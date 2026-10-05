@@ -28,6 +28,8 @@ import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-sl
 import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: pulls this package's SlotMap merge (the two Models child slots).
 import type {} from './slot-contract.ts'
+import { CodexBackendCard } from './CodexBackendCard.tsx'
+import { ChatGPTCard } from './ChatGPTCard.tsx'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, protocolChoices, providerUsable } from './store.ts'
 import type { ModelsSettingsStore, ProviderRow } from './store.ts'
@@ -338,11 +340,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   // One fact decides both first-run postures on this page and the onboarding
   // step: whether the user already has a provider to talk to.
   const anyUsable = state.rows.some(providerUsable)
-  const configured = state.rows.filter(row => row.configured)
-  const configurable = state.rows.filter(row => state.namespaces.has(row.entry.settingsNs))
+  const configured = state.rows.filter(row => row.configured && row.entry.provider !== 'chatgpt')
+  const configurable = state.rows.filter(row => row.entry.provider !== 'chatgpt' && state.namespaces.has(row.entry.settingsNs))
   const addable: AddableRow[] = state.rows.flatMap((row) => {
     const namespace = state.namespaces.get(row.entry.settingsNs)
-    return namespace === undefined || row.configured ? [] : [{ row, namespace }]
+    return namespace === undefined || row.configured || row.entry.provider === 'chatgpt' ? [] : [{ row, namespace }]
   })
   // Hand-declared routes live in the pi-ai namespace, which is also the only
   // one whose schema names the protocols one may speak; without it mounted
@@ -394,6 +396,9 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             {providerCopy(t('savedProvider'), savedIdentity)}
           </p>
         )}
+      <CodexBackendCard operations={operations} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} />
+      <ChatGPTCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} />
+      <p className={styles['advancedHint']}>{t('nousUnavailable')}</p>
       <ul className={styles['rows']}>
         {configured.map((row) => {
           const target = targetOf(row)

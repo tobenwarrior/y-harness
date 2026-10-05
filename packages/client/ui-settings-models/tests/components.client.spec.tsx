@@ -2018,3 +2018,17 @@ it('renders the localized account row and supports catalogs without capacity def
     operations={operationsWith(scripted.face)} t={t} readOnly={false} onClose={() => {}} />)
   expect(screen.queryByLabelText(en.keyInput)).toBeNull()
 })
+
+it('requires explicit local-storage consent before saving an OpenCode Go key', async () => {
+  const { face, set } = scriptedFace()
+  render(<ProviderEditor provider="opencode-go" displayName="OpenCode Go"
+    namespace={wireNamespaces().find(ns => ns.ns === 'llm-pi-ai')!} schema={settingsSchema}
+    settingsPath={['providers', 'opencode-go']} operations={operationsWith(face)} t={t} readOnly={false} onClose={() => {}} />)
+  const key = screen.getByLabelText<HTMLInputElement>(en.keyInput)
+  expect(key.type).toBe('password')
+  fireEvent.change(key, { target: { value: 'mock-go-key' } })
+  expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(true)
+  expect(set).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('checkbox', { name: /Save this API key locally/ }))
+  expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(false)
+})

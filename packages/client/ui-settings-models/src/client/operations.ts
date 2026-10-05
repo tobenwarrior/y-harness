@@ -7,7 +7,7 @@
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
-  CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
+  CodexBackendModelView, CodexBackendView, ChatGPTModelView, CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
   SettingsNamespaceView, SettingsPathOpView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 
@@ -30,8 +30,34 @@ export type ModelDiscoveryOutcome =
   /** The interrogation was refused, with the Host's own diagnostic. */
   | { readonly kind: 'refused'; readonly message: string }
 
+/** Display-safe ChatGPT account state from the Host. */
+export interface ChatGPTView {
+  accounts: Array<{ id: string; label: string; connected: boolean }>
+  activeId?: string
+  busy: boolean
+  error?: string
+}
 /** The Host operations the Models page and its cards invoke. */
 export interface ModelsOperations {
+  codexBackend?: {
+    getState(): Promise<CodexBackendView>
+    models(): Promise<CodexBackendModelView[]>
+    refresh(): Promise<CodexBackendView>
+    start(consent: boolean): Promise<{ verificationUrl: string; userCode: string }>
+    cancel(): Promise<void>
+    configure(enabled: boolean, modelId: string | undefined, tier: string | undefined): Promise<CodexBackendView>
+    disconnect(): Promise<CodexBackendView>
+  }
+  chatGPT?: {
+    getState(): Promise<ChatGPTView>
+    start(accountId: string | undefined, consent: boolean): Promise<string>
+    finish(): Promise<ChatGPTView>
+    cancel(): Promise<void>
+    disconnect(accountId: string): Promise<boolean>
+    select(accountId: string): Promise<ChatGPTView>
+    models(): Promise<ChatGPTModelView[]>
+  }
+
   /**
    * Read one credential reference's state.
    * @param ref - credential reference name.
@@ -80,7 +106,39 @@ export interface ModelsOperations {
  * @returns the callbacks the section and its cards are injected with.
  */
 export function createModelsOperations(ctx: ClientContext): ModelsOperations {
+  const unwrap = <T>(result: { ok: true; value: T } | { ok: false; error: { message: string } }): T => {
+    if (!result.ok) throw new Error(result.error.message)
+    return result.value
+  }
+  // The subscription provider is optional; ctx.get resolves it without a required inject.
+  const chatGPT = ctx.get('remote.chatGPT') as typeof ctx.remote.chatGPT | undefined
+  const codexBackend = ctx.get('remote.codexBackend') as typeof ctx.remote.codexBackend | undefined
   return {
+    ...(codexBackend === undefined ? {} : { codexBackend: {
+      getState: async () => unwrap(await codexBackend.getState()),
+      models: async () => unwrap(await codexBackend.models()),
+      refresh: async () => unwrap(await codexBackend.refresh()),
+      start: async (consent: boolean) => unwrap(await codexBackend.start(consent)),
+      cancel: async () => { unwrap(await codexBackend.cancel()) },
+      configure: async (enabled: boolean, modelId: string | undefined, tier: string | undefined) => unwrap(await codexBackend.configure(enabled, modelId, tier)),
+      disconnect: async () => unwrap(await codexBackend.disconnect()),
+    } }),
+    ...(chatGPT === undefined ? {} : { chatGPT: {
+      getState: async () => unwrap(await chatGPT.getState()),
+      start: async (accountId: string | undefined, consent: boolean) => unwrap(await chatGPT.start(accountId, consent)),
+      finish: async () => {
+        let state = unwrap(await chatGPT.getState())
+        while (state.busy) {
+          await new Promise<void>(resolve => setTimeout(resolve, 1000))
+          state = unwrap(await chatGPT.getState())
+        }
+        return state
+      },
+      disconnect: async (accountId: string) => unwrap(await chatGPT.disconnect(accountId)),
+      cancel: async () => { unwrap(await chatGPT.cancel()) },
+      select: async (accountId: string) => unwrap(await chatGPT.select(accountId)),
+      models: async () => unwrap(await chatGPT.models()),
+    } }),
     describeCredential: async (ref) => {
       const response = await ctx.remote.credentials.describe([ref])
       return response.ok ? response.value[ref] : undefined

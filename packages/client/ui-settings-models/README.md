@@ -37,6 +37,14 @@ A provider with a stored catalog error remains visible with its diagnostic and e
 
 Host configuration `credentialOnboarding` defaults to `true`. The Electron preload marker suppresses automatic credential onboarding and the Web welcome notice; Models settings and explicit API-key editing remain available. The [account plugin](../ui-settings-account/README.md#desktop-onboarding) owns the Desktop introduction. Other native shells can disable only the credential step with `credentialOnboarding: false`. Host publishes this public boolean through `webserver/index-inject`, and Client validates it before registering dialogs. It is page initialization data, not a durable completion marker.
 
+The local ChatGPT card owns subscription sign-in, saved-account selection,
+model discovery, cancellation, and per-account disconnect. Its Host Remote
+returns only account metadata and browser approval URLs. Saving tokens needs
+explicit consent to the protected, unencrypted profile credential file.
+The generic API-key editor does not offer the ChatGPT route. OpenCode Go's
+masked key field requires separate local-storage consent. Nous Portal OAuth
+remains visibly unavailable until public client registration is verified.
+
 ### API keys
 
 API-key inputs start empty and use `autocomplete="new-password"` to ask browsers not to autofill saved login passwords.

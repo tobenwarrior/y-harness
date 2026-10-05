@@ -216,6 +216,8 @@ export interface ResolvedPiAiProviderProfile
    * own, so a catalog capability must not appear here.
    */
   configuredMaxTokens: ReadonlyMap<string, number>
+  /** Per-model defaults preserved from the connected account's current catalog. */
+  configuredReasoning: ReadonlyMap<string, ModelThinkingLevel>
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -312,6 +314,10 @@ const modelFields = {
   // `{}`, and absent must stay distinguishable — it means "inherit the
   // installed catalog's capability", while `false` disables reasoning.
   reasoningEfforts: z.union([z.const(false), reasoningEfforts]),
+  defaultReasoning: z.union(THINKING_LEVELS),
+  unavailableReasoningEfforts: z.array(z.string()),
+  serviceTiers: z.array(z.object({ id: z.string().required(), name: z.string().required(), description: z.string() })),
+  serviceTier: z.union(['default', 'priority', 'fast', 'ultrafast']),
   compat: compatProfile,
 }
 
@@ -417,6 +423,19 @@ export function resolveProfiles(
   const entries = Object.entries(providers ?? {})
   const resolved = new Map<string, ResolvedPiAiProviderProfile>()
   for (const [provider, source] of entries) {
+    if (provider === 'chatgpt' && ((source.baseURL !== undefined && source.baseURL !== 'https://api.openai.com/v1')
+      || (source.api !== undefined && source.api !== 'openai-responses') || 'apiKey' in source || source.apiKeyEnv !== undefined)) {
+      throw new Error('ChatGPT subscriptions require the public Responses endpoint and sign-in in Models settings.')
+    }
+    for (const model of source.models ?? []) {
+      if (model.serviceTier !== undefined && (provider !== 'chatgpt' || (model.serviceTier !== 'default' && !model.serviceTiers?.some(tier => tier.id === model.serviceTier)))) {
+        throw new Error(`Processing tier "${model.serviceTier}" is not advertised for ${provider}/${model.id}.`)
+      }
+      if (model.defaultReasoning !== undefined
+        && (model.reasoningEfforts === false || model.reasoningEfforts?.[model.defaultReasoning] === undefined)) {
+        throw new Error(`Default effort "${model.defaultReasoning}" is not advertised for ${provider}/${model.id}.`)
+      }
+    }
     rejectRemovedFields(provider, source)
     if (provider.length === 0) throw new Error('llm-pi-ai: provider names must be non-empty')
     if (source.baseURL !== undefined && source.baseURL.length === 0) {
@@ -481,6 +500,7 @@ export function resolveProfiles(
         ...source.api === undefined ? {} : { api: source.api },
         ...source.baseURL === undefined ? {} : { baseURL: source.baseURL },
         models: catalog.models,
+        ...source.models === undefined ? {} : { modelProfiles: source.models },
         namesCredential: source.apiKeyEnv !== undefined,
       })
     } catch (error) {
@@ -501,6 +521,8 @@ export function resolveProfiles(
       ...rest.headers === undefined ? {} : { headers: { ...rest.headers } },
       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
       configuredMaxTokens: catalog?.configuredMaxTokens ?? new Map(),
+      configuredReasoning: new Map((source.models ?? []).flatMap(model =>
+        model.defaultReasoning === undefined ? [] : [[model.id, model.defaultReasoning] as const])),
       modelErrors: catalog?.modelErrors ?? new Map(),
       ...piProvider === undefined ? {} : { piProvider },
       ...catalogError === undefined ? {} : { catalogError },

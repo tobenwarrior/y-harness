@@ -33,6 +33,40 @@ The adapter accepts the LLM service's [request-only user inputs](../llm/README.m
 
 Choose this adapter when the same composition serves several providers, when a route needs pi-ai's catalog defaults with a few fields corrected, or when a hand-declared gateway must be reached through its own endpoint and protocol. Choose `dsh-llm-deepseek` for the direct DeepSeek route when the deployment needs no other provider. Both adapters can be mounted together because their route names do not collide; registering a route another adapter already owns fails plugin loading.
 
+### Local subscription connections
+
+The local desktop adds a ChatGPT connection card in Settings → Models.
+It uses OpenAI's documented public dynamic client registration, PKCE, a
+short-lived IPv4 loopback callback, and verified ID-token signatures. Each
+account keeps its own issued client ID. Explicit consent is required before
+saving tokens in the profile's owner-only, unencrypted credential file.
+Account selection, refresh, cancellation, and disconnect use this same card.
+Models are fetched after sign-in; the default model is not changed.
+
+The `chatgpt` route accepts only public OpenAI Responses and OAuth. Requests
+stream with `store: false`, use namespaced local function tools, and omit
+fields disallowed by the ChatGPT plan preview. OAuth and inference have
+mocked protocol coverage; the user completed browser sign-in and the existing
+connection was checked through read-only account model discovery. No live
+inference request was sent during verification.
+See [OpenAI's public flow](https://developers.openai.com/siwc/token-sharing-open-source)
+and [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
+The account catalog's reasoning efforts and defaults populate the native
+composer picker. Models settings expose Standard and account-advertised Fast
+processing tiers per model; applying Fast requires an explicit save and shows
+its increased-usage description. The exact tier is sent as `service_tier`.
+Ultra delegation is not implemented on this direct Responses route and is not
+silently mapped to Max. Model availability follows this connection's current
+public catalog; absence is not evidence of missing account entitlement. Codex
+backend catalogs used by other apps are a different authentication contract.
+
+OpenCode Go uses the installed native `opencode-go` provider, including its
+Responses, Chat Completions, and Anthropic Messages endpoints. Settings
+requires explicit local storage consent for its API key. Nous Portal OAuth
+is unavailable because a public Harness client-registration flow has not
+been verified. Existing DeepSeek account settings remain unchanged.
+
 ### Configure provider routes
 
 Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential reference resolved per request through the harness credential seam, so no secret enters the configuration file; a reference that resolves to nothing fails the request with `MISSING_CREDENTIAL`. Omitting it leaves the route configured-but-keyless, which for an installed catalog route defers to pi-ai's provider-native ambient discovery.

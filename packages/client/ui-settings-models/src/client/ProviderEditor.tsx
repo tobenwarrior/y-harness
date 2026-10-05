@@ -167,6 +167,8 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
   const { namespace, schema, settingsPath, operations, t } = props
   const [draft, setDraft] = useState<Record<string, unknown>>(() => draftAt(schema, namespace, settingsPath))
   const [keyDraft, setKeyDraft] = useState('')
+  const [saveKeyLocally, setSaveKeyLocally] = useState(false)
+  const goProvider = props.provider === 'opencode-go'
   const [keyState, setKeyState] = useState<CredentialInfo | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [listBusy, setListBusy] = useState(false)
@@ -259,6 +261,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
    * outside the card. Ops name only the fields this card can see.
    */
   const applyOnce = async (): Promise<string | undefined> => {
+    if (goProvider && keyValue.length > 0 && !saveKeyLocally) return t('goStorage')
     const ns = namespace.ns
     // A pi-ai profile names the conventional reference only when this page is
     // about to store a key. Otherwise the provider keeps its native auth path.
@@ -395,6 +398,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
           />
           {shownKeyFailure === undefined ? null : <p className={styles['error']}>{t(shownKeyFailure)}</p>}
         </div>
+        {goProvider ? <><p className={styles['advancedHint']}>{t('goHint')}</p><label className={styles['advancedHint']}><input type="checkbox" checked={saveKeyLocally} disabled={disabled} onChange={event => { setSaveKeyLocally(event.target.checked) }} /> {t('goStorage')}</label></> : null}
         {props.credentialOnly === true ? null : <details className={styles['customized']}>
           <summary className={styles['customizedSummary']}>{t('customized')}</summary>
           <div className={styles['customizedBody']}>
@@ -524,7 +528,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       <EditorFooter
         t={t}
         busy={busy}
-        submitDisabled={disabled || layout === 'unknown'
+        submitDisabled={disabled || (goProvider && keyValue.length > 0 && !saveKeyLocally) || layout === 'unknown'
           || (props.credentialOnly !== true && modelFailure !== undefined)
           || shownKeyFailure !== undefined
           || (props.credentialRequired === true && keyValue.length === 0)}

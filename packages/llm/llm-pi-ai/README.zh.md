@@ -243,3 +243,28 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 - `compat` 开关集合由漂移门禁钉在 pi-ai 的 compat 类型上；上游升级若新增字段、为更多协议赋予 compat 类型或扩大值联合，会在有人分类前让构建失败。
 
 </details>
+
+### 本地订阅连接
+
+本地桌面的“设置 → 模型”增加 ChatGPT 连接卡片，使用 OpenAI 公开的动态客户端
+注册、PKCE、短时 IPv4 回环回调和 ID 令牌签名验证。各账户保留各自的客户端 ID。
+只有明确同意后才会将令牌保存到本配置的凭据文件（仅所有者可读，未加密）。
+可在同一卡片切换账户、刷新模型、取消或断开连接；默认模型保持不变。
+
+`chatgpt` 路由仅接受公开 OpenAI Responses 和 OAuth，使用流式请求、
+`store: false` 及命名空间内的本地函数工具，并移除订阅预览不支持的字段。
+OAuth 和推理协议有模拟测试覆盖。用户已在浏览器完成登录，既有连接通过只读
+账户模型目录验证；验证过程中未发送实际推理请求。
+参见 [OpenAI 公开流程](https://developers.openai.com/siwc/token-sharing-open-source)
+和[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+
+账户目录的推理等级和默认值用于既有输入区选择器。“模型”设置提供标准模式和
+账户目录声明的逐模型 Fast 选项；启用 Fast 需明确保存，并显示其增加用量说明。
+请求的 `service_tier` 保留目录中的实际值。此直接 Responses 路由未实现 Ultra
+自动任务委派，也不会静默降为 Max。模型可见性取决于此连接的当前公开目录，
+缺少某个条目不能证明账户没有权限；其他应用的 Codex 后端目录使用不同认证契约。
+
+OpenCode Go 使用已安装的 `opencode-go` 原生适配器，覆盖 Responses、
+Chat Completions 和 Anthropic Messages 接口；保存 API 密钥前需明确同意。
+Nous Portal OAuth 暂不可用，尚未验证 Harness 的公开客户端注册方式。
+既有 DeepSeek 账户设置保持不变。

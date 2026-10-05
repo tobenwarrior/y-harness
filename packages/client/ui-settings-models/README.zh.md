@@ -138,3 +138,9 @@ Models 页面包含 **DeepSeek 账号**（`deepseek-account`，英文为 **DeepS
 无。
 
 </details>
+
+本地 ChatGPT 卡片管理订阅登录、已保存账户切换、模型发现、取消和逐账户断开。
+Host Remote 仅返回账户元数据与浏览器授权链接。保存令牌前需明确同意写入
+受保护但未加密的配置凭据文件。通用 API 密钥编辑器不提供 ChatGPT 路由。
+OpenCode Go 密码式密钥输入也要求单独同意本地存储。确认公开客户端注册方式前，
+Nous Portal OAuth 会明确显示为不可用。

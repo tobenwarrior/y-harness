@@ -71,6 +71,10 @@ import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
+import { CodexBackendConnection } from './codex-backend-connection.ts'
+export { CodexBackendConnection } from './codex-backend-connection.ts'
+import { ChatGPTConnection } from './chatgpt-connection.ts'
+export { ChatGPTConnection } from './chatgpt-connection.ts'
 import { registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
@@ -169,6 +173,7 @@ export function apply(ctx: Context, config: Config): void {
     return next
   }
   profiles()
+  if (launchEnvironmentOf(ctx).get('DSH_CODEX_BINARY')?.value) ctx.plugin(CodexBackendConnection)
   ctx.on('internal/config', function (this: import('@deepseek-ai/cordis').Fiber, _raw, next) {
     const raw: unknown = next()
     if (this !== ctx.fiber) return raw
@@ -232,6 +237,7 @@ export function apply(ctx: Context, config: Config): void {
   // composition without it (headless, ACP) simply has no surface to sign in
   // from, while everything else this plugin does still works.
   ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
+  ctx.inject(['authorization', 'credentials'], child => { child.plugin(ChatGPTConnection) })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as
