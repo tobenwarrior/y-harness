@@ -1,10 +1,14 @@
-# DeepSeek Harness
+# Y harness
+
+<img src="assets/y-harness-logo.jpg" alt="Y harness" width="120">
 
 [English](README.md) | 中文
 
-DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。
+**Y harness** 是构建于 **DeepSeek Harness**（`dsh`）之上的个人 agent harness（智能体框架）。DeepSeek Harness 是由 [DeepSeek AI](https://deepseek.com) 开发并以 MIT 许可证发布的开源 agent harness。
 
-它构建于**一切皆插件**的架构之上，由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://arxiv.org/abs/2608.25512)。
+本仓库是一个 fork：`origin` 指向本仓库，`upstream` 指向 [`deepseek-ai/deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness)，因此可用 `git fetch upstream && git merge upstream/master` 合并上游变更。下文所述的 package、`dsh` CLI 与架构均来自上游；本 fork 保留上游历史，并加入进行中的本地工作：`packages/llm/llm-pi-ai` 中经由官方 Codex 应用运行的 ChatGPT 订阅 provider，以及 Nous Portal provider，二者对应的设置界面位于 `packages/client/ui-settings-models`。
+
+DeepSeek Harness 构建于**一切皆插件**的架构之上，由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://arxiv.org/abs/2608.25512)。
 
 文档：[https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)
 

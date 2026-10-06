@@ -21,6 +21,7 @@ export class ModelCatalogDirectory {
   })
 
   private readonly reasoning = new Map<string, ModelProviderGroup['models'][number]['reasoning']>()
+  private readonly serviceTiers = new Map<string, ModelProviderGroup['models'][number]['serviceTiers']>()
 
   /**
    * Read the last advertised reasoning metadata, including unavailable models.
@@ -29,6 +30,15 @@ export class ModelCatalogDirectory {
    */
   reasoningFor(selection: ModelSelection): ModelProviderGroup['models'][number]['reasoning'] {
     return this.reasoning.get(JSON.stringify([selection.provider, selection.model]))
+  }
+
+  /**
+   * Read the last advertised service-tier metadata, including unavailable models.
+   * @param selection - provider and model whose speed is displayed.
+   * @returns service-tier metadata observed during this Host generation.
+   */
+  serviceTiersFor(selection: ModelSelection): ModelProviderGroup['models'][number]['serviceTiers'] {
+    return this.serviceTiers.get(JSON.stringify([selection.provider, selection.model]))
   }
 
   private generation = 0
@@ -61,6 +71,7 @@ export class ModelCatalogDirectory {
         for (const group of response.value.groups) {
           for (const model of group.models) {
             this.reasoning.set(JSON.stringify([group.id, model.id]), model.reasoning)
+            this.serviceTiers.set(JSON.stringify([group.id, model.id]), model.serviceTiers)
           }
         }
         this.store.set({ value: response.value, status: 'ready', error: null })
@@ -101,6 +112,7 @@ export class ModelCatalogDirectory {
   /** Clear Host-specific values and load the replacement Host generation. */
   resetGeneration(): void {
     this.reasoning.clear()
+    this.serviceTiers.clear()
     this.invalidate(true)
     void this.load().catch(() => { /* the selector exposes the shared error */ })
   }

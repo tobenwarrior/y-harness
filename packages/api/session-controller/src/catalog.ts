@@ -9,6 +9,7 @@ import type {
   ModelCatalog,
   ModelReasoning,
   ModelSelection,
+  ModelServiceTiers,
 } from './types.ts'
 
 /**
@@ -39,11 +40,24 @@ export async function buildModelCatalog(
               ? {}
               : { defaultEffort: resolved.reasoning.defaultEffort }),
           }
+        const serviceTiers: ModelServiceTiers | undefined = resolved.serviceTiers === undefined
+          ? undefined
+          : {
+            tiers: resolved.serviceTiers.tiers.map(tier => ({
+              id: tier.id,
+              name: tier.name,
+              ...(tier.description === undefined ? {} : { description: tier.description }),
+            })),
+            ...(resolved.serviceTiers.defaultTier === undefined
+              ? {}
+              : { defaultTier: resolved.serviceTiers.defaultTier }),
+          }
         return {
           id: model.id,
           name: model.name,
           ...(model.description === undefined ? {} : { description: model.description }),
           ...(reasoning === undefined ? {} : { reasoning }),
+          ...(serviceTiers === undefined ? {} : { serviceTiers }),
         }
       }))
       return {

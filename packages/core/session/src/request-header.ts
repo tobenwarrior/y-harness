@@ -22,7 +22,7 @@ export function canonicalHeader(header: EpochHeader): EpochHeader {
   const adapterDefaults = header.adapterDefaults
   return {
     config: header.config,
-    ...adapterDefaults?.reasoningEffort === true || adapterDefaults?.maxTokens === true
+    ...adapterDefaults?.reasoningEffort === true || adapterDefaults?.serviceTier === true || adapterDefaults?.maxTokens === true
       ? { adapterDefaults }
       : {},
     ...header.tools !== undefined && header.tools.length > 0 ? { tools: header.tools } : {},
@@ -44,6 +44,7 @@ export function headerEquals(a: EpochHeader, b: EpochHeader): boolean {
   if (
     !callConfigEquals(a.config, b.config)
     || a.adapterDefaults?.reasoningEffort !== b.adapterDefaults?.reasoningEffort
+    || a.adapterDefaults?.serviceTier !== b.adapterDefaults?.serviceTier
     || a.adapterDefaults?.maxTokens !== b.adapterDefaults?.maxTokens
   ) return false
   const at = a.tools ?? []

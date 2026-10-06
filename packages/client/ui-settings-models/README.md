@@ -29,6 +29,8 @@ Desktop product events use the optional [product analytics service](../product-a
 
 Saving credentials or a custom provider preserves the selected model. The user can select an available model from the composer.
 
+The native Nous Portal card connects with the public `hermes-cli` device-login client the Hermes agent uses; the deployment may still override that client ID in settings, and whether Y Harness may reuse the registration remains unverified, which the card discloses behind its own disclosure row. It requests consent before saving OAuth credentials, shows device authorization instructions, and loads the connected account catalog on its own. Connecting publishes a small starter set — the account's leading advertised models, minus batch variants — so the composer starts usable, and the card then reports how many of the catalog's models are enabled. Every other model is chosen in a **Manage models** dialog that owns the long catalog: a search box, an enabled-only filter, and one section per vendor with its own select-all, so a hundred-model account never becomes a hundred-row card. Disconnect clears the local grant and removes the saved Nous model selection; Portal-side authorization remains manageable in the user’s Nous account. Route timeouts, retries, and other valid settings survive catalog selection updates.
+
 DeepSeek Account appears first and DeepSeek second in the provider list; third-party providers retain their directory order.
 
 Open the Models page from the Settings navigation to see every configured provider as a row. A whole-section provider whose key is not configured anywhere renders as its open setup card instead, but only in the first-run posture and only until the user closes that card. Each card kind owns its own open state, so closing one never discards a draft in another.
@@ -37,13 +39,11 @@ A provider with a stored catalog error remains visible with its diagnostic and e
 
 Host configuration `credentialOnboarding` defaults to `true`. The Electron preload marker suppresses automatic credential onboarding and the Web welcome notice; Models settings and explicit API-key editing remain available. The [account plugin](../ui-settings-account/README.md#desktop-onboarding) owns the Desktop introduction. Other native shells can disable only the credential step with `credentialOnboarding: false`. Host publishes this public boolean through `webserver/index-inject`, and Client validates it before registering dialogs. It is page initialization data, not a durable completion marker.
 
-The local ChatGPT card owns subscription sign-in, saved-account selection,
-model discovery, cancellation, and per-account disconnect. Its Host Remote
-returns only account metadata and browser approval URLs. Saving tokens needs
-explicit consent to the protected, unencrypted profile credential file.
-The generic API-key editor does not offer the ChatGPT route. OpenCode Go's
-masked key field requires separate local-storage consent. Nous Portal OAuth
-remains visibly unavailable until public client registration is verified.
+### ChatGPT subscription
+
+The single ChatGPT card publishes a connected account without a second confirmation step: on mount it reads native status, so a stored sign-in is detected rather than reported as signed out, and it enables the route so its catalog reaches the composer. An explicit enable or disable then becomes the user's own choice and stops the automatic publication, and disconnecting stops it too. Consent-gated device sign-in, cancellation, disconnect, and per-model processing choices remain explicit user operations, and the card never starts login on mount. The read-only/network-off/fail-closed policy and the per-model processing controls each sit behind their own disclosure row, so the card shows a status, its actions, and a route summary by default. Native effort IDs populate the composer after publication, while applying a processing tier sends no model request. Read-only settings documents perform no native read and never publish.
+
+The generic API-key editor does not offer the ChatGPT or Nous routes. OpenCode Go's masked key field requires separate local-storage consent.
 
 ### API keys
 

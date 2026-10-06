@@ -33,6 +33,18 @@ kind: "package-reference"
 
 当同一组合服务多个提供方、某条路由需要 pi-ai 目录默认值并修正少数字段、或必须通过自有端点与协议到达手工声明网关时，选择本适配器。当部署不需要其他提供方时，选择 `dsh-llm-deepseek` 直连 DeepSeek 路由。两个适配器可以同时挂载，因为它们的路由名不冲突；注册其他适配器已拥有的路由会导致插件加载失败。
 
+### 本地订阅连接
+
+OpenCode Go 使用已安装的 `opencode-go` 原生适配器，覆盖 Responses、Chat Completions 和 Anthropic Messages 接口；保存 API 密钥前需明确同意。已安装目录是有限的本地清单，不代表账户权限；`minimax-m2.7`、`qwen3.7-plus` 和 `qwen3.8-max` 使用 Go 公布的 Messages 端点。
+
+原生 `nous` 路由使用 Portal 设备授权和已认证的账户模型目录。“模型”卡片默认使用公开 `hermes-cli` 客户端 ID 的兼容 Hermes 设备登录，也可填写自定义公开客户端 ID。Nous 授权页面可能显示 Hermes；Y Harness 是独立应用，尚未验证独立的 Y Harness 客户端注册。选择客户端只保存公开配置；另行勾选本地存储并点击继续后才会启动授权。已有 grant 始终绑定所选客户端 ID。卡片提供设备登录说明和明确的模型选择，并在断开时清除本地 grant。Portal 端撤销仍由用户在账户中操作。
+
+Nous 请求通过 grant 中经过验证的推理地址使用 Chat Completions。刷新在凭据存储中串行执行，先持久保存轮换后的令牌，再验证请求认证。只发送目录声明的推理等级；关闭推理要求元数据明确声明推理为可选。授权服务接纳持久保存前可取消；接纳之后，取消会等待保存完成。凭据保存在仅所有者可读、未加密的本地文件中。用户明确启动设备登录后，在浏览器完成实际授权。
+
+### 可选本地 Codex 后端
+
+部署显式提供 `DSH_CODEX_BINARY`、`DSH_CODEX_NODE`、`DSH_CODEX_HOME`、`DSH_CODEX_SHELL_HOME` 和 `DSH_CODEX_CWD` 路径后，可使用独立的 `codex-backend` 路由。本地桌面固定官方 Codex 0.160.0，通过文档规定的 stdio app-server、新配置和用户自行完成的设备登录运行。循环与工具由 Codex 负责；账户连接后会自行发布该路由，直到用户明确启用或禁用为止，此后以用户保存的选择为准。原生 Ultra 保持原值，输入框在目录中的每个速度层级旁提供 Standard；按模型保存的偏好即适配器默认值，会话中的明确选择优先。priority/Fast 转为 `serviceTier: fast`。目录声明的模态会被转发（audio 因 LLM 接缝无法表达而丢弃），当前轮次自身的图片经持久附件存储编码为原生 `image` 输入；引用对话上下文中的图片仍为文本占位。工具使用只读沙箱、网络关闭、批准拒绝。单活动轮次；重启或历史变化使用引用对话上下文。原生工具详情与问题面板尚未桥接；模型目录不代表账户访问权限。
+
 ### 配置提供方路由
 
 每个 profile 都可以设置 `retryPolicy`；省略时使用 normal mode、最多重试五次。`apiKeyEnv` 是按请求经 harness 凭据 seam 解析的凭据引用，因此配置文件绝不包含密钥；解析为空的引用会让请求以 `MISSING_CREDENTIAL` 失败。省略它会让路由保持已配置但无密钥（configured-but-keyless）状态，对已安装目录路由而言即交由 pi-ai 提供方原生的环境发现。
@@ -243,28 +255,3 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 - `compat` 开关集合由漂移门禁钉在 pi-ai 的 compat 类型上；上游升级若新增字段、为更多协议赋予 compat 类型或扩大值联合，会在有人分类前让构建失败。
 
 </details>
-
-### 本地订阅连接
-
-本地桌面的“设置 → 模型”增加 ChatGPT 连接卡片，使用 OpenAI 公开的动态客户端
-注册、PKCE、短时 IPv4 回环回调和 ID 令牌签名验证。各账户保留各自的客户端 ID。
-只有明确同意后才会将令牌保存到本配置的凭据文件（仅所有者可读，未加密）。
-可在同一卡片切换账户、刷新模型、取消或断开连接；默认模型保持不变。
-
-`chatgpt` 路由仅接受公开 OpenAI Responses 和 OAuth，使用流式请求、
-`store: false` 及命名空间内的本地函数工具，并移除订阅预览不支持的字段。
-OAuth 和推理协议有模拟测试覆盖。用户已在浏览器完成登录，既有连接通过只读
-账户模型目录验证；验证过程中未发送实际推理请求。
-参见 [OpenAI 公开流程](https://developers.openai.com/siwc/token-sharing-open-source)
-和[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
-
-账户目录的推理等级和默认值用于既有输入区选择器。“模型”设置提供标准模式和
-账户目录声明的逐模型 Fast 选项；启用 Fast 需明确保存，并显示其增加用量说明。
-请求的 `service_tier` 保留目录中的实际值。此直接 Responses 路由未实现 Ultra
-自动任务委派，也不会静默降为 Max。模型可见性取决于此连接的当前公开目录，
-缺少某个条目不能证明账户没有权限；其他应用的 Codex 后端目录使用不同认证契约。
-
-OpenCode Go 使用已安装的 `opencode-go` 原生适配器，覆盖 Responses、
-Chat Completions 和 Anthropic Messages 接口；保存 API 密钥前需明确同意。
-Nous Portal OAuth 暂不可用，尚未验证 Harness 的公开客户端注册方式。
-既有 DeepSeek 账户设置保持不变。

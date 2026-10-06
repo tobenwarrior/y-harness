@@ -24,8 +24,8 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 import { catalogProvider, PiAiCatalogError } from './catalog.ts'
-import { chatGPTProvider } from './chatgpt-provider.ts'
-import type { PiAiModelProfile } from './catalog.ts'
+import { nousProvider } from './nous-provider.ts'
+import type { NousModelView } from './nous-types.ts'
 import { createProvider } from './models.ts'
 
 /**
@@ -98,8 +98,8 @@ export interface ProviderSpec {
   baseURL?: string
   /** The route's materialized models, in configuration order. */
   models: readonly Model<Api>[]
-  /** Per-model account capabilities and explicitly chosen processing tiers. */
-  modelProfiles?: readonly PiAiModelProfile[]
+  /** Deployment-approved Nous registration; absent keeps native OAuth request auth dormant. */
+  nousClientId?: string
   /**
    * Whether the profile names a credential, which it does through `apiKeyEnv`
    * alone: configuration carries the reference, never the secret. Only that
@@ -169,11 +169,28 @@ function reuseCatalogProvider(base: Provider, spec: ProviderSpec): Provider {
  * @throws Error when the route names a wire protocol this build cannot serve.
  */
 export function buildProvider(spec: ProviderSpec): Provider {
-  const catalog = spec.provider === 'chatgpt' ? chatGPTProvider(spec.modelProfiles) : catalogProvider(spec.provider)
+  if (spec.provider === 'nous') {
+    if (spec.namesCredential || (spec.api !== undefined && spec.api !== 'openai-completions')
+      || (spec.baseURL !== undefined && spec.baseURL !== 'https://inference-api.nousresearch.com/v1')) {
+      throw new PiAiCatalogError('Nous Portal uses its native OAuth connection and verified inference route; remove API-key, protocol, and endpoint overrides.')
+    }
+    const metadata: NousModelView[] = spec.models.map((model) => {
+      const efforts: NonNullable<NousModelView['reasoningEfforts']> = {}
+      for (const [level, wire] of Object.entries(model.thinkingLevelMap ?? {})) {
+        if (typeof wire === 'string' && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(level)) {
+          Object.assign(efforts, { [level]: wire })
+        }
+      }
+      return { id: model.id, name: model.name, reasoning: model.reasoning,
+        reasoningMandatory: !Object.hasOwn(efforts, 'off'), reasoningEfforts: efforts }
+    })
+    return reuseCatalogProvider(nousProvider(metadata, spec.nousClientId), spec)
+  }
+  const catalog = catalogProvider(spec.provider)
   // A catalog route keeping its catalog protocol reuses the catalog provider;
   // an explicit protocol means the deployment is repointing the route at a
   // different wire format, which only the protocol table can serve.
-  if (catalog !== undefined && (spec.api === undefined || spec.provider === 'chatgpt')) return reuseCatalogProvider(catalog, spec)
+  if (catalog !== undefined && spec.api === undefined) return reuseCatalogProvider(catalog, spec)
 
   // Every model on this path carries the route's protocol: model resolution
   // requires one for a route the catalog cannot default, and an explicit one

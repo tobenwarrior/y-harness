@@ -11,7 +11,7 @@ import settingsControllerRemote from '@deepseek-ai/dsh-api-settings-controller/r
 import officeToPdfRemote from '@deepseek-ai/dsh-office-to-pdf/remote'
 import goalsRemote from '@deepseek-ai/dsh-goal/remote'
 import scheduleRemote from '@deepseek-ai/dsh-schedule/remote'
-import chatGPTRemote from '@deepseek-ai/dsh-llm-pi-ai/remote'
+import piAiRemote from '@deepseek-ai/dsh-llm-pi-ai/remote'
 export type {} from '@deepseek-ai/dsh-llm-pi-ai/remote'
 import llmRemote from '@deepseek-ai/dsh-llm/remote'
 import dynamicRemote from '@deepseek-ai/dsh-cordis-host-runner/remote'
@@ -182,7 +182,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   try {
     for (const contribution of [
       productAnalyticsRemote, agentPresetsRemote, commandsRemote, settingsControllerRemote, accountRemote,
-      goalsRemote, llmRemote, chatGPTRemote, dynamicRemote, scheduleRemote,
+      goalsRemote, llmRemote, piAiRemote, dynamicRemote, scheduleRemote,
       pluginInventoryRemote, pluginManagerRemote, pluginRegistryProbeRemote, messageFeedbackRemote, sessionFeedbackRemote,
       fileUploadsRemote, sessionReferencesRemote,
       permissionPresetsRemote, subagentsRemote, sessionRemote, jobRemote, workspaceRemote, workspaceFilesRemote, terminalRemote,
@@ -201,4 +201,4 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   }
 }
 
-export type { CodexBackendModelView, CodexBackendView, ChatGPTModelView } from '@deepseek-ai/dsh-llm-pi-ai/types'
+export type { CodexBackendModelView, CodexBackendView, NousConnectionView, NousDeviceVerification, NousModelView } from '@deepseek-ai/dsh-llm-pi-ai/types'

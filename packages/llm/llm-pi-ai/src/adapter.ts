@@ -121,6 +121,8 @@ function profileOptions(
   return {
     ...apiKey === undefined ? {} : { apiKey },
     ...enabledReasoning === undefined ? {} : { reasoning: enabledReasoning },
+    ...profile.provider === 'nous' && reasoning === 'off'
+      ? { samplingParams: { reasoning: { enabled: false } } } : {},
     ...profile.thinkingBudgets === undefined ? {} : { thinkingBudgets: profile.thinkingBudgets },
     ...profile.cacheRetention === undefined ? {} : { cacheRetention: profile.cacheRetention },
     ...profile.transport === undefined ? {} : { transport: profile.transport },

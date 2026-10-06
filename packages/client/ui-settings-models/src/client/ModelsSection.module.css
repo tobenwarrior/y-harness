@@ -231,6 +231,7 @@
 }
 
 .editorHeader {
+  flex-wrap: wrap;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -721,4 +722,68 @@ select.input {
   font-size: 13px;
   line-height: 20px;
   text-align: center;
+}
+
+/* Subscription-card model summary: one count line paired with its picker
+   action, so a card that owns a whole catalog stays a single row. */
+.modelSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* Account-catalog picker: the card's long list lives here instead, so search
+   and the enabled-only filter can cut it down before it is rendered. */
+.pickerBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.pickerFilters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pickerSearch {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pickerPills {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pickerGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pickerGroupHead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  background: var(--dsw-alias-bg-module-platform);
 }

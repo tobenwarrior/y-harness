@@ -241,6 +241,9 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
     ? 'keyRequired' as const
     : undefined
   const shownKeyFailure = credentialRequiredFailure ?? keyFailure
+  // A typed key with no consent is refused by the footer, and a disabled button
+  // states no reason of its own; this is what names the missing consent.
+  const goConsentPending = goProvider && keyValue.length > 0 && !saveKeyLocally
   // What the form currently shows, which is what an interrogation must ask:
   // an edited-but-unsaved endpoint, and a key typed but not yet stored.
   const probeApi = stringAt(draft, 'api') ?? stringAt(fallback, 'api')
@@ -261,6 +264,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
    * outside the card. Ops name only the fields this card can see.
    */
   const applyOnce = async (): Promise<string | undefined> => {
+    /* v8 ignore next -- unreachable from the card: a missing consent disables submit */
     if (goProvider && keyValue.length > 0 && !saveKeyLocally) return t('goStorage')
     const ns = namespace.ns
     // A pi-ai profile names the conventional reference only when this page is
@@ -398,7 +402,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
           />
           {shownKeyFailure === undefined ? null : <p className={styles['error']}>{t(shownKeyFailure)}</p>}
         </div>
-        {goProvider ? <><p className={styles['advancedHint']}>{t('goHint')}</p><label className={styles['advancedHint']}><input type="checkbox" checked={saveKeyLocally} disabled={disabled} onChange={event => { setSaveKeyLocally(event.target.checked) }} /> {t('goStorage')}</label></> : null}
+        {goProvider ? <><p className={styles['advancedHint']}>{t('goHint')}</p><label className={styles['advancedHint']}><input type="checkbox" checked={saveKeyLocally} disabled={disabled} onChange={(event) => { setSaveKeyLocally(event.target.checked) }} /> {t('goStorage')}</label>{goConsentPending ? <p role="status" className={styles['error']}>{t('goConsentRequired')}</p> : null}</> : null}
         {props.credentialOnly === true ? null : <details className={styles['customized']}>
           <summary className={styles['customizedSummary']}>{t('customized')}</summary>
           <div className={styles['customizedBody']}>
@@ -528,7 +532,7 @@ export function ProviderEditor(props: ProviderEditorProps): ReactNode {
       <EditorFooter
         t={t}
         busy={busy}
-        submitDisabled={disabled || (goProvider && keyValue.length > 0 && !saveKeyLocally) || layout === 'unknown'
+        submitDisabled={disabled || goConsentPending || layout === 'unknown'
           || (props.credentialOnly !== true && modelFailure !== undefined)
           || shownKeyFailure !== undefined
           || (props.credentialRequired === true && keyValue.length === 0)}

@@ -318,14 +318,14 @@ describe('ApiSession model selection', () => {
     expect(selection.current).toMatchObject({
       provider: 'selected-provider', model: 'selected-model', reasoningEffort: 'high',
     })
-    expect(agents.consumeSelection(pending, 'other-provider', 'selected-model', 'high')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'other-model', 'high')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'low')).toBe(false)
-    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'high')).toBe(true)
+    expect(agents.consumeSelection(pending, 'other-provider', 'selected-model', 'high', undefined)).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'other-model', 'high', undefined)).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'low', undefined)).toBe(false)
+    expect(agents.consumeSelection(pending, 'selected-provider', 'selected-model', 'high', undefined)).toBe(true)
     expect(selection.current).toEqual({ provider: 'fixture', model: 'fixture-model' })
 
     const untouched = agent(ctx, header('uninstalled-model'))
-    expect(agents.consumeSelection(untouched, 'fixture', 'fixture-model', undefined)).toBe(false)
+    expect(agents.consumeSelection(untouched, 'fixture', 'fixture-model', undefined, undefined)).toBe(false)
   })
 })
 

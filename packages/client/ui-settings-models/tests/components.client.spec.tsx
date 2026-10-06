@@ -2026,9 +2026,96 @@ it('requires explicit local-storage consent before saving an OpenCode Go key', a
     settingsPath={['providers', 'opencode-go']} operations={operationsWith(face)} t={t} readOnly={false} onClose={() => {}} />)
   const key = screen.getByLabelText<HTMLInputElement>(en.keyInput)
   expect(key.type).toBe('password')
+  // Nothing is refused before a key exists, so the consent hint stays away.
+  expect(screen.queryByText(en.goConsentRequired)).toBeNull()
   fireEvent.change(key, { target: { value: 'mock-go-key' } })
   expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(true)
+  // The disabled commit names its own cause rather than leaving a dead button.
+  expect(screen.getByText(en.goConsentRequired)).toBeTruthy()
   expect(set).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('checkbox', { name: /Save this API key locally/ }))
   expect(screen.getByText<HTMLButtonElement>(en.apply).disabled).toBe(false)
+  expect(screen.queryByText(en.goConsentRequired)).toBeNull()
+})
+
+function committedGoNamespace(): SettingsNamespaceView {
+  const namespace = wireNamespaces().find(view => view.ns === 'llm-pi-ai')!
+  return {
+    ...namespace,
+    value: { providers: {
+      ...(namespace.value as { providers: object }).providers,
+      'opencode-go': { apiKeyEnv: 'OPENCODE_GO_API_KEY' },
+    } },
+    user: { providers: {
+      ...(namespace.user as { providers: object }).providers,
+      'opencode-go': { apiKeyEnv: 'OPENCODE_GO_API_KEY' },
+    } },
+    revision: 1,
+  }
+}
+
+it('saves a consented Go key through credentials without exposing it in settings or selecting a model', async () => {
+  const mutate = vi.fn<(...args: Parameters<ModelsOperations['writeSettings']>) => Promise<RemoteResult<SettingsNamespaceView>>>(
+    async () => remoteOk(committedGoNamespace()),
+  )
+  const { face, set } = scriptedFace({ mutate })
+  const initialize = vi.spyOn(ctxWith(face).remote.session, 'initializeDefaultModel')
+  const onClose = vi.fn()
+  render(<ProviderEditor provider="opencode-go" displayName="OpenCode Go"
+    namespace={wireNamespaces().find(ns => ns.ns === 'llm-pi-ai')!} schema={settingsSchema}
+    settingsPath={['providers', 'opencode-go']} operations={operationsWith(face)} t={t} readOnly={false} onClose={onClose} />)
+  const key = screen.getByLabelText<HTMLInputElement>(en.keyInput)
+  expect(key.type).toBe('password')
+  expect(key.autocomplete).toBe('new-password')
+  fireEvent.change(key, { target: { value: '  mock-go-key-for-storage  ' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: en.goStorage }))
+  fireEvent.click(screen.getByRole('button', { name: en.apply }))
+  await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+  expect(mutate).toHaveBeenCalledExactlyOnceWith('llm-pi-ai', [
+    { op: 'set', path: ['providers', 'opencode-go', 'apiKeyEnv'], value: 'OPENCODE_GO_API_KEY' },
+  ], 0)
+  expect(set).toHaveBeenCalledExactlyOnceWith('OPENCODE_GO_API_KEY', 'mock-go-key-for-storage')
+  expect(mutate.mock.invocationCallOrder[0]).toBeLessThan(set.mock.invocationCallOrder[0]!)
+  expect(key.value).toBe('')
+  expect(document.body.textContent).not.toContain('mock-go-key-for-storage')
+  expect(face.settings.update).not.toHaveBeenCalled()
+  expect(initialize).not.toHaveBeenCalled()
+})
+
+it('retains a masked Go key and retries only its credential write after settings have committed', async () => {
+  const mutate = vi.fn<(...args: Parameters<ModelsOperations['writeSettings']>) => Promise<RemoteResult<SettingsNamespaceView>>>(
+    async () => remoteOk(committedGoNamespace()),
+  )
+  const set = vi.fn<(ref: string, value: string) => Promise<RemoteResult<void>>>()
+    .mockResolvedValueOnce({ ok: false, error: new RemoteError('credential/rejected', 'Go credential store unavailable', { ref: 'OPENCODE_GO_API_KEY' }) })
+    .mockResolvedValueOnce(remoteOk(undefined))
+  const { face } = scriptedFace({ mutate, set })
+  const initialize = vi.spyOn(ctxWith(face).remote.session, 'initializeDefaultModel')
+  const onClose = vi.fn()
+  render(<ProviderEditor provider="opencode-go" displayName="OpenCode Go"
+    namespace={wireNamespaces().find(ns => ns.ns === 'llm-pi-ai')!} schema={settingsSchema}
+    settingsPath={['providers', 'opencode-go']} operations={operationsWith(face)} t={t} readOnly={false} onClose={onClose} />)
+  const key = screen.getByLabelText<HTMLInputElement>(en.keyInput)
+  fireEvent.change(key, { target: { value: 'mock-go-retry-key' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: en.goStorage }))
+  fireEvent.click(screen.getByRole('button', { name: en.apply }))
+  await screen.findByText('Go credential store unavailable')
+  expect(key.type).toBe('password')
+  expect(key.value).toBe('mock-go-retry-key')
+  expect(document.body.textContent).not.toContain('mock-go-retry-key')
+  expect(onClose).not.toHaveBeenCalled()
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: en.apply }).disabled).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: en.apply }))
+  await waitFor(() => { expect(onClose).toHaveBeenCalledWith(true) })
+  expect(mutate).toHaveBeenCalledExactlyOnceWith('llm-pi-ai', [
+    { op: 'set', path: ['providers', 'opencode-go', 'apiKeyEnv'], value: 'OPENCODE_GO_API_KEY' },
+  ], 0)
+  expect(set.mock.calls).toEqual([
+    ['OPENCODE_GO_API_KEY', 'mock-go-retry-key'],
+    ['OPENCODE_GO_API_KEY', 'mock-go-retry-key'],
+  ])
+  expect(key.value).toBe('')
+  expect(screen.queryByText('Go credential store unavailable')).toBeNull()
+  expect(face.settings.update).not.toHaveBeenCalled()
+  expect(initialize).not.toHaveBeenCalled()
 })

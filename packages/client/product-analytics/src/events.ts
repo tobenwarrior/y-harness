@@ -28,6 +28,7 @@ export interface ProductEventMap {
   }
   model_switch: { session_id?: SessionId; switch_from: string; switch_to: string }
   thinking_level_switch: { session_id?: SessionId; switch_from: string; switch_to: string; model_name: string }
+  speed_switch: { session_id?: SessionId; switch_from: string; switch_to: string; model_name: string }
   context_compression: { session_id: SessionId; trigger_type: 'auto' | 'manual' }
   branch_session_click: {
     session_id: SessionId

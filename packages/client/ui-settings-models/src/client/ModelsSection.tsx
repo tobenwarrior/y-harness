@@ -29,7 +29,7 @@ import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: pulls this package's SlotMap merge (the two Models child slots).
 import type {} from './slot-contract.ts'
 import { CodexBackendCard } from './CodexBackendCard.tsx'
-import { ChatGPTCard } from './ChatGPTCard.tsx'
+import { NousCard } from './NousCard.tsx'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, protocolChoices, providerUsable } from './store.ts'
 import type { ModelsSettingsStore, ProviderRow } from './store.ts'
@@ -251,6 +251,8 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const [deleteFailure, setDeleteFailure] = useState<string | undefined>(undefined)
   const [savedTarget, setSavedTarget] = useState<ProviderIdentity | undefined>(undefined)
   const [dismissedSetup, setDismissedSetup] = useState<ReadonlySet<string>>(() => new Set())
+  const [chatgptOpen, setChatgptOpen] = useState(false)
+  const [nousOpen, setNousOpen] = useState(false)
 
   const announceSaved = (target: ProviderIdentity): void => {
     // Announced only once the refreshed directory is in the snapshot the
@@ -340,11 +342,14 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   // One fact decides both first-run postures on this page and the onboarding
   // step: whether the user already has a provider to talk to.
   const anyUsable = state.rows.some(providerUsable)
-  const configured = state.rows.filter(row => row.configured && row.entry.provider !== 'chatgpt')
-  const configurable = state.rows.filter(row => row.entry.provider !== 'chatgpt' && state.namespaces.has(row.entry.settingsNs))
+  // Subscription routes are owned by their own cards above, never by a provider
+  // row; `chatgpt` is a retired route a stored profile may still name.
+  const cardOwned = (provider: string): boolean => provider === 'nous' || provider === 'chatgpt'
+  const configured = state.rows.filter(row => row.configured && !cardOwned(row.entry.provider))
+  const configurable = state.rows.filter(row => !cardOwned(row.entry.provider) && state.namespaces.has(row.entry.settingsNs))
   const addable: AddableRow[] = state.rows.flatMap((row) => {
     const namespace = state.namespaces.get(row.entry.settingsNs)
-    return namespace === undefined || row.configured || row.entry.provider === 'chatgpt' ? [] : [{ row, namespace }]
+    return namespace === undefined || row.configured || cardOwned(row.entry.provider) ? [] : [{ row, namespace }]
   })
   // Hand-declared routes live in the pi-ai namespace, which is also the only
   // one whose schema names the protocols one may speak; without it mounted
@@ -396,9 +401,45 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             {providerCopy(t('savedProvider'), savedIdentity)}
           </p>
         )}
-      <CodexBackendCard operations={operations} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} />
-      <ChatGPTCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} />
-      <p className={styles['advancedHint']}>{t('nousUnavailable')}</p>
+      <div className={styles['rowCard']}>
+        <div className={styles['rowHead']}>
+          <span className={styles['rowIdentity']}>
+            <span className={styles['rowName']}>{t('codexTitle')}</span>
+          </span>
+          <span className={styles['rowActions']}>
+            <button
+              type="button"
+              className={styles['secondaryButton']}
+              aria-label={providerCopy(t('editProvider'), { provider: t('codexTitle'), displayName: t('codexTitle') })}
+              onClick={() => { setChatgptOpen(!chatgptOpen) }}
+            >
+              {t('edit')}
+            </button>
+          </span>
+        </div>
+        {chatgptOpen && <CodexBackendCard
+          operations={operations} readOnly={!state.writable} onSaved={() => { void controller.load() }}
+          t={t} open={chatgptOpen}
+        />}
+      </div>
+      <div className={styles['rowCard']}>
+        <div className={styles['rowHead']}>
+          <span className={styles['rowIdentity']}>
+            <span className={styles['rowName']}>{t('nousTitle')}</span>
+          </span>
+          <span className={styles['rowActions']}>
+            <button
+              type="button"
+              className={styles['secondaryButton']}
+              aria-label={providerCopy(t('editProvider'), { provider: t('nousTitle'), displayName: t('nousTitle') })}
+              onClick={() => { setNousOpen(!nousOpen) }}
+            >
+              {t('edit')}
+            </button>
+          </span>
+        </div>
+        {nousOpen && <NousCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={nousOpen} />}
+      </div>
       <ul className={styles['rows']}>
         {configured.map((row) => {
           const target = targetOf(row)

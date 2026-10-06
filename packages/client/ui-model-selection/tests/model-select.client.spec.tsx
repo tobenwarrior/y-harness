@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -362,6 +362,89 @@ describe('ModelSelect reasoning effort', () => {
   })
 })
 
+describe('ModelSelect processing speed', () => {
+  const serviceTiers = {
+    tiers: [
+      { id: 'default', name: 'Standard' },
+      { id: 'priority', name: 'Fast', description: '2x speed' },
+    ],
+    defaultTier: 'priority',
+  }
+  const codexGroups: ModelDirectoryState['groups'] = [{
+    id: 'codex-backend',
+    name: 'Codex',
+    models: [{ id: 'gpt-6.1-sol', name: 'Sol', reasoning, serviceTiers }],
+  }]
+
+  it('shows the adapter default tier and submits Standard while preserving the effort', async () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: { provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: 'high' },
+      groups: codexGroups,
+    }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ current: selection, groups: codexGroups }))
+      return { ok: true as const, value: undefined }
+    })
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
+
+    // No conversation tier yet, so the caption reads the adapter's own default.
+    const trigger = screen.getByRole('button', { name: '选择模型，当前 Sol，推理等级 High，速度 Fast' })
+    expect(trigger.textContent).toContain('Fast')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /速度/ }))
+    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
+      .toEqual(['Standard', 'Fast'])
+    expect(screen.queryByText('2x speed')).toBeNull()
+
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Standard/ }))
+    await waitFor(() => {
+      expect(select).toHaveBeenCalledWith({
+        provider: 'codex-backend',
+        model: 'gpt-6.1-sol',
+        reasoningEffort: 'high',
+        serviceTier: 'default',
+      })
+      expect(trigger.getAttribute('aria-label')).toBe('选择模型，当前 Sol，推理等级 High，速度 Standard')
+    })
+  })
+
+  it('keeps the chosen standard tier when the effort changes', async () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: { provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: 'high', serviceTier: 'default' },
+      groups: codexGroups,
+    }))
+    const select = vi.fn().mockResolvedValue({ ok: true, value: undefined })
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={select} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 Sol，推理等级 High，速度 Standard' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /推理等级/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Off/ }))
+    await waitFor(() => {
+      expect(select).toHaveBeenCalledWith({
+        provider: 'codex-backend',
+        model: 'gpt-6.1-sol',
+        reasoningEffort: 'off',
+        serviceTier: 'default',
+      })
+    })
+  })
+
+  it('offers no Speed row for a model that advertises no tiers', () => {
+    const directory = createSnapshotStore<ModelDirectoryState>(state())
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择模型，当前 DeepSeek-V4-Flash，推理等级 High' }))
+    expect(screen.queryByRole('menuitem', { name: /速度/ })).toBeNull()
+  })
+})
+
 describe('ModelSelect keyboard walk', () => {
   function mountOpen() {
     const select = vi.fn().mockResolvedValue({ ok: true, value: undefined })
@@ -502,7 +585,7 @@ describe('ModelSelect keyboard walk', () => {
     expect(fireEvent.mouseDown(retry)).toBe(false)
     fireEvent.click(retry)
     expect(load).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('group', { name: '模型与推理等级' })).toBeTruthy()
+    expect(screen.getByRole('group', { name: '模型、推理等级与速度' })).toBeTruthy()
     retry.focus()
     // A control that is not a row keeps the browser's traversal.
     expect(fireEvent.keyDown(retry, { key: 'Tab' })).toBe(true)
@@ -659,7 +742,7 @@ describe('ModelSelect catalog size', () => {
     expect(fireEvent.keyDown(rows[2]!, { key: 'Tab' })).toBe(false)
     expect(select).toHaveBeenCalledWith({ provider: 'deepseek-official', model: 'model-3' })
     await waitFor(() => { expect(document.activeElement).toBe(trigger) })
-    expect(screen.queryByRole('group', { name: '模型与推理等级' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '模型、推理等级与速度' })).toBeNull()
     expect(trigger.hasAttribute('data-selection-focus')).toBe(true)
   })
 
@@ -675,7 +758,7 @@ describe('ModelSelect catalog size', () => {
     expect(row.hasAttribute('data-highlighted')).toBe(true)
     expect(fireEvent.keyDown(row, { key: 'Tab' })).toBe(false)
     expect(select).toHaveBeenCalledWith({ provider: 'deepseek-official', model: 'model-3' })
-    await waitFor(() => { expect(screen.queryByRole('group', { name: '模型与推理等级' })).toBeNull() })
+    await waitFor(() => { expect(screen.queryByRole('group', { name: '模型、推理等级与速度' })).toBeNull() })
   })
 
   it.each(['Escape', 'Tab'])('leaves a small model pane with %s and returns to its root cell', (key) => {
@@ -705,7 +788,7 @@ describe('ModelSelect search', () => {
     expect(document.activeElement).toBe(search)
     fireEvent.change(search, { target: { value: 'zzzz' } })
     fireEvent.keyDown(search, { key: 'Escape' })
-    expect(screen.queryByRole('group', { name: '模型与推理等级' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '模型、推理等级与速度' })).toBeNull()
     fireEvent.click(trigger)
     expect(screen.getByRole('searchbox').getAttribute('value')).toBe('')
     expect(document.activeElement).toBe(screen.getByRole('searchbox'))
@@ -761,6 +844,9 @@ describe('ModelSelect search', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
     const search = screen.getByRole('searchbox')
     expect(search).toBeInstanceOf(HTMLInputElement)
+    // Only the route in use opens by default, so the provider beside it is
+    // expanded here: arrow wrapping across groups is what this case proves.
+    fireEvent.click(within(screen.getByRole('group', { name: 'Other' })).getByRole('button'))
     const [alpha, beta, delta, epsilon, gamma] = screen.getAllByRole('menuitemradio')
     expect(search.getAttribute('aria-activedescendant')).toBe(beta!.id)
     fireEvent.keyDown(search, { key: 'ArrowDown' })
@@ -796,7 +882,7 @@ describe('ModelSelect search', () => {
     expect(document.activeElement).toBe(search)
     fireEvent.keyDown(search, { key })
     expect(select).toHaveBeenCalledWith({ provider: 'other', model: 'gamma' })
-    await waitFor(() => { expect(screen.queryByRole('group', { name: '模型与推理等级' })).toBeNull() })
+    await waitFor(() => { expect(screen.queryByRole('group', { name: '模型、推理等级与速度' })).toBeNull() })
     const trigger = screen.getByRole('button', { name: /选择模型/ })
     await waitFor(() => { expect(document.activeElement).toBe(trigger) })
     expect(trigger.hasAttribute('data-selection-focus')).toBe(true)
@@ -834,6 +920,12 @@ describe('ModelSelect search', () => {
     expect(search.getAttribute('value')).toBe('')
     expect(document.activeElement).toBe(search)
     expect(screen.queryByRole('button', { name: '清除搜索' })).toBeNull()
+    // Clearing the query folds every provider but the one in use again.
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(4)
+    const otherGroup = screen.getByRole('group', { name: 'Other' })
+    const otherHeading = within(otherGroup).getByRole('button')
+    expect(otherHeading.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(otherHeading)
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(5)
     fireEvent.change(search, { target: { value: 'gmfl' } })
     fireEvent.keyDown(search, { key: 'Escape' })
@@ -849,6 +941,90 @@ describe('ModelSelect search', () => {
     fireEvent.keyDown(reopened, { key: 'Tab' })
     await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull() })
     expect(select).toHaveBeenCalledWith({ provider: 'other', model: 'gemini' })
+  })
+
+  /** One selected route beside a second provider, with enough models for search. */
+  function foldedCatalog() {
+    return createSnapshotStore(state({
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      groups: [
+        { id: 'deepseek-official', name: 'DeepSeek', models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
+          { id: 'other-model', name: 'Other Model' },
+        ] },
+        { id: 'gateway', name: 'My Gateway', models: [
+          { id: 'gpt-x', name: 'GPT X' },
+          { id: 'gpt-y', name: 'GPT Y' },
+          { id: 'gpt-z', name: 'GPT Z' },
+        ] },
+      ],
+    }))
+  }
+
+  it('folds every provider but the one in use, and searching opens the rest', () => {
+    render(<ModelSelect locked={false} available directory={foldedCatalog()} load={vi.fn()} select={vi.fn()} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    // The route in use is open; the provider beside it is folded away.
+    expect(screen.getAllByRole('menuitemradio').map(row => row.textContent))
+      .toEqual(['DeepSeek-V4-Flash', 'Other Model'])
+    const gateway = screen.getByRole('group', { name: 'My Gateway' })
+    expect(within(gateway).getByRole('button').getAttribute('aria-expanded')).toBe('false')
+    // A match may not stay hidden, so a query opens every provider it names.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'gpt' } })
+    expect(screen.getAllByRole('menuitemradio').map(row => row.textContent))
+      .toEqual(['GPT X', 'GPT Y', 'GPT Z'])
+    // Clearing it folds the untouched provider again.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
+    expect(screen.getAllByRole('menuitemradio').map(row => row.textContent))
+      .toEqual(['DeepSeek-V4-Flash', 'Other Model'])
+  })
+
+  it('never highlights or wraps onto a folded row', () => {
+    render(<ModelSelect locked={false} available directory={foldedCatalog()} load={vi.fn()} select={vi.fn()} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    const search = screen.getByRole('searchbox')
+    const [first, second] = screen.getAllByRole('menuitemradio')
+    expect(search.getAttribute('aria-activedescendant')).toBe(first!.id)
+    // The cycle covers the two rendered rows, never the three that are folded.
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(second!.id)
+    expect(document.getElementById(search.getAttribute('aria-activedescendant')!)).not.toBeNull()
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(search.getAttribute('aria-activedescendant')).toBe(first!.id)
+  })
+
+  it('reaches a folded provider from the keyboard and toggles it', () => {
+    // Four models leave search hidden, which is when headings join the arrow
+    // order; with search shown the field drives the highlight instead.
+    const directory = createSnapshotStore(state({
+      current: { provider: 'deepseek-official', model: 'alpha' },
+      groups: [
+        { id: 'deepseek-official', name: 'DeepSeek', models: [
+          { id: 'alpha', name: 'Alpha' },
+          { id: 'beta', name: 'Beta' },
+        ] },
+        { id: 'gateway', name: 'My Gateway', models: [
+          { id: 'delta', name: 'Delta' },
+          { id: 'epsilon', name: 'Epsilon' },
+        ] },
+      ],
+    }))
+    render(<ModelSelect locked={false} available directory={directory} load={vi.fn()} select={vi.fn()} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    const last = screen.getAllByRole('menuitemradio').at(-1)!
+    last.focus()
+    fireEvent.keyDown(last, { key: 'ArrowDown' })
+    const gateway = screen.getByRole('group', { name: 'My Gateway' })
+    const heading = within(gateway).getByRole('button')
+    // The heading is an arrow stop precisely so a folded provider stays reachable.
+    expect(document.activeElement).toBe(heading)
+    fireEvent.keyDown(heading, { key: 'Tab' })
+    expect(heading.getAttribute('aria-expanded')).toBe('true')
+    expect(within(gateway).getAllByRole('menuitemradio')).toHaveLength(2)
   })
 })
 
@@ -866,7 +1042,7 @@ it('shows the unselected model control with the inherited effort', async () => {
   const row = screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })
   expect(document.activeElement).toBe(row)
   fireEvent.keyDown(row, { key: 'Escape' })
-  expect(screen.queryByRole('group', { name: '模型与推理等级' })).toBeNull()
+  expect(screen.queryByRole('group', { name: '模型、推理等级与速度' })).toBeNull()
   fireEvent.click(trigger)
   expect(screen.queryByRole('searchbox')).toBeNull()
   expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' }))

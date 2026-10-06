@@ -4,17 +4,17 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@deepseek-ai/dsh-llm'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
-import { CHATGPT_KEY } from '../src/chatgpt-state.ts'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { assemble } from './assemble.ts'
+import { clearCodexLaunchEnvironment } from './codex-launch-environment.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
 /** One text block, then a tool call truncated by the output-token ceiling. */
@@ -28,6 +28,8 @@ const truncatedToolCallEvents = [
 
 let root: string | undefined
 let context: Context | undefined
+
+beforeEach(clearCodexLaunchEnvironment)
 
 afterEach(async () => {
   await context?.fiber.dispose()
@@ -272,20 +274,4 @@ describe('llm-pi-ai real dormant composition', () => {
       ],
     })
   })
-})
-
-
-it('boots subscription settings without network or credentials and refuses login without storage consent', async () => {
-  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network is forbidden before user action'))
-  try {
-    const { ctx } = await loadComposition()
-    await vi.waitFor(() => expect(ctx.get('chatGPTConnection')).toBeDefined())
-    expect(await ctx.chatGPTConnection.getState()).toEqual({ accounts: [], busy: false })
-    await expect(ctx.chatGPTConnection.start(undefined, false)).rejects.toThrow('storage')
-    expect(await ctx.credentials.describeRecord(CHATGPT_KEY)).toMatchObject({ configured: false })
-    expect(fetchSpy).not.toHaveBeenCalled()
-    expect(ctx.authorization.list().some(flow => flow.key === CHATGPT_KEY)).toBe(true)
-    await ctx.fiber.dispose()
-    expect(ctx.get('chatGPTConnection')).toBeUndefined()
-  } finally { fetchSpy.mockRestore() }
 })

@@ -637,6 +637,61 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'codexBackendConnection',
+    summary: 'Independent optional model family.',
+    description: 'Independent optional model family.',
+    methods: [
+      {
+        signature: '@Remote async getState(): Promise<CodexBackendView>',
+        description: 'Read display state without launching Codex or reading its auth file.',
+        parameters: [],
+        returns: 'the current enablement, connection, and running state.',
+      },
+      {
+        signature: '@Remote async models(): Promise<CodexBackendModelView[]>',
+        description: 'Cached display catalog; refreshing is an explicit user action.',
+        parameters: [],
+        returns: 'the stored native model catalog.',
+      },
+      {
+        signature: '@Remote async refresh(): Promise<CodexBackendView>',
+        description: 'Read the native account and model catalog; this sends no model prompt.',
+        parameters: [],
+        returns: 'the refreshed display state.',
+      },
+      {
+        signature: '@Remote async start(consent: boolean): Promise<{ verificationUrl: string; userCode: string }>',
+        description: 'Start native device login only after explicit local-file consent.',
+        parameters: [{ name: 'consent', description: 'whether the user consented to storing native credentials locally.' }],
+        returns: 'the device verification URL and user code.',
+      },
+      {
+        signature: '@Remote async cancel(): Promise<void>',
+        description: 'Cancel this native device login.',
+        parameters: [],
+        returns: 'fulfillment after the pending login is cancelled.',
+      },
+      {
+        signature: '@Remote async publish(): Promise<CodexBackendView>',
+        description: 'Publish a connected account\'s catalog while the user has not chosen otherwise.',
+        parameters: [],
+        returns: 'the resulting display state, unchanged when the account or catalog is not ready.',
+      },
+      {
+        signature: '@Remote async configure(enabled: boolean, modelId: string | undefined, tier: string | undefined): Promise<CodexBackendView>',
+        description: 'Enable the separate family or set a catalog-advertised native service tier.',
+        parameters: [{ name: 'enabled', description: 'whether the route accepts turns.' }, { name: 'modelId', description: 'model whose processing tier changes; omit to change enablement only.' }, { name: 'tier', description: 'catalog-advertised tier id, or `default` for standard speed.' }],
+        returns: 'the resulting display state.',
+      },
+      {
+        signature: '@Remote async disconnect(): Promise<CodexBackendView>',
+        description: 'Logout only this separate Codex profile, then withdraw its selectable models.',
+        parameters: [],
+        returns: 'the resulting display state.',
+      },
+    ],
+  },
+  {
     key: 'commands',
     summary: 'Human-command registry.',
     description: 'Human-command registry. Plain-context definitions are global; definitions registered through a command-injected child of an agent context shadow globals for that agent.',
@@ -1532,6 +1587,49 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Delete one item after checking its version; absence succeeds without an event.',
         parameters: [{ name: 'request', description: 'Session, message, and observed item version.' }],
         returns: 'the stable absent postcondition or an explicit failure.',
+      },
+    ],
+  },
+  {
+    key: 'nousConnection',
+    summary: 'Own one sign-in attempt through cancellation and durable grant commit.',
+    description: 'Own one sign-in attempt through cancellation and durable grant commit.',
+    methods: [
+      {
+        signature: 'assertClientChange(nextClientId: string | undefined): void',
+        description: 'Reject changing public client identity while a device attempt is active.',
+        parameters: [{ name: 'nextClientId', description: 'the public client id a settings write wants to adopt.' }],
+        throws: ['when a pending sign-in is still bound to a different client id.'],
+      },
+      {
+        signature: '@Remote async getState(): Promise<NousConnectionView>',
+        description: 'Read local connection metadata without redeeming a refresh token.',
+        parameters: [],
+        returns: 'connection and attempt state without credentials or device polling tokens.',
+      },
+      {
+        signature: '@Remote async start(saveLocally: boolean): Promise<NousDeviceVerification>',
+        description: 'Begin one device attempt with explicit local-storage consent and a chosen public client.',
+        parameters: [{ name: 'saveLocally', description: 'affirmative consent to the owner-only unencrypted credential file.' }],
+        returns: 'browser instructions; the grant commits asynchronously before busy becomes false.',
+      },
+      {
+        signature: '@Remote async cancel(): Promise<void>',
+        description: 'Cancel before commit admission; an admitted save completes before cancellation returns.',
+        parameters: [],
+        returns: 'after polling and durable credential work have settled.',
+      },
+      {
+        signature: '@Remote async models(): Promise<NousModelView[]>',
+        description: 'Resolve registered OAuth under the credential-store lock and read the account catalog.',
+        parameters: [],
+        returns: 'advertised models; failures expose a sanitized retry or sign-in message.',
+      },
+      {
+        signature: '@Remote async disconnect(): Promise<void>',
+        description: 'Delete this app\'s local grant while no sign-in is running; Portal revocation is user-owned.',
+        parameters: [],
+        returns: 'after the local credential deletion completes.',
       },
     ],
   },
@@ -4761,6 +4859,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ClientArtifactBaseline {\n    readonly path: string;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n    readonly size: number;\n}',
   },
   {
+    name: 'CodexBackendModelView',
+    declaration: 'export interface CodexBackendModelView {\n    id: string;\n    name: string;\n    description: string;\n    efforts: Array<{\n        id: string;\n        description: string;\n    }>;\n    defaultEffort?: string;\n    serviceTiers: Array<{\n        id: string;\n        name: string;\n        description: string;\n    }>;\n    defaultServiceTier?: string;\n    inputModalities: Array<\'text\' | \'image\'>;\n}',
+  },
+  {
+    name: 'CodexBackendView',
+    declaration: 'export interface CodexBackendView {\n    enabled: boolean;\n    connected: boolean;\n    busy: boolean;\n    running: number;\n    label?: string;\n    error?: string;\n    tiers: Record<string, string>;\n}',
+  },
+  {
     name: 'CollectedOutput',
     declaration: 'export interface CollectedOutput {\n    text: string;\n    truncated: boolean;\n    spillPath?: string;\n}',
   },
@@ -5318,7 +5424,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -5654,11 +5760,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmCallConfig',
-    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
+    declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
   {
     name: 'LlmCallConfigAdapterDefaults',
-    declaration: 'export interface LlmCallConfigAdapterDefaults {\n    reasoningEffort?: true;\n    maxTokens?: true;\n}',
+    declaration: 'export interface LlmCallConfigAdapterDefaults {\n    reasoningEffort?: true;\n    serviceTier?: true;\n    maxTokens?: true;\n}',
   },
   {
     name: 'LlmConfigurableProvider',
@@ -5697,6 +5803,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface LlmModelReasoningInfo {\n    efforts: readonly LlmReasoningEffortInfo[];\n    defaultEffort?: ReasoningEffortId;\n}',
   },
   {
+    name: 'LlmModelServiceTierInfo',
+    declaration: 'export interface LlmModelServiceTierInfo {\n    tiers: readonly LlmServiceTierInfo[];\n    defaultTier?: ServiceTierId;\n}',
+  },
+  {
     name: 'LlmProviderInfo',
     declaration: 'export interface LlmProviderInfo {\n    id: string;\n    name: string;\n}',
   },
@@ -5706,11 +5816,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmResolvedModelInfo',
-    declaration: 'export interface LlmResolvedModelInfo extends LlmModelInfo {\n    context?: LlmModelContext;\n    defaultMaxTokens?: number;\n    reasoning?: LlmModelReasoningInfo;\n    systemPromptUpdate?: SystemPromptUpdate;\n    toolUpdate?: ToolUpdate;\n}',
+    declaration: 'export interface LlmResolvedModelInfo extends LlmModelInfo {\n    context?: LlmModelContext;\n    defaultMaxTokens?: number;\n    reasoning?: LlmModelReasoningInfo;\n    serviceTiers?: LlmModelServiceTierInfo;\n    systemPromptUpdate?: SystemPromptUpdate;\n    toolUpdate?: ToolUpdate;\n}',
   },
   {
     name: 'LlmRuntime',
     declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions) /* …truncated — full shape in source */',
+  },
+  {
+    name: 'LlmServiceTierInfo',
+    declaration: 'export interface LlmServiceTierInfo {\n    id: ServiceTierId;\n    name: string;\n    description?: string;\n}',
   },
   {
     name: 'LocalAtInput',
@@ -5886,7 +6000,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
+    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly serviceTiers?: ModelServiceTiers;\n}',
   },
   {
     name: 'ModelMessageSource',
@@ -5911,6 +6025,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ModelReasoningEffort',
     declaration: 'export interface ModelReasoningEffort {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'ModelServiceTier',
+    declaration: 'export interface ModelServiceTier {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n}',
+  },
+  {
+    name: 'ModelServiceTiers',
+    declaration: 'export interface ModelServiceTiers {\n    readonly tiers: readonly ModelServiceTier[];\n    readonly defaultTier?: string;\n}',
   },
   {
     name: 'ModEvents',
@@ -5943,6 +6065,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'NotFutureError',
     declaration: 'export interface NotFutureError {\n    readonly code: \'not_future\';\n    readonly message: string;\n}',
+  },
+  {
+    name: 'NousConnectionView',
+    declaration: 'export interface NousConnectionView {\n    configured: boolean;\n    connected: boolean;\n    busy: boolean;\n    error?: string;\n    expiresAt?: number;\n}',
+  },
+  {
+    name: 'NousDeviceVerification',
+    declaration: 'export interface NousDeviceVerification {\n    url: string;\n    code: string;\n    expiresAt: number;\n}',
+  },
+  {
+    name: 'NousModelView',
+    declaration: 'export interface NousModelView {\n    id: string;\n    name: string;\n    contextWindow?: number;\n    maxTokens?: number;\n    inputModalities?: Array<\'text\' | \'image\'>;\n    reasoning: boolean;\n    reasoningMandatory?: boolean;\n    reasoningEfforts?: {\n        off?: string;\n        minimal?: string;\n        low?: string;\n        medium?: string;\n        high?: string;\n        xhigh?: string;\n        max?: string;\n    };\n}',
   },
   {
     name: 'ObjectJsonSchema',
@@ -6563,6 +6697,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ServerResponse',
     declaration: 'export interface ServerResponse {\n    readonly type: \'server-response\';\n    readonly rpcId: RpcId;\n    readonly result: ConnectionRpcResult<unknown>;\n}',
+  },
+  {
+    name: 'ServiceTierId',
+    declaration: 'export type ServiceTierId = Branded<\'ServiceTierId\'>;',
   },
   {
     name: 'Session',

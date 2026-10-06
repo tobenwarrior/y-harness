@@ -814,7 +814,7 @@ export class LlmRuntime extends TypertRemoteService {
       ...resolved.toolUpdate === undefined ? {} : { toolUpdate: resolved.toolUpdate },
     }
     const reasoning = resolved.reasoning
-    if (reasoning === undefined) return info
+    if (reasoning === undefined) return this.withServiceTiers(info, resolved.serviceTiers, provider, model)
     if (reasoning.efforts.length === 0) {
       throw new LlmError(
         `adapter returned invalid reasoning metadata for provider "${provider}" model "${model}"`,
@@ -849,11 +849,71 @@ export class LlmRuntime extends TypertRemoteService {
         'INVALID_MODEL_REASONING',
       )
     }
-    return {
+    const infoWithReasoning: LlmResolvedModelInfo = {
       ...info,
       reasoning: {
         efforts,
         ...reasoning.defaultEffort === undefined ? {} : { defaultEffort: reasoning.defaultEffort },
+      },
+    }
+    return this.withServiceTiers(infoWithReasoning, resolved.serviceTiers, provider, model)
+  }
+
+  /**
+   * Validate and detach one adapter-returned service-tier declaration. Tiers are
+   * independent of reasoning: a model may offer a speed choice and no effort.
+   * @param info - already-validated exact model metadata.
+   * @param serviceTiers - adapter declaration, when the model offers tiers.
+   * @param provider - registered provider route, for diagnostics.
+   * @param model - exact model id, for diagnostics.
+   * @returns the metadata with the detached tier declaration, or unchanged.
+   */
+  private withServiceTiers(
+    info: LlmResolvedModelInfo,
+    serviceTiers: LlmResolvedModelInfo['serviceTiers'],
+    provider: string,
+    model: string,
+  ): LlmResolvedModelInfo {
+    if (serviceTiers === undefined) return info
+    if (serviceTiers.tiers.length === 0) {
+      throw new LlmError(
+        `adapter returned invalid service tier metadata for provider "${provider}" model "${model}"`,
+        'INVALID_MODEL_SERVICE_TIER',
+      )
+    }
+    const seen = new Set<string>()
+    const tiers = serviceTiers.tiers.map((tier) => {
+      if (
+        typeof tier.id !== 'string'
+        || tier.id.length === 0
+        || typeof tier.name !== 'string'
+        || tier.name.length === 0
+        || (tier.description !== undefined && typeof tier.description !== 'string')
+        || seen.has(tier.id)
+      ) {
+        throw new LlmError(
+          `adapter returned invalid or duplicate service tier metadata for provider "${provider}" model "${model}"`,
+          'INVALID_MODEL_SERVICE_TIER',
+        )
+      }
+      seen.add(tier.id)
+      return {
+        id: tier.id,
+        name: tier.name,
+        ...tier.description === undefined ? {} : { description: tier.description },
+      }
+    })
+    if (serviceTiers.defaultTier !== undefined && !seen.has(serviceTiers.defaultTier)) {
+      throw new LlmError(
+        `adapter returned an unknown default service tier for provider "${provider}" model "${model}"`,
+        'INVALID_MODEL_SERVICE_TIER',
+      )
+    }
+    return {
+      ...info,
+      serviceTiers: {
+        tiers,
+        ...serviceTiers.defaultTier === undefined ? {} : { defaultTier: serviceTiers.defaultTier },
       },
     }
   }
@@ -911,6 +971,27 @@ export class LlmRuntime extends TypertRemoteService {
         if (requested !== effective) resolvedConfig = { ...defaulted, reasoningEffort: effective }
       }
     }
+    const tiers = info.serviceTiers
+    const requestedTier = defaulted.serviceTier
+    if (tiers === undefined) {
+      if (requestedTier !== undefined) {
+        throw new LlmError(
+          `provider "${config.provider}" model "${config.model}" does not support service tier "${requestedTier}"`,
+          'UNSUPPORTED_SERVICE_TIER',
+        )
+      }
+    } else {
+      const effectiveTier = requestedTier ?? tiers.defaultTier
+      if (effectiveTier !== undefined) {
+        if (!tiers.tiers.some(tier => tier.id === effectiveTier)) {
+          throw new LlmError(
+            `provider "${config.provider}" model "${config.model}" does not support service tier "${effectiveTier}"`,
+            'UNSUPPORTED_SERVICE_TIER',
+          )
+        }
+        if (requestedTier !== effectiveTier) resolvedConfig = { ...resolvedConfig, serviceTier: effectiveTier }
+      }
+    }
     return {
       config: resolvedConfig,
       ...info.context === undefined ? {} : { context: info.context },
@@ -938,6 +1019,9 @@ export class LlmRuntime extends TypertRemoteService {
     const adapterDefaults = deepFreeze<LlmCallConfigAdapterDefaults>({
       ...config.reasoningEffort === undefined && resolvedConfig.reasoningEffort !== undefined
         ? { reasoningEffort: true }
+        : {},
+      ...config.serviceTier === undefined && resolvedConfig.serviceTier !== undefined
+        ? { serviceTier: true }
         : {},
       ...config.maxTokens === undefined && resolvedConfig.maxTokens !== undefined
         ? { maxTokens: true }

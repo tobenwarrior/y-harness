@@ -94,6 +94,8 @@ export const SERVICE_PAGE: Record<string, string> = {
   inspector: 'extensions.md',
   webServer: 'web-server.md',
   llm: 'llm-streaming.md',
+  codexBackendConnection: 'llm-streaming.md',
+  nousConnection: 'llm-streaming.md',
   lsp: 'lsp.md',
   messageFeedback: 'feedback.md',
   sessionFeedback: 'feedback.md',
@@ -946,6 +948,11 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   TerminalFrame: 'Browser terminal stream frames are owned by packages/api/terminal-controller/README.md',
   TerminalRetentionFrame: 'Browser terminal window holds are owned by packages/api/terminal-controller/README.md',
   WebTerminalId: 'Browser terminal identity is owned by packages/api/terminal-controller/README.md',
+  CodexBackendView: 'Codex native backend view is owned by packages/llm/llm-pi-ai/README.md',
+  CodexBackendModelView: 'Codex native backend model view is owned by packages/llm/llm-pi-ai/README.md',
+  NousConnectionView: 'Nous Portal connection view is owned by packages/llm/llm-pi-ai/README.md',
+  NousDeviceVerification: 'Nous Portal device instructions are owned by packages/llm/llm-pi-ai/README.md',
+  NousModelView: 'Nous Portal account model view is owned by packages/llm/llm-pi-ai/README.md',
 }
 
 /** Repository data policy consumed by the Cordis catalog projector. */

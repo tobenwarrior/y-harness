@@ -10,7 +10,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore from '@deepseek-ai/dsh-attachment'
-import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions, LlmCallConfig, LlmCallConfigAdapterDefaults, LlmModelInfo,
   LlmModelReasoningInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
@@ -146,6 +146,20 @@ function registerTextOnly(ctx: Context): void {
       return Promise.resolve({ provider, id: model, name: model, inputModalities: ['text'] })
     }
   }('Text Only', [{ provider: 'text-only', id: 'plain', name: 'Plain' }]))
+}
+
+function registerTiered(ctx: Context): void {
+  ctx.llm.registerAdapter(['tiered'], new class extends CatalogAdapter {
+    override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+      return Promise.resolve({ provider, id: model, name: model, serviceTiers: {
+        tiers: [
+          { id: ServiceTierId('default'), name: 'Standard' },
+          { id: ServiceTierId('priority'), name: 'Fast' },
+        ],
+        defaultTier: ServiceTierId('default'),
+      } })
+    }
+  }('Tiered', [{ provider: 'tiered', id: 'model', name: 'Model' }]))
 }
 
 /** Resolve the Client-visible next selection from durable state and the Host default. */
@@ -561,6 +575,59 @@ describe('Web session model selection', () => {
     })
     expect(currentSelection(ctx, sessionId))
       .toEqual({ provider: 'deepseek-official', model: 'deepseek-reasoner', reasoningEffort: 'max' })
+    await ctx.fiber.dispose()
+  })
+
+  it('installs an advertised service tier and rejects one the model does not offer', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTiered(ctx)
+    const remote = createSessionTestRemote(ctx, {
+      defaultModelSelection: () => ({ provider: 'tiered', model: 'model' }),
+      cwd: '/tmp',
+    })
+    const seed: LlmCallConfig = { provider: 'seed', model: 'seed' }
+    const signal = new AbortController().signal
+
+    const selected = expectValue(await remote.selectModel(request({
+      sessionId,
+      provider: 'tiered',
+      model: 'model',
+      serviceTier: 'priority',
+    })))
+    expect(selected.selected).toEqual({ provider: 'tiered', model: 'model', serviceTier: 'priority' })
+    expect(currentSelection(ctx, sessionId))
+      .toEqual({ provider: 'tiered', model: 'model', serviceTier: 'priority' })
+    // Prompt assembly captures the selection; the request config follows on the next step.
+    await expect(agentEvents(ctx, agent).waterfall(
+      'agent/request', { turn: 1, step: 0, signal }, () => Promise.resolve(seed),
+    )).resolves.toEqual(seed)
+    expect((await ctx.systemPrompt.assemble()).variables)
+      .toMatchObject({ provider: 'tiered', model: 'model' })
+    await expect(agentEvents(ctx, agent).waterfall(
+      'agent/request', { turn: 1, step: 1, signal }, () => Promise.resolve(seed),
+    )).resolves.toEqual({ provider: 'tiered', model: 'model', serviceTier: 'priority' })
+
+    // The adapter's own default materializes for a caller that names no tier.
+    const defaulted = expectValue(await remote.selectModel(request({
+      sessionId,
+      provider: 'tiered',
+      model: 'model',
+    })))
+    expect(defaulted.selected).toEqual({ provider: 'tiered', model: 'model', serviceTier: 'default' })
+
+    const unsupported = await remote.selectModel(request({
+      sessionId,
+      provider: 'tiered',
+      model: 'model',
+      serviceTier: 'invented',
+    }))
+    expect(unsupported).toMatchObject({
+      ok: false,
+      error: {
+        code: 'session/model-unavailable',
+        message: 'provider "tiered" model "model" does not support service tier "invented"',
+      },
+    })
     await ctx.fiber.dispose()
   })
 

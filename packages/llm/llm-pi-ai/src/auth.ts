@@ -8,7 +8,6 @@
  * @module dsh-llm-pi-ai/auth
  */
 
-import { readChatGPTCredential, modifyChatGPTCredential } from './chatgpt-state.ts'
 import { homedir } from 'node:os'
 import { access } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
@@ -142,7 +141,6 @@ function writableStore(ctx: Context): CredentialProvider {
 export function credentialStoreFrom(ctx: Context): CredentialStore {
   return {
     async read(providerId) {
-      if (providerId === 'chatgpt') return readChatGPTCredential(ctx)
       const credentials = ctx.get('credentials')
       if (credentials === undefined) return undefined
       if (!isCredentialKeySegment(providerId)) return undefined
@@ -163,7 +161,6 @@ export function credentialStoreFrom(ctx: Context): CredentialStore {
       return mine
     },
     async modify(providerId, mutate) {
-      if (providerId === 'chatgpt') return modifyChatGPTCredential(ctx, mutate)
       if (!isCredentialKeySegment(providerId)) {
         throw new LlmError(
           `llm-pi-ai: provider id "${providerId}" cannot address a stored credential record (a record id is a`
@@ -182,7 +179,6 @@ export function credentialStoreFrom(ctx: Context): CredentialStore {
     // store contract is promise-returning, and a synchronous throw would
     // escape the `ModelsError` wrapper every other storage failure gets.
     async delete(providerId) {
-      if (providerId === 'chatgpt') throw new Error('Disconnect ChatGPT in Models settings.')
       if (!isCredentialKeySegment(providerId)) return
       await writableStore(ctx).deleteRecord(recordKeyFor(providerId))
     },

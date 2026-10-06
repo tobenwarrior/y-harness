@@ -12,7 +12,7 @@
  * @module dsh-llm-pi-ai/catalog
  */
 
-import { chatGPTProvider } from './chatgpt-provider.ts'
+import { nousProvider } from './nous-provider.ts'
 import { builtinProviders, getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type {
@@ -173,7 +173,7 @@ let providerIndex: Map<string, Provider> | undefined
  * @returns the catalog provider index.
  */
 function catalogProviders(): Map<string, Provider> {
-  providerIndex ??= new Map([...builtinProviders(), chatGPTProvider()].map(provider => [provider.id, provider]))
+  providerIndex ??= new Map([...builtinProviders(), nousProvider()].map(provider => [provider.id, provider]))
   return providerIndex
 }
 
@@ -191,7 +191,7 @@ export function catalogProvider(provider: string): Provider | undefined {
  * @returns the catalog provider ids.
  */
 export function catalogProviderIds(): readonly string[] {
-  return [...getBuiltinProviders(), 'chatgpt']
+  return [...getBuiltinProviders(), 'nous']
 }
 
 /**
@@ -200,9 +200,17 @@ export function catalogProviderIds(): readonly string[] {
  * @returns catalog models by id; empty for a route pi-ai does not ship.
  */
 export function catalogModels(provider: string): Map<string, Model<Api>> {
-  if (provider === 'chatgpt' || !catalogProviders().has(provider)) return new Map()
+  if (provider === 'nous' || !catalogProviders().has(provider)) return new Map()
   const models = getBuiltinModels(provider as BuiltinProvider) as Model<Api>[]
-  return new Map(models.map(model => [model.id, model]))
+  return new Map(models.map((model): [string, Model<Api>] => {
+    // The Go catalog in this dependency predates these public Messages routes.
+    // Keep model capabilities intact and do not mutate the shared vendor catalog.
+    if (provider === 'opencode-go' && ['minimax-m2.7', 'qwen3.7-plus', 'qwen3.8-max'].includes(model.id)) {
+      const { compat: _compat, ...native } = model
+      return [model.id, { ...native, api: 'anthropic-messages', baseUrl: 'https://opencode.ai/zen/go' }]
+    }
+    return [model.id, model]
+  }))
 }
 
 /**
@@ -621,12 +629,6 @@ export interface PiAiModelProfile {
   reasoningEfforts?: false | PiAiReasoningEfforts
   /** Account-advertised default, used only when no route/session override is chosen. */
   defaultReasoning?: ModelThinkingLevel
-  /** Product-only modes that this direct Responses connection cannot execute. */
-  unavailableReasoningEfforts?: string[]
-  /** Account-advertised processing tiers; no absent tier is implied. */
-  serviceTiers?: Array<{ id: string; name: string; description: string }>
-  /** User-selected processing tier for this model; absent preserves Standard. */
-  serviceTier?: 'default' | 'priority' | 'fast' | 'ultrafast'
   /** pi-ai wire-compatibility switches for this model, winning over the route's per field; one its protocol does not declare is refused. */
   compat?: PiAiCompatProfile
 }
@@ -894,7 +896,7 @@ export function resolveRouteModels(
     invalid(provider, 'resolves no models; the installed catalog does not describe this route, so its models'
       + ' must be listed in configuration')
   }
-  const routeApi = sharedCatalogApi(defaults)
+  const routeApi = sharedCatalogApi(defaults) ?? (provider === 'nous' ? 'openai-completions' : undefined)
   // Vocabulary before protocols: a withheld or undeclared switch is refused
   // wherever it is written, so it cannot look applied on a route whose models
   // never reach the protocol that would have taken it.

@@ -1,10 +1,11 @@
 /**
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
- * the Model / Effort row pair (label + current value + a right chevron),
- * each drilling into its own list — the provider-grouped model list over
- * the shared directory, and the effort levels. The trigger (313:14108's
- * ToggleButton) shows both: model name + effort in the caption tone.
+ * the Model / Effort / Speed row triple (label + current value + a right
+ * chevron), each drilling into its own list — the provider-grouped model list
+ * over the shared directory, the effort levels, and the speed tiers when the
+ * exact model advertises any. The trigger (313:14108's ToggleButton) shows
+ * model name plus the effort and speed captions in the caption tone.
  * Model catalogs above four entries show search, which retains focus while
  * ↑/↓ cycle the highlighted result; Enter and Tab accept it. Smaller model
  * catalogs, root panes, and effort panes move focus between rows. Escape and Shift+Tab leave a drilled pane first and otherwise close
@@ -25,7 +26,7 @@
  * chevron, and each row whose value that selection carries shows one in place
  * of its check mark.
  */
-import { MenuGroup, MenuSurface, observeStickyMenuGroups } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MenuSurface, observeStickyMenuGroups } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type KeyboardEvent, type FocusEvent,
@@ -42,13 +43,20 @@ import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
 
-/** Which pane the dropdown shows: the two-row root or one drilled-in list. */
-type Pane = 'root' | 'model' | 'effort'
+/** Which pane the dropdown shows: the three-row root or one drilled-in list. */
+type Pane = 'root' | 'model' | 'effort' | 'speed'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
   key: string
   effort: string | undefined
+  label: string
+}
+
+/** One dynamic speed row; 'default' is the adapter's standard-speed tier. */
+interface TierChoice {
+  key: string
+  tier: string
   label: string
 }
 
@@ -74,6 +82,9 @@ export function ModelSelect(
   const [query, setQuery] = useState('')
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [selectionFocus, setSelectionFocus] = useState(false)
+  // Collapsed providers, not expanded ones: a picker opens showing its models,
+  // and the header is only a way to fold a long catalog away.
+  const [groupOverrides, setGroupOverrides] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   // The in-menu error strip serves catalog loads (its Retry re-runs the
   // load); a rejected SELECTION announces through the transient toast
   // instead, so the strip renders only while the latest failure-capable
@@ -88,6 +99,8 @@ export function ModelSelect(
   const groupsRef = useRef<HTMLDivElement | null>(null)
   const [menuPos, setMenuPos] = useState<CSSProperties | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  /** Model rows by their position in the flat filtered list, which collapsed groups still occupy. */
+  const modelRefs = useRef(new Map<number, HTMLButtonElement>())
   const id = useId()
 
   const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
@@ -107,9 +120,25 @@ export function ModelSelect(
   const filteredGroups = useMemo(() => groups.map(group => ({
     ...group, models: rankByName(group.models, showSearch ? query.trim() : ''),
   })).filter(group => group.models.length > 0), [groups, query, showSearch])
-  const visibleModels = useMemo(() => filteredGroups.flatMap(group => group.models.map(model => ({
-    provider: group.id, model: model.id,
-  }))), [filteredGroups])
+  /**
+   * Whether a provider group shows its models. A long catalog stays navigable
+   * by opening only the route in use; a search opens every group that matched,
+   * since a hidden match is no result at all. With no route in use there is
+   * nothing to focus on, so every group opens and the pane still browses. One
+   * provider alone has nothing to fold. A heading the user toggled keeps that
+   * choice while the menu stays open.
+   */
+  const groupOpen = (groupId: string, overrides: ReadonlyMap<string, boolean> = groupOverrides): boolean => {
+    const inUse = state.current?.provider
+    if (filteredGroups.length <= 1) return true
+    return overrides.get(groupId) ?? (inUse === undefined || query.trim().length > 0 || groupId === inUse)
+  }
+  // Only rendered rows are reachable: the highlight, `aria-activedescendant`,
+  // scrolling, and Enter all address this list, so a folded row must not be in
+  // it — otherwise a keystroke could land on, or select, a model nobody sees.
+  const visibleModels = filteredGroups.flatMap(group => groupOpen(group.id)
+    ? group.models.map(model => ({ provider: group.id, model: model.id }))
+    : [])
   const currentVisibleIndex = visibleModels.findIndex(model =>
     model.provider === state.current?.provider && model.model === state.current.model)
   const activeModelIndex = Math.min(highlightedIndex ?? Math.max(0, currentVisibleIndex), visibleModels.length - 1)
@@ -136,6 +165,22 @@ export function ModelSelect(
         label: effort.name,
       })),
     ], [reasoning, t])
+  const serviceTiers = currentChoice?.model.serviceTiers
+  // The adapter materializes its own default tier, so an unset conversation
+  // value already reads as the tier the next request would use.
+  const effectiveTier = state.current?.serviceTier ?? serviceTiers?.defaultTier
+  const tierLabel = serviceTiers === undefined
+    ? state.retainedTier
+    : effectiveTier === undefined
+      ? undefined
+      : serviceTiers.tiers.find(choice => choice.id === effectiveTier)?.name ?? effectiveTier
+  const tierChoices = useMemo<readonly TierChoice[]>(() => serviceTiers === undefined
+    ? []
+    : serviceTiers.tiers.map(tier => ({
+      key: `tier:${tier.id}`,
+      tier: tier.id,
+      label: tier.name,
+    })), [serviceTiers])
   const { pending } = state
   const busy = pending !== null
 
@@ -165,7 +210,7 @@ export function ModelSelect(
 
   // Pane switches unmount the focused row; restore focus inside the menu so
   // keyboard navigation remains available.
-  const paneFocus = useRef<'drill' | 'model' | 'effort' | null>(null)
+  const paneFocus = useRef<'drill' | 'model' | 'effort' | 'speed' | null>(null)
   const previousShowSearch = useRef(showSearch)
   useEffect(() => {
     const changedSearchMode = previousShowSearch.current !== showSearch
@@ -179,15 +224,20 @@ export function ModelSelect(
         return
       }
       // The checked row is the value in use; a pane without one opens on its
-      // first row.
+      // first model, not on a provider heading, so the first keystroke lands
+      // where a choice can be made. Headings stay reachable by arrow.
       const checked = menuRef.current?.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]:not([disabled])')
-      const target = checked ?? itemRefs.current.find(item => item !== null && !item.disabled)
+      const rows = (item: HTMLButtonElement | null): boolean =>
+        item !== null && item.getAttribute('role') === 'menuitemradio' && !item.disabled
+      const target = checked
+        ?? itemRefs.current.find(rows)
+        ?? itemRefs.current.find(item => item !== null && !item.disabled)
       // Rows a selection in flight disabled cannot take the keyboard; the
       // trigger does, so the card's keys still reach the menu.
       ;(target ?? triggerRef.current)?.focus()
       return
     }
-    const cell = itemRefs.current[intent === 'effort' ? 1 : 0]
+    const cell = itemRefs.current[intent === 'speed' ? 2 : intent === 'effort' ? 1 : 0]
     ;(cell !== null && cell !== undefined && !cell.disabled ? cell : triggerRef.current)?.focus()
   }, [open, pane, showSearch])
 
@@ -199,7 +249,7 @@ export function ModelSelect(
 
   useLayoutEffect(() => {
     if (open && pane === 'model' && activeModelIndex >= 0) {
-      itemRefs.current[activeModelIndex]?.scrollIntoView({ block: 'nearest' })
+      modelRefs.current.get(activeModelIndex)?.scrollIntoView({ block: 'nearest' })
     }
   }, [open, pane, activeModelIndex, visibleModels])
 
@@ -244,10 +294,15 @@ export function ModelSelect(
     triggerRef.current?.focus()
     setQuery('')
     setHighlightedIndex(null)
+    setGroupOverrides(new Map())
     if (state.current === null) paneFocus.current = 'drill'
     setPane(state.current === null ? 'model' : 'root')
     setOpen(true)
     reload()
+  }
+
+  const toggleGroup = (groupId: string): void => {
+    setGroupOverrides(current => new Map(current).set(groupId, !groupOpen(groupId, current)))
   }
 
   const changeQuery = (next: string): void => {
@@ -403,10 +458,29 @@ export function ModelSelect(
       closeAfterSelection()
       return
     }
+    // Preserve the conversation's speed: omitting the tier would re-materialize
+    // the adapter default and silently undo an explicit Standard choice.
     const selection: ModelSelection = {
       provider: state.current.provider,
       model: state.current.model,
       ...effort === undefined ? {} : { reasoningEffort: effort },
+      ...state.current.serviceTier === undefined ? {} : { serviceTier: state.current.serviceTier },
+    }
+    submit(selection)
+  }
+
+  const chooseTier = (tier: string): void => {
+    if (state.current === null) return
+    if (effectiveTier === tier) {
+      closeAfterSelection()
+      return
+    }
+    // Preserve the conversation's effort for the same reason as above.
+    const selection: ModelSelection = {
+      provider: state.current.provider,
+      model: state.current.model,
+      ...state.current.reasoningEffort === undefined ? {} : { reasoningEffort: state.current.reasoningEffort },
+      serviceTier: tier,
     }
     submit(selection)
   }
@@ -416,20 +490,38 @@ export function ModelSelect(
     ? t('trigger.loading')
     : currentChoice?.model.name
       ?? (state.current === null ? t('trigger.fallback') : `${state.current.provider}/${state.current.model}`)
-  const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
+  const caption = [effortLabel, tierLabel].filter((part): part is string => part !== undefined).join(' · ')
+  const triggerLabel = caption === '' ? modelLabel : `${modelLabel} · ${caption}`
   const triggerAria = waiting
     ? t('trigger.loading')
     : state.current === null
       ? t('trigger.selectAria')
-      : effortLabel === undefined
-        ? t('trigger.aria', { model: modelLabel })
-        : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+      : effortLabel !== undefined && tierLabel !== undefined
+        ? t('trigger.ariaEffortSpeed', { model: modelLabel, effort: effortLabel, speed: tierLabel })
+        : tierLabel !== undefined
+          ? t('trigger.ariaSpeed', { model: modelLabel, speed: tierLabel })
+          : effortLabel !== undefined
+            ? t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+            : t('trigger.aria', { model: modelLabel })
   itemRefs.current = []
+  modelRefs.current = new Map()
+  const collapsibleGroups = filteredGroups.length > 1
   let itemIndex = 0
-  let modelIndex = 0
+  // Advances across every filtered model, rendered or not: a collapsed group
+  // still owns its rows' positions, which ids and the search highlight address.
+  let modelCursor = 0
   const itemRef = () => {
     const at = itemIndex++
     return (node: HTMLButtonElement | null) => { itemRefs.current[at] = node }
+  }
+  /** Seat one model row at its DOM position and under its flat model index. */
+  const modelRef = (index: number) => {
+    const at = itemIndex++
+    return (node: HTMLButtonElement | null) => {
+      itemRefs.current[at] = node
+      if (node === null) modelRefs.current.delete(index)
+      else modelRefs.current.set(index, node)
+    }
   }
 
   return (
@@ -466,7 +558,7 @@ export function ModelSelect(
       >
         <IconDataOutlineRegular className={css.triggerIcon} size={16} />
         <span className={css.triggerLabel}>{modelLabel}</span>
-        {effortLabel !== undefined && <span className={css.triggerEffort}>{effortLabel}</span>}
+        {caption !== '' && <span className={css.triggerEffort}>{caption}</span>}
         {busy
           ? <StateDot state="ongoing" />
           : <IconChevronDownOutlineRegular className={clsx(css.chevron, open && css.chevronOpen)} />}
@@ -496,6 +588,13 @@ export function ModelSelect(
                 <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { drill('effort') }}>
                   <span className={css.cellLabel}>{t('menu.effort')}</span>
                   <span className={css.cellValue}>{effortLabel}</span>
+                  <IconChevronRightOutlineRegular className={css.cellChevron} />
+                </button>
+              )}
+              {serviceTiers !== undefined && (
+                <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { drill('speed') }}>
+                  <span className={css.cellLabel}>{t('menu.speed')}</span>
+                  <span className={css.cellValue}>{tierLabel ?? t('effort.providerDefault')}</span>
                   <IconChevronRightOutlineRegular className={css.cellChevron} />
                 </button>
               )}
@@ -557,14 +656,31 @@ export function ModelSelect(
                 hidden={filteredGroups.length === 0}
               >
                 {filteredGroups.map((group) => {
+                  const isExpanded = groupOpen(group.id)
+                  const groupLabel = group.id === 'deepseek-account' ? t('provider.account') : group.name
+                  const groupStart = modelCursor
+                  if (isExpanded) modelCursor += group.models.length
                   return (
-                    <MenuGroup key={group.id} label={group.id === 'deepseek-account' ? t('provider.account') : group.name}>
-                      {group.models.map((model) => {
-                        const index = modelIndex++
+                    <div key={group.id} className={css.group} role="group" aria-label={groupLabel}>
+                      <button
+                        // A heading earns a place in the arrow order only when it
+                        // can fold something; one provider's list needs no stop.
+                        ref={collapsibleGroups ? itemRef() : undefined}
+                        type="button"
+                        className={css.groupHeader}
+                        onClick={() => { toggleGroup(group.id) }}
+                        aria-expanded={isExpanded}
+                      >
+                        <span className={css.groupLabel}>{groupLabel}</span>
+                        <span className={css.groupCount}>{group.models.length}</span>
+                        <IconChevronRightOutlineRegular className={clsx(css.groupChevron, isExpanded && css.groupChevronOpen)} />
+                      </button>
+                      {isExpanded && group.models.map((model, offset) => {
+                        const index = groupStart + offset
                         const selected = state.current?.provider === group.id && state.current.model === model.id
                         return (
                           <button
-                            ref={itemRef()}
+                            ref={modelRef(index)}
                             type="button"
                             role="menuitemradio"
                             aria-checked={selected}
@@ -595,7 +711,7 @@ export function ModelSelect(
                           </button>
                         )
                       })}
-                    </MenuGroup>
+                    </div>
                   )
                 })}
               </div>
@@ -634,6 +750,41 @@ export function ModelSelect(
                         && pending.model === state.current.model && pending.reasoningEffort === level.effort
                         ? <StateDot state="ongoing" />
                         : effectiveEffort === level.effort ? <IconCheckOutlineRegular /> : null}
+                    </span>
+                  </button>
+                ))}
+            </>
+          )}
+
+          {pane === 'speed' && (
+            <>
+              {state.error !== null && lastActionRef.current === 'load' && (
+                <div className={css.error}>
+                  <span>{t('error.action', { message: state.error })}</span>
+                  <button type="button" className={css.retry} onClick={reload}>{t('action.reload')}</button>
+                </div>
+              )}
+              {tierChoices.length === 0
+                ? <div className={css.empty}>{t('empty.tiers')}</div>
+                : tierChoices.map(level => (
+                  <button
+                    ref={itemRef()}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={effectiveTier === level.tier}
+                    className={clsx(css.option, effectiveTier === level.tier && css.selected)}
+                    key={level.key}
+                    disabled={busy}
+                    onClick={() => { chooseTier(level.tier) }}
+                  >
+                    <span className={css.optionCopy}>
+                      <span className={css.modelName}>{level.label}</span>
+                    </span>
+                    <span className={css.check}>
+                      {pending !== null && pending.provider === state.current?.provider
+                        && pending.model === state.current.model && pending.serviceTier === level.tier
+                        ? <StateDot state="ongoing" />
+                        : effectiveTier === level.tier ? <IconCheckOutlineRegular /> : null}
                     </span>
                   </button>
                 ))}

@@ -12,6 +12,7 @@ import LlmRuntime, {
   ProviderRequestId,
   ReasoningEffortId,
   resolveRetryPolicy,
+  ServiceTierId,
   StreamChunk,
   createMessage,
   createDeveloperMessage,
@@ -21,6 +22,7 @@ import type {
   LlmModelContext,
   LlmModelInfo,
   LlmModelReasoningInfo,
+  LlmModelServiceTierInfo,
   LlmProviderInfo,
   LlmResolvedModelInfo,
   SystemPromptUpdate,
@@ -872,6 +874,85 @@ describe('LlmRuntime', () => {
     ))
     await expect(ctx.llm.resolveModelInfo('route', 'model'))
       .rejects.toMatchObject({ code: 'INVALID_MODEL_REASONING' })
+  })
+
+  // Deliberately mistyped fixtures: each case is rejected by the runtime validator.
+  const invalidServiceTiers: Array<[unknown, string]> = [
+    [{ tiers: [] }, 'empty tier list'],
+    [{ tiers: [{ id: '', name: 'Empty' }] }, 'empty id'],
+    [{ tiers: [{ id: 'valid', name: '' }] }, 'empty name'],
+    [{ tiers: [{ id: 'valid', name: 'Valid', description: 1 }] }, 'non-string description'],
+    [{ tiers: [{ id: 'same', name: 'One' }, { id: 'same', name: 'Two' }] }, 'duplicate id'],
+    [{ tiers: [{ id: 'valid', name: 'Valid' }], defaultTier: 'other' }, 'unknown default'],
+  ]
+  it.each(invalidServiceTiers)('rejects invalid model service tier metadata (%s: %s)', async (metadata, _label) => {
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const adapter = new class extends ScriptedAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({ provider, id: model, name: model, serviceTiers: metadata as LlmModelServiceTierInfo })
+      }
+    }(SCRIPT)
+    ctx.llm.registerAdapter(['route'], adapter)
+
+    await expect(ctx.llm.resolveModelInfo('route', 'model'))
+      .rejects.toMatchObject({ code: 'INVALID_MODEL_SERVICE_TIER' })
+  })
+
+  it('resolves service tiers without clamping and refuses unadvertised ones', async () => {
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    const tiered = (serviceTiers: LlmModelServiceTierInfo) => new class extends ScriptedAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({ provider, id: model, name: model, serviceTiers })
+      }
+    }(SCRIPT)
+    ctx.llm.registerAdapter(['route'], tiered({ tiers: [
+      { id: ServiceTierId('default'), name: 'Standard' },
+      { id: ServiceTierId('priority'), name: 'Fast' },
+    ], defaultTier: ServiceTierId('priority') }))
+
+    // The adapter default materializes; an explicit choice wins; anything else refuses.
+    expect(await ctx.llm.resolveCallConfig({ provider: 'route', model: 'model' }))
+      .toEqual({ provider: 'route', model: 'model', serviceTier: 'priority' })
+    expect(await ctx.llm.resolveCallConfig({ provider: 'route', model: 'model', serviceTier: ServiceTierId('default') }))
+      .toEqual({ provider: 'route', model: 'model', serviceTier: 'default' })
+    await expect(ctx.llm.resolveCallConfig({ provider: 'route', model: 'model', serviceTier: ServiceTierId('invented') }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SERVICE_TIER' })
+    const prepared = await ctx.llm.prepareCall({ provider: 'route', model: 'model' })
+    expect(prepared.adapterDefaults).toEqual({ serviceTier: true })
+    // An explicit tier is the caller's choice, not an adapter default.
+    const explicit = await ctx.llm.prepareCall({ provider: 'route', model: 'model', serviceTier: ServiceTierId('priority') })
+    expect(explicit.adapterDefaults).toEqual({})
+
+    // A tier list without a default leaves the provider's own default in force.
+    const ctx2 = new Context()
+    await ctx2.plugin(LlmRuntime)
+    ctx2.llm.registerAdapter(['route'], tiered({ tiers: [{ id: ServiceTierId('priority'), name: 'Fast' }] }))
+    expect(await ctx2.llm.resolveCallConfig({ provider: 'route', model: 'model' }))
+      .toEqual({ provider: 'route', model: 'model' })
+
+    // Tier metadata survives beside reasoning metadata.
+    const ctx4 = new Context()
+    await ctx4.plugin(LlmRuntime)
+    ctx4.llm.registerAdapter(['route'], new class extends ScriptedAdapter {
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({ provider, id: model, name: model,
+          reasoning: { efforts: [{ id: ReasoningEffortId('high'), name: 'High' }] },
+          serviceTiers: { tiers: [{ id: ServiceTierId('priority'), name: 'Fast' }] } })
+      }
+    }(SCRIPT))
+    expect(await ctx4.llm.resolveModelInfo('route', 'model')).toMatchObject({
+      reasoning: { efforts: [{ id: 'high' }] },
+      serviceTiers: { tiers: [{ id: 'priority' }] },
+    })
+
+    // A model advertising no tiers refuses a tier outright.
+    const ctx3 = new Context()
+    await ctx3.plugin(LlmRuntime)
+    ctx3.llm.registerAdapter(['route'], new CatalogAdapter({ id: 'route', name: 'Route' }, []))
+    await expect(ctx3.llm.resolveCallConfig({ provider: 'route', model: 'model', serviceTier: ServiceTierId('default') }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SERVICE_TIER' })
   })
 
   it('rejects unsupported reasoning efforts without clamping', async () => {

@@ -1,5 +1,5 @@
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,6 +11,7 @@ import { liveConfig } from '../../../settings/settings/tests/live-config.ts'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
 import { assemble } from './assemble.ts'
+import { clearCodexLaunchEnvironment } from './codex-launch-environment.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
 const configurations = new WeakMap<Context, Awaited<ReturnType<typeof liveConfig>>>()
@@ -25,6 +26,8 @@ class StubAdapter extends LlmAdapter {
 }
 
 const cleanups: Array<() => Promise<void>> = []
+
+beforeEach(clearCodexLaunchEnvironment)
 
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!()
@@ -309,4 +312,30 @@ describe('request-level dynamic profiles', () => {
     await configurations.get(ctx)!.update({ providers: { anthropic: {}, openai: {} } })
     expect(ctx.llm.listProviders().map(provider => provider.id)).toEqual(before)
   })
+})
+
+
+it('updates the public Nous client live while preserving and isolating an existing grant', async () => {
+  const { credentialStoreFrom } = await import('../src/auth.ts')
+  const fetch = vi.fn(async () => { throw new Error('No real requests are permitted in this test.') })
+  vi.stubGlobal('fetch', fetch)
+  try {
+    const providers = { nous: { models: [{ id: 'account/model' }] } }
+    const ctx = await boot(await home(), { providers }, { authorization: true })
+    const connection = ctx.nousConnection
+    // The public hermes-cli client is the default, so no client ID is chosen.
+    expect((await connection.getState()).configured).toBe(true)
+    expect(fetch).not.toHaveBeenCalled()
+    const stored = { type: 'oauth' as const, access: 'mock-public-access', refresh: 'mock-public-refresh', expires: Date.now() + 3_600_000,
+      clientId: 'hermes-cli', scope: 'inference:invoke', inferenceBaseURL: 'https://inference-api.nousresearch.com/v1' }
+    await credentialStoreFrom(ctx).modify('nous', async () => stored)
+    expect((await connection.getState()).connected).toBe(true)
+    await configurations.get(ctx)!.update({ providers, nousClientId: 'custom-public-client' })
+    expect((await connection.getState()).connected).toBe(false)
+    const result = await assemble(ctx, { provider: 'nous', model: 'account/model', messages: [] })
+    expect(result.finish.kind).toBe('error')
+    expect(result.finish.kind === 'error' ? result.finish.failure.message : '').toContain('matching the stored connection')
+    expect(await credentialStoreFrom(ctx).read('nous')).toEqual(stored)
+    expect(fetch).not.toHaveBeenCalled()
+  } finally { vi.unstubAllGlobals() }
 })

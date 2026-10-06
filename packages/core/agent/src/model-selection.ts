@@ -9,6 +9,7 @@ import {
   createUserMessage,
   type LlmCallConfig,
   type ReasoningEffortId,
+  type ServiceTierId,
 } from '@deepseek-ai/dsh-llm'
 import type { PreStepDecision } from './runtime-types.ts'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
@@ -26,6 +27,8 @@ export interface ModelSelection {
   model: string
   /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-owned service tier (processing speed), or the adapter's own default when absent. */
+  serviceTier?: ServiceTierId
 }
 
 /** Mutable model selection plus the value captured for the current step. */
@@ -63,10 +66,10 @@ function modelSwitchNotice(previous: ModelSelection, selected: ModelSelection) {
 /**
  * Couple one mutable selection to Agent-scoped prompt assembly and request routing.
  * Prompt assembly snapshots the selected model before delegating, then applies
- * its provider/model pair and effort to request config so a
+ * its provider/model pair, effort, and service tier to request config so a
  * concurrent switch takes effect on a later step instead of splitting the two
- * surfaces. An absent selected effort clears any inherited effort, restoring
- * the selected model's provider/default behavior.
+ * surfaces. An absent selected effort or tier clears any inherited value,
+ * restoring the selected model's provider/default behavior.
  *
  * A provider/model change appends a durable user-role notice to the next
  * admitted request. It compares the assembled selection with the latest
@@ -99,14 +102,17 @@ export function installModelSelection(agentCtx: Context, selection: ModelSelecti
       const resolved = await next()
       const selected = selection.assembled
       if (selected === undefined) return resolved
-      const { reasoningEffort: _inheritedEffort, ...withoutInheritedEffort } = resolved
+      const { reasoningEffort: _inheritedEffort, serviceTier: _inheritedTier, ...withoutInheritedSelection } = resolved
       return {
-        ...withoutInheritedEffort,
+        ...withoutInheritedSelection,
         provider: selected.provider,
         model: selected.model,
         ...selected.reasoningEffort === undefined
           ? {}
           : { reasoningEffort: selected.reasoningEffort },
+        ...selected.serviceTier === undefined
+          ? {}
+          : { serviceTier: selected.serviceTier },
       }
     },
   )

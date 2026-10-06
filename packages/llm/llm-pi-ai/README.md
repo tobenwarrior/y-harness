@@ -35,37 +35,15 @@ Choose this adapter when the same composition serves several providers, when a r
 
 ### Local subscription connections
 
-The local desktop adds a ChatGPT connection card in Settings → Models.
-It uses OpenAI's documented public dynamic client registration, PKCE, a
-short-lived IPv4 loopback callback, and verified ID-token signatures. Each
-account keeps its own issued client ID. Explicit consent is required before
-saving tokens in the profile's owner-only, unencrypted credential file.
-Account selection, refresh, cancellation, and disconnect use this same card.
-Models are fetched after sign-in; the default model is not changed.
+OpenCode Go uses the installed native `opencode-go` provider, including its Responses, Chat Completions, and Anthropic Messages endpoints. Settings requires explicit local storage consent for its API key. The installed catalog is a limited local inventory, not an entitlement check; `minimax-m2.7`, `qwen3.7-plus` and `qwen3.8-max` use Go's advertised Messages endpoint.
 
-The `chatgpt` route accepts only public OpenAI Responses and OAuth. Requests
-stream with `store: false`, use namespaced local function tools, and omit
-fields disallowed by the ChatGPT plan preview. OAuth and inference have
-mocked protocol coverage; the user completed browser sign-in and the existing
-connection was checked through read-only account model discovery. No live
-inference request was sent during verification.
-See [OpenAI's public flow](https://developers.openai.com/siwc/token-sharing-open-source)
-and [preview limits](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+The native `nous` route uses Portal device authorization and the account's authenticated model catalog. The Models card offers Hermes-compatible device login using the public `hermes-cli` client ID by default, or a custom public client ID. Nous consent may identify Hermes; Y Harness is a separate application, and an independent Y Harness registration has not been verified. Choosing a client saves public configuration; a separate Continue click and local-storage consent start authorization. Stored grants remain bound to the selected client ID. The card offers device instructions and explicit model selection, and clears the local grant on disconnect. Portal-side revocation remains an account action.
 
-The account catalog's reasoning efforts and defaults populate the native
-composer picker. Models settings expose Standard and account-advertised Fast
-processing tiers per model; applying Fast requires an explicit save and shows
-its increased-usage description. The exact tier is sent as `service_tier`.
-Ultra delegation is not implemented on this direct Responses route and is not
-silently mapped to Max. Model availability follows this connection's current
-public catalog; absence is not evidence of missing account entitlement. Codex
-backend catalogs used by other apps are a different authentication contract.
+Nous requests use Chat Completions with the grant's verified inference address. Refreshes serialize through the credential store and persist rotated tokens before request-auth validation. Only advertised reasoning efforts are sent; disabling reasoning requires explicitly optional reasoning metadata. A cancelled attempt cannot commit before admission; once the authorization service admits a durable save, cancellation waits for its completion. Credentials remain in the owner-only unencrypted local file. Live sign-in requires the user's explicit device-login action and browser authorization.
 
-OpenCode Go uses the installed native `opencode-go` provider, including its
-Responses, Chat Completions, and Anthropic Messages endpoints. Settings
-requires explicit local storage consent for its API key. Nous Portal OAuth
-is unavailable because a public Harness client-registration flow has not
-been verified. Existing DeepSeek account settings remain unchanged.
+### Optional local Codex backend
+
+Deployments that supply the explicit `DSH_CODEX_BINARY`, `DSH_CODEX_NODE`, `DSH_CODEX_HOME`, `DSH_CODEX_SHELL_HOME`, and `DSH_CODEX_CWD` paths can expose the separate `codex-backend` route. The local desktop pins official Codex 0.160.0 and uses the documented stdio app-server with a fresh native profile and user-completed device login. Codex owns its loop and tools. A connected account publishes the route on its own until the user makes an explicit enable or disable choice, after which that stored choice stands. Catalog effort names are preserved, including real native Ultra, and the composer offers Standard beside each catalog speed tier; the stored per-model preference is the adapter default, and an explicit conversation choice wins. Priority/Fast maps to native `serviceTier: fast`. The catalog's modality tags are republished (audio is dropped because the LLM seam cannot express it), and the turn's own images travel as native `image` inputs encoded from the durable attachment store; images inside a seeded transcript stay text placeholders. Native tools use read-only sandbox with network disabled and approvals declined. One active turn; restart/history changes seed a quoted transcript. Native tool detail and question panels are not bridged. Model listing is not account entitlement.
 
 ### Configure provider routes
 

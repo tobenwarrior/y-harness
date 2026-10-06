@@ -218,7 +218,7 @@
     "a288679a4dcd49ed1fea620d9f3442c1f518406ad8d2d49dba1fafe8a45fbcbd": 1
   },
   "packages/api/session-controller/src/model-selection-projection.ts": {
-    "921e80b20107c8b88b0fc3cb1ebc1fe52d465175fe782cf9e7a0b72e505ff427": 1
+    "620086b35bee8c0218283e2ca2da4319892b4d5bfc6239fc7c9eac067fb7c36b": 1
   },
   "packages/api/session-controller/tests/agent.host.spec.ts": {
     "40b9b8efe71e65b5bddad33acf9b7595d58a7427f077e3aa9ccc488ebb23f4d0": 1,

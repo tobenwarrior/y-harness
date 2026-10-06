@@ -29,8 +29,8 @@
       "default": "./lib/typert.remote-client.js"
     },
     "./types": {
-      "types": "./lib/types/chatgpt-types.d.ts",
-      "default": "./lib/types/chatgpt-types.js"
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
     }
   },
   "files": [
@@ -40,7 +40,9 @@
     "lib/typert.host.d.ts",
     "lib/typert.remote-client.js",
     "lib/typert.remote-client.d.ts",
-    "lib/types/chatgpt-types.js"
+    "lib/types/codex-types.js",
+    "lib/types/types.js",
+    "NOUS-LICENSE.txt"
   ],
   "license": "MIT",
   "peerDependencies": {

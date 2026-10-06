@@ -20,6 +20,8 @@ export interface ModelDirectoryState {
   current: ModelSelection | null
   /** Saved effort caption retained when the selected model is unavailable. */
   retainedEffort?: string
+  /** Saved speed caption retained when the selected model is unavailable. */
+  retainedTier?: string
   /** Whether the current selection is present in the available catalog; null while unresolved. */
   routable: boolean | null
   /** Successfully loaded provider groups (last good load). */
@@ -82,10 +84,10 @@ export class ModelDirectory {
   }
 
   /**
-   * Select the complete provider/model/reasoning selection. The durable
+   * Select the complete provider/model/reasoning/speed selection. The durable
    * projection frame updates the shared current; failures surface on the store
    * and return with the operation so each entry can present its own failure.
-   * @param selection - provider, provider-owned model id, and optional adapter-owned effort.
+   * @param selection - provider, provider-owned model id, and optional adapter-owned effort and service tier.
    * @returns the selection outcome, including the original Remote failure.
    */
   async select(selection: ModelSelection): Promise<RemoteResult<void>> {
@@ -93,6 +95,8 @@ export class ModelDirectory {
     const previous = this.store.getSnapshot().current
     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
+    const previousTier = previous?.serviceTier ?? (previous === null ? undefined : this.catalog.serviceTiersFor(previous)?.defaultTier)
+    const nextTier = selection.serviceTier ?? this.catalog.serviceTiersFor(selection)?.defaultTier
     const generation = ++this.generation
     this.store.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
     const result = await this.sessions.selectModel({
@@ -102,6 +106,9 @@ export class ModelDirectory {
       ...selection.reasoningEffort === undefined
         ? {}
         : { reasoningEffort: selection.reasoningEffort },
+      ...selection.serviceTier === undefined
+        ? {}
+        : { serviceTier: selection.serviceTier },
     })
     if (this.disposed || generation !== this.generation) {
       return result.ok ? { ok: true, value: undefined } : result
@@ -120,6 +127,9 @@ export class ModelDirectory {
       if (from !== to) this.track?.('model_switch', { ...this.isBlank() ? {} : { session_id: this.sessionId }, switch_from: from, switch_to: to })
       if (from === to && previousEffort !== nextEffort) this.track?.('thinking_level_switch', {
         ...this.isBlank() ? {} : { session_id: this.sessionId }, model_name: to, switch_from: previousEffort ?? 'default', switch_to: nextEffort ?? 'default',
+      })
+      if (from === to && previousTier !== nextTier) this.track?.('speed_switch', {
+        ...this.isBlank() ? {} : { session_id: this.sessionId }, model_name: to, switch_from: previousTier ?? 'default', switch_to: nextTier ?? 'default',
       })
     }
     this.store.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
@@ -163,10 +173,15 @@ export class ModelDirectory {
     const effort = intended?.reasoningEffort ?? reasoning?.defaultEffort
     const retainedEffort = effort === undefined ? undefined
       : reasoning?.efforts.find(level => level.id === effort)?.name ?? effort
+    const tiers = intended === undefined ? undefined : this.catalog.serviceTiersFor(intended)
+    const tier = intended?.serviceTier ?? tiers?.defaultTier
+    const retainedTier = tier === undefined ? undefined
+      : tiers?.tiers.find(choice => choice.id === tier)?.name ?? tier
     if (catalog.status !== 'ready' || catalog.value === null || projected === undefined) {
       this.store.set({
         current: catalog.value === null ? null : this.store.getSnapshot().current,
         ...retainedEffort === undefined ? {} : { retainedEffort },
+        ...retainedTier === undefined ? {} : { retainedTier },
         routable: null,
         groups: catalog.value?.groups ?? [],
         failures: catalog.value?.failures ?? [],
@@ -182,6 +197,7 @@ export class ModelDirectory {
     this.store.set({
       current: selection,
       ...retainedEffort === undefined ? {} : { retainedEffort },
+      ...retainedTier === undefined ? {} : { retainedTier },
       routable,
       groups: catalog.value.groups,
       failures: catalog.value.failures,

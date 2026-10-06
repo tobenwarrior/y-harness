@@ -576,6 +576,8 @@ interface LlmResolvedModelInfo extends LlmModelInfo {
   defaultMaxTokens?: number
   /** Adapter-owned selectable reasoning levels when exposed. */
   reasoning?: LlmModelReasoningInfo
+  /** Adapter-owned selectable service tiers (processing speeds) when exposed. */
+  serviceTiers?: LlmModelServiceTierInfo
   /** Declared mid-conversation system prompt handling; absent means only a leading system message is read. */
   systemPromptUpdate?: SystemPromptUpdate
   /** Declared mid-conversation tool declaration handling; absent means every request declares the complete tool list. */
@@ -608,6 +610,12 @@ interface GenerateOptions {
   model: string
   /** Adapter-owned reasoning effort selected for this exact model. */
   reasoningEffort?: ReasoningEffortId
+  /**
+   * Adapter-owned service tier (processing speed) selected for this exact
+   * model. Absence preserves the adapter's own default, which is the stored
+   * per-model preference where the adapter keeps one.
+   */
+  serviceTier?: ServiceTierId
   /**
    * Ordered conversation messages, exactly as the provider sees them. A
    * loop-built request passes the derived history (dsh-agent-loop), whose
@@ -761,6 +769,8 @@ interface LlmCallConfig {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  /** Adapter-owned service tier (processing speed) selected for this exact model. */
+  serviceTier?: ServiceTierId
   temperature?: number
   maxTokens?: number
   stop?: string[]
@@ -774,6 +784,7 @@ interface LlmCallConfig {
  */
 interface LlmCallConfigAdapterDefaults {
   reasoningEffort?: true
+  serviceTier?: true
   maxTokens?: true
 }
 ```
@@ -897,6 +908,68 @@ declare abstract class LlmAdapter {
 ## Cordis API
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+
+<a id="ctxcodexbackendconnection--codexbackendconnection"></a>
+
+### `ctx.codexBackendConnection` — `CodexBackendConnection`
+
+Independent optional model family.
+
+```ts cordis-catalog
+/**
+ * Read display state without launching Codex or reading its auth file.
+ * @returns the current enablement, connection, and running state.
+ */
+@Remote async getState(): Promise<CodexBackendView>
+
+/**
+ * Cached display catalog; refreshing is an explicit user action.
+ * @returns the stored native model catalog.
+ */
+@Remote async models(): Promise<CodexBackendModelView[]>
+
+/**
+ * Read the native account and model catalog; this sends no model prompt.
+ * @returns the refreshed display state.
+ */
+@Remote async refresh(): Promise<CodexBackendView>
+
+/**
+ * Start native device login only after explicit local-file consent.
+ * @param consent - whether the user consented to storing native credentials locally.
+ * @returns the device verification URL and user code.
+ */
+@Remote async start(consent: boolean): Promise<{ verificationUrl: string; userCode: string }>
+
+/**
+ * Cancel this native device login.
+ * @returns fulfillment after the pending login is cancelled.
+ */
+@Remote async cancel(): Promise<void>
+
+/**
+ * Publish a connected account's catalog while the user has not chosen otherwise.
+ * @returns the resulting display state, unchanged when the account or catalog is not ready.
+ */
+@Remote async publish(): Promise<CodexBackendView>
+
+/**
+ * Enable the separate family or set a catalog-advertised native service tier.
+ * @param enabled - whether the route accepts turns.
+ * @param modelId - model whose processing tier changes; omit to change enablement only.
+ * @param tier - catalog-advertised tier id, or `default` for standard speed.
+ * @returns the resulting display state.
+ */
+@Remote async configure(enabled: boolean, modelId: string | undefined, tier: string | undefined): Promise<CodexBackendView>
+
+/**
+ * Logout only this separate Codex profile, then withdraw its selectable models.
+ * @returns the resulting display state.
+ */
+@Remote async disconnect(): Promise<CodexBackendView>
+```
+
+Source: [`packages/llm/llm-pi-ai/src/codex-backend-connection.ts`](../../packages/llm/llm-pi-ai/src/codex-backend-connection.ts)
 
 <a id="ctxdeepseekllmapiextensions--deepseekllmapiextensionregistry"></a>
 
@@ -1083,6 +1156,54 @@ stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 Types: [FileAttachmentRef](attachment.zh.md)
 
 Source: [`packages/llm/llm/src/index.ts`](../../packages/llm/llm/src/index.ts)
+
+<a id="ctxnousconnection--nousconnection"></a>
+
+### `ctx.nousConnection` — `NousConnection`
+
+Own one sign-in attempt through cancellation and durable grant commit.
+
+```ts cordis-catalog
+/**
+ * Reject changing public client identity while a device attempt is active.
+ * @param nextClientId - the public client id a settings write wants to adopt.
+ * @throws when a pending sign-in is still bound to a different client id.
+ */
+assertClientChange(nextClientId: string | undefined): void
+
+/**
+ * Read local connection metadata without redeeming a refresh token.
+ * @returns connection and attempt state without credentials or device polling tokens.
+ */
+@Remote async getState(): Promise<NousConnectionView>
+
+/**
+ * Begin one device attempt with explicit local-storage consent and a chosen public client.
+ * @param saveLocally - affirmative consent to the owner-only unencrypted credential file.
+ * @returns browser instructions; the grant commits asynchronously before busy becomes false.
+ */
+@Remote async start(saveLocally: boolean): Promise<NousDeviceVerification>
+
+/**
+ * Cancel before commit admission; an admitted save completes before cancellation returns.
+ * @returns after polling and durable credential work have settled.
+ */
+@Remote async cancel(): Promise<void>
+
+/**
+ * Resolve registered OAuth under the credential-store lock and read the account catalog.
+ * @returns advertised models; failures expose a sanitized retry or sign-in message.
+ */
+@Remote async models(): Promise<NousModelView[]>
+
+/**
+ * Delete this app's local grant while no sign-in is running; Portal revocation is user-owned.
+ * @returns after the local credential deletion completes.
+ */
+@Remote async disconnect(): Promise<void>
+```
+
+Source: [`packages/llm/llm-pi-ai/src/nous-connection.ts`](../../packages/llm/llm-pi-ai/src/nous-connection.ts)
 
 <a id="llm-events"></a>
 

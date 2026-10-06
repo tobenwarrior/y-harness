@@ -19,9 +19,12 @@ export const zh = {
   'trigger.selectAria': '请选择模型',
   'trigger.aria': '选择模型，当前 {model}',
   'trigger.ariaEffort': '选择模型，当前 {model}，推理等级 {effort}',
-  'menu.aria': '模型与推理等级',
+  'trigger.ariaSpeed': '选择模型，当前 {model}，速度 {speed}',
+  'trigger.ariaEffortSpeed': '选择模型，当前 {model}，推理等级 {effort}，速度 {speed}',
+  'menu.aria': '模型、推理等级与速度',
   'menu.model': '模型',
   'menu.effort': '推理等级',
+  'menu.speed': '速度',
   'effort.providerDefault': 'Default',
   'status.loading': '正在刷新模型列表…',
   'error.action': '模型操作失败：{message}',
@@ -33,6 +36,7 @@ export const zh = {
   'search.empty': '没有匹配的模型。',
   'empty.models': '没有可用的模型。',
   'empty.efforts': '当前模型未提供推理等级。',
+  'empty.tiers': '当前模型未提供速度选项。',
 } satisfies Record<string, string>
 
 /** The model namespace key union. */
@@ -49,9 +53,12 @@ export const en = {
   'trigger.selectAria': 'Select model',
   'trigger.aria': 'Select model, current {model}',
   'trigger.ariaEffort': 'Select model, current {model}, reasoning effort {effort}',
-  'menu.aria': 'Model and reasoning effort',
+  'trigger.ariaSpeed': 'Select model, current {model}, speed {speed}',
+  'trigger.ariaEffortSpeed': 'Select model, current {model}, reasoning effort {effort}, speed {speed}',
+  'menu.aria': 'Model, reasoning effort, and speed',
   'menu.model': 'Model',
   'menu.effort': 'Effort',
+  'menu.speed': 'Speed',
   'effort.providerDefault': 'Default',
   'status.loading': 'Refreshing model list…',
   'error.action': 'Model operation failed: {message}',
@@ -63,4 +70,5 @@ export const en = {
   'search.empty': 'No matching models.',
   'empty.models': 'No models available.',
   'empty.efforts': 'This model provides no reasoning effort levels.',
+  'empty.tiers': 'This model provides no speed choices.',
 } satisfies Record<ModelKey, string>

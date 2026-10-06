@@ -73,8 +73,9 @@ import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
 import { CodexBackendConnection } from './codex-backend-connection.ts'
 export { CodexBackendConnection } from './codex-backend-connection.ts'
-import { ChatGPTConnection } from './chatgpt-connection.ts'
-export { ChatGPTConnection } from './chatgpt-connection.ts'
+import { NousConnection } from './nous-connection.ts'
+export { NousConnection } from './nous-connection.ts'
+export type { NousConnectionView, NousDeviceVerification, NousModelView } from './nous-types.ts'
 import { registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
@@ -155,6 +156,7 @@ export function apply(ctx: Context, config: Config): void {
   const settingsNs = ctx.fiber.entry?.options.id ?? NS
   let lastRaw: ReturnType<Config['providers']['get']> | undefined
   let memoized: ReadonlyMap<string, ResolvedPiAiProviderProfile> | undefined
+  let lastNousClientId: string | undefined
   /**
    * The resolved profiles for the current configuration, memoized by the raw
    * snapshot's identity — which is also what makes the adapter's own snapshot
@@ -166,9 +168,11 @@ export function apply(ctx: Context, config: Config): void {
    */
   const profiles = (): ReadonlyMap<string, ResolvedPiAiProviderProfile> => {
     const raw = config.providers.get()
-    if (raw === lastRaw && memoized !== undefined) return memoized
-    const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred')
+    const nousClientId = config.nousClientId.get()
+    if (raw === lastRaw && nousClientId === lastNousClientId && memoized !== undefined) return memoized
+    const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred', nousClientId)
     lastRaw = raw
+    lastNousClientId = nousClientId
     memoized = next
     return next
   }
@@ -177,10 +181,13 @@ export function apply(ctx: Context, config: Config): void {
   ctx.on('internal/config', function (this: import('@deepseek-ai/cordis').Fiber, _raw, next) {
     const raw: unknown = next()
     if (this !== ctx.fiber) return raw
-    const candidate = Config(raw as import('./config.ts').Options)
+    const candidate: Config = Config(raw as import('./config.ts').Options)
+    ctx.get('nousConnection')?.assertClientChange(candidate.nousClientId.get())
     assertServiceable(
-      { providers: structuredClone(candidate.providers.get()) } as import('./config.ts').Options,
-      { providers: structuredClone(config.providers.get()) } as import('./config.ts').Options,
+      { providers: structuredClone(candidate.providers.get()),
+        ...candidate.nousClientId.get() === undefined ? {} : { nousClientId: candidate.nousClientId.get() } } as import('./config.ts').Options,
+      { providers: structuredClone(config.providers.get()),
+        ...config.nousClientId.get() === undefined ? {} : { nousClientId: config.nousClientId.get() } } as import('./config.ts').Options,
     )
     return raw
   })
@@ -237,7 +244,8 @@ export function apply(ctx: Context, config: Config): void {
   // composition without it (headless, ACP) simply has no surface to sign in
   // from, while everything else this plugin does still works.
   ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
-  ctx.inject(['authorization', 'credentials'], child => { child.plugin(ChatGPTConnection) })
+  ctx.inject(['authorization', 'credentials'], (child) => { child.plugin(NousConnection,
+    { clientId: () => config.nousClientId.get() }) })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as

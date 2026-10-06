@@ -222,6 +222,8 @@ export interface ResolvedPiAiProviderProfile
 
 /** Plugin configuration: the provider routes this instance owns. */
 export interface Config {
+  /** Public Nous device-flow client identity; defaults to the public `hermes-cli` client. No credential is stored here. */
+  nousClientId: Volatile<string | undefined>
   /**
    * pi-ai provider routes, keyed by provider. An empty (or omitted) dict is
    * the dormant settings-driven posture: the adapter mounts with no routes
@@ -231,7 +233,7 @@ export interface Config {
 }
 
 /** Plain options accepted by the provider resolver. */
-export type Options = { [K in keyof Config]?: Config[K] extends Volatile<infer T> ? T : never }
+export type Options = { [K in keyof Config]?: Config[K] extends Volatile<infer T> ? Exclude<T, undefined> : Config[K] }
 
 const thinkingBudgets = z.object({
   minimal: z.number(),
@@ -315,9 +317,6 @@ const modelFields = {
   // installed catalog's capability", while `false` disables reasoning.
   reasoningEfforts: z.union([z.const(false), reasoningEfforts]),
   defaultReasoning: z.union(THINKING_LEVELS),
-  unavailableReasoningEfforts: z.array(z.string()),
-  serviceTiers: z.array(z.object({ id: z.string().required(), name: z.string().required(), description: z.string() })),
-  serviceTier: z.union(['default', 'priority', 'fast', 'ultrafast']),
   compat: compatProfile,
 }
 
@@ -356,6 +355,7 @@ const profile = z.object({
 
 /** Runtime schema for {@link Config}. */
 export const Config = z.object({
+  nousClientId: z.string().min(1).default('hermes-cli').volatile(),
   providers: z.dict(profile).default({}).volatile(),
 })
 
@@ -370,7 +370,7 @@ export const Config = z.object({
 export function assertServiceable(config: Options, previous?: Options): void {
   const changed = Object.fromEntries(Object.entries(config.providers ?? {}).filter(([provider, profile]) =>
     !deepEqualJson(profile, previous?.providers?.[provider])))
-  resolveProfiles(changed)
+  resolveProfiles(changed, 'strict', config.nousClientId)
 }
 
 /** Reject removed pre-release profile fields and name their replacements. */
@@ -411,26 +411,30 @@ function assertValidHeaders(provider: string, headers: Readonly<Record<string, s
  * routes. An omitted dict resolves to the empty, dormant route set.
  * @param providers - configured provider profiles keyed by route.
  * @param validation - writes require a complete catalog; stored reads retain catalog diagnostics.
+ * @param nousClientId - public Nous device-flow client identity the `nous` route authenticates with.
  * @returns validated profiles in configuration order.
  */
 export function resolveProfiles(
   providers: Readonly<Record<string, PiAiProviderProfile>> | undefined,
   validation: 'strict' | 'deferred' = 'strict',
+  nousClientId?: string,
 ): Map<string, ResolvedPiAiProviderProfile> {
+  if (nousClientId !== undefined && (nousClientId.length === 0 || nousClientId.trim() !== nousClientId
+    || /[\u0000-\u001f\u007f]/u.test(nousClientId))) {
+    throw new Error('Nous requires a nonempty registered client identity without surrounding whitespace or control characters.')
+  }
   if (Array.isArray(providers)) {
     throw new Error('llm-pi-ai: providers is now a dict keyed by provider route, not an array of profiles')
   }
   const entries = Object.entries(providers ?? {})
   const resolved = new Map<string, ResolvedPiAiProviderProfile>()
   for (const [provider, source] of entries) {
-    if (provider === 'chatgpt' && ((source.baseURL !== undefined && source.baseURL !== 'https://api.openai.com/v1')
-      || (source.api !== undefined && source.api !== 'openai-responses') || 'apiKey' in source || source.apiKeyEnv !== undefined)) {
-      throw new Error('ChatGPT subscriptions require the public Responses endpoint and sign-in in Models settings.')
+    if (provider === 'nous' && (source.apiKeyEnv !== undefined || 'apiKey' in source
+      || (source.api !== undefined && source.api !== 'openai-completions')
+      || (source.baseURL !== undefined && source.baseURL !== 'https://inference-api.nousresearch.com/v1'))) {
+      throw new Error('Nous Portal uses native OAuth and its verified inference route; remove API-key, protocol, and endpoint overrides.')
     }
     for (const model of source.models ?? []) {
-      if (model.serviceTier !== undefined && (provider !== 'chatgpt' || (model.serviceTier !== 'default' && !model.serviceTiers?.some(tier => tier.id === model.serviceTier)))) {
-        throw new Error(`Processing tier "${model.serviceTier}" is not advertised for ${provider}/${model.id}.`)
-      }
       if (model.defaultReasoning !== undefined
         && (model.reasoningEfforts === false || model.reasoningEfforts?.[model.defaultReasoning] === undefined)) {
         throw new Error(`Default effort "${model.defaultReasoning}" is not advertised for ${provider}/${model.id}.`)
@@ -496,11 +500,11 @@ export function resolveProfiles(
       catalogError = catalog.modelErrors.values().next().value
       piProvider = buildProvider({
         provider,
+        ...provider === 'nous' && nousClientId !== undefined ? { nousClientId } : {},
         displayName,
         ...source.api === undefined ? {} : { api: source.api },
         ...source.baseURL === undefined ? {} : { baseURL: source.baseURL },
         models: catalog.models,
-        ...source.models === undefined ? {} : { modelProfiles: source.models },
         namesCredential: source.apiKeyEnv !== undefined,
       })
     } catch (error) {
