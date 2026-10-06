@@ -41,6 +41,7 @@ const ctx = {
     unarchiveSession: async (id) => { calls.push(`unarchive:${id}`) },
   },
   sessionPersistence: { stat: async (id) => (stored.has(id) ? { header: { id } } : undefined) },
+  emit: (event, ...args) => { calls.push(`emit:${event}:${String(args[0])}`) },
   get(name) {
     if (name === 'sessions') return { get: (id) => live.get(id) }
     if (name === 'dshHomePath') return (...segments) => join(root, ...segments)
@@ -81,11 +82,16 @@ assert.equal((await liveResponse.json()).code, 'session/live')
 assert.deepEqual(calls, [])
 await stat(join(project, liveId))
 
-// Deleting hides the Session, removes it, and restores the archive set.
+// Deleting hides the Session, removes it, restores the archive set, and
+// publishes the removal that drops its sidebar row.
 const deleted = await post({ sessionId: deadId })
 assert.equal(deleted.status, 200)
 assert.equal((await deleted.json()).path, join(project, deadId))
-assert.deepEqual(calls, [`archive:${deadId}:true`, `unarchive:${deadId}`])
+assert.deepEqual(calls, [
+  `archive:${deadId}:true`,
+  `unarchive:${deadId}`,
+  `emit:api-session/removed:${deadId}`,
+])
 await assert.rejects(stat(join(project, deadId)), 'session directory should be gone')
 
 // Unknown Session and malformed bodies.

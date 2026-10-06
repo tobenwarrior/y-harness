@@ -7,12 +7,13 @@
  * - `GET  ?sessionId=&label=` reports the Session's stored artifact directory
  *   and its canonical `@[label](dsh-session:…)` reference mention.
  * - `POST {sessionId}` permanently deletes a non-live Session's stored
- *   artifacts, after hiding it from every browsing surface.
+ *   artifacts, after hiding it from every browsing surface and publishing its
+ *   removal from the Session list.
  *
  * The route exists because no shipped Host entry point deletes a Session:
  * `workspaceRegistry` owns archive/pin, and `sessionPersistence` is
- * append-only. Deletion therefore resolves the artifact directory itself and
- * removes it, then returns the archive set to its prior state.
+ * append-only. Deletion therefore resolves the artifact directory itself,
+ * removes it, and then publishes the Session's removal.
  */
 import { readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -116,6 +117,11 @@ async function deleteRequest(ctx, request) {
   } finally {
     await ctx.workspaceRegistry.unarchiveSession(sessionId)
   }
+  // Workspace membership is durable and does not follow the artifacts, so the
+  // row a deleted Session leaves behind survives the archive-set restore above.
+  // Publish the removal exactly as a disposed Session does, which is what
+  // drops the Session from the browser's list.
+  ctx.emit('api-session/removed', sessionId)
   return json(200, { sessionId, path: directory ?? null })
 }
 

@@ -45,8 +45,11 @@ so every row above is reachable by right-clicking a session row.
 Deleting has no shipped Host entry point (`workspaceRegistry` owns archive and
 pin; `sessionPersistence` is append-only), so the route resolves the artifact
 directory itself, archives the session to hide it from every browsing surface,
-removes the directory, and then unarchives it so the archive set returns to its
-prior state. A live session is refused with `session/live`.
+removes the directory, unarchives it so the archive set returns to its prior
+state, and then publishes `api-session/removed` for the session. The published
+removal is what drops the sidebar row: Workspace membership is durable and does
+not follow the artifacts, so hiding alone would leave the row behind after the
+archive set is restored. A live session is refused with `session/live`.
 
 `client.js` is a dynamic browser bundle: it registers the menu rows and the
 dialog and imports only the module table's React, `react-dom`, and
@@ -61,7 +64,7 @@ node local-plugins/y-session-tools/verify-host-route.mjs
 Drives the registered fetch handler against a real temporary session tree and
 checks path discovery, the reference mention (compared with the shipped
 `formatSessionReferenceMention` once the checkout is built), the live-session
-refusal, the archive/delete/unarchive ordering, and the 400/404 paths.
+refusal, the archive/delete/unarchive/removal ordering, and the 400/404 paths.
 
 ## Known limitations
 
