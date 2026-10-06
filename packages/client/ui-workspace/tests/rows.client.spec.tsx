@@ -197,6 +197,27 @@ describe('workspace browser rows', () => {
     expect(onOpen).toHaveBeenCalledWith(node.id)
   })
 
+  it('opens the row menu on right-click, and leaves a blank row to the browser', () => {
+    const node: SessionNode = {
+      id: sid('session'), title: 'Session', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false, archived: false,
+    }
+    const view = render(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={vi.fn()} t={t} />)
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    const menuEvent = createEvent.contextMenu(screen.getByRole('treeitem'))
+    fireEvent(screen.getByRole('treeitem'), menuEvent)
+    expect(menuEvent.defaultPrevented).toBe(true)
+    expect(screen.queryByRole('menu')).not.toBeNull()
+
+    view.unmount()
+    render(<SessionNodeItem node={{ ...node, blank: true }} currentId={undefined} now={0} onOpen={vi.fn()} t={t} />)
+    const blankEvent = createEvent.contextMenu(screen.getByRole('treeitem'))
+    fireEvent(screen.getByRole('treeitem'), blankEvent)
+    expect(blankEvent.defaultPrevented).toBe(false)
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
   it('marquees a clipped session title at a constant speed while the row is hovered', () => {
     vi.useFakeTimers()
     // jsdom implements no matchMedia; the stub answers the reduced-motion probe.

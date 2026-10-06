@@ -524,7 +524,10 @@ export function SearchResultItem({ result, currentId, onOpen, onUnarchive, t }: 
 /**
  * One top-level 32px session row: leading 16px cell (status dot, or the
  * leading seat while the row's primary state is idle), title, relative time or
- * compact pending label, and the row actions menu. A row that owns a state dot
+ * compact pending label, and the row actions menu. A right-click anywhere on
+ * the row opens that same menu, so every verb it holds — shipped and plugin —
+ * is reachable without aiming at the trigger; a blank row has no menu to open.
+ * A row that owns a state dot
  * keeps that cell and renders no seat, so an ambient automation mark never
  * appears beside the row's own state dot. An archived row keeps the cell blank:
  * neither marker renders there, and its live status stays on the hover card.
@@ -596,6 +599,14 @@ export function SessionNodeItem({
       aria-selected={selected}
       aria-description={row.archived ? t('toast.archivedNotOpenable') : undefined}
       onClick={() => { onOpen(node.id) }}
+      onContextMenu={row.blank
+        ? undefined
+        : (event) => {
+          // The row's own menu holds every session verb, so a right-click
+          // opens it in place of the browser's page menu.
+          event.preventDefault()
+          setMenuOpen(true)
+        }}
       onPointerEnter={marquee.enter}
       onPointerLeave={marquee.leave}
       draggable={draggable}
