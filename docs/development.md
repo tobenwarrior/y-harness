@@ -10,7 +10,7 @@ The setup tutorial takes a new contributor from prerequisites to a checked check
 
 - Node.js supports 22.19+ and 24+. CI covers 22.19, 24, and 26; see the [Node engine floor Agent Note](../.agents/notes/implemented/process/2026-07-06-node-engine-floor.md).
 - Node.js TypeScript type stripping enabled. The repository build scripts load `tsdown.config.ts` with tsdown's native config loader, so they fail when `--no-experimental-strip-types` is in `NODE_OPTIONS` or the Node.js build lacks TypeScript support; `pnpm run build` checks this first and names the cause.
-- Corepack-enabled pnpm. The repo pins `pnpm@11.7.0` in `package.json`; run `corepack enable` if `pnpm --version` does not resolve through Corepack.
+- Corepack-enabled pnpm. The repo pins `pnpm@11.25.0` in `package.json`; run `corepack enable` if `pnpm --version` does not resolve through Corepack.
 - Git 2.26 or newer; hook setup enables Git's worktree-specific configuration extension.
 - Optional: a DeepSeek API key for the Web, headless, and ACP automation demos and real-API e2e tests.
 
@@ -133,6 +133,8 @@ Contributors can opt into the comprehensive local gate set with `pnpm run check:
 ### CI gates
 
 The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. Required benchmarks run separately on standard GitHub-hosted Linux; the [benchmark runner reference](../benchmarks/AGENTS.md) owns routing and the job timeout. The separate real-API workflow runs `pnpm run test:e2e` with its configured worker bound. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
+
+Fork PRs default to standard GitHub-hosted Linux and Windows runners. Real DeepSeek API validation, including installed-wheel smokes, requires the fork's own `DEEPSEEK_API_KEY_EXTERNAL` secret and `DSH_REAL_API_TESTS_ENABLED=true` repository variable. Disabled API checks report a skip; enabled checks fail if the secret is missing. Upstream always requires its secret. Forks enable their configured private standby pools separately with `DSH_CI_STANDBY_LINUX_ENABLED=true` or `DSH_CI_STANDBY_WINDOWS_ENABLED=true`; `DSH_CI_RUNNER_BENCHMARKS_ENABLED=true` enables the private manual benchmark tiers. The existing `DSH_CI_FAILOVER_LINUX` and `DSH_CI_FAILOVER_WINDOWS` switches select configured alternate runner pools.
 
 The credential-free dsh dependency-layout and dsh/vendor pack rehearsals use the existing Linux self-hosted pool only when `DSH_CI_FAILOVER_LINUX=selfhosted` and the event is a trusted master push or same-repository, non-fork, non-Dependabot pull request. All other cases, including manual dispatch, use `ubuntu-24.04`; manual publication stays hosted. See the [release rehearsal runner reference](../.agents/notes/implemented/process/2026-07-26-ci-failover-runbook.md) for persistent-store isolation and fallback limits.
 

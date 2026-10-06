@@ -206,6 +206,22 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
   },
   {
+    key: 'codexBackendConnection',
+    pkg: 'llm-pi-ai',
+    title: 'Native Codex backend controls',
+    mode: 'service',
+    consumers: ['client-ui-settings-models'],
+    note: 'Owns device login, cached model discovery, and adapter enablement through the generated Remote namespace; Codex owns its native credential file.',
+  },
+  {
+    key: 'nousConnection',
+    pkg: 'llm-pi-ai',
+    title: 'Nous device authorization controls',
+    mode: 'service',
+    consumers: ['llm-pi-ai', 'client-ui-settings-models'],
+    note: 'Owns device authorization for an explicitly configured public client, durable grant commit, and account model discovery through the generated Remote namespace.',
+  },
+  {
     key: 'deepseekLlmApiExtensions',
     pkg: 'deepseek-llm-api-extensions',
     title: 'Official DeepSeek request extensions',

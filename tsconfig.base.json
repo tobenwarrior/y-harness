@@ -151,6 +151,7 @@
       "@deepseek-ai/dsh-goal/types": ["./packages/goal/goal/src/types.ts"],
       "@deepseek-ai/dsh-goal/client": ["./packages/goal/goal/src/client.ts"],
       "@deepseek-ai/dsh-llm/types": ["./packages/llm/llm/src/types.ts"],
+      "@deepseek-ai/dsh-llm-pi-ai/types": ["./packages/llm/llm-pi-ai/src/types.ts"],
       "@deepseek-ai/dsh-llm/brand": ["./packages/llm/llm/src/brand.ts"],
       "@deepseek-ai/dsh-llm/assistant-stream": ["./packages/llm/llm/src/assistant-stream.ts"],
       "@deepseek-ai/dsh-deepseek-llm-api-extensions/types": ["./packages/llm/deepseek-llm-api-extensions/src/types.ts"],

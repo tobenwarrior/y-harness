@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write local-plugins/y-session-tools/README.md
+/y-session-tools-local-plugin-bundle:
+  en: e18874c01444dd4e
+  zh: 5715f11ed850fa1c
+/y-session-tools-local-plugin-bundle/what-it-adds:
+  en: 0cd75a72b4deae57
+  zh: 8885b929ff887a2d
+/y-session-tools-local-plugin-bundle/how-it-works:
+  en: ef82136372be571c
+  zh: 42d40b18da4ed8e1
+/y-session-tools-local-plugin-bundle/verify:
+  en: 200265ebeabdea9e
+  zh: a45a106daee7147c
+/y-session-tools-local-plugin-bundle/known-limitations:
+  en: b2ec5179aedf9301
+  zh: 6b687968fd585ff3
+/y-session-tools-local-plugin-bundle/install-remove:
+  en: e2522d699e9d8c3e
+  zh: 4094b0b56250b2e6

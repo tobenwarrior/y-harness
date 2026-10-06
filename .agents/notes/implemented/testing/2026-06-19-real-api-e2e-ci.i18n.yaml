@@ -18,11 +18,11 @@
   en: 88b945361b1d4804
   zh: 0887a653945f4dda
 /agent-note-real-api-e2e-in-ci-against-the-external-deepseek-api/decision/triggers-trusted-events-only:
-  en: 42a2fb15f00aec3a
-  zh: c4775447c863d209
+  en: 731c332da12320ca
+  zh: 0a917f516f1502a3
 /agent-note-real-api-e2e-in-ci-against-the-external-deepseek-api/decision/the-untrusted-pr-gate:
-  en: e94c28db20896508
-  zh: c8e77c54dceed035
+  en: 24ab20e1e5261f74
+  zh: baa51b22002f3e67
 /agent-note-real-api-e2e-in-ci-against-the-external-deepseek-api/decision/preflight-fail-loud-never-false-green:
   en: 07904c7ad53be5ad
   zh: 67d84d4dc6f082a9

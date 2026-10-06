@@ -1,12 +1,20 @@
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import * as yaml from 'js-yaml'
+import { satisfies } from 'semver'
 import { describe, expect, it } from 'vitest'
 
 function evaluateRunsOn(selector: unknown, context: Record<string, unknown>): unknown {
   if (typeof selector !== 'string') throw new TypeError('Runner selector must be a string')
   return runInNewContext(selector.trim().slice(3, -2), context, { timeout: 1000 })
+}
+
+function evaluateCondition(condition: unknown, context: Record<string, unknown>): unknown {
+  if (typeof condition === 'boolean') return condition
+  if (typeof condition !== 'string') throw new TypeError('Workflow condition must be a string or boolean')
+  return runInNewContext(condition.trim(), context, { timeout: 1000 })
 }
 
 const root = resolve(import.meta.dirname, '..')
@@ -284,7 +292,7 @@ describe('CI workflow', () => {
     expect(report?.run).toContain('Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append')
 
     // serial-windows: master-only standby, self-hosted, non-blocking, lives in ci-master.
-    expect(serialWindows.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+    expect(serialWindows.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/master'")
     expect(serialWindows['runs-on']).toEqual(['self-hosted', 'dsh-win-ci', 'windows'])
     expect(serialWindows.name).toBe('serial / windows (self-hosted standby)')
     // Its store must share the ReFS workspace volume for clone; the install
@@ -369,7 +377,7 @@ describe('CI workflow', () => {
       return evaluateRunsOn(expression, {
         vars,
         fromJSON: JSON.parse,
-        github: { event: { pull_request: { user: { login } } } },
+        github: { repository: 'deepseek-harness/deepseek-harness', event: { pull_request: { user: { login } } } },
       })
     }
     for (const [name, selector, variable, pool, hosted] of [
@@ -501,6 +509,27 @@ describe('CI workflow', () => {
     )
   })
 
+  it('uses pnpm with the Windows linker race fix for one immutable Wine install', () => {
+    const manifest: unknown = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
+    if (!isRecord(manifest) || typeof manifest.packageManager !== 'string' || !isRecord(manifest.devDependencies)) {
+      throw new TypeError('Root manifest must pin pnpm for workflows and local development')
+    }
+    const version = manifest.packageManager.replace(/^pnpm@/, '')
+    expect(satisfies(version, '>=11.25.0')).toBe(true)
+    expect(manifest.devDependencies.pnpm).toBe(version)
+    const desktop: unknown = JSON.parse(readFileSync(resolve(root, 'apps/desktop/package.json'), 'utf8'))
+    const nativeSystem: unknown = JSON.parse(readFileSync(resolve(root, 'native/system/package.json'), 'utf8'))
+    if (!isRecord(desktop) || !isRecord(desktop.devDependencies) || !isRecord(nativeSystem)) {
+      throw new TypeError('Desktop and native-system manifests must pin the shared pnpm toolchain')
+    }
+    expect(desktop.devDependencies.pnpm).toBe(version)
+    expect(nativeSystem.packageManager).toBe(manifest.packageManager)
+    const wineGates = readFileSync(resolve(root, 'scripts/wine-windows-gates.sh'), 'utf8')
+    expect(wineGates.match(/pnpm install --frozen-lockfile --ignore-scripts/g)).toHaveLength(1)
+    expect(wineGates).not.toMatch(/^\s*(?:if\s+)?grep[^\n]*ERR_PNPM_ENOENT/m)
+    expect(wineGates).not.toContain('snapshot_install_attempt')
+  })
+
   it('cancels superseded master runs without changing the post-merge job inventory', () => {
     const workflow = loadWorkflow('.github/workflows/ci-master.yml')
     const prWorkflow = loadWorkflow('.github/workflows/ci.yml')
@@ -533,21 +562,21 @@ describe('CI workflow', () => {
       if (!isRecord(job)) throw new TypeError(`${name} must be defined`)
       expect(job.concurrency).toBeUndefined()
       // Standby drills remain post-merge work, but share run cancellation.
-      expect(job.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+      expect(job.if).toContain("github.event_name == 'push' && github.ref == 'refs/heads/master'")
     }
 
     // Pin the post-merge runtime, Wine, and standby inventory.
-    const NOT_PUSH_REACHABLE = new Set([
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
-    ])
     const pushReachable = Object.entries(workflow.jobs)
       .filter(([, job]) => {
         if (!isRecord(job)) return false
         if (job.if === undefined) return true // unconditional: runs on every event
         if (job.if === false) return false // `if: false` parses as a boolean
         if (typeof job.if !== 'string') return true // unrecognized shape: surface it
-        return !NOT_PUSH_REACHABLE.has(job.if.trim())
+        return evaluateCondition(job.if, {
+          github: { event_name: 'push', ref: 'refs/heads/master', repository: 'deepseek-harness/deepseek-harness' },
+          inputs: {},
+          vars: {},
+        })
       })
       .map(([name]) => name)
       .sort()
@@ -700,7 +729,121 @@ describe('bubblewrap preparation script', () => {
   })
 })
 
+describe('Fork CI configuration', () => {
+  it('uses standard hosted PR runners when a fork has not selected an alternate pool', () => {
+    const workflow = loadWorkflow('.github/workflows/ci.yml')
+    for (const [name, hosted, upstream] of [
+      ['node-24', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
+      ['node-24-coverage', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
+      ['node-24-consumers', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
+      ['windows-build', 'windows-2025', 'dsh-windows-2025-16core'],
+      ['windows-coverage', 'windows-2025', 'dsh-windows-2025-16core'],
+      ['windows-native-tests', 'windows-2025', 'dsh-windows-2025-16core'],
+    ] as const) {
+      const job = workflowJob(workflow, name)
+      for (const [repository, expected] of [['tobenwarrior/y-harness', hosted], ['deepseek-harness/deepseek-harness', upstream]]) {
+        expect(evaluateRunsOn(job['runs-on'], {
+          github: { repository }, vars: {}, fromJSON: JSON.parse,
+        }), `${name} in ${repository}`).toBe(expected)
+      }
+    }
+  })
+
+  it('requires matching fork opt-ins before queuing private standby or benchmark runners', () => {
+    const workflow = loadWorkflow('.github/workflows/ci-master.yml')
+    for (const [name, variable, event] of [
+      ['serial-linux-selfhosted', 'DSH_CI_STANDBY_LINUX_ENABLED', 'push'],
+      ['serial-windows', 'DSH_CI_STANDBY_WINDOWS_ENABLED', 'push'],
+      ['larger-runner-benchmark', 'DSH_CI_RUNNER_BENCHMARKS_ENABLED', 'workflow_dispatch'],
+      ['consolidated-runner-benchmark', 'DSH_CI_RUNNER_BENCHMARKS_ENABLED', 'workflow_dispatch'],
+    ] as const) {
+      const job = workflowJob(workflow, name)
+      for (const [repository, enabled, expected] of [
+        ['deepseek-harness/deepseek-harness', '', true],
+        ['tobenwarrior/y-harness', '', false],
+        ['tobenwarrior/y-harness', 'false', false],
+        ['tobenwarrior/y-harness', 'true', true],
+      ] as const) {
+        const context = {
+          github: { repository, event_name: event, ref: 'refs/heads/master' },
+          vars: { [variable]: enabled }, inputs: { suite: name },
+        }
+        expect(evaluateCondition(job.if, context), `${name} in ${repository} enabled=${enabled}`).toBe(expected)
+        expect(evaluateCondition(job.if, { ...context, github: { ...context.github, event_name: 'pull_request' } })).toBe(false)
+      }
+    }
+  })
+})
+
 describe('DeepSeek e2e workflow', () => {
+  it('requires fork opt-in and trusted PR authors before exposing API credentials', () => {
+    const workflow = loadWorkflow('.github/workflows/e2e.yml')
+    const e2e = workflowJob(workflow, 'e2e')
+    const configuration = workflowJob(workflow, 'configuration')
+    const build = workflowJob(loadWorkflow('.github/workflows/build-exe-for-python-sdk.yml'), 'build')
+    if (!Array.isArray(build.steps)) throw new TypeError('Python wheel builder must define steps')
+    const apiSteps = build.steps.filter(isRecord).filter(step => typeof step.name === 'string'
+      && /^(Preflight|Run) installed-wheel real API/.test(step.name))
+    expect(apiSteps).toHaveLength(4)
+
+    for (const [repository, enabled, event, headRepository, author, expected] of [
+      ['deepseek-harness/deepseek-harness', '', 'push', '', 'maintainer', true],
+      ['deepseek-harness/deepseek-harness', 'false', 'push', '', 'maintainer', true],
+      ['tobenwarrior/y-harness', '', 'push', '', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'false', 'push', '', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'true', 'push', '', 'maintainer', true],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'maintainer', true],
+      ['deepseek-harness/deepseek-harness', 'true', 'pull_request', 'contributor/harness', 'maintainer', false],
+      ['deepseek-harness/deepseek-harness', 'true', 'pull_request', 'deepseek-harness/deepseek-harness', 'dependabot[bot]', false],
+    ] as const) {
+      const context = {
+        github: {
+          repository, event_name: event, actor: 'maintainer',
+          event: { pull_request: { head: { repo: { full_name: headRepository, fork: repository !== 'deepseek-harness/deepseek-harness' } }, user: { login: author } } },
+        },
+        vars: { DSH_REAL_API_TESTS_ENABLED: enabled },
+        inputs: { ci: true },
+      }
+      expect(evaluateCondition(e2e.if, context), `${repository} ${event} ${author} enabled=${enabled}`).toBe(expected)
+      expect(evaluateCondition(configuration.if, context)).toBe(repository !== 'deepseek-harness/deepseek-harness' && enabled !== 'true')
+      for (const step of apiSteps) {
+        const os = String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux'
+        expect(evaluateCondition(step.if, { ...context, runner: { os } }), String(step.name)).toBe(expected)
+        expect(evaluateCondition(step.if, { ...context, inputs: { ci: false }, runner: { os } })).toBe(false)
+      }
+    }
+
+    expect(JSON.stringify(configuration.steps)).toContain('validation is skipped')
+    const reports = build.steps.filter(isRecord).filter(step => typeof step.name === 'string'
+      && step.name.startsWith('Report skipped installed-wheel real API'))
+    expect(reports).toHaveLength(2)
+    for (const step of reports) {
+      expect(JSON.stringify(step)).toContain('keyless black-box tests still run')
+      const runner = { os: String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux' }
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: {}, runner })).toBe(true)
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'deepseek-harness/deepseek-harness' }, vars: {}, runner })).toBe(false)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('fails the API preflight without a key and never prints a configured key', () => {
+    const e2e = workflowJob(loadWorkflow('.github/workflows/e2e.yml'), 'e2e')
+    if (!Array.isArray(e2e.steps)) throw new TypeError('DeepSeek e2e workflow must define steps')
+    const preflight = e2e.steps.filter(isRecord).find(step => step.name === 'Preflight (require DEEPSEEK_API_KEY)')
+    if (!preflight || typeof preflight.run !== 'string') throw new TypeError('DeepSeek e2e must require a key')
+    const missing = spawnSync('bash', ['-c', preflight.run], { env: { DEEPSEEK_API_KEY: '' }, encoding: 'utf8' })
+    expect(missing.error).toBeUndefined()
+    expect(missing.signal).toBeNull()
+    expect(missing.status).toBe(1)
+    expect(missing.stdout).toContain('Configure the repo secret DEEPSEEK_API_KEY_EXTERNAL')
+
+    const syntheticKey = 'ci-test-synthetic-credential'
+    const configured = spawnSync('bash', ['-c', preflight.run], { env: { DEEPSEEK_API_KEY: syntheticKey }, encoding: 'utf8' })
+    expect(configured.error).toBeUndefined()
+    expect(configured.signal).toBeNull()
+    expect(configured.status).toBe(0)
+    expect(configured.stdout + configured.stderr).not.toContain(syntheticKey)
+  })
+
   it('prepares bubblewrap from the pinned payload without a package transaction', () => {
     const workflow = loadWorkflow('.github/workflows/e2e.yml')
     const e2e = workflowJob(workflow, 'e2e')
@@ -886,7 +1029,7 @@ describe('Python release workflows', () => {
       env: { DEEPSEEK_API_KEY: '${{ secrets.DEEPSEEK_API_KEY_EXTERNAL }}' },
     })
     expect(String(realApiPreflightPosix.if)).toContain('inputs.ci')
-    expect(String(realApiPreflightPosix.if)).toContain('head.repo.fork')
+    expect(String(realApiPreflightPosix.if)).toContain('head.repo.full_name == github.repository')
     expect(String(realApiPreflightPosix.if)).toContain('dependabot[bot]')
     expect(realApiPreflightWindows).toMatchObject({ shell: 'pwsh' })
     for (const step of [installedRealApiPosix, installedRealApiWindows]) {

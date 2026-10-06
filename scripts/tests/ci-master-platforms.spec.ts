@@ -92,7 +92,7 @@ describe('master-only platform scheduling', () => {
     }))
   })
 
-  it('runs all three deferred carriers on master pushes with fail-loud API credentials', () => {
+  it('runs all three deferred carriers on master pushes with an opted-in API preflight', () => {
     const master = workflow('ci-master.yml')
     expect(master.on.push).toEqual({ branches: ['master'] })
     expect(Object.keys(master.on).sort()).toEqual(['push', 'workflow_dispatch'])
@@ -113,8 +113,9 @@ describe('master-only platform scheduling', () => {
     const preflight = build.steps!.find(step => step.name === 'Preflight installed-wheel real API test (POSIX)')!
     expect(preflight.if).toContain('inputs.ci')
     expect(preflight.if).toContain("github.event_name != 'pull_request'")
-    expect(preflight.if).toContain('github.event.pull_request.head.repo.fork')
-    expect(preflight.if).toContain("github.event.pull_request.user.login == 'dependabot[bot]'")
+    expect(preflight.if).toContain('github.event.pull_request.head.repo.full_name == github.repository')
+    expect(preflight.if).toContain("vars.DSH_REAL_API_TESTS_ENABLED == 'true'")
+    expect(preflight.if).toContain("github.event.pull_request.user.login != 'dependabot[bot]'")
     expect(preflight.run).toContain('exit 1')
   })
 

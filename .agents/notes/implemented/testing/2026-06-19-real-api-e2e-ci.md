@@ -26,13 +26,18 @@ Internal inference cost is not the limiting constraint, so the workflow optimize
 
 `workflow_dispatch` + `push` to `main`/`master` + nightly `schedule` (`17 0 * * *`, 08:17 Asia/Shanghai) + `pull_request`. Push gives a post-merge signal; schedule catches external-API drift; dispatch is the manual escape hatch; and trusted pull requests get a pre-merge gate. That pre-merge signal deliberately accepts the larger key-exposure surface described under § Security.
 
+The upstream repository always enables real-API validation. Fork repositories opt in with `DSH_REAL_API_TESTS_ENABLED=true` after configuring their own `DEEPSEEK_API_KEY_EXTERNAL` secret. Without that opt-in, the API job is skipped and a configuration job reports the missing enablement in the run summary. Enabled repositories retain the missing-secret failure instead of reporting a self-skipped suite as passing.
+
 ### The untrusted-PR gate
 
-GitHub withholds repo secrets from two kinds of PR: those from **forks**, and **Dependabot** PRs (same-repo branch, so `head.repo.fork == false`, but secrets are still withheld). A job-level `if:` skips the whole job for both:
+GitHub withholds repo secrets from cross-repository PRs and **Dependabot** PRs. The job-level `if:` combines repository enablement with the head repository and PR author checks; a same-repository PR inside an opted-in fork remains eligible:
 
 ```
-github.event_name != 'pull_request'
-  || !(github.event.pull_request.head.repo.fork || github.event.pull_request.user.login == 'dependabot[bot]')
+(github.repository == 'deepseek-harness/deepseek-harness'
+ || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+&& (github.event_name != 'pull_request'
+    || (github.event.pull_request.head.repo.full_name == github.repository
+        && github.event.pull_request.user.login != 'dependabot[bot]'))
 ```
 
 The Dependabot clause keys on the PR **author** (`pull_request.user.login`), not `github.actor` (the run trigger): a maintainer who reopens or re-runs a Dependabot PR would make `github.actor` a human while the PR is still keyless, and an author-based test stays correct across that. A job skipped by a **job-level** `if:` reports as a *successful* check (unlike a workflow/trigger-level skip, which stays pending), so this workflow is safe to mark as a required status check if desired — a fork/Dependabot PR's skipped-but-green check does not block the merge.

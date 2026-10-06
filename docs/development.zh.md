@@ -12,7 +12,7 @@
 
 - Node.js 支持 22.19+ 与 24+。CI 覆盖 22.19、24 和 26；见 [Node 引擎下限 Agent Note](../.agents/notes/implemented/process/2026-07-06-node-engine-floor.zh.md)。
 - 启用 Node.js TypeScript 类型剥离。仓库构建脚本用 tsdown 的 native 配置加载器加载 `tsdown.config.ts`，因此当 `NODE_OPTIONS` 含 `--no-experimental-strip-types` 或 Node.js 构建缺少 TypeScript 支持时会失败；`pnpm run build` 会先检查这一条件并指出原因。
-- 启用了 Corepack 的 pnpm。仓库在 `package.json` 中固定使用 `pnpm@11.7.0`；如果 `pnpm --version` 无法通过 Corepack 解析，请先运行 `corepack enable`。
+- 启用了 Corepack 的 pnpm。仓库在 `package.json` 中固定使用 `pnpm@11.25.0`；如果 `pnpm --version` 无法通过 Corepack 解析，请先运行 `corepack enable`。
 - Git 2.26 或更高版本；钩子设置会启用 Git 的 worktree 专属配置扩展。
 - 可选：一个 DeepSeek API key，用于 Web、headless 和 ACP（Agent Client Protocol）自动化 agent（智能体）演示以及真实 API 的 e2e 测试。
 
@@ -137,6 +137,8 @@ vendor manifest 守卫检查 `vendor/*/src` 下的改动是否连同对应的 `v
 ### CI 门禁
 
 keyless [CI 工作流](../.github/workflows/ci.yml) 将独立门禁分组到若干宽粒度 lane，并在受支持的 Node 版本上运行一组较小的兼容性检查。产物消费方在各自 lane 内等待一次 build。必需 benchmark 在标准 GitHub 托管 Linux 上独立运行；[benchmark 运行器说明](../benchmarks/AGENTS.md)拥有路由及 job 超时。单独的真实 API 工作流按其配置的 worker 上限运行 `pnpm run test:e2e`。当前门禁和 job 清单以 [scripts/run-gates.ts](../scripts/run-gates.ts) 和工作流文件为准。
+
+fork 仓库的 PR 默认使用标准 GitHub 托管 Linux 和 Windows 运行器。真实 DeepSeek API 验证（包括已安装 wheel 的冒烟测试）需要 fork 自己配置 `DEEPSEEK_API_KEY_EXTERNAL` secret，并将仓库变量 `DSH_REAL_API_TESTS_ENABLED` 设为 `true`。未启用的 API 检查会报告跳过；启用后若缺少 secret，检查会失败。上游始终要求配置其 secret。fork 可分别通过 `DSH_CI_STANDBY_LINUX_ENABLED=true` 或 `DSH_CI_STANDBY_WINDOWS_ENABLED=true` 启用已配置的私有备用池；`DSH_CI_RUNNER_BENCHMARKS_ENABLED=true` 启用私有运行器的手动 benchmark 分档。现有的 `DSH_CI_FAILOVER_LINUX` 与 `DSH_CI_FAILOVER_WINDOWS` 开关用于选择已配置的替代运行器池。
 
 不带凭据的 dsh 依赖布局检查与 dsh/vendor 打包演练仅在 `DSH_CI_FAILOVER_LINUX=selfhosted`，且事件为受信任的 master 推送或同仓库、非 fork、非 Dependabot 拉取请求时使用现有 Linux 自托管池。其余情况（包括手动触发）均使用 `ubuntu-24.04`；手动发布仍使用托管运行器。持久化存储隔离与回退限制见[发布演练运行器说明](../.agents/notes/implemented/process/2026-07-26-ci-failover-runbook.zh.md)。
 
