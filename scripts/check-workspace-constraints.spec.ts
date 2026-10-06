@@ -378,6 +378,19 @@ it('requires Office skill bodies and helpers in the published payload', () => {
   } })).toEqual([expect.stringContaining('package.json files must be')])
 })
 
+it('requires the Nous license and emitted JavaScript in the pi-ai publication payload', () => {
+  const dir = 'packages/llm/llm-pi-ai'
+  const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
+  expect(expectedDshPackageFiles(manifest)).toContain('NOUS-LICENSE.txt')
+  expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
+  for (const omitted of ['NOUS-LICENSE.txt', 'lib/types/**/*.js']) {
+    expect(checkWorkspaceManifest({ dir, manifest: { ...manifest, files: manifest.files!.filter(file => file !== omitted) } }))
+      .toEqual([expect.stringContaining('package.json files must be')])
+  }
+  expect(expectedDshPackageFiles({ ...manifest, name: '@deepseek-ai/dsh-other-provider' }))
+    .not.toContain('NOUS-LICENSE.txt')
+})
+
 it('requires the local speech worker and locked runtime in the published payload', () => {
   const dir = 'packages/experimental/speech-to-text-sensevoice'
   const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
