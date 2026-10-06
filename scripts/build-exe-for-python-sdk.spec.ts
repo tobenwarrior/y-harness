@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { PROFILE_TEMPLATES } from '../packages/boot/app-boot/src/profile.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const script = resolve(root, 'scripts/build-exe-for-python-sdk.ts')
@@ -23,6 +24,19 @@ function run(env: NodeJS.ProcessEnv, ...args: string[]) {
 }
 
 describe('Python runtime executable builder CLI', () => {
+  it('retains SDK profile bundles when legacy deployment restores only direct dependencies', () => {
+    const runtimeManifest = JSON.parse(readFileSync(resolve(root, 'python/sdk-runtime/package.json'), 'utf8')) as {
+      dependencies: Record<string, string>
+    }
+    for (const profile of ['sdk', 'sdk-minimal']) {
+      const bundles = PROFILE_TEMPLATES[profile]?.bundles
+      if (!bundles?.length) throw new Error(`Expected bundled profile ${profile}`)
+      for (const bundle of bundles) {
+        expect(runtimeManifest.dependencies[bundle], `${profile} profile bundle ${bundle}`).toBe('workspace:*')
+      }
+    }
+  })
+
   it('keeps the single-file dispatcher on the Python packaging surface', () => {
     const bootstrapPath = resolve(root, 'python/sdk-runtime/runtime-bootstrap.mjs')
     const bootstrap = readFileSync(bootstrapPath, 'utf8')
