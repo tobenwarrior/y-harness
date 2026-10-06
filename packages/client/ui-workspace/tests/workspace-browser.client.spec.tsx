@@ -513,7 +513,7 @@ describe('WorkspaceBrowser', () => {
       fireEvent.click(screen.getByRole('menuitem', { name }))
     }
 
-    // 仅显示已归档 hides the live rows and shows the archived one.
+    // Show archived only hides the live rows and shows the archived one.
     pick('仅显示已归档')
     expect(b.store.getSnapshot().archivedFilter).toBe('only')
     expect(screen.queryByText('kept')).toBeNull()
@@ -531,7 +531,7 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByText('kept')).toBeTruthy()
     expect(screen.getByText('stored')).toBeTruthy()
 
-    // 隐藏已归档 is the explicit way back to the default hidden view.
+    // Hide archived is the explicit way back to the default hidden view.
     pick('隐藏已归档')
     expect(b.store.getSnapshot().archivedFilter).toBe('default')
     expect(screen.getByText('kept')).toBeTruthy()

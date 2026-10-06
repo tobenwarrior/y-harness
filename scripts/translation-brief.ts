@@ -206,7 +206,7 @@ export function computeMechanicalUpdate(confirmedSource: string, currentSource: 
 export interface TerminologyRow {
   english: string
   chinese: string
-  /** The 首次出现 cell (first-occurrence rendering), possibly empty. */
+  /** The first-occurrence rendering cell, possibly empty. */
   first: string
   /** The verbatim table row. */
   line: string
@@ -301,7 +301,7 @@ export interface FirstOccurrenceContext {
 
 /**
  * Track document-wide first occurrences of the relevant English terms. The
- * 首次出现 rendering attaches to a term's first occurrence, so when an edit
+ * first-occurrence rendering attaches to a term's first occurrence, so when an edit
  * moves that occurrence across spans, both the old and new spans need
  * counterpart edits even when only one of them changed.
  *

@@ -70,7 +70,7 @@ describe('web e2e: preset roster guidance', () => {
     expect(shown).toContain("disabled: !!js process.platform === 'win32'\n")
     expect(shown).not.toContain('__jsExpr')
     expect(await viewer.getByRole('textbox').count()).toBe(0)
-    // The header X and the footer button share the 关闭 name; the footer one is last.
+    // The header X and the footer button share the Close name; the footer one is last.
     await viewer.getByRole('button', { name: '关闭', exact: true }).last().click()
     await viewer.waitFor({ state: 'detached', timeout: 10_000 })
     expect(await settings.getByRole('button', { name: '新任务默认: 标准模式', exact: true }).getAttribute('aria-pressed')).toBe('true')

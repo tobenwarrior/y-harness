@@ -1,6 +1,6 @@
 // Web e2e scenarios: the settings surface — the modal shell (trigger, nav,
 // section switching, both close paths), the Appearance preference row (the
-// real theme gesture — click 深色 and the whole cascade runs: ThemeRuntime preference -> Host settings
+// real theme gesture — click the dark theme and the whole cascade runs: ThemeRuntime preference -> Host settings
 // -> theme/change -> ui-layout's presenter -> body attribute -> alias token +
 // browser theme-color metadata)
 // the Language row and busy-state Enter preference (both Host-backed), plus
@@ -689,7 +689,7 @@ describe('web e2e: settings modal and General preferences', () => {
     await expect.poll(async () => readFile(join(scaffold.harnessHome, 'profiles', 'scaffold', 'cordis.patch.yml'), 'utf8'), { timeout: 5_000 })
       .toContain('preference: en')
     // Reload keeps English; then restore zh so shared page state (and the
-    // other specs' 设置-anchored selectors + goldens) see the default again.
+    // other specs' Settings-anchored selectors + goldens) see the default again.
     const warningStart = tripwire.warnings.length
     await page.reload({ waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })

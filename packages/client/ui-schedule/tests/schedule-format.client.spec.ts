@@ -272,7 +272,7 @@ describe('formatScheduleNextRun', () => {
     new Intl.DateTimeFormat('en-US', { year: 'numeric', timeZone }).format(Date.now())
 
   // The month is a locale-owned name plus the locale's own clock: en writes
-  // `Oct 1, 3:00 PM` and zh-CN writes `10月1日 23:00`. Neither locale can emit
+  // `Oct 1, 3:00 PM` and zh-CN writes the localized month/day and 24-hour time. Neither locale can emit
   // the retired zero-padded `MM-DD` pair.
   it('names the month and the clock field pair in each locale, in the given zone', () => {
     expect(formatScheduleNextRun(`${yearIn('UTC')}-10-01T15:00:00.000Z`, 'en', 'UTC')).toBe('Oct 1, 3:00 PM')
@@ -296,7 +296,7 @@ describe('formatScheduleNextRun', () => {
       expect(shown).toBe(expected(locale, timeZone))
       // No two-digit month-day pair, whatever separators the locale uses.
       expect(shown).not.toMatch(/\d{2}-\d{2}/)
-      // The name and the clock are both present: a month word or 月, an hour
+      // The name and the clock are both present: a month name or suffix, an hour
       // marker, and a day number.
       expect(shown).toMatch(locale === 'zh-CN' ? /月\s*\d{1,2}日/ : /[A-Za-z]{3}/)
       expect(shown).toMatch(/\d{1,2}:\d{2}/)

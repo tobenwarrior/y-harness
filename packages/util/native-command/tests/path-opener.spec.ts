@@ -88,7 +88,7 @@ describe('native path opener', () => {
     // the encoded file URI is what keeps the whole path in one field. Only those
     // two separators are escaped on top of the URI's own encoding: Explorer
     // rejects percent-encoded non-ASCII and opens Documents instead, while it
-    // resolves the literal characters, so `报告` stays literal here. UNC takes
+    // resolves the literal characters, so the non-ASCII basename stays literal here. UNC takes
     // the same encoding.
     ["C:\\work\\o'reilly, & 100%.txt", "file:///C:/work/o'reilly%2C%20&%20100%25.txt"],
     ['C:\\work\\plain.txt', 'file:///C:/work/plain.txt'],

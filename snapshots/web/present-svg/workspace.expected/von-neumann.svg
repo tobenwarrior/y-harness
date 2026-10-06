@@ -71,7 +71,7 @@
   <text x="645" y="184" text-anchor="middle" font-size="10.5" fill="#bf3989">数据(输出)</text>
   <text x="645" y="236" text-anchor="middle" font-size="10" fill="#555">控制</text>
 
-  <!-- Memory <-> Input/Output hints: 存储器与 I/O 也通过总线交换 -->
+  <!-- Memory <-> Input/Output hints: Memory and I/O also exchange data through the bus -->
   <path d="M125,272 L125,300 Q125,340 175,340 L298,340" fill="none" stroke="#8c959f" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
   <text x="160" y="328" text-anchor="middle" font-size="10" fill="#666" transform="rotate(-8 160 328)">总线</text>
 
