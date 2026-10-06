@@ -22,6 +22,15 @@ model `session_search`, `session_event_search`, `session_trace`,
 `session_event_trace`, and `session_event_read` for reading other sessions'
 history.
 
+The two search tools additionally need the SQLite index, which both shipped
+layers configure with `openAt: never` — the sidebar's own search matches titles
+and workspace names only. The bundle's patch therefore overrides
+`session-query-sqlite` to `openAt: first-search`, the base patch's documented
+opt-in: it keeps the ephemeral in-memory index and defers the `node:sqlite`
+import and handle to the first search. Without that override the two search
+tools are registered but refuse with *"session search is disabled in this
+deployment"*, while the three trace/read tools work regardless.
+
 The fork's `packages/client/ui-workspace` opens this same menu on right-click,
 so every row above is reachable by right-clicking a session row.
 

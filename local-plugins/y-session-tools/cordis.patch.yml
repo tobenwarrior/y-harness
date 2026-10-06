@@ -9,6 +9,19 @@
 # is a separate capability: the sidebar actions work without it, and the model
 # sees five more tool schemas with it. Cross-session reads are authorized only
 # when the target Session's cwd matches the caller's.
+#
+# The two search tools need the SQLite index, which both shipped layers
+# configure with `openAt: never` — the sidebar's own search matches titles and
+# workspace names only. `first-search` is the base patch's documented opt-in:
+# it keeps the ephemeral in-memory index and defers the `node:sqlite` import
+# and handle to the first search, so startup stays quiet. Without this override
+# `session_search` and `session_event_search` are registered but refuse with
+# "session search is disabled in this deployment".
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: first-search
+
 - insert:
     - id: y-session-tools
       name: '@local/y-session-tools'
