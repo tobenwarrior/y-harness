@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process'
 import { dirname, isAbsolute, join } from 'node:path'
 import { Transform } from 'node:stream'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
-import { declineCodexRequest } from './codex-backend.ts'
 import type { CodexPeer } from './codex-backend.ts'
 /** Absolute deployment-owned paths one Codex child is launched with. */
 export interface CodexProcessOptions { binary: string; home: string; shellHome: string; cwd: string; nodePath: string }
@@ -13,8 +12,8 @@ export interface CodexProcessOptions { binary: string; home: string; shellHome: 
  * @returns the argv passed to the pinned Codex binary.
  */
 export function codexProcessArguments(options: CodexProcessOptions): string[] {
-  return ['app-server', '--listen', 'stdio://', '-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="on-request"',
-    '-c', 'analytics.enabled=false', '-c', 'feedback.enabled=false', '-c', 'history.persistence="none"', '-c', 'web_search="disabled"',
+  return ['app-server', '--listen', 'stdio://',
+    '-c', 'analytics.enabled=false', '-c', 'feedback.enabled=false', '-c', 'history.persistence="none"',
     '-c', 'shell_environment_policy.inherit="none"', '-c', `shell_environment_policy.set={HOME=${JSON.stringify(options.shellHome)},PATH="/usr/bin:/bin"}`]
 }
 /**
@@ -33,10 +32,14 @@ export function boundedCodexInput(maximum = 4 * 1024 * 1024): Transform {
 /**
  * Launch the pinned native Codex app server over stdio with a cleared environment.
  * @param options - absolute binary, home, shell-home, cwd, and Node paths.
+ * @param handleRequest - routes native requests to the owning Harness turn.
  * @returns the connected peer; closing it terminates the child.
  * @throws when any launch path is not absolute.
  */
-export function startCodexProcess(options: CodexProcessOptions): CodexPeer {
+export function startCodexProcess(
+  options: CodexProcessOptions,
+  handleRequest: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+): CodexPeer {
   if (![options.binary, options.home, options.shellHome, options.cwd, options.nodePath].every(isAbsolute)) throw new Error('Configure absolute local Codex paths before using this backend.')
   const child = spawn(options.nodePath, [options.binary, ...codexProcessArguments(options)], { cwd: options.cwd, env: {
     PATH: `${dirname(options.nodePath)}:/usr/bin:/bin`, HOME: options.shellHome, CODEX_HOME: options.home,
@@ -55,7 +58,7 @@ export function startCodexProcess(options: CodexProcessOptions): CodexPeer {
     for (const callback of listeners) callback('__closed', {})
     listeners.clear()
   }
-  transport.onRequest(declineCodexRequest)
+  transport.onRequest(handleRequest)
   transport.onNotification((method, params) => { for (const callback of listeners) callback(method, params) })
   bounded.on('error', close); child.on('error', close); child.once('exit', close); child.stdin.on('error', close)
   // Native diagnostics can contain sign-in details; never relay stderr to logs or the renderer.

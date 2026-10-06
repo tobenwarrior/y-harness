@@ -10,6 +10,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { CodexBackendAdapter, CodexBackendRuntime } from './codex-backend.ts'
 import type { CodexPreferences } from './codex-backend.ts'
 import { startCodexProcess } from './codex-backend-process.ts'
+import { resolveCodexAccess } from './codex-backend-access.ts'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
 
 declare module '@deepseek-ai/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
@@ -67,7 +68,8 @@ export class CodexBackendConnection extends TypertRemoteService {
         if (registration === undefined) { if (routes.length > 0) registration = this.ctx.llm.registerAdapter(routes, adapter) }
         else registration.replace(routes)
       }
-      const runtime = new CodexBackendRuntime({ connect: () => Promise.resolve(startCodexProcess(options)), cwd: options.cwd, preferences,
+      const runtime = new CodexBackendRuntime({ connect: handleRequest => Promise.resolve(startCodexProcess(options, handleRequest)),
+        resolveAccess: request => resolveCodexAccess(this.ctx, request), preferences,
         resolveAttachments: () => this.ctx.get('attachments'),
         persist: async (next) => {
           await mkdir(options.home, { recursive: true, mode: 0o700 })

@@ -5,6 +5,7 @@ import { LlmAdapter, ReasoningEffortId, ServiceTierId, offloadedImageText } from
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
+import type { CodexTurnAccess } from './codex-backend-access.ts'
 
 type Obj = Record<string, unknown>
 function obj(value: unknown): Obj { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {} }
@@ -118,14 +119,14 @@ export interface CodexPreferences {
   auto?: boolean
 }
 interface RuntimeOptions {
-  connect: () => Promise<CodexPeer>
-  cwd: string
+  connect: (handleRequest: (method: string, params: Obj) => Promise<unknown>) => Promise<CodexPeer>
+  resolveAccess: (options: GenerateOptions) => CodexTurnAccess
   preferences: CodexPreferences
   persist: (preferences: CodexPreferences) => Promise<void>
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
 }
-interface ThreadCursor { id: string; marker: string; input: string; instructions: string }
+interface ThreadCursor { id: string; marker: string; input: string; instructions: string; access: string }
 /** Lazy process and account lifecycle; merely mounting Models never starts Codex. */
 export class CodexBackendRuntime {
   private peer: CodexPeer | undefined
@@ -138,6 +139,7 @@ export class CodexBackendRuntime {
   private disposed = false
   private signingIn = false
   private readonly cursors = new Map<string, ThreadCursor>()
+  private activeRequest: { threadId: string; turnId: string | undefined; access: CodexTurnAccess; items: Map<string, Obj> } | undefined
   constructor(private readonly options: RuntimeOptions) {}
   /**
    * Read display state without touching the native process.
@@ -157,7 +159,13 @@ export class CodexBackendRuntime {
     if (this.disposed) throw new Error('Codex backend is closed.')
     if (this.peer !== undefined) return this.peer
     this.opening ??= (async () => {
-      const peer = await this.options.connect()
+      const peer = await this.options.connect((method, params) => {
+        const active = this.activeRequest
+        if (active === undefined || params.threadId !== active.threadId
+          || (active.turnId !== undefined && params.turnId !== active.turnId)) return declineCodexRequest(method, params)
+        return active.access.request(method, { ...params,
+          ...(active.items.has(text(params.itemId)) ? { item: active.items.get(text(params.itemId)) } : {}) })
+      })
       try {
         await peer.request('initialize', { clientInfo: { name: 'deepseek-harness-local', title: 'DeepSeek Harness', version: '0.2.1-alpha.1' }, capabilities: { experimentalApi: false } })
         if (this.disposed) { peer.close(); throw new Error('Codex backend is closed.') }
@@ -287,8 +295,10 @@ export class CodexBackendRuntime {
    */
   async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     if (this.running > 0 || this.signingIn || this.loginId !== undefined) throw new Error('Finish the active Codex operation first.')
+    const lifetime = new AbortController()
+    const signal = options.signal === undefined ? lifetime.signal : AbortSignal.any([options.signal, lifetime.signal])
     this.running++
-    try { yield* this.streamTurn(options) } finally { this.running-- }
+    try { yield* this.streamTurn({ ...options, signal }) } finally { lifetime.abort(); this.running-- }
   }
   private async *streamTurn(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     if (!this.options.preferences.enabled) throw new Error('Enable the optional Codex backend in Models first.')
@@ -299,24 +309,31 @@ export class CodexBackendRuntime {
     const tier = options.serviceTier ?? this.options.preferences.tiers[model.id] ?? 'default'
     if (tier !== 'default' && !model.serviceTiers.some(choice => choice.id === tier)) throw new Error('That processing tier is not in the native Codex catalog.')
     options.signal?.throwIfAborted()
+    const access = this.options.resolveAccess(options)
+    const accessKey = JSON.stringify([access.cwd, access.sandbox, access.approvalPolicy, access.sandboxPolicy])
     const history = projectCodexHistory(options.messages)
     const instructions = [options.system, ...options.messages.filter(message => message.role === 'system').flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])),
-      'Use your native Codex tools. Harness tool descriptions in prior context do not grant access. This backend has a read-only sandbox; approval requests are declined.'].filter(Boolean).join('\n\n')
+      'Use your native Codex tools. Harness tool descriptions in prior context do not grant access.'].filter(Boolean).join('\n\n')
     const peer = await this.ensure(); await this.readAccount(peer)
     if (!this.connected) throw new Error('Sign in to the separate Codex profile before sending a turn.')
     const key = options.purpose === undefined && options.sessionId !== undefined ? `${options.sessionId}/${options.model}` : randomUUID()
     let cursor = this.cursors.get(key)
     const markerIndex = cursor === undefined ? -1 : options.messages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
     const prefix = markerIndex < 0 ? '' : JSON.stringify(projectCodexHistory(options.messages.slice(0, markerIndex)))
-    const continuing = cursor !== undefined && prefix === cursor.input && cursor.instructions === instructions
+    const continuing = cursor !== undefined && prefix === cursor.input
+      && cursor.instructions === instructions && cursor.access === accessKey
     if (!continuing) {
-      const result = obj(await peer.request('thread/start', { model: options.model, cwd: this.options.cwd, sandbox: 'read-only', approvalPolicy: 'on-request', ephemeral: false, developerInstructions: instructions }))
+      const result = obj(await peer.request('thread/start', { model: options.model, cwd: access.cwd, sandbox: access.sandbox,
+        approvalPolicy: access.approvalPolicy, approvalsReviewer: 'user', ephemeral: false, developerInstructions: instructions,
+        config: { sandbox_workspace_write: { writable_roots: access.writableRoots, network_access: true,
+          exclude_tmpdir_env_var: true, exclude_slash_tmp: true } } }))
       const id = text(obj(result.thread).id)
       if (!id) throw new Error('Codex returned an invalid thread.')
-      cursor = { id, marker: randomUUID(), input: '', instructions }
+      cursor = { id, marker: randomUUID(), input: '', instructions, access: accessKey }
     }
     if (cursor === undefined) throw new Error('Codex thread was not created.')
     const activeCursor = cursor
+    const activeRequest = { threadId: activeCursor.id, access, turnId: undefined as string | undefined, items: new Map<string, Obj>() }
     const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
     const transcript = suffix.map(({ role, text: entryText }) => ({ role, text: entryText }))
     const prompt = suffix.length === 1 && suffix[0]?.role === 'user' ? suffix[0].text : `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`
@@ -330,6 +347,11 @@ export class CodexBackendRuntime {
     let wake: (() => void) | undefined
     const unsubscribe = peer.subscribe((method, params) => {
       if (method !== '__closed' && params.threadId !== activeCursor.id) return
+      if (method === 'item/started' && (activeRequest.turnId === undefined || params.turnId === activeRequest.turnId)) {
+        const item = obj(params.item)
+        if (item.type === 'fileChange') activeRequest.items.set(text(item.id), item)
+      }
+      if (method === 'item/completed') activeRequest.items.delete(text(obj(params.item).id))
       if (queue.length >= 4096) { queue.length = 0; queue.push({ method: '__overflow', params: {} }); peer.close() }
       else queue.push({ method, params })
       wake?.()
@@ -343,9 +365,12 @@ export class CodexBackendRuntime {
     const blocks = new Map<string, { index: number; text: string; ended: boolean }>()
     let usage: TokenUsage | undefined
     try {
+      this.activeRequest = activeRequest
       const result = obj(await peer.request('turn/start', { threadId: activeCursor.id, model: options.model, effort, serviceTier: tier === 'priority' ? 'fast' : tier,
-        input: [{ type: 'text', text: prompt, text_elements: [] }, ...imageInputs], approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly', networkAccess: false } }))
+        cwd: access.cwd, input: [{ type: 'text', text: prompt, text_elements: [] }, ...imageInputs],
+        approvalPolicy: access.approvalPolicy, approvalsReviewer: 'user', sandboxPolicy: access.sandboxPolicy }))
       turnId = text(obj(result.turn).id)
+      activeRequest.turnId = turnId
       if (!turnId) throw new Error('Codex returned an invalid turn.')
       options.signal?.throwIfAborted()
       while (!terminal) {
@@ -398,6 +423,7 @@ export class CodexBackendRuntime {
         }
       }
     } finally {
+      if (this.activeRequest === activeRequest) this.activeRequest = undefined
       unsubscribe(); options.signal?.removeEventListener('abort', onAbort)
       if (!terminal) { this.cursors.delete(key); onAbort() }
     }

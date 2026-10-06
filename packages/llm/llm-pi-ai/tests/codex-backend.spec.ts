@@ -22,7 +22,7 @@ function fixture(models: unknown = catalog, resolveAttachments?: () => Attachmen
     close: vi.fn(),
   }
   const runtime = new CodexBackendRuntime({ connect: async () => peer,
-    cwd: '/isolated/project', persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
+    resolveAccess: () => ({ cwd: '/session/project', sandbox: 'workspace-write', writableRoots: ['/session/project', '/tmp'], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true }, request: declineCodexRequest }), persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
     ...resolveAttachments === undefined ? {} : { resolveAttachments } })
   return { runtime, request, peer,
     emit: (method: string, params: Record<string, unknown>) => { for (const cb of listeners) cb(method, params) },
@@ -90,11 +90,11 @@ describe('Codex native backend', () => {
       messages: [{ role: 'user', content: [{ type: 'text', text: 'p' }] }] })) { /* consume */ }
     expect(request.mock.calls.find(x => x[0] === 'turn/start')?.[1]).toMatchObject({ serviceTier: 'default' })
   })
-  it('streams native answer and sends exact Ultra with restrictive policy, no Harness tools', async () => {
+  it('streams native answer and sends exact Ultra with session policy, no Harness tools', async () => {
     const { runtime, request } = fixture(); await runtime.refresh(); await runtime.configure(true, 'gpt-6.1-sol', 'priority')
     const chunks = []; for await (const chunk of runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('ultra'), system: 'system', messages: [{ role: 'user', content: [{ type: 'text', text: 'prompt' }] }], tools: [{ name: 'shell', description: 'Harness shell', parameters: {} }] })) chunks.push(chunk)
     const turn = request.mock.calls.find(x => x[0] === 'turn/start')?.[1]
-    expect(turn).toMatchObject({ effort: 'ultra', serviceTier: 'fast', approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly', networkAccess: false } }); expect(turn).not.toHaveProperty('tools'); expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'hello' }); expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(turn).toMatchObject({ effort: 'ultra', serviceTier: 'fast', approvalPolicy: 'on-request', cwd: '/session/project', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true } }); expect(turn).not.toHaveProperty('tools'); expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'hello' }); expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
   })
   it('rejects missing or unadvertised efforts instead of converting Ultra to Max', async () => {
     const { runtime } = fixture(); await runtime.refresh(); await runtime.configure(true); const call = runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('invented'), messages: [] }); await expect(call.next()).rejects.toThrow('effort')
