@@ -15,6 +15,7 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
+    "verify-host-route.mjs",
     "locale/*.json",
     "icon.svg"
   ],

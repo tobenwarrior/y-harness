@@ -43,6 +43,17 @@ prior state. A live session is refused with `session/live`.
 dialog and imports only the module table's React, `react-dom`, and
 `client-store`.
 
+## Verify
+
+```sh
+node local-plugins/y-session-tools/verify-host-route.mjs
+```
+
+Drives the registered fetch handler against a real temporary session tree and
+checks path discovery, the reference mention (compared with the shipped
+`formatSessionReferenceMention` once the checkout is built), the live-session
+refusal, the archive/delete/unarchive ordering, and the 400/404 paths.
+
 ## Known limitations
 
 - Deleting removes the session log and its directory. Attachment blobs it
