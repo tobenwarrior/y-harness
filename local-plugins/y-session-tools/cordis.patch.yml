@@ -1,0 +1,17 @@
+# y-session-tools bundle layer.
+#
+# One Host row serves both halves of the bundle: its `dsh.client` manifest is
+# what the Web registry scans for `./client`.
+#
+# `tool-session-query` is the shipped, opt-in session-history tool set
+# (`session_search`, `session_event_search`, `session_trace`,
+# `session_event_trace`, `session_event_read`). It is a separate row because it
+# is a separate capability: the sidebar actions work without it, and the model
+# sees five more tool schemas with it. Cross-session reads are authorized only
+# when the target Session's cwd matches the caller's.
+- insert:
+    - id: y-session-tools
+      name: '@local/y-session-tools'
+
+    - id: tool-session-query
+      name: '@deepseek-ai/dsh-tool-session-query'
