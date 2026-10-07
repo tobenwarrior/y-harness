@@ -26,3 +26,15 @@ it.each([null, [], 'Atlas'])('rejects a configuration without the displayName fi
   writeFileSync(join(root, 'app-branding.json'), JSON.stringify(value))
   expect(() => readAppDisplayName(root)).toThrow(/displayName/)
 })
+
+it('requires the public configuration file even when no display name is configured', () => {
+  const root = fixture(null)
+  rmSync(join(root, 'app-branding.json'))
+  expect(() => readAppDisplayName(root)).toThrow(/ENOENT/)
+})
+
+it('rejects malformed public configuration instead of retaining default labels', () => {
+  const root = fixture(null)
+  writeFileSync(join(root, 'app-branding.json'), '{')
+  expect(() => readAppDisplayName(root)).toThrow(SyntaxError)
+})

@@ -30,6 +30,7 @@ function buildFixture(environment: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'dsh-release-build-'))
   roots.push(root)
   write(join(root, 'package.json'), `${JSON.stringify({ version: environment.DSH_CLIENT_VERSION ?? '0.0.1' })}\n`)
+  write(join(root, 'app-branding.json'), JSON.stringify({ displayName: environment.DSH_CLIENT_DISPLAY_NAME ?? null }))
   write(join(root, 'apps/web/dist/index.html'), '<main></main>')
   write(join(root, 'packages/client/example/lib/client.js'), 'module.exports = {}\n')
   writeClientBuildRecord(root, environment)
@@ -193,6 +194,7 @@ describe('release families', () => {
     const defaultBuild = buildFixture({})
     const missing = join(defaultBuild, 'missing')
     write(join(missing, 'package.json'), `${JSON.stringify({ version: officialEnvironment.DSH_CLIENT_VERSION })}\n`)
+    write(join(missing, 'app-branding.json'), JSON.stringify({ displayName: officialEnvironment.DSH_CLIENT_DISPLAY_NAME ?? null }))
 
     expect(() => { dsh.verifyBuildArtifacts(official) }).not.toThrow()
     expect(() => { dsh.verifyBuildArtifacts(defaultBuild) }).toThrow(/DSH_CLIENT_TITLE/)
@@ -201,6 +203,18 @@ describe('release families', () => {
 
     write(join(official, 'packages/client/example/lib/client.js'), 'module.exports = { changed: true }\n')
     expect(() => { dsh.verifyBuildArtifacts(official) }).toThrow(/artifacts differ/)
+  })
+
+  it('verifies official artifacts with their configured display name', () => {
+    const environment: ReturnType<typeof officialClientBuildEnvironment> = {
+      ...officialClientBuildEnvironment(resolve(import.meta.dirname, '../..')),
+      DSH_CLIENT_DISPLAY_NAME: 'Atlas',
+      DSH_CLIENT_TITLE: 'Atlas',
+    }
+    vi.stubEnv('DSH_CLIENT_COMMIT_HASH', environment.DSH_CLIENT_COMMIT_HASH)
+    const official = buildFixture(environment)
+
+    expect(() => { releaseFamily('dsh').verifyBuildArtifacts(official) }).not.toThrow()
   })
 
   it('publishes a dependency before its consumer, and orders ties by name', () => {

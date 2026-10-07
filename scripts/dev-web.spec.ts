@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { dirname, join } from 'node:path'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { TsdownBundle } from 'tsdown'
 import { writeClientBuildRecord } from './client-build-environment.ts'
 import {
@@ -110,10 +110,14 @@ describe('parseDevWebArguments', () => {
 
 it('samples one local environment at startup without validating watcher outputs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-dev-web-environment-'))
+  // The official helper can place TMPDIR inside the checkout; this fixture has no Git metadata.
+  vi.stubEnv('GIT_CEILING_DIRECTORIES', dirname(root))
+  onTestFinished(() => { vi.unstubAllEnvs() })
   try {
     await mkdir(join(root, 'apps/web/dist'), { recursive: true })
     await mkdir(join(root, 'packages/client/example/lib'), { recursive: true })
     await writeFile(join(root, 'package.json'), JSON.stringify({ version: '1.2.3' }))
+    await writeFile(join(root, 'app-branding.json'), JSON.stringify({ displayName: null }))
     await writeFile(join(root, 'apps/web/dist/index.html'), '<main></main>')
     await writeFile(join(root, 'packages/client/example/lib/client.js'), 'module.exports = {}\n')
     writeClientBuildRecord(root, {
