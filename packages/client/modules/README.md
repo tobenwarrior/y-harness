@@ -83,6 +83,10 @@ The host contributes structured index rows that inject, into `<head>`: the `wind
 
 `ClientEntries` records the entries created during boot and serializes full-graph updates, retries and code reloads over the same Loader. A local generation prevents an older download from mounting after its desired entry or code changes; snapshots of the same targets share the pending load. New arrivals use single-resource URLs, never startup batches that could register existing factories twice. Factories retain their artifact revision before an entry exists; graph updates discard stale unowned factories, their styles and failed arrival targets before importing consumers. Cleanup retains declared and observed transitive module requests from every remaining Loader entry. Its observable status has no runtime library import because the modules bootstrap materializes before platform seeds are available.
 
+Live changes prefetch new and changed rows before changing Loader entries. Failed downloads and bootstrap preflight retain the current fibers; descriptors and fetched factories may still change during preparation. The controller publishes `syncing` synchronously before its first Loader mutation and keeps it true until queued operations and Loader-owned cleanup and activation settle, including dependent entries. Unchanged targets leave it false. Failures after mutation are reported after settlement.
+
+`beforeRetire()` synchronously reports retiring fibers after synchronization begins and before teardown. Replacement includes every fiber of the shared plugin runtime; removal and failed-fiber restart report the entry fiber. A listener error aborts that mutation, and the returned disposer unsubscribes the listener. New entries do not emit retirement notifications.
+
 ### Source map
 
 | File | Role |

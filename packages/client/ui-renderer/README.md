@@ -29,7 +29,9 @@ This package is infrastructure: the web shell and the boot kernel are its only d
 
 ### What mounting does
 
-`mount(container)` installs the slot renderer, hydrates the existing boot DOM when present, renders the assembled application into the container before the next paint, and returns a disposer that unmounts the React root. The renderer performs the sole context-level `renderSlot('root')` call; the registered root occupant owns product layout and document metadata.
+`mount(container)` hydrates the existing boot DOM when present, renders the assembled application into the container before the next paint, and returns a disposer that unmounts the React root. The renderer performs the sole context-level `renderSlot('root')` call; the registered root occupant owns product layout and document metadata.
+
+Before retiring client fibers, the shell calls `affectedBy(retiring)` with their exact identities while their dependency snapshots remain live. The renderer requires root suspension when retirement reaches its own fiber, a root registration, a root-source contribution, a scope or locale adapter, or the service dependencies of a live Slot or Factory registration. Direct retirement of a leaf with only ordinary Slot or Factory registrations and no provided services preserves the mounted root and its local React state, even when the leaf consumes services; an unrelated service provider also preserves the root.
 
 ### For business plugins
 
@@ -47,7 +49,7 @@ The package realizes one boundary: the object layer (runtime, React-free) owns b
 
 ### Activation and mount
 
-The plugin activates after `slots`, `sessions`, and `layout`; it installs `createSlotRenderer()` and reflects the `uiRenderer` service. `mountApp` looks for the boot kernel's `[data-dsh-boot]` element: when present it hydrates through `BootHandoff` (a one-frame pass-through that preserves the loading DOM), otherwise it creates a fresh root and flushes the render synchronously.
+The plugin owns `SlotRegistry`, installs `createSlotRenderer()`, and reflects the `uiRenderer` service. Registration effects retain the caller's fiber until the contribution leaves the registry; retirement checks follow public Cordis dependency snapshots and parent ownership. `mountApp` looks for the boot kernel's `[data-dsh-boot]` element: when present it hydrates through `BootHandoff` (a one-frame pass-through that preserves the loading DOM), otherwise it creates a fresh root and flushes the render synchronously.
 
 ### Slot bindings
 
@@ -93,6 +95,7 @@ These limits define when the application frame appears and how far per-region re
 
 - **The first application frame waits for every client entry** — the boot kernel hands over the mount point only after the loader roster settles; per-region readiness remains deferred.
 - **Slot rendering has no Suspense integration or per-entry lazy loading** — the complete plugin roster settles before the renderer mounts the root.
+- **Provider retirement suspends the whole root** — retirement of a dependency provider or a leaf that itself provides services, or an unavailable dependency snapshot, uses conservative root suspension; suspension per affected subtree remains deferred.
 
 <a id="dev-note"></a>
 ### Dev Note

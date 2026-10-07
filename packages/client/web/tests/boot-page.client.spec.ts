@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BootPage } from '../src/boot-page.ts'
 
-afterEach(() => { document.body.innerHTML = '' })
+let originalLang: string | null
+beforeEach(() => { originalLang = document.documentElement.getAttribute('lang') })
+afterEach(() => {
+  document.body.innerHTML = ''
+  if (originalLang === null) document.documentElement.removeAttribute('lang')
+  else document.documentElement.setAttribute('lang', originalLang)
+})
 
 function mount() {
   const el = document.createElement('div')
@@ -57,5 +63,20 @@ describe('BootPage', () => {
     const { el, page } = mount()
     page.dispose()
     expect(el.childNodes).toHaveLength(0)
+  })
+
+  it('keeps localized retry available while plugin locale services are absent', async () => {
+    document.documentElement.lang = 'zh-CN'
+    const { el, page } = mount()
+    expect(el.textContent).toContain('正在加载插件')
+    const retry = vi.fn(async () => { throw new Error('retry failed') })
+    page.fail('layout failed', retry)
+    const button = el.querySelector<HTMLButtonElement>('[data-dsh-boot-retry]')
+    expect(button?.textContent).toBe('重试')
+    button?.click()
+    expect(button?.disabled).toBe(true)
+    await vi.waitFor(() => { expect(el.textContent).toContain('retry failed') })
+    expect(retry).toHaveBeenCalledOnce()
+    expect(el.textContent).toContain('插件加载失败')
   })
 })

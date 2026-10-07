@@ -88,4 +88,16 @@ describe('official browser-brand plugin', () => {
     mark.rerender(<OfficialBrandMark size={24} />)
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
   })
+
+  it('renders a configured display name while preserving the official mark', () => {
+    const mark = render(<OfficialBrandMark size={24} />)
+    const originalMark = mark.container.innerHTML
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas & Co')
+
+    const name = render(<OfficialBrandName />)
+    expect(name.container.textContent).toBe('Atlas & Co')
+    expect(name.container.querySelector('svg')).toBeNull()
+    mark.rerender(<OfficialBrandMark size={24} />)
+    expect(mark.container.innerHTML).toBe(originalMark)
+  })
 })

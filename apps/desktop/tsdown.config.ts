@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { repositoryClientBuildEnvironment, resolveClientBuildEnvironment } from '../../scripts/client-build-environment.ts'
 import { packagedImportsPlugin } from './scripts/desktop-bundle-imports.mjs'
+import { readAppDisplayName } from '../../scripts/app-branding.mjs'
 
 // This config runs after the workspace tsdown pass, not inside it: the main bundle inlines
 // workspace devDependencies from their lib/ output, which the concurrent workspace pass does
@@ -29,8 +30,10 @@ const clientEnvironment = resolveClientBuildEnvironment(process.env.DSH_CLIENT_V
 const clientVersion = clientEnvironment.DSH_CLIENT_VERSION
 if (clientVersion === undefined) throw new Error('desktop build: the client environment carries no DSH_CLIENT_VERSION')
 
-/** Inline the one public build value the Node entry reads; every other variable stays a runtime lookup. */
-const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
+const displayName = readAppDisplayName(REPOSITORY_ROOT)
+/** Inline public build values for the main process and sandboxed preloads. */
+const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion),
+  'process.env.DSH_CLIENT_DISPLAY_NAME': displayName === undefined ? 'undefined' : JSON.stringify(displayName) }
 
 export default defineConfig([
   {
@@ -94,6 +97,7 @@ export default defineConfig([
     // Sandboxed Electron preloads run as CommonJS even though the application package is ESM.
     entry: { [name]: `lib/types/${name}.js` },
     plugins: [packagedImportsPlugin(preloadImports)],
+    define: clientVersionDefine,
     outDir: 'lib',
     format: 'cjs' as const,
     codeSplitting: false,

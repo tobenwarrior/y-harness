@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { readAppDisplayName } from './app-branding.mjs'
 
 /** Prefix reserved for build-time values that may be embedded in browser artifacts. */
 const CLIENT_BUILD_ENV_PREFIX = 'DSH_CLIENT_'
@@ -42,6 +43,14 @@ const CLIENT_ARTIFACT_PATTERNS = [
 
 /** Public values embedded in one set of client artifacts. */
 export type ClientBuildEnvironment = Readonly<Record<string, string>>
+
+/** Project a display-only override into the public browser build values. */
+function displayNameBuildEnvironment(displayName: string | undefined): ClientBuildEnvironment {
+  return displayName === undefined ? {} : {
+    DSH_CLIENT_DISPLAY_NAME: displayName,
+    DSH_CLIENT_TITLE: displayName,
+  }
+}
 
 /**
  * Resolve the short source commit used by browser build metadata.
@@ -123,9 +132,11 @@ export function repositoryClientBuildEnvironment(
   delete inherited.DSH_CLIENT_COMMIT_HASH
   delete inherited.DSH_CLIENT_GIT_DIRTY
   delete inherited.DSH_CLIENT_VERSION
+  delete inherited.DSH_CLIENT_DISPLAY_NAME
   const dirty = repositoryGitDirty(root)
   return {
     ...inherited,
+    ...displayNameBuildEnvironment(readAppDisplayName(root)),
     DSH_CLIENT_COMMIT_HASH: repositoryCommitHash(root, environment),
     ...(dirty === true ? { DSH_CLIENT_GIT_DIRTY: 'true' } : {}),
     DSH_CLIENT_VERSION: repositoryVersion(root),
@@ -146,6 +157,7 @@ export function officialClientBuildEnvironment(
     DSH_CLIENT_COMMIT_HASH: repositoryCommitHash(root, environment),
     DSH_CLIENT_VERSION: repositoryVersion(root),
     ...OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
+    ...displayNameBuildEnvironment(readAppDisplayName(root)),
   }
 }
 
@@ -202,6 +214,7 @@ export function resolveClientBuildEnvironment(
       DSH_CLIENT_COMMIT_HASH: commitHash,
       DSH_CLIENT_VERSION: version,
       ...OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
+      ...displayNameBuildEnvironment(environment.DSH_CLIENT_DISPLAY_NAME),
     }
   }
   throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected "official"`)

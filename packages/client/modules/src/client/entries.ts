@@ -1,5 +1,5 @@
 /** Page-owned Loader entries; transport-independent reconciliation, retries and code replacement. */
-import type { FiberState } from '@deepseek-ai/cordis'
+import type { Fiber, FiberState } from '@deepseek-ai/cordis'
 import type { Entry, Loader } from '@deepseek-ai/cordis-plugin-loader'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { parseBootManifest } from './manifest.ts'
@@ -8,7 +8,7 @@ import { removeOwnedStyles, tearDownEntryFiber } from './entry-lifecycle.ts'
 
 /** Page-local failures do not change the Host's bundle enablement. */
 export interface ClientEntryState {
-  /** True while a snapshot, retry or code replacement is being applied. */
+  /** True during live Loader mutations and queued settlement; prefetch alone leaves it false. */
   readonly syncing: boolean
   /** Package ids and errors from the latest reconciliation. */
   readonly failures: readonly { readonly id: string; readonly message: string }[]
@@ -43,10 +43,12 @@ export class ClientEntries {
   // The modules bootstrap factory cannot request platform libraries before the shell supplies its seed.
   private snapshot: ClientEntryState = { syncing: false, failures: [] }
   private readonly listeners = new Set<() => void>()
+  private readonly retirementListeners = new Set<(fibers: readonly Fiber[]) => void>()
   private readonly managed = new Map<string, Entry>()
   private readonly revisions = new Map<string, string>()
   private loader: Loader | undefined
   private queue: Promise<void> = Promise.resolve()
+  private pending = 0
   private desired: BootManifest
   private generation = 0
   private stopped = false
@@ -58,6 +60,18 @@ export class ClientEntries {
    */
   constructor(private readonly modules: ClientModuleLoader, private readonly index: ModuleIndex) {
     this.desired = modules.manifest
+  }
+
+  /**
+   * Observe fibers synchronously before Loader removal, code replacement or failed-fiber restart.
+   * Replacement reports every fiber of the shared plugin runtime; removal and restart report the entry fiber.
+   * A listener error aborts that mutation and follows the operation's error reporting. Creation does not notify listeners.
+   * @param listener - Called after syncing begins and before any retiring fiber is disposed.
+   * @returns Unsubscribe the listener.
+   */
+  beforeRetire(listener: (fibers: readonly Fiber[]) => void): () => void {
+    this.retirementListeners.add(listener)
+    return () => { this.retirementListeners.delete(listener) }
   }
 
   /**
@@ -111,31 +125,40 @@ export class ClientEntries {
    * Entries missing after a failed import are reconciled; bootstrap replacement fails before teardown.
    * @param id - Package id from a rebuilt frame.
    * @param rev - Opaque revision selecting the rebuilt artifact.
-   * @returns after queued work; replacement errors reject, while per-package reconciliation errors remain in {@link state}.
+   * @returns after replacement and Loader-owned cascades settle; errors reject, and activation failures remain in {@link state}.
    */
   reload(id: string, rev: string): Promise<void> {
     this.desired = {
       ...this.desired,
       modules: this.desired.modules.map(row => row.id === id ? { ...row, rev } : row),
     }
+    const generation = this.generation
     return this.enqueue(async () => {
       const desired = this.desired.modules.find(row => row.id === id)
-      if (this.stopped || desired === undefined) return
+      if (!this.current(generation) || desired === undefined || desired.rev !== rev) return
       const entry = this.managed.get(id)
       if (entry === undefined) {
         this.modules.invalidate(id, desired.rev)
         removeOwnedStyles(id)
-        await this.reconcile(this.generation)
+        await this.reconcile(generation)
         return
       }
-      if (this.revisions.get(id) === rev) return
-      this.publish({ syncing: true, failures: this.snapshot.failures.filter(failure => failure.id !== id) })
-      await this.replace(entry, id, rev, this.generation)
-      this.publish({ syncing: false, failures: this.snapshot.failures })
+      if (this.revisions.get(id) === rev && entry.fiber !== undefined) return
+      await this.prepare(id, rev)
+      await this.replace(entry, id, rev, generation)
+      if (!this.currentTarget(generation, id, rev)) return
+      const failures = await this.audit(this.snapshot.failures.filter(failure => failure.id !== id && !this.managed.has(failure.id)))
+      this.publish({ syncing: this.snapshot.syncing, failures })
     }, id)
   }
 
   private publish(snapshot: ClientEntryState): void {
+    if (snapshot.syncing === this.snapshot.syncing
+      && snapshot.failures.length === this.snapshot.failures.length
+      && snapshot.failures.every((failure, index) => {
+        const previous = this.snapshot.failures[index]
+        return failure.id === previous?.id && failure.message === previous.message
+      })) return
     this.snapshot = snapshot
     for (const listener of [...this.listeners]) {
       try {
@@ -148,19 +171,46 @@ export class ClientEntries {
   }
 
   private enqueue(task: () => Promise<void>, subject = 'graph'): Promise<void> {
-    const run = this.queue.then(task)
-    // Each operation reports its own failure; later operations must still run.
-    this.queue = run.then(() => undefined, (error: unknown) => {
-      this.publish({ syncing: false, failures: [
-        ...this.snapshot.failures.filter(failure => failure.id !== subject),
-        { id: subject, message: String(error) },
-      ] })
+    this.pending++
+    const run = this.queue.then(async () => {
+      try {
+        await task()
+      } catch (error) {
+        await this.loader?.await()
+        this.publish({ syncing: this.snapshot.syncing, failures: [
+          ...this.snapshot.failures.filter(failure => failure.id !== subject),
+          { id: subject, message: String(error) },
+        ] })
+        throw error
+      } finally {
+        await this.loader?.await()
+        if (--this.pending === 0) this.publish({ syncing: false, failures: this.snapshot.failures })
+      }
     })
+    // Each operation reports its own failure; later operations must still run.
+    this.queue = run.then(() => undefined, () => undefined)
     return run
+  }
+
+  private beginApplying(): void {
+    if (!this.snapshot.syncing) this.publish({ syncing: true, failures: this.snapshot.failures })
+  }
+
+  private notifyBeforeRetire(fibers: readonly Fiber[]): void {
+    for (const listener of [...this.retirementListeners]) listener(fibers)
   }
 
   private current(generation: number): boolean {
     return !this.stopped && generation === this.generation
+  }
+
+  private currentTarget(generation: number, id: string, rev: string): boolean {
+    return this.current(generation) && this.desired.modules.some(row => row.id === id && row.rev === rev)
+  }
+
+  private requireLoader(): Loader {
+    if (this.loader === undefined) throw new Error('client-modules: entries have not started')
+    return this.loader
   }
 
   /** Keep ownership even when Loader rejects a module's plugin exports after inserting its entry. */
@@ -174,16 +224,25 @@ export class ClientEntries {
     }
   }
 
-  private async replace(entry: Entry, id: string, rev: string, generation: number): Promise<void> {
+  private async prepare(id: string, rev: string): Promise<void> {
     this.index.invalidateForReplacement(id, rev)
     await this.modules.prefetch(id)
-    if (!this.current(generation)) return
+  }
+
+  private async replace(entry: Entry, id: string, rev: string, generation: number): Promise<void> {
+    if (!this.currentTarget(generation, id, rev)) return
+    this.beginApplying()
+    if (!this.currentTarget(generation, id, rev)) return
+    const fiber = entry.fiber
+    if (fiber !== undefined) this.notifyBeforeRetire(fiber.runtime === null ? [fiber] : [...fiber.runtime.fibers])
+    if (!this.currentTarget(generation, id, rev)) return
     await tearDownEntryFiber(entry)
     removeOwnedStyles(id)
-    if (!this.current(generation)) return
+    if (!this.currentTarget(generation, id, rev)) return
     await this.modules.import(id, '', {})
-    if (!this.current(generation)) return
+    if (!this.currentTarget(generation, id, rev)) return
     await entry.refresh()
+    await this.requireLoader().await()
     await entry.fiber?.await()
     if (entry.fiber === undefined) throw new Error(`client-modules: ${id} import failed (see console)`)
     this.revisions.set(id, rev)
@@ -191,16 +250,35 @@ export class ClientEntries {
 
   private async reconcile(generation: number): Promise<void> {
     if (!this.current(generation)) return
-    const loader = this.loader
-    if (loader === undefined) throw new Error('client-modules: entries have not started')
+    const loader = this.requireLoader()
     const manifest = this.desired
-    this.publish({ syncing: true, failures: [] })
     const failures: { id: string; message: string }[] = []
     this.index.update(manifest, this.managed.keys())
+    for (const row of manifest.modules) {
+      if (!this.current(generation)) return
+      if (!this.currentTarget(generation, row.id, row.rev)) continue
+      try {
+        const entry = this.managed.get(row.id)
+        if (entry === undefined) await this.modules.prefetch(row.id)
+        else if (this.revisions.get(row.id) !== row.rev || entry.fiber === undefined) await this.prepare(row.id, row.rev)
+      } catch (error) {
+        if (this.currentTarget(generation, row.id, row.rev)) failures.push({ id: row.id, message: String(error) })
+      }
+    }
+    if (!this.current(generation)) return
+    if (failures.length > 0) {
+      const settledFailures = await this.audit(failures)
+      if (this.current(generation)) this.publish({ syncing: this.snapshot.syncing, failures: settledFailures })
+      return
+    }
     const wanted = new Set(manifest.plugins.map(row => row.id))
     for (const [id, entry] of this.managed) {
       if (wanted.has(id)) continue
+      this.beginApplying()
+      if (!this.current(generation)) break
       const fiber = entry.fiber
+      if (fiber !== undefined) this.notifyBeforeRetire([fiber])
+      if (!this.current(generation)) break
       loader.remove(entry.id)
       this.managed.delete(id)
       this.revisions.delete(id)
@@ -209,13 +287,14 @@ export class ClientEntries {
     }
     for (const row of manifest.modules) {
       if (!this.current(generation)) break
+      if (!this.currentTarget(generation, row.id, row.rev)) continue
       try {
         const entry = this.managed.get(row.id)
         if (entry === undefined) {
-          await this.modules.prefetch(row.id)
-          if (!this.current(generation)) break
           await this.modules.import(row.id, '', {})
-          if (!this.current(generation)) break
+          if (!this.currentTarget(generation, row.id, row.rev)) continue
+          this.beginApplying()
+          if (!this.currentTarget(generation, row.id, row.rev)) continue
           await this.create(loader, row.id)
           this.revisions.set(row.id, row.rev)
         } else if (this.revisions.get(row.id) !== row.rev) {
@@ -223,13 +302,24 @@ export class ClientEntries {
         } else if (entry.fiber === undefined) {
           await this.replace(entry, row.id, row.rev, generation)
         } else if (entry.fiber.state === FAILED) {
-          entry.fiber.update(entry.options.config)
+          const fiber = entry.fiber
+          this.beginApplying()
+          if (!this.currentTarget(generation, row.id, row.rev)) continue
+          this.notifyBeforeRetire([fiber])
+          if (!this.currentTarget(generation, row.id, row.rev)) continue
+          fiber.update(entry.options.config)
         }
       } catch (error) {
         failures.push({ id: row.id, message: String(error) })
       }
     }
-    await loader.await()
+    const settledFailures = await this.audit(failures)
+    this.index.prune([...loader.entries()].map(entry => entry.options.name))
+    if (this.current(generation)) this.publish({ syncing: this.snapshot.syncing, failures: settledFailures })
+  }
+
+  private async audit(failures: { id: string; message: string }[]): Promise<{ id: string; message: string }[]> {
+    await this.requireLoader().await()
     for (const [id, entry] of this.managed) {
       if (failures.some(failure => failure.id === id)) continue
       if (entry.fiber?.state === ACTIVE) continue
@@ -241,7 +331,6 @@ export class ClientEntries {
         failures.push({ id, message: String(error) })
       }
     }
-    this.index.prune([...loader.entries()].map(entry => entry.options.name))
-    if (this.current(generation)) this.publish({ syncing: false, failures })
+    return failures
   }
 }

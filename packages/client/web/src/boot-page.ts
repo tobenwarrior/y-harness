@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-client-web/src/boot-page
  */
 import type { LoaderEntryState } from './loader-status.ts'
+import { bootMessages, type BootMessages } from './boot-locales.ts'
 import css from './boot-page.module.css'
 
 /** Create a div with one module class and optional text. */
@@ -25,19 +26,22 @@ export class BootPage {
   private readonly active = new Set<string>()
   private total = 0
   private failure: string | undefined
+  private retry: (() => Promise<void>) | undefined
+  private readonly messages: BootMessages
 
   /**
    * Build and attach the boot page.
    * @param container - Application mount point.
    */
   constructor(container: HTMLElement) {
+    this.messages = bootMessages(container.ownerDocument)
     this.root = div(css.boot)
     this.root.dataset.dshBoot = ''
     this.card = div(css.card)
     this.wordmark = div(css.wordmark, 'HARNESS')
     this.spinner = div(css.spinner)
     this.spinner.dataset.dshBootSpinner = ''
-    this.hint = div(css.hint, 'Loading plugins…')
+    this.hint = div(css.hint, this.messages.loading)
     this.card.append(this.wordmark, this.spinner, this.hint)
     this.root.append(this.card)
     container.append(this.root)
@@ -68,9 +72,11 @@ export class BootPage {
   /**
    * Display the boot failure report.
    * @param message - Failure report text.
+   * @param retry - Optional page-local retry, available without React or plugin services.
    */
-  fail(message: string): void {
+  fail(message: string, retry?: () => Promise<void>): void {
     this.failure = message
+    this.retry = retry
     this.render()
   }
 
@@ -89,9 +95,22 @@ export class BootPage {
       return
     }
     const report = div(css.failed)
-    report.append(div(css.failedTitle, 'Failed to load plugins'))
+    report.append(div(css.failedTitle, this.messages.failed))
     for (const id of failed) report.append(div(css.failedItem, id))
     if (this.failure !== undefined) report.append(div(css.failedItem, this.failure))
+    if (this.retry !== undefined) {
+      const retry = this.retry
+      const button = this.root.ownerDocument.createElement('button')
+      button.type = 'button'
+      button.textContent = this.messages.retry
+      button.dataset.dshBootRetry = ''
+      button.addEventListener('click', () => {
+        button.disabled = true
+        void retry().catch((error: unknown) => { this.fail(String(error), retry) })
+          .finally(() => { button.disabled = false })
+      })
+      report.append(button)
+    }
     this.card.replaceChildren(this.wordmark, report)
   }
 

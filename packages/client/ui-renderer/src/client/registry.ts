@@ -119,6 +119,9 @@ type SlotInjectionEffect = (() => void) | Iterable<() => void, void, void>
 /** cordis Service layer of the slot system; see the module doc for the split with SlotCore. */
 export class SlotRegistry extends Service {
   private readonly _core = new SlotCore()
+  private readonly _entryOwners = new Map<string, Map<StoredEntry, () => void>>()
+  /** Captures the committed entry before the event bridge can reenter registration. */
+  private _captureEntry: ((key: string) => void) | undefined
   /** Store-instance axis: handle -> mounted scope, refcount, resolved instances. */
   private readonly _stores = new Map<EngineStoreHandle, StoreAxisRecord>()
   private readonly _factoryStores = new Map<StoredFactory, FactoryStoreAxis>()
@@ -154,11 +157,25 @@ export class SlotRegistry extends Service {
   }
 
   /**
-   * @param ctx - owning root context.
+   * @param ctx - owning plugin context.
+   * @param retainOwner - Renderer-private caller-fiber observer; critical marks root composition infrastructure.
    */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private readonly retainOwner?: (ctx: Context, critical: boolean) => () => void) {
     super(ctx, 'slots')
-    this._core.onMutate((key) => { ctx.emit('slots/changed', key) })
+    this._core.onMutate((key) => {
+      this._captureEntry?.(key)
+      const owners = this._entryOwners.get(key)
+      if (owners !== undefined) {
+        const live = new Set(this._core.entries(key))
+        for (const [entry, release] of owners) {
+          if (live.has(entry)) continue
+          owners.delete(entry)
+          release()
+        }
+        if (owners.size === 0) this._entryOwners.delete(key)
+      }
+      ctx.emit('slots/changed', key)
+    })
   }
 
   /**
@@ -280,8 +297,10 @@ export class SlotRegistry extends Service {
     if (this._renderer !== undefined) throw new Error('slot renderer already installed (install() is boot-once)')
     this.ctx.effect(() => {
       this._renderer = renderer
+      const releaseOwner = this.retainOwner?.(this.ctx, true)
       return () => {
         if (this._renderer === renderer) this._renderer = undefined
+        releaseOwner?.()
       }
     }, 'slots.install()')
   }
@@ -297,8 +316,10 @@ export class SlotRegistry extends Service {
     if (this._locale !== undefined) throw new Error('locale face already installed (installLocale() is boot-once)')
     this.ctx.effect(() => {
       this._locale = face
+      const releaseOwner = this.retainOwner?.(this.ctx, true)
       return () => {
         if (this._locale === face) this._locale = undefined
+        releaseOwner?.()
       }
     }, 'slots.installLocale()')
   }
@@ -318,11 +339,16 @@ export class SlotRegistry extends Service {
         this._rootContributions.pop()
         throw error
       }
+      const releaseOwner = this.retainOwner?.(this.ctx, true)
       return () => {
         const index = this._rootContributions.indexOf(contribution)
         if (index === -1) return
         this._rootContributions.splice(index, 1)
-        this.rebuildRootBinding()
+        try {
+          this.rebuildRootBinding()
+        } finally {
+          releaseOwner?.()
+        }
       }
     }, 'slots.provideRoot()')
     return () => { void dispose() }
@@ -341,12 +367,14 @@ export class SlotRegistry extends Service {
     if (this._scopes.has(scope)) throw new Error(`slot scope '${scope}' already has an adapter`)
     this.ctx.effect(() => {
       this._scopes.set(scope, adapter)
+      const releaseOwner = this.retainOwner?.(this.ctx, true)
       this.publishScopeRevision()
       return () => {
         if (this._scopes.get(scope) === adapter) {
           this._scopes.delete(scope)
           this.publishScopeRevision()
         }
+        releaseOwner?.()
       }
     }, `slots.installScope(${JSON.stringify(scope)})`)
   }
@@ -487,7 +515,27 @@ export class SlotRegistry extends Service {
     // Core write first: all load-time validation (undeclared target,
     // duplicate declaration, kind conflicts, cross-scope handle) throws
     // there before this layer commits anything.
-    const dispose = (this._core as ErasedCore).register(erased, component)
+    const previousCapture = this._captureEntry
+    const existing = new Set(this._core.entries(options.name))
+    let entry: StoredEntry | undefined
+    this._captureEntry = (key) => {
+      if (key !== options.name || entry !== undefined) return
+      entry = this._core.entries(key).find(candidate => !existing.has(candidate))
+    }
+    let dispose: () => void
+    try {
+      dispose = (this._core as ErasedCore).register(erased, component)
+    } finally {
+      this._captureEntry = previousCapture
+    }
+    if (entry !== undefined && this._core.isLive(entry)) {
+      const releaseOwner = this.retainOwner?.(this.ctx, options.name === 'root')
+      if (releaseOwner !== undefined) {
+        const owners = this._entryOwners.get(options.name) ?? new Map<StoredEntry, () => void>()
+        owners.set(entry, releaseOwner)
+        this._entryOwners.set(options.name, owners)
+      }
+    }
     if (store !== undefined) {
       const scope = (this._core.specDynamic(options.name) as SlotSpec<SlotEntryDef>).scope
       this._acquire(store, scope)
@@ -510,6 +558,7 @@ export class SlotRegistry extends Service {
     const dispose = (this._core as ErasedFactoryCore).registerFactory(erased, component)
     const definition = this._core.factory(options.name)
     if (definition === undefined) throw new Error(`slot factory "${options.name}" disappeared during registration`)
+    const releaseOwner = this.retainOwner?.(this.ctx, false)
     if (definition.store !== undefined && typeof definition.store !== 'function') {
       this._acquire(definition.store, definition.scope)
     } else if (typeof definition.store === 'function') {
@@ -523,6 +572,7 @@ export class SlotRegistry extends Service {
       if (disposed) return
       disposed = true
       dispose()
+      releaseOwner?.()
       this._factoryStores.delete(definition)
       if (definition.store !== undefined && typeof definition.store !== 'function') {
         this._release(definition.store)

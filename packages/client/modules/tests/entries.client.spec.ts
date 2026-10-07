@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { Context } from '@deepseek-ai/cordis'
+import { Context, FiberState } from '@deepseek-ai/cordis'
+import type { Fiber } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply as provideModules, createClientModuleSystem } from '../src/client/index.ts'
@@ -199,13 +200,13 @@ describe('client manifest entries', () => {
 
 
 it('publishes stable local snapshots and contains a failing subscriber', async () => {
-  const b = await bench(graph(), {})
+  const b = await bench(graph(), { a: () => ({ apply() {} }) })
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})
   const listener = vi.fn()
   const removeBad = b.modules.entries.state.subscribe(() => { throw new Error('subscriber') })
   const remove = b.modules.entries.state.subscribe(listener)
   expect(b.modules.entries.state.getSnapshot()).toBe(b.modules.entries.state.getSnapshot())
-  await b.modules.entries.retry()
+  await b.modules.entries.sync(graph(row('a')))
   expect(listener).toHaveBeenCalledTimes(2)
   expect(error).toHaveBeenCalled()
   removeBad()
@@ -287,13 +288,15 @@ it('does not finish a stale code replacement after download or asynchronous tear
 it('stops an obsolete multi-entry application after awaiting removal', async () => {
   const cleanup = deferred()
   const effects = { mounted: 0, disposed: 0, hits: 0 }
-  const b = await bench(graph(row('a')), { a: visible('a', effects, () => cleanup.promise), b: () => ({ apply() {} }) })
+  let newMounts = 0
+  const b = await bench(graph(row('a')), { a: visible('a', effects, () => cleanup.promise), b: () => ({ apply() { newMounts++ } }) })
   const first = b.modules.entries.sync(graph(row('b')))
   await vi.waitFor(() => { expect(document.querySelector('[data-live=a]')).toBeNull() })
   const latest = b.modules.entries.sync(graph())
   cleanup.resolve()
   await Promise.all([first, latest])
-  expect(b.fetched).toEqual(['/batch'])
+  expect(b.fetched).toEqual(['/batch', row('b').url])
+  expect(newMounts).toBe(0)
 })
 
 
@@ -514,4 +517,381 @@ it('cleans styles from a materialized factory superseded before its entry is cre
   expect(b.fetched).toEqual([row('a').url, row('a', 'r1').url])
   expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
   expect(document.querySelectorAll('style[data-plugin=a]')).toHaveLength(1)
+})
+
+it.each(['graph', 'rebuilt'])('keeps the live page mounted through a failed %s prefetch', async (source) => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects) })
+  const download = deferred()
+  const started = deferred()
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  b.arrival(async () => { started.resolve(); await download.promise; throw new Error('offline replacement') })
+  const replacing = source === 'graph'
+    ? b.modules.entries.sync(graph(row('a', 'r1')))
+    : b.modules.entries.reload('a', 'r1').catch(() => {})
+  try {
+    await started.promise
+    expect(b.modules.entries.state.getSnapshot().syncing).toBe(false)
+    expect(document.querySelector('[data-live=a]')).not.toBeNull()
+  } finally {
+    download.resolve()
+    await replacing
+  }
+  expect(syncing).not.toContain(true)
+  expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.message).toContain('offline replacement')
+})
+
+it('notifies the shell synchronously before replacement effect cleanup starts', async () => {
+  const page = document.createElement('main')
+  document.body.append(page)
+  const cleanup: { syncing: boolean; pageMounted: boolean }[] = []
+  const b = await bench(graph(row('a')), { a: () => ({ apply(ctx: Context) {
+    ctx.effect(() => () => {
+      cleanup.push({ syncing: b.modules.entries.state.getSnapshot().syncing, pageMounted: page.isConnected })
+    })
+  } }) })
+  const download = deferred()
+  const started = deferred()
+  b.arrival(async () => { started.resolve(); await download.promise })
+  b.modules.entries.state.subscribe(() => {
+    if (b.modules.entries.state.getSnapshot().syncing) page.remove()
+  })
+  const replacing = b.modules.entries.reload('a', 'r1')
+  try {
+    await started.promise
+    expect(page.isConnected).toBe(true)
+  } finally {
+    download.resolve()
+    await replacing
+  }
+  expect(cleanup).toEqual([{ syncing: true, pageMounted: false }])
+})
+
+it('keeps syncing until dependent cleanup and reactivation both settle', async () => {
+  const cleanup = deferred()
+  const cleanupStarted = deferred()
+  const activation = deferred()
+  const activationStarted = deferred()
+  let mounts = 0
+  const b = await bench(graph(row('provider'), row('consumer')), {
+    provider: () => ({ apply(ctx: Context) { ctx.provide('probe', {}) } }),
+    consumer: () => ({ inject: ['probe'], async apply(ctx: Context) {
+      mounts++
+      ctx.effect(() => () => { cleanupStarted.resolve(); return cleanup.promise })
+      if (mounts > 1) { activationStarted.resolve(); await activation.promise }
+    } }),
+  })
+  let finished = false
+  const replacing = b.modules.entries.reload('provider', 'r1').then(() => { finished = true })
+  try {
+    await cleanupStarted.promise
+    expect(b.modules.entries.state.getSnapshot().syncing).toBe(true)
+    expect(finished).toBe(false)
+    cleanup.resolve()
+    await activationStarted.promise
+    await [...b.ctx.loader.entries()].find(entry => entry.options.name === 'provider')!.fiber!.await()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    expect(b.modules.entries.state.getSnapshot().syncing).toBe(true)
+    expect(finished).toBe(false)
+  } finally {
+    cleanup.resolve()
+    activation.resolve()
+    await replacing
+  }
+  expect(mounts).toBe(2)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('settles failed dependent activation cleanup before reporting the failure', async () => {
+  const cleanup = deferred()
+  const cleanupStarted = deferred()
+  const applyFailed = deferred()
+  let mounts = 0
+  const b = await bench(graph(row('provider'), row('consumer')), {
+    provider: () => ({ apply(ctx: Context) { ctx.provide('probe', {}) } }),
+    consumer: () => ({ inject: ['probe'], apply(ctx: Context) {
+      mounts++
+      const activation = mounts
+      ctx.effect(() => () => {
+        if (activation > 1) { cleanupStarted.resolve(); return cleanup.promise }
+      })
+      if (activation > 1) { applyFailed.resolve(); throw new Error('dependent activation failed') }
+    } }),
+  })
+  let finished = false
+  const replacing = b.modules.entries.reload('provider', 'r1').then(() => { finished = true }, () => { finished = true })
+  try {
+    await cleanupStarted.promise
+    await applyFailed.promise
+    await [...b.ctx.loader.entries()].find(entry => entry.options.name === 'provider')!.fiber!.await()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    expect(b.modules.entries.state.getSnapshot().syncing).toBe(true)
+    expect(finished).toBe(false)
+    expect(b.modules.entries.state.getSnapshot().failures).toEqual([])
+  } finally {
+    cleanup.resolve()
+    await replacing
+  }
+  expect(b.modules.entries.state.getSnapshot().syncing).toBe(false)
+  expect(b.modules.entries.state.getSnapshot().failures[0]).toMatchObject({ id: 'consumer' })
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.message).toContain('dependent activation failed')
+})
+
+it('holds suspension across a superseded replacement and queued graph removal', async () => {
+  const cleanup = deferred()
+  const cleanupStarted = deferred()
+  const b = await bench(graph(row('a')), { a: () => ({ apply(ctx: Context) {
+    ctx.effect(() => () => { cleanupStarted.resolve(); return cleanup.promise })
+  } }) })
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  const replacing = b.modules.entries.reload('a', 'r1')
+  try {
+    await cleanupStarted.promise
+    const removing = b.modules.entries.sync(graph())
+    cleanup.resolve()
+    await Promise.all([replacing, removing])
+  } finally {
+    cleanup.resolve()
+    await replacing
+  }
+  expect(syncing.filter((value, index) => index === 0 || value !== syncing[index - 1])).toEqual([true, false])
+  expect([...b.ctx.loader.entries()]).toHaveLength(0)
+})
+
+it('does not suspend for unchanged targets or rejected bootstrap replacement', async () => {
+  const b = await bench(graph(row('bootstrap'), row('a')), { a: () => ({ apply() {} }) })
+  const fibers = [...b.ctx.loader.entries()].map(entry => entry.fiber)
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  await b.modules.entries.sync(graph(row('bootstrap'), row('a')))
+  await b.modules.entries.reload('a', 'r0')
+  await expect(b.modules.entries.reload('bootstrap', 'r1')).rejects.toThrow('requires a page reload')
+  expect(syncing).not.toContain(true)
+  expect([...b.ctx.loader.entries()].map(entry => entry.fiber)).toEqual(fibers)
+})
+
+it('prefetches an entire replacement graph before removing its old entries', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects), b: () => ({ apply() {} }) })
+  const entry = [...b.ctx.loader.entries()][0]!
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  b.arrival(async () => { throw new Error('new entry offline') })
+  await b.modules.entries.sync(graph(row('b')))
+  expect([...b.ctx.loader.entries()].map(candidate => candidate === entry)).toEqual([true])
+  expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+  expect(syncing).not.toContain(true)
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.message).toContain('new entry offline')
+})
+
+it('preflights bootstrap replacement before changing any peer entries', async () => {
+  const b = await bench(graph(row('a'), row('bootstrap')), { a: () => ({ apply() {} }) })
+  const fibers = [...b.ctx.loader.entries()].map(entry => entry.fiber)
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  await b.modules.entries.sync(graph(row('a', 'r1'), row('bootstrap', 'r1')))
+  expect([...b.ctx.loader.entries()].map((entry, index) => entry.fiber === fibers[index])).toEqual([true, true])
+  expect(syncing).not.toContain(true)
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.id).toBe('bootstrap')
+})
+
+it('does not install a downloaded rebuild superseded by a newer rebuild', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects) })
+  const download = deferred()
+  const started = deferred()
+  b.arrival(async (url) => { if (url === row('a', 'r1').url) { started.resolve(); await download.promise } })
+  const old = b.modules.entries.reload('a', 'r1')
+  try {
+    await started.promise
+    const latest = b.modules.entries.reload('a', 'r2')
+    download.resolve()
+    await Promise.all([old, latest])
+  } finally {
+    download.resolve()
+    await old
+  }
+  expect(effects).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(b.fetched).toEqual(['/batch', row('a', 'r1').url, row('a', 'r2').url])
+})
+
+it('applies overlapping rebuilds of different entries', async () => {
+  const a = { mounted: 0, disposed: 0, hits: 0 }
+  const b = { mounted: 0, disposed: 0, hits: 0 }
+  const page = await bench(graph(row('a'), row('b')), { a: visible('a', a), b: visible('b', b) })
+  await Promise.all([page.modules.entries.reload('a', 'r1'), page.modules.entries.reload('b', 'r1')])
+  expect(a).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(b).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(page.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('retains unrelated activation failures when graph prefetch fails', async () => {
+  const b = await bench(graph(row('bad')), {
+    bad: () => ({ apply() { throw new Error('existing activation failed') } }),
+    a: () => ({ apply() {} }),
+  })
+  await b.modules.entries.retry()
+  b.arrival(async () => { throw new Error('new entry offline') })
+  await b.modules.entries.sync(graph(row('bad'), row('a')))
+  expect(b.modules.entries.state.getSnapshot().failures.map(failure => failure.id).sort()).toEqual(['a', 'bad'])
+})
+
+it('retains the mounted page when a new factory fails before entry creation', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('healthy')), {
+    healthy: visible('healthy', effects),
+    a: () => { throw new Error('new factory failed') },
+  })
+  const syncing: boolean[] = []
+  b.modules.entries.state.subscribe(() => { syncing.push(b.modules.entries.state.getSnapshot().syncing) })
+  await b.modules.entries.sync(graph(row('healthy'), row('a')))
+  expect(syncing).not.toContain(true)
+  expect(document.querySelector('[data-live=healthy]')).not.toBeNull()
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.message).toContain('new factory failed')
+})
+
+it('clears a dependent activation failure after provider replacement recovers it', async () => {
+  let broken = true
+  const b = await bench(graph(row('provider'), row('consumer')), {
+    provider: () => ({ apply(ctx: Context) { ctx.provide('probe', {}) } }),
+    consumer: () => ({ inject: ['probe'], apply() { if (broken) throw new Error('consumer unavailable') } }),
+  })
+  await b.modules.entries.retry()
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.id).toBe('consumer')
+  broken = false
+  await b.modules.entries.reload('provider', 'r1')
+  expect([...b.ctx.loader.entries()].every(entry => entry.fiber?.state === FiberState.ACTIVE)).toBe(true)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('applies current graph peers after another target fails and is superseded by a rebuild', async () => {
+  const a = { mounted: 0, disposed: 0, hits: 0 }
+  const b = { mounted: 0, disposed: 0, hits: 0 }
+  const page = await bench(graph(row('a'), row('b')), { a: visible('a', a), b: visible('b', b) })
+  const download = deferred()
+  const started = deferred()
+  page.arrival(async (url) => {
+    if (url === row('a', 'r1').url) { started.resolve(); await download.promise; throw new Error('obsolete download failed') }
+  })
+  const updating = page.modules.entries.sync(graph(row('a', 'r1'), row('b', 'r1')))
+  try {
+    await started.promise
+    const latest = page.modules.entries.reload('a', 'r2')
+    download.resolve()
+    await Promise.all([updating, latest])
+  } finally {
+    download.resolve()
+    await updating
+  }
+  expect(a).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(b).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(page.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('restores a previous revision requested during replacement teardown', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const cleanup = deferred()
+  const cleanupStarted = deferred()
+  const b = await bench(graph(row('a')), { a: visible('a', effects, async () => {
+    cleanupStarted.resolve()
+    await cleanup.promise
+  }) })
+  const old = b.modules.entries.reload('a', 'r1')
+  try {
+    await cleanupStarted.promise
+    const restored = b.modules.entries.reload('a', 'r0')
+    cleanup.resolve()
+    await Promise.all([old, restored])
+  } finally {
+    cleanup.resolve()
+    await old
+  }
+  expect(effects).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect([...b.ctx.loader.entries()].every(entry => entry.fiber?.state === FiberState.ACTIVE)).toBe(true)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it.each(['replace', 'remove', 'retry'])('reports retiring fibers synchronously before %s mutates the Loader', async (operation) => {
+  const events: string[] = []
+  let applications = 0
+  const b = await bench(graph(row('a')), { a: () => ({ apply(ctx: Context) {
+    applications++
+    events.push('apply')
+    ctx.effect(() => () => { events.push('cleanup') })
+    if (operation === 'retry' && applications === 1) throw new Error('first activation failed')
+  } }) })
+  const fiber = [...b.ctx.loader.entries()][0]?.fiber
+  const retiring: (readonly Fiber[])[] = []
+  const observations: { syncing: boolean; intact: boolean }[] = []
+  events.length = 0
+  b.modules.entries.beforeRetire((fibers) => {
+    events.push('retire')
+    retiring.push([...fibers])
+    observations.push({ syncing: b.modules.entries.state.getSnapshot().syncing, intact: events.indexOf('cleanup') === -1 })
+  })
+  if (operation === 'replace') await b.modules.entries.reload('a', 'r1')
+  else if (operation === 'remove') await b.modules.entries.sync(graph())
+  else await b.modules.entries.retry()
+  expect(retiring.map(fibers => fibers.map(candidate => candidate === fiber))).toEqual([[true]])
+  expect(observations).toEqual([{ syncing: true, intact: true }])
+  expect(events).toEqual(operation === 'replace' ? ['retire', 'cleanup', 'apply'] : operation === 'remove' ? ['retire', 'cleanup'] : ['retire', 'apply'])
+})
+
+it('creates entries without notifying retirement listeners', async () => {
+  const b = await bench(graph(), { a: () => ({ apply() {} }) })
+  const retired: (readonly Fiber[])[] = []
+  b.modules.entries.beforeRetire((fibers) => { retired.push([...fibers]) })
+  await b.modules.entries.sync(graph(row('a')))
+  await b.modules.entries.reload('a', 'r0')
+  expect(retired).toEqual([])
+  expect([...b.ctx.loader.entries()].every(entry => entry.fiber?.state === FiberState.ACTIVE)).toBe(true)
+})
+
+it.each(['replace', 'remove', 'retry'])('aborts %s before teardown when a retirement listener throws, then unsubscribes', async (operation) => {
+  let applications = 0
+  let cleanups = 0
+  const b = await bench(graph(row('a')), { a: () => ({ apply(ctx: Context) {
+    applications++
+    ctx.effect(() => () => { cleanups++ })
+    if (operation === 'retry' && applications === 1) throw new Error('first activation failed')
+  } }) })
+  const entry = [...b.ctx.loader.entries()][0]
+  const fiber = entry?.fiber
+  const previousCleanups = cleanups
+  const unsubscribe = b.modules.entries.beforeRetire(() => { throw new Error('retirement denied') })
+  if (operation === 'replace') await expect(b.modules.entries.reload('a', 'r1')).rejects.toThrow('retirement denied')
+  else if (operation === 'remove') await expect(b.modules.entries.sync(graph())).rejects.toThrow('retirement denied')
+  else await b.modules.entries.retry()
+  expect([...b.ctx.loader.entries()].map(candidate => candidate === entry)).toEqual([true])
+  expect(entry?.fiber === fiber).toBe(true)
+  expect(applications).toBe(1)
+  expect(cleanups).toBe(previousCleanups)
+  expect(b.modules.entries.state.getSnapshot().failures[0]?.message).toContain('retirement denied')
+  unsubscribe()
+  if (operation === 'replace') await b.modules.entries.reload('a', 'r1')
+  else if (operation === 'remove') await b.modules.entries.sync(graph())
+  else await b.modules.entries.retry()
+  expect(applications).toBe(operation === 'remove' ? 1 : 2)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('reports every same-runtime fiber before replacement removes the shared registry callback', async () => {
+  let cleanups = 0
+  const plugin = { apply(ctx: Context) { ctx.effect(() => () => { cleanups++ }) } }
+  const b = await bench(graph(row('a')), { a: () => plugin })
+  const fiber = [...b.ctx.loader.entries()][0]?.fiber
+  const extra = await b.ctx.plugin(plugin)
+  const observations: { entry: boolean; extra: boolean; count: number; cleanups: number }[] = []
+  b.modules.entries.beforeRetire((fibers) => {
+    observations.push({
+      entry: fibers.some(candidate => candidate === fiber), extra: fibers.includes(extra), count: fibers.length, cleanups,
+    })
+  })
+  await b.modules.entries.reload('a', 'r1')
+  expect(observations).toEqual([{ entry: true, extra: true, count: 2, cleanups: 0 }])
+  expect(cleanups).toBe(2)
+  expect(extra.state).toBe(4)
 })

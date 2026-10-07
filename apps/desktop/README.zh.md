@@ -142,6 +142,13 @@ macOS 上自定义菜单保留 Electron 的标准 Window 菜单及应用隐藏�
 
 macOS 和 Linux 从图形界面启动的程序只继承会话管理器提供的环境，不包含 shell 启动文件导出的变量。第一个 Host 启动之前，Desktop 以 `<shell> -ilc` 运行一次账户的登录 shell（取自用户数据库，不看 `$SHELL`），读取定界符之间的 `env -0` 输出，使 `~/.zprofile` 和 `~/.zshrc`（或该 shell 的对应文件）对 Host、agent shell、终端和 profile 配置生效。读取与 profile 准备并行进行。读取进程没有终端输入，并设置 `DISABLE_AUTO_UPDATE=true`、`ZSH_TMUX_AUTOSTARTED=true` 和 `ZSH_TMUX_AUTOSTART=false`，避免 oh-my-zsh 和 tmux 插件阻塞。shell 的值覆盖继承的值，但 `PWD`、`OLDPWD`、`SHLVL`、`_`、上述读取变量以及启动方自有的 `DSH_*` 和 `ELECTRON_*` 除外；Desktop 在读取之前已按 `DSH_HOME` 等变量解析路径，因此 Host 保持相同的值。读取在结束定界符出现时完成，因此启动文件启动的后台进程可以继续运行，其输出被丢弃。候选 shell 无法启动、以非零状态退出、没有输出定界内容或超过 `DSH_DESKTOP_LOGIN_SHELL_TIMEOUT_MS`（1000 到 2147483647 的整数毫秒，默认 `10000`；超时会结束其进程组）时，Desktop 记录一条警告，并依次尝试 `/bin/zsh`、`/bin/bash` 和 `/bin/sh`；全部失败时 Host 使用继承的环境。读取命令使用 POSIX 语法，因此 csh、tcsh 或 nushell 等账户 shell 会失败，Host 改为获得第一个系统 shell 的启动文件所设置的环境。读取期间退出 Desktop 会结束正在运行的读取进程组。每个应用进程只读取一次，因此修改 shell 启动文件后需要退出并重新打开 Desktop。Windows 从图形界面启动的程序已经从注册表继承用户和系统环境变量，因此 Windows 跳过这一步。
 
+<a id="app-display-name"></a>
+## 应用显示名称
+
+仓库中的公开配置 [`app-branding.json`](../../app-branding.json) 控制显示文字。保留 `"displayName": null` 可维持现有标签，也可设为非空的单行名称，例如 `"displayName": "Atlas"`。名称首尾的空白会被移除；无效值会终止构建。重新打开应用前，应一并重新构建 Host、客户端、Web 和 Desktop 产物，并通过常规开发流程刷新已准备的开发应用。仅刷新页面不会重新构建名称。
+
+该覆盖项提供浏览器文档标题、侧栏名称、原生“关于”面板／菜单／托盘／弹窗标签、已安装 Web 应用的清单标签，以及 macOS 应用包的显示元数据。图形资源和语言选择保持不变。它保留 Electron 的运行时名称和包的 `productName`、应用包 ID、URL scheme、可执行文件及 `.app` 文件名、`DSH_HOME` 和 Electron userData。现有启动器继续使用原有文件名与路径；修改显示文字不会重命名 `/Applications/YHarness.app`，也不会迁移设置、凭据或会话。安装器身份和外部授权页面文字仍由各自配置控制。
+
 ## 开发
 
 开发环境应用菜单提供“刷新页面”（macOS 为 Cmd+R，其他平台为 Ctrl+R）和“重启应用与 Host”。重启会等待 Host 关闭，再重新启动 Electron 和新的 Host；这两项操作都不会重新构建源码。
@@ -153,6 +160,10 @@ pnpm run dev:desktop
 ```
 
 开发 Harness 状态默认写入 `apps/desktop/.desktop-build/development/home`，一次性 npm 项目位于 `apps/desktop/.desktop-build/development/project`，Electron 浏览器数据则位于 `apps/desktop/.desktop-build/development/electron-user-data`。因此，会话、设置、凭据、包链接和浏览器数据都不会进入用户正常使用的 Harness home；显式 `DSH_HOME` 只会替换开发 Harness home。Renderer DevTools 默认自动打开，Main、Renderer 和 dsh Host 调试端口依次为 9229、9222 和 9230。`DSH_DESKTOP_MAIN_INSPECT_PORT`、`DSH_DESKTOP_RENDERER_DEBUG_PORT` 与 `DSH_DESKTOP_HOST_INSPECT_PORT` 可以替换这些端口，`DSH_DESKTOP_OPEN_DEVTOOLS=0` 则保持 Renderer 调试窗口关闭。
+
+在 macOS 上，生成的开发应用包会保存这些设置，用于 Launch Services 冷启动。直接启动应用包时，可通过相同环境变量覆盖调试端口与 DevTools 设置。直接启动时覆盖端口须使用 1 到 65535 的十进制数字；未设置或为空时使用保存的值。DevTools 变量未设置时使用保存的设置，空值则会保留。
+
+macOS Applications 启动包装器可调用 [scripts/development_owner.py](scripts/development_owner.py) 中的 `find_development_owner`，传入 Electron 可执行文件、工作区应用目录和浏览器数据目录。检测要求完整的可执行文件路径和命令末尾的工作区应用路径匹配，不依赖调试端口，并排除 Electron 辅助进程和 Node Host 进程。传入预期 PID 时，检测仅针对该进程。由于 `ps` 输出不保留参数边界，检测会保守地拒绝应用路径后的额外位置参数。包装器继续管理自身的锁和 PID 聚焦逻辑。
 
 显式构建完成后，`start:desktop` 会重新生成一次性项目，并跳过构建直接启动已有产物：
 

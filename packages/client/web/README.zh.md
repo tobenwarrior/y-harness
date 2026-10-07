@@ -71,7 +71,7 @@ kind: "package-library"
 
 启动页是原生 DOM 加本地 CSS，其回退字体与颜色匹配加载期间到达的主题 token。`internal/status` 事件驱动一个 spinner 节点与逐 entry 标签；hydrate 会保留该节点与动画相位直到应用提交，`fail()` 渲染抛出的原因。React 挂载、slot 渲染与应用组装位于 `ui-renderer`；`ui-layout` 拥有组装后的浏览器标题投影。
 
-启动内核把清单条目创建交给 Client Modules，使启动后的动态图同步继续持有相同的条目身份。初始激活审计仍然严格；后续页面本地失败显示在「设置 → 插件 → 插件列表」。
+启动内核把清单条目创建交给 Client Modules，使启动后的动态图同步继续持有相同的条目身份。在根节点所有者或活动 UI 服务提供者退出前，外壳同步卸载 React，待所有托管条目与 Loader 生命周期任务停稳后再挂载。无关插件变更保留已挂载的应用及其本地状态。拆除前的下载失败保留可用的原 UI，并显示在「设置 → 插件 → 插件列表」；拆除后的失败保留无框架页面，并提供页面本地「重试」操作。初始启动失败仍使用调用方的恢复回调。
 
 ### 源码地图
 
@@ -80,8 +80,9 @@ kind: "package-library"
 | [`src/index.ts`](src/index.ts) | 库入口：`AppWebEntry`、`getStaticModules`、平台表 |
 | [`src/boot.ts`](src/boot.ts) | `AppWebEntry`：模块阶段、启动页、immediately 层级预取、安装窗口拖拽矩形 watcher，随后调用 `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`：挂载 Loader、每个 manifest 行一个 entry、激活审计 |
-| [`src/mount.ts`](src/mount.ts) | `mountClient`：经 `uiRenderer` 依赖 fiber 完成渲染器交接 |
-| [`src/boot-page.ts`](src/boot-page.ts) | 无框架启动页：spinner、逐 entry 状态、失败渲染 |
+| [`src/mount.ts`](src/mount.ts) | `mountClient`：选择性退出交接、停稳后的渲染器挂载与替换恢复 |
+| [`src/boot-page.ts`](src/boot-page.ts) | 无框架启动页：spinner、逐 entry 状态、失败渲染与页面本地重试 |
+| [`src/boot-locales.ts`](src/boot-locales.ts) | 内核持有的中英文启动文案，不依赖正在替换的语言服务 |
 | [`src/platform.ts`](src/platform.ts) | `PLATFORM_MODULES` / `PRELOADED_CLIENT_EXTERNALS`：隐式 external 基座 |
 | [`src/seed.ts`](src/seed.ts) | 启动时交给 loader 的静态模块表 |
 | [`src/window-drag/regions.ts`](src/window-drag/regions.ts) | darwin app-region 组合模型，以及 `base.css` 减除的交互元素选择器 |

@@ -29,7 +29,9 @@ kind: "package-reference"
 
 ### 挂载做什么
 
-`mount(container)` 会安装 slot 渲染器、在存在时 hydrate 现有启动 DOM、在下一次绘制前把组装后的应用渲染进容器，并返回一个卸载 React 根的 disposer。渲染器执行全程序唯一一次上下文级 `renderSlot('root')` 调用；注册的根占用方拥有产品布局与文档元数据。
+`mount(container)` 会在存在时 hydrate 现有启动 DOM、在下一次绘制前把组装后的应用渲染进容器，并返回一个卸载 React 根的 disposer。渲染器执行全程序唯一一次上下文级 `renderSlot('root')` 调用；注册的根占用方拥有产品布局与文档元数据。
+
+停用客户端 fiber 前，外壳会在依赖快照仍有效时，把这些 fiber 的精确身份传给 `affectedBy(retiring)`。如果停用操作影响渲染器自身的 fiber、根注册、根数据源贡献、scope 或 locale 适配器，或存活的 Slot 或 Factory 注册所依赖的服务，渲染器就要求暂停根节点。直接停用仅具有普通 Slot 或 Factory 注册且不提供服务的叶节点，会保留已挂载的根节点及其局部 React 状态，即使该叶节点使用其他服务；无关服务提供方的停用同样会保留根节点。
 
 ### 对业务插件
 
@@ -47,7 +49,7 @@ kind: "package-reference"
 
 ### 激活与挂载
 
-插件在 `slots`、`sessions` 与 `layout` 就绪后激活；它安装 `createSlotRenderer()` 并 reflect `uiRenderer` 服务。`mountApp` 会查找启动内核的 `[data-dsh-boot]` 元素：存在时经 `BootHandoff`（一个保留加载 DOM 的单帧透传）hydrate，否则创建全新的根节点并同步提交渲染。
+插件拥有 `SlotRegistry`，安装 `createSlotRenderer()` 并 reflect `uiRenderer` 服务。注册 effect 会保留调用方的 fiber，直到贡献离开注册表；停用检查沿公开的 Cordis 依赖快照与父级所有权关系遍历。`mountApp` 会查找启动内核的 `[data-dsh-boot]` 元素：存在时经 `BootHandoff`（一个保留加载 DOM 的单帧透传）hydrate，否则创建全新的根节点并同步提交渲染。
 
 ### Slot 绑定
 
@@ -93,6 +95,7 @@ React、React DOM、Cordis、ui-slots 与 ui-primitives 通过 Web 外壳的静�
 
 - **应用首帧会等待全部客户端 entry**：启动内核只在 loader 名册稳定后交出挂载点；按区域就绪仍属暂缓事项。
 - **slot 渲染没有 Suspense 集成或逐 entry 惰性加载**：完整插件名册稳定后，渲染器才挂载根节点。
+- **提供方停用会暂停整个根节点**：停用依赖的服务提供方或自身提供服务的叶节点，或无法获取依赖快照时，会保守地暂停根节点；按受影响子树暂停仍属暂缓事项。
 
 <a id="dev-note"></a>
 ### 开发备注

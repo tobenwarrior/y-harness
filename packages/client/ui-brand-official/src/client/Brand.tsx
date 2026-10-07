@@ -11,9 +11,10 @@ export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
 }
 
 /**
- * Render the official name artwork without its independently slotted mark.
- * @returns the official name wordmark.
+ * Render the configured display name or official artwork without its independently slotted mark.
+ * @returns the display name or official wordmark.
  */
 export function OfficialBrandName() {
-  return <BrandWordmark includeMark={false} />
+  const displayName = process.env.DSH_CLIENT_DISPLAY_NAME
+  return displayName === undefined ? <BrandWordmark includeMark={false} /> : <span>{displayName}</span>
 }

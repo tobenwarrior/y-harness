@@ -3,6 +3,7 @@ import type { AfterPackContext, BeforePackContext } from 'app-builder-lib'
 /** Electron-builder fields asserted by the Desktop release tests. */
 export interface DesktopElectronBuilderConfig {
   readonly appId: string
+  readonly productName: 'Y harness'
   readonly artifactName: string
   readonly protocols: readonly [{ readonly name: 'Y harness'; readonly schemes: readonly ['dsh'] }]
   readonly directories: {
@@ -24,11 +25,12 @@ export interface DesktopElectronBuilderConfig {
     ...{ readonly from: string, readonly to: 'tray.ico' }[],
   ]
   readonly mac: {
-    readonly extendInfo: { readonly NSMicrophoneUsageDescription: string }
+    readonly extendInfo: { readonly NSMicrophoneUsageDescription: string; readonly CFBundleDisplayName?: string }
     readonly entitlements: string
     readonly entitlementsInherit: string
     readonly identity: string | undefined
     readonly forceCodeSigning: boolean
+    readonly hardenedRuntime: true
     readonly notarize: boolean
     readonly signIgnore: readonly string[]
   }

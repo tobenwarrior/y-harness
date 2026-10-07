@@ -71,7 +71,7 @@ The kernel owns exactly three things: the module system, the Cordis Loader, and 
 
 The boot page is plain DOM with local CSS whose fallback fonts and colors match the theme tokens that arrive during loading. `internal/status` events drive one spinner node and per-entry labels; hydration preserves the node and animation phase through the application commit, and `fail()` renders the thrown reason. React mounting, slot rendering, and assembly live in `ui-renderer`; `ui-layout` owns the assembled browser-title projection.
 
-The boot kernel delegates manifest entry creation to Client Modules so live graph synchronization owns the same entry identities after startup. The initial activation audit remains strict; later page-local failures appear in Settings → Plugins → Plugin list.
+The boot kernel delegates manifest entry creation to Client Modules so live graph synchronization owns the same entry identities after startup. Before retiring a root owner or a live UI service provider, the shell synchronously unmounts React and waits for all managed entries and Loader lifecycle tasks to settle before mounting again. Unrelated plugin changes keep the mounted application and its local state intact. A download failure before teardown keeps the existing UI usable and appears in Settings → Plugins → Plugin list; a failure after teardown keeps the framework-free page visible with a page-local Retry action. Initial boot failures still use the caller's recovery callback.
 
 ### Source map
 
@@ -80,8 +80,9 @@ The boot kernel delegates manifest entry creation to Client Modules so live grap
 | [`src/index.ts`](src/index.ts) | Library entry: `AppWebEntry`, `getStaticModules`, platform tables |
 | [`src/boot.ts`](src/boot.ts) | `AppWebEntry`: module stage, boot page, immediate-tier prefetch, window drag-rect watcher install, then `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`: Loader mount, one entry per manifest row, activation audit |
-| [`src/mount.ts`](src/mount.ts) | `mountClient`: renderer handoff through a `uiRenderer` dependency fiber |
-| [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: spinner, per-entry status, failure rendering |
+| [`src/mount.ts`](src/mount.ts) | `mountClient`: selective retirement handoff, settled renderer mounting, and replacement recovery |
+| [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: spinner, per-entry status, failure rendering, and page-local retry |
+| [`src/boot-locales.ts`](src/boot-locales.ts) | Kernel-owned English and Chinese boot text, independent of replacing locale services |
 | [`src/platform.ts`](src/platform.ts) | `PLATFORM_MODULES` / `PRELOADED_CLIENT_EXTERNALS`: the implicit external baseline |
 | [`src/seed.ts`](src/seed.ts) | Static module table handed to the loader at boot |
 | [`src/window-drag/regions.ts`](src/window-drag/regions.ts) | The darwin app-region composition model, and the interactive selector `base.css` subtracts |

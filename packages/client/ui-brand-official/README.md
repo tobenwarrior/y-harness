@@ -33,7 +33,7 @@ Mount this plugin in the browser roster of a deployment whose identity is DeepSe
 
 ### Replacing the brand
 
-A deployment with its own identity leaves this package out and composes another package that occupies the sidebar slots — and the hero slot, which this package leaves on its fallback. Occupying a slot is the only composition route; there is no brand configuration surface here.
+A text-only rename uses the public [app display-name configuration](../../../apps/desktop/README.md#app-display-name); its build value `DSH_CLIENT_DISPLAY_NAME` replaces the name artwork with plain text while preserving the mark. To replace artwork, a deployment leaves this package out and composes another package that occupies the sidebar slots — and the hero slot, which this package leaves on its fallback. Slot occupation remains the artwork composition route.
 
 -----
 

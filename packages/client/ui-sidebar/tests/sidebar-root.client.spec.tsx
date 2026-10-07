@@ -186,6 +186,25 @@ describe('SidebarRoot shell', () => {
     expect(screen.getByText('Y Harness Local Build')).toBeTruthy()
   })
 
+  it.each([undefined, '1.2.3'])('shows the configured display name with version %s', (version) => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas & Co')
+    vi.stubEnv('DSH_CLIENT_VERSION', version)
+    const { container } = render(<SidebarRoot
+      collapsed={false} width={300}
+      useSessions={neverHook} useSessionStatus={useSessionStatus} useSessionRetainInfo={neverHook}
+      usePanelInfo={usePanelInfo} selectPanel={() => {}} usePanels={selector => selector([])} useShortcuts={selector => selector([])}
+      useResource={useResource} useWorkspaces={neverHook}
+      startSession={vi.fn()} toggleSidebar={vi.fn()} t={t}
+      renderSlot={((_key: string, _owner: unknown, options?: { fallback?: ReactNode }) =>
+        options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
+    />)
+
+    expect(screen.getByText('Atlas & Co')).toBeTruthy()
+    expect(screen.queryByText('Y Harness Local Build')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+    if (version !== undefined) expect(screen.getByText(version)).toBeTruthy()
+  })
+
   it('hands the region its wide flag and clamps expandSidebar to the collapsed state', () => {
     const b = mountShell()
     expect(b.regionOwner().wide).toBe(true)

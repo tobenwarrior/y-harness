@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import yaml from 'js-yaml'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   assertClientBuildEnvironment,
   clientBuildEnvironmentDefines,
@@ -67,12 +67,13 @@ function repositoryFixture(version = '1.2.3-rc.4'): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'dsh-client-build-repository-'))
   roots.push(fixtureRoot)
   write(join(fixtureRoot, 'package.json'), `${JSON.stringify({ version })}\n`)
+  write(join(fixtureRoot, 'app-branding.json'), '{"displayName":null}\n')
   write(join(fixtureRoot, 'tracked.txt'), 'committed\n')
   git(fixtureRoot, ['init'])
   git(fixtureRoot, ['config', 'user.name', 'DSH test'])
   git(fixtureRoot, ['config', 'user.email', 'dsh-test@example.invalid'])
   git(fixtureRoot, ['config', 'commit.gpgsign', 'false'])
-  git(fixtureRoot, ['add', 'package.json', 'tracked.txt'])
+  git(fixtureRoot, ['add', 'package.json', 'app-branding.json', 'tracked.txt'])
   git(fixtureRoot, ['commit', '-m', 'fixture'])
   return fixtureRoot
 }
@@ -203,7 +204,11 @@ describe('client build environment', () => {
   it('omits dirty metadata when repository metadata is unavailable', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'dsh-client-build-no-git-'))
     roots.push(fixtureRoot)
+    // Temporary directories may live inside a checkout; this fixture owns no repository.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', dirname(fixtureRoot))
+    onTestFinished(() => { vi.unstubAllEnvs() })
     write(join(fixtureRoot, 'package.json'), '{"version":"2.0.0"}\n')
+    write(join(fixtureRoot, 'app-branding.json'), '{"displayName":null}\n')
 
     expect(repositoryGitDirty(fixtureRoot)).toBeUndefined()
     expect(repositoryClientBuildEnvironment(fixtureRoot, {
@@ -212,6 +217,31 @@ describe('client build environment', () => {
     })).toEqual({
       DSH_CLIENT_COMMIT_HASH: COMMIT_HASH.slice(0, 7),
       DSH_CLIENT_VERSION: '2.0.0',
+    })
+  })
+
+  it('projects a configured display name without changing runtime identity variables', () => {
+    const fixtureRoot = repositoryFixture()
+    write(join(fixtureRoot, 'app-branding.json'), '{"displayName":"Atlas & Co."}\n')
+    const parent = {
+      DSH_CLIENT_COMMIT_HASH: COMMIT_HASH,
+      DSH_CLIENT_TITLE: 'Previous title',
+      DSH_HOME: '/saved/harness-home',
+      DSH_DESKTOP_USER_DATA_DIR: '/saved/electron-user-data',
+      DSH_DESKTOP_APP_ID: 'com.example.existing',
+    }
+    const local = repositoryClientBuildEnvironment(fixtureRoot, parent)
+    expect(local.DSH_CLIENT_TITLE).toBe('Atlas & Co.')
+    expect(local.DSH_CLIENT_DISPLAY_NAME).toBe('Atlas & Co.')
+    const official = officialClientBuildEnvironment(fixtureRoot, parent)
+    expect(official.DSH_CLIENT_TITLE).toBe('Atlas & Co.')
+    expect(official.DSH_CLIENT_DISPLAY_NAME).toBe('Atlas & Co.')
+    expect(resolveClientBuildEnvironment(local, 'official')).toEqual(official)
+    expect(clientBuildEnvironmentDefines(local)['process.env.DSH_CLIENT_DISPLAY_NAME']).toBe('"Atlas & Co."')
+    expect(clientBuildProcessEnvironment(parent, local)).toMatchObject({
+      DSH_HOME: parent.DSH_HOME,
+      DSH_DESKTOP_USER_DATA_DIR: parent.DSH_DESKTOP_USER_DATA_DIR,
+      DSH_DESKTOP_APP_ID: parent.DSH_DESKTOP_APP_ID,
     })
   })
 

@@ -239,6 +239,7 @@ describe('plugin activation', () => {
         id: 'renderer',
         factory: () => ({
           apply: (ctx: Context) => {
+            ctx.reflect.provide('slots', { renderSlot: () => null })
             ctx.reflect.provide('uiRenderer', {
               mount: (element: HTMLElement) => {
                 events.push('mount')

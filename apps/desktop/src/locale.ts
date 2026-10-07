@@ -345,11 +345,20 @@ export interface DesktopLocale {
   readonly messages: DesktopMessages
 }
 
-/** Resolve Electron's locale to one shipped Desktop dictionary. */
-export function resolveDesktopLocale(locale: string): DesktopLocale {
-  return locale.toLowerCase().startsWith('zh')
+/**
+ * Resolve Electron's locale and optional public display label without changing the shipped dictionaries.
+ * @param locale - Electron's locale identifier.
+ * @param displayName - Optional configured public label; omission retains existing product names.
+ * @returns the supported dictionary with configured display labels.
+ */
+export function resolveDesktopLocale(locale: string, displayName = process.env.DSH_CLIENT_DISPLAY_NAME): DesktopLocale {
+  const resolved: DesktopLocale = locale.toLowerCase().startsWith('zh')
     ? { id: 'zh-CN', messages: zh }
     : { id: 'en', messages: en }
+  if (displayName === undefined) return resolved
+  const messages = Object.fromEntries(Object.entries(resolved.messages)
+    .map(([key, value]) => [key, value.replaceAll(/Y [Hh]arness/gu, () => displayName)])) as DesktopMessages
+  return { ...resolved, messages }
 }
 
 /**

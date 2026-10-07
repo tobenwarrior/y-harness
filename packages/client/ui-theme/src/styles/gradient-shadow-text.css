@@ -38,8 +38,8 @@ body * {
 }
 
 body[data-ds-dark-theme] {
-  --yh-linear-gradient-think: linear-gradient(180deg, #151517 20.19%, rgba(21, 21, 23, 0) 100%);
-  --yh-linear-think-select: linear-gradient(180deg, #232325 20.19%, rgba(35, 35, 37, 0) 100%);
+  --yh-linear-gradient-think: linear-gradient(180deg, #151515 20.19%, rgba(21, 21, 21, 0) 100%);
+  --yh-linear-think-select: linear-gradient(180deg, #252526 20.19%, rgba(37, 37, 38, 0) 100%);
 }
 
 /* Fonts. */
