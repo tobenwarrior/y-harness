@@ -6,19 +6,19 @@
 }
 
 .code {
-  --dsh-file-type-default-color: var(--dsw-static-deepseek-500);
+  --dsh-file-type-default-color: var(--yh-static-deepseek-500);
 }
 
 .excel {
-  --dsh-file-type-default-color: var(--dsw-static-green-500);
+  --dsh-file-type-default-color: var(--yh-static-green-500);
 }
 
 .folder {
-  --dsh-file-type-default-color: var(--dsw-static-amber-400);
+  --dsh-file-type-default-color: var(--yh-static-amber-400);
 }
 
 .html {
-  --dsh-file-type-default-color: var(--dsw-static-deepseek-500);
+  --dsh-file-type-default-color: var(--yh-static-deepseek-500);
 }
 
 .image {
@@ -26,19 +26,19 @@
 }
 
 .markdown {
-  --dsh-file-type-default-color: var(--dsw-static-deepseek-500);
+  --dsh-file-type-default-color: var(--yh-static-deepseek-500);
 }
 
 .other {
-  --dsh-file-type-default-color: var(--dsw-static-neutral-bluish-300);
+  --dsh-file-type-default-color: var(--yh-static-neutral-bluish-300);
 }
 
 .pdf {
-  --dsh-file-type-default-color: var(--dsw-static-red-600);
+  --dsh-file-type-default-color: var(--yh-static-red-600);
 }
 
 .ppt {
-  --dsh-file-type-default-color: var(--dsw-static-amber-500);
+  --dsh-file-type-default-color: var(--yh-static-amber-500);
 }
 
 .video {
@@ -46,5 +46,5 @@
 }
 
 .word {
-  --dsh-file-type-default-color: var(--dsw-static-deepseek-450);
+  --dsh-file-type-default-color: var(--yh-static-deepseek-450);
 }

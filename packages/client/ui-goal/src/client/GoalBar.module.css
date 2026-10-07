@@ -29,9 +29,9 @@
   margin: 0 auto;
   padding: 4px 5px 4px 12px;
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  box-shadow: var(--dsw-elevation-panel);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-md);
+  box-shadow: var(--yh-elevation-panel);
 }
 
 .bar::before {
@@ -39,8 +39,8 @@
   z-index: -1;
   inset: 0;
   border-radius: inherit;
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
   content: '';
   pointer-events: none;
 }
@@ -48,7 +48,7 @@
 .goalGlyph {
   display: inline-flex;
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Matches the Todo/Queue panel titles (13/24 medium, primary) so the three
@@ -58,7 +58,7 @@
   font-size: 13px;
   line-height: 24px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .objective {
@@ -67,7 +67,7 @@
   overflow: hidden;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary-dimmed);
+  color: var(--yh-alias-label-primary-dimmed);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -76,7 +76,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font-size: 12px;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -91,8 +91,8 @@
   min-height: 36px;
   align-items: flex-end;
   /* The editor scrolls inside this elevated menu-surface strip. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 /* ---- Icon actions ---- */
@@ -115,13 +115,13 @@
   border-radius: 999px;
   corner-shape: round;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .iconBtn:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
 }
 
 .iconBtn:disabled {

@@ -69,47 +69,47 @@ window.__ModuleLoader__.load({
     /** Menu rows and the confirmation card, styled with host theme tokens. */
     const CSS = `
 .yst-item-wrap { position: relative; }
-.yst-separator { height: 0; margin: 3px 0; border-top: 0.5px solid var(--dsw-alias-border-l2); }
+.yst-separator { height: 0; margin: 3px 0; border-top: 0.5px solid var(--yh-alias-border-l2); }
 .yst-item {
   display: flex; align-items: center; gap: 6px; width: 100%; min-height: 34px;
-  padding: 6px 8px; border: none; border-radius: var(--dsw-radius-md);
+  padding: 6px 8px; border: none; border-radius: var(--yh-radius-md);
   background: transparent; cursor: pointer; font-size: 13px; line-height: 20px;
-  color: var(--dsw-alias-label-primary); text-align: left;
+  color: var(--yh-alias-label-primary); text-align: left;
 }
 .yst-item:hover:not(:disabled), .yst-item:focus-visible:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover); outline: none;
+  background: var(--yh-alias-interactive-bg-hover); outline: none;
 }
-.yst-item-danger { color: var(--dsw-alias-state-error-primary); }
+.yst-item-danger { color: var(--yh-alias-state-error-primary); }
 .yst-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .yst-modal-root {
   pointer-events: auto; position: fixed; inset: 0; z-index: 1000;
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .yst-modal-mask {
-  position: absolute; inset: 0; backdrop-filter: var(--dsw-mask-blur);
-  background: var(--dsw-alias-bg-mask-1);
+  position: absolute; inset: 0; backdrop-filter: var(--yh-mask-blur);
+  background: var(--yh-alias-bg-mask-1);
 }
 .yst-modal-card {
   position: relative; z-index: 1; display: flex; flex-direction: column; gap: 12px;
   box-sizing: border-box; width: min(420px, 100%); padding: 22px 24px 20px;
-  border-radius: var(--dsw-radius-panel); background: var(--dsw-alias-bg-layer-2);
-  box-shadow: var(--dsw-elevation-prominent);
+  border-radius: var(--yh-radius-panel); background: var(--yh-alias-bg-layer-2);
+  box-shadow: var(--yh-elevation-prominent);
 }
-.yst-modal-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--dsw-alias-label-primary); }
-.yst-modal-description { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }
-.yst-modal-warning { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
-.yst-modal-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); }
+.yst-modal-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--yh-alias-label-primary); }
+.yst-modal-description { margin: 0; font-size: 14px; line-height: 22px; color: var(--yh-alias-label-primary); }
+.yst-modal-warning { margin: 0; font-size: 13px; line-height: 20px; color: var(--yh-alias-label-secondary); }
+.yst-modal-error { font-size: 12px; line-height: 18px; color: var(--yh-alias-state-error-primary); }
 .yst-modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .yst-button {
   box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
-  gap: 4px; height: 36px; padding: 0 14px; border: none; border-radius: var(--dsw-radius-md);
+  gap: 4px; height: 36px; padding: 0 14px; border: none; border-radius: var(--yh-radius-md);
   background: transparent; cursor: pointer; font-size: 14px; line-height: 22px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 .yst-button:disabled { cursor: not-allowed; opacity: 0.4; }
-.yst-button-outline { border: 0.5px solid var(--dsw-alias-border-l3); }
-.yst-button-outline:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
-.yst-button-danger:not(:disabled) { color: var(--dsw-alias-state-error-primary); }
+.yst-button-outline { border: 0.5px solid var(--yh-alias-border-l3); }
+.yst-button-outline:hover:not(:disabled) { background: var(--yh-alias-interactive-bg-hover); }
+.yst-button-danger:not(:disabled) { color: var(--yh-alias-state-error-primary); }
 `
 
     /**

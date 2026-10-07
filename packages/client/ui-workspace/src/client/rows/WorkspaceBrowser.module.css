@@ -22,11 +22,11 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* The action cluster animates its width and the search pill rounds its corners,
@@ -34,12 +34,12 @@
 .iconButton:focus-visible,
 .searchButton:focus-visible,
 .clearButton:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
 .iconButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* View-options dropdown card: labels are short, so a content-sized card reads
@@ -60,9 +60,9 @@
   padding-left: 4px;
   margin-bottom: 4px;
   box-sizing: border-box;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .root:not(.rail) .sectionHeader {
@@ -153,10 +153,10 @@
   padding: 0;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   cursor: text;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   overflow: hidden;
   transition:
     width 180ms var(--ds-ease-in-out),
@@ -170,10 +170,10 @@
   height: 30px;
   margin-inline: -2px;
   padding: 0 4px 0 0;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .searchButton {
@@ -184,7 +184,7 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 0;
   background: transparent;
   cursor: pointer;
@@ -197,7 +197,7 @@
 }
 
 .searchButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .searchExpanded .searchButton:hover {
@@ -215,7 +215,7 @@
   pointer-events: none;
   font-size: 13px;
   line-height: 18px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   transition: opacity 120ms var(--ds-ease-in-out);
 }
 
@@ -226,7 +226,7 @@
 }
 
 .searchInput::placeholder {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .clearButton {
@@ -237,15 +237,15 @@
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .clearButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Rail variant (own .rail class from the wide owner prop — the region never
@@ -267,8 +267,8 @@
   width: 36px;
   height: 36px;
   /* Rail hovers share the shell rail's 12px rounding. */
-  border-radius: var(--dsw-radius-md);
-  color: var(--dsw-alias-label-primary);
+  border-radius: var(--yh-radius-md);
+  color: var(--yh-alias-label-primary);
 }
 
 .rail .search {
@@ -279,7 +279,7 @@
   gap: 0;
   /* The collapsed search frame clips its button's hover, so it must carry the
      rail's 12px rounding itself. */
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   border-color: transparent;
   background: transparent;
 }
@@ -287,12 +287,12 @@
 .rail .searchButton {
   width: 36px;
   height: 36px;
-  border-radius: var(--dsw-radius-md);
-  color: var(--dsw-alias-label-primary);
+  border-radius: var(--yh-radius-md);
+  color: var(--yh-alias-label-primary);
 }
 
 .rail .searchButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* List seat: always mounted so the shell foot never moves. */
@@ -332,7 +332,7 @@
   right: var(--dsh-session-list-edge-inset);
   bottom: 0;
   height: 24px;
-  background: linear-gradient(to bottom, transparent, var(--dsw-specific-sidebar-fill));
+  background: linear-gradient(to bottom, transparent, var(--yh-specific-sidebar-fill));
   pointer-events: none;
 }
 
@@ -383,7 +383,7 @@
   padding: 10px 12px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Pending content search: skeleton rows on searchResultRow metrics — a round
@@ -418,14 +418,14 @@
 
 .skeletonDot,
 .skeletonBar {
-  background: var(--dsw-alias-bg-skeleton);
+  background: var(--yh-alias-bg-skeleton);
   animation: search-skeleton 2s cubic-bezier(0.36, 0, 0.64, 1) infinite;
 }
 
 .skeletonBar {
   width: 65%;
   height: 16px;
-  border-radius: var(--dsw-radius-xs);
+  border-radius: var(--yh-radius-xs);
 }
 
 .skeletonBarWide {
@@ -461,17 +461,17 @@
     linear-gradient(
       55deg,
       transparent calc(50% - 1px),
-      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      var(--yh-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
       transparent calc(50% + 1px)
     ) 0 0 / 5px 7px no-repeat,
     linear-gradient(
       125deg,
       transparent calc(50% - 1px),
-      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      var(--yh-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
       transparent calc(50% + 1px)
     ) 0 5px / 5px 7px no-repeat,
     linear-gradient(
-      var(--dsw-alias-state-business-primary) 0 0
+      var(--yh-alias-state-business-primary) 0 0
     ) 4px 5px / calc(100% - 4px) 2px no-repeat;
   pointer-events: none;
 }
@@ -500,13 +500,13 @@
   width: 100%;
   height: 28px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 0 12px 0 calc(28px + var(--dsh-workspace-indent, 0px));
   background: transparent;
   cursor: pointer;
   text-align: left;
   font-size: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .groupSection > .sessionOverflowButton {
@@ -515,12 +515,12 @@
 
 .sessionOverflowButton:hover {
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .empty {
   padding: 16px 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
 }
 
@@ -531,14 +531,14 @@
   gap: 8px;
   margin-top: 80px;
   padding: 0 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
 }
 
 .emptyState > svg {
   margin-bottom: 4px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .emptyAction {
@@ -548,7 +548,7 @@
   cursor: pointer;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-link);
+  color: var(--yh-alias-link);
 }
 
 /* Rename dialog form (same figma dialog family as the create modals). */
@@ -557,35 +557,35 @@
   width: 100%;
   height: 44px;
   padding: 7px 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-lg);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-lg);
   outline: none;
   background: transparent;
   font-size: 14px;
   font-weight: 400;
   line-height: 22px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .renameInput:disabled {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--yh-alias-label-dimmed);
 }
 
 .renameError {
   margin-top: 8px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .deleteAction:not(:disabled) {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .deleteStatus {
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* The stop-and-archive dialog's list of work that will be stopped. */
@@ -594,7 +594,7 @@
   padding-left: 18px;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .archiveActivity li {

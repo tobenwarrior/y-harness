@@ -1,10 +1,10 @@
 .root {
   margin: 4px 0 4px 4px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-markdown-code-block);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xs-13);
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-markdown-code-block);
+  color: var(--yh-alias-label-secondary);
+  font: var(--yh-font-xs-13);
   overflow: hidden;
 }
 
@@ -23,7 +23,7 @@
 }
 
 .item + .item {
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .root[data-inspect]:not([data-caption]) > .list > .item,
@@ -34,7 +34,7 @@
 
 .caption {
   padding: 10px 14px 6px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 12px;
 }
 
@@ -68,7 +68,7 @@
   box-sizing: border-box;
   width: 10px;
   height: 10px;
-  border: 1px solid var(--dsw-alias-label-tertiary);
+  border: 1px solid var(--yh-alias-label-tertiary);
   border-radius: 2px;
 }
 
@@ -78,31 +78,31 @@
 
 .statusText {
   margin-inline-start: auto;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 12px;
   white-space: nowrap;
 }
 
 .previous,
 .unchanged {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .item[data-change='added'] .status {
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--yh-alias-state-success-primary);
 }
 
 .item[data-change='removed'] .status {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .item[data-change='removed'] .text {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   text-decoration: line-through;
 }
 
 .unchanged {
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .unchanged summary {
@@ -141,7 +141,7 @@
 }
 
 .field dt {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .field dd {
@@ -155,7 +155,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 12px;
 }
 
@@ -168,21 +168,21 @@
   background: currentColor;
 }
 
-.badge[data-tone='info'] { color: var(--dsw-alias-state-business-primary); }
-.badge[data-tone='success'] { color: var(--dsw-alias-state-success-primary); }
-.badge[data-tone='warning'] { color: var(--dsw-alias-state-warn-primary); }
-.badge[data-tone='error'] { color: var(--dsw-alias-state-error-primary); }
+.badge[data-tone='info'] { color: var(--yh-alias-state-business-primary); }
+.badge[data-tone='success'] { color: var(--yh-alias-state-success-primary); }
+.badge[data-tone='warning'] { color: var(--yh-alias-state-warn-primary); }
+.badge[data-tone='error'] { color: var(--yh-alias-state-error-primary); }
 
 .subtitle {
   margin-top: 3px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
 .description {
   margin: 6px 0;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -198,7 +198,7 @@
 
 .group {
   margin-top: 8px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .group > summary {
@@ -206,7 +206,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 0 0;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   list-style: none;
   cursor: pointer;
   overflow-wrap: anywhere;
@@ -253,4 +253,4 @@
 }
 
 .path:hover { text-decoration: underline; }
-.path:focus-visible { outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 3px; }
+.path:focus-visible { outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: 3px; }

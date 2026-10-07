@@ -5,8 +5,8 @@
   height: var(--inspector-height);
   min-height: 0;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base);
-  border-top: 0.5px solid var(--dsw-alias-border-l3);
+  background: var(--yh-alias-bg-base);
+  border-top: 0.5px solid var(--yh-alias-border-l3);
   box-sizing: border-box;
 }
 
@@ -20,7 +20,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px 4px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 12px;
   line-height: 20px;
 }
@@ -41,7 +41,7 @@
 
 .resize:hover,
 .resize:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .page {

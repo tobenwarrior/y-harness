@@ -19,14 +19,14 @@
   max-width: min(440px, calc(100vw - 24px));
   padding: 16px;
   border: 0;
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: default;
 }
 
@@ -37,14 +37,14 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 8px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-weight: 500;
 }
 
 /* Rule under each section heading, above its rows. */
 .titleRule {
   margin-bottom: 10px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .titleValue {
@@ -70,7 +70,7 @@
   grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
   gap: 6px 16px;
   margin: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .details dt,
@@ -80,7 +80,7 @@
 }
 
 .details dd {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -90,6 +90,6 @@
 }
 
 .reasoning {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   white-space: nowrap;
 }

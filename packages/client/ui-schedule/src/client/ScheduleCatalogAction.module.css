@@ -18,14 +18,14 @@
   border: 0;
   border-radius: 28px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .trigger:hover,
 .trigger:focus-visible {
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .trigger svg {
@@ -48,12 +48,12 @@
   list-style: none;
   border: 0;
   border-radius: 16px;
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
 }
 
 .row {
@@ -66,7 +66,7 @@
   min-height: 48px;
   padding: 10px 12px;
   border-radius: 10px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* A task row is one whole-row opener, so the row itself carries the hover
@@ -76,15 +76,15 @@
 }
 
 .rowTask:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .rowOverdue {
-  background: var(--dsw-alias-state-warn-tertiary);
+  background: var(--yh-alias-state-warn-tertiary);
 }
 
 .rowOverdue:hover {
-  background: var(--dsw-alias-state-warn-tertiary);
+  background: var(--yh-alias-state-warn-tertiary);
 }
 
 .body {
@@ -128,7 +128,7 @@
 }
 
 .openButton:focus-visible::after {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
@@ -139,13 +139,13 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 10px;
   line-height: 15px;
 }
 
 .metadataOverdue {
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 /* The next target states its own line and takes the frequency line's rule above. */
@@ -169,14 +169,14 @@
   border: 0;
   border-radius: 6px;
   background: none;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
 }
 
 .deleteButton:hover,
 .deleteButton:focus-visible {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .deleteButton:disabled {
@@ -185,5 +185,5 @@
 
 /* The open entry keeps the same quiet gray as its hover state. */
 .trigger[aria-expanded='true'] {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }

@@ -7,10 +7,10 @@
   height: 28px;
   padding: 0 8px;
   box-sizing: border-box;
-  border: 1px solid color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 20%, transparent);
-  border-radius: var(--dsw-radius-sm);
-  color: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--yh-alias-brand-primary-new-colorprimary-new-color) 20%, transparent);
+  border-radius: var(--yh-radius-sm);
+  color: var(--yh-alias-brand-primary-new-colorprimary-new-color);
+  background: color-mix(in srgb, var(--yh-alias-brand-primary-new-colorprimary-new-color) 8%, transparent);
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -35,7 +35,7 @@
   height: 6px;
   border-radius: 50%;
   corner-shape: round;
-  background: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
+  background: var(--yh-alias-brand-primary-new-colorprimary-new-color);
 }
 
 .errorDot { background: currentColor; width: 6px; height: 6px; border-radius: 50%; corner-shape: round; }

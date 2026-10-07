@@ -1313,7 +1313,7 @@ describe('PluginManagerPage', () => {
     expect(screen.getByText('pnpm add dsh-x')).toBeTruthy()
     const terminal = document.querySelector('[data-terminal]') as HTMLElement
     expect(terminal.hasAttribute('data-running')).toBe(true)
-    expect(within(terminal).getByText('1').getAttribute('style')).toContain('--dsw-static-blue-500')
+    expect(within(terminal).getByText('1').getAttribute('style')).toContain('--yh-static-blue-500')
     expect(within(terminal).getByText(en.terminalRunning)).toBeTruthy()
     // A long log folds its middle behind an expand control, so the dialog keeps its height while pnpm talks.
     const lines = Array.from({ length: 15 }, (_line, index) => `line ${String(index + 1)}`).join('\n')

@@ -25,18 +25,18 @@
   padding: 0 10px 0 8px;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
   cursor: pointer;
   overflow: hidden;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-family: inherit;
   font-size: 14px;
   line-height: 22px;
 }
 
 .trigger:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Rail trigger: the same 36x36 box and 12px rounding as the other rail
@@ -57,7 +57,7 @@
 }
 
 /* Full-viewport layer (figma Mask 501:29946 #000@24%): mask tokens match the
-   Modal primitive (--dsw-alias-bg-mask-1 + --dsw-mask-blur). */
+   Modal primitive (--yh-alias-bg-mask-1 + --yh-mask-blur). */
 .overlay {
   position: fixed;
   inset: 0;
@@ -71,8 +71,8 @@
 .mask {
   position: absolute;
   inset: var(--dsh-frame-chrome-top, 0px) 0 0;
-  background: var(--dsw-alias-bg-mask-1);
-  backdrop-filter: var(--dsw-mask-blur);
+  background: var(--yh-alias-bg-mask-1);
+  backdrop-filter: var(--yh-mask-blur);
 }
 
 /* Settings uses a shared 800×800 panel; longer sections scroll
@@ -89,17 +89,17 @@
   width: 800px;
   height: min(800px, calc(100vh - 2 * max(24px, var(--dsh-frame-overlay-top, 24px))));
   max-width: calc(100vw - 48px);
-  border-radius: var(--dsw-radius-panel);
+  border-radius: var(--yh-radius-panel);
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2);
-  box-shadow: var(--dsw-elevation-prominent);
+  background: var(--yh-alias-bg-layer-2);
+  box-shadow: var(--yh-elevation-prominent);
   /* Elevated surface: the scrollbar thumb takes the l2 elevation tokens.
      Declared on the panel rather than the scrolling `.options` child so the
      elevation choice sits with the surface; the custom properties inherit
      down to whichever descendant scrolls (see ui-theme
      styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .panel:focus {
@@ -124,7 +124,7 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Cell stack (figma 501:29961): gap 4. */
@@ -145,23 +145,23 @@
   padding: 9px 16px 9px 12px;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
   cursor: pointer;
   font-family: inherit;
   font-size: 14px;
   line-height: 22px;
   font-weight: 400;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   text-align: left;
 }
 
 .navCell:hover {
-  background: var(--dsw-specific-sidebar-nav-item-hover);
+  background: var(--yh-specific-sidebar-nav-item-hover);
 }
 
 .navCell.active {
-  background: var(--dsw-specific-sidebar-nav-item-active);
+  background: var(--yh-specific-sidebar-nav-item-active);
 }
 
 .navIcon {
@@ -214,14 +214,14 @@
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   cursor: pointer;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .close:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Options area (figma Options 501:29983): pad (24,0,24,24), scrolls. */

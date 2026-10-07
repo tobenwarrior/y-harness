@@ -14,7 +14,7 @@ describe('deliverables layout', () => {
     expect(deliveries).toMatch(/\.root\[data-after-changes='true'\]\s*\{\s*margin-top:\s*0;\s*\}/)
     expect(deliveries).toMatch(/\.file\s*\{[^}]*height:\s*60px;[^}]*padding:\s*8px 10px/s)
     expect(deliveries).toMatch(/\.fileIcon\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*40px;[^}]*height:\s*40px/s)
-    expect(deliveries).toMatch(/\.fileIcon\s*\{[^}]*border:\s*0\.5px solid var\(--dsw-alias-border-l1\)/s)
+    expect(deliveries).toMatch(/\.fileIcon\s*\{[^}]*border:\s*0\.5px solid var\(--yh-alias-border-l1\)/s)
     expect(read('PresentedFileCard.tsx')).toMatch(/<FileTypeIcon path=\{file\.path\} size=\{20\} \/>/)
     expect(deliveries).toMatch(/\.fileName\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*20px/s)
     expect(deliveries).toMatch(/\.description\s*\{[^}]*font-size:\s*10px;[^}]*line-height:\s*16px/s)

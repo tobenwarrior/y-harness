@@ -35,9 +35,9 @@
   max-width: var(--dsh-composer-card-max-width);
   margin-bottom: 6px;
   padding: 4px 8px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
 }
@@ -57,10 +57,10 @@
      drawn as the elevation hairline so it costs no layout; the shadow is the
      soft elevation tier. Fill: the input surface token (elevated in dark). */
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-panel);
-  background: var(--dsw-specific-input-major);
-  box-shadow: var(--dsw-elevation-soft);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-panel);
+  background: var(--yh-specific-input-major);
+  box-shadow: var(--yh-elevation-soft);
   /* The draft text follows the Settings font-size preference (the textarea,
      mirror, and backdrop all inherit from here, so the three layers stay in
      step); the line height keeps the default 10px leading via the shared px
@@ -72,15 +72,15 @@
      pair. Declared on the card because the elevation belongs to the surface,
      and the custom properties inherit down to the box that actually scrolls
      (see ui-theme styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 /* No-workspace trigger state: an inset 1px dashed outline marks the card as a
    workspace picker rather than a live composer. Keeping the complete stroke
    inside the rounded box prevents clipped corner pixels from reading heavier. */
 .cardWorkspaceTrigger {
-  --dsw-elevation-stroke-color: transparent;
+  --yh-elevation-stroke-color: transparent;
   cursor: pointer;
 }
 
@@ -90,8 +90,8 @@
   inset: 0;
   box-sizing: border-box;
   border: 1px dashed currentColor;
-  border-radius: var(--dsw-radius-panel);
-  color: var(--dsw-alias-border-l4);
+  border-radius: var(--yh-radius-panel);
+  color: var(--yh-alias-border-l4);
   transition: color 100ms ease;
   pointer-events: none;
 }
@@ -104,7 +104,7 @@
 }
 
 .cardWorkspaceTrigger:hover::after {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .accessory {
@@ -153,7 +153,7 @@
   height: 8px;
   border-radius: 50%;
   corner-shape: round;
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
   animation: input-pending 1s ease-in-out infinite alternate;
 }
 
@@ -172,16 +172,16 @@
      an 8px breath below the line (the hero keeps its own 52px floor below). */
   min-height: 36px;
   padding: 4px 8px 0 14px;
-  font-family: var(--dsw-font-family);
+  font-family: var(--yh-font-family);
   font-size: inherit;
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
   outline: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   /* Business blue, not brand-primary: that token resolves to ink in this sheet. */
-  caret-color: var(--dsw-alias-state-business-primary);
+  caret-color: var(--yh-alias-state-business-primary);
 }
 
 /* Lexical paragraphs are <p> blocks: strip the UA margins so the surface
@@ -195,7 +195,7 @@
    blank; without the variable the declaration is invalid and nothing shows. */
 .input p:last-child::after {
   content: var(--dsh-composer-hint);
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .input[data-composer-composing] p:last-child::after {
@@ -213,7 +213,7 @@
 .placeholder {
   position: absolute;
   inset: 4px 8px auto 14px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -222,7 +222,7 @@
 }
 
 .inputDisabled {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: not-allowed;
 }
 
@@ -320,13 +320,13 @@
   border: none;
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-specific-selector);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-specific-selector);
+  color: var(--yh-alias-label-primary);
   cursor: pointer;
 }
 
 .add:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+  background: var(--yh-alias-interactive-bg-hover-solid);
 }
 
 .add:disabled {
@@ -341,14 +341,14 @@
   height: 28px;
   padding: 0 20px 0 8px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   outline: none;
   background-color: transparent;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 4px center;
   background-size: 12px 12px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
@@ -358,7 +358,7 @@
 }
 
 .select:hover:not(:disabled) {
-  background-color: var(--dsw-alias-interactive-bg-hover);
+  background-color: var(--yh-alias-interactive-bg-hover);
 }
 
 .select:disabled {
@@ -378,7 +378,7 @@
   border: none;
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-alias-button-info-fill);
+  background: var(--yh-alias-button-info-fill);
   /* Static white, not the foreground token: the arrow stays white on the blue
      fill in both themes (design 34:10465). */
   color: #fff;
@@ -391,7 +391,7 @@
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-info-hover);
+  background: var(--yh-alias-button-info-hover);
 }
 
 .primary:disabled {
@@ -403,7 +403,7 @@
   margin-left: 8px;
   padding: 1px 8px;
   border: 1px solid currentColor;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   color: inherit;
   font-size: 12px;

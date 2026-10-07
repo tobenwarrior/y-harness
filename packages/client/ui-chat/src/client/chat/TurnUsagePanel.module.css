@@ -22,9 +22,9 @@
   height: calc(28px + var(--dsh-content-font-delta, 0px));
   padding: 6px 8px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
   font-variant-numeric: tabular-nums;
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
@@ -48,8 +48,8 @@
 
 .trigger:hover,
 .trigger[aria-expanded='true'] {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-tertiary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Narrow viewport: the pills collapse to bare icons with the sibling

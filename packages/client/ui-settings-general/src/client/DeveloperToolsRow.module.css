@@ -4,7 +4,7 @@
   justify-content: space-between;
   gap: 24px;
   padding: 16px 0;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .title {
@@ -14,7 +14,7 @@
 
 .description {
   margin-top: 4px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
 }

@@ -6,15 +6,15 @@
   width: 240px;
   height: 64px;
   padding: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-specific-input-major, transparent);
+  border: 0.5px solid var(--yh-alias-border-l2, rgba(0, 0, 0, 0.12));
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-specific-input-major, transparent);
   box-sizing: border-box;
   text-align: left;
 }
 
 .failed {
-  border-color: var(--dsw-alias-state-error-primary, #d54941);
+  border-color: var(--yh-alias-state-error-primary, #d54941);
 }
 
 .icon {
@@ -62,7 +62,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   font-weight: 500;
   line-height: 22px;
@@ -72,13 +72,13 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--dsw-alias-label-tertiary, rgba(0, 0, 0, 0.45));
+  color: var(--yh-alias-label-tertiary, rgba(0, 0, 0, 0.45));
   font-size: 12px;
   line-height: 15px;
 }
 
 .metaFailed {
-  color: var(--dsw-alias-state-error-primary, #d54941);
+  color: var(--yh-alias-state-error-primary, #d54941);
 }
 
 .remove {
@@ -94,8 +94,8 @@
   border: none;
   border-radius: 50%;
   corner-shape: round;
-  background: var(--dsw-alias-button-contrast-fill, rgba(0, 0, 0, 0.72));
-  color: var(--dsw-alias-label-primary-inverted, #fff);
+  background: var(--yh-alias-button-contrast-fill, rgba(0, 0, 0, 0.72));
+  color: var(--yh-alias-label-primary-inverted, #fff);
   opacity: 0;
   cursor: pointer;
   transition: opacity 0.2s ease-in-out;
@@ -124,7 +124,7 @@
 }
 
 .removeFailed {
-  background: var(--dsw-alias-state-error-primary, #d54941);
+  background: var(--yh-alias-state-error-primary, #d54941);
   color: #fff;
   opacity: 1;
 }
@@ -137,7 +137,7 @@
   overflow: hidden;
   height: 2px;
   border-radius: 1px;
-  background: var(--dsw-alias-fill-tertiary, rgba(0, 0, 0, 0.08));
+  background: var(--yh-alias-fill-tertiary, rgba(0, 0, 0, 0.08));
 }
 
 .progressBar {
@@ -145,7 +145,7 @@
   width: 35%;
   height: 100%;
   border-radius: inherit;
-  background: var(--dsw-alias-brand-primary, #4d6bfe);
+  background: var(--yh-alias-brand-primary, #4d6bfe);
   animation: file-card-progress 1.2s ease-in-out infinite alternate;
 }
 

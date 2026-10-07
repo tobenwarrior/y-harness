@@ -2,17 +2,17 @@
   position: relative;
   display: grid;
   padding: 4px;
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-module-platform);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-module-platform);
 }
 
 .indicator {
   position: absolute;
   inset: 4px auto 4px 4px;
   box-sizing: border-box;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-3);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-3);
   transition: transform 180ms ease;
   pointer-events: none;
 }
@@ -22,18 +22,18 @@
   justify-content: center;
   height: 34px;
   padding: 0 12px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   font-size: 14px;
   line-height: 20px;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   transition: color 180ms ease;
 }
 
 .tab:hover,
 .tab[aria-selected='true'] {
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .tab[aria-selected='true'] {

@@ -29,12 +29,12 @@ H 表示以 CSS 像素计、包含边框的设计外部高度。R 表示浏览�
 
 | 用途 | 典型尺寸或示例 | 圆角 | 共享 token |
 |---|---|---|---|
-| 小细节 | 低于 H20；键帽、行内代码、微型控件 | R4 | `--dsw-radius-xs` |
-| 紧凑控件 | H20–28；小按钮、紧凑图标按钮、紧凑菜单项 | R8 | `--dsw-radius-sm` |
-| 标准控件或单行 cell | H32–40；按钮、输入框、选择器、导航行 | R12 | `--dsw-radius-md` |
-| 大控件或分组内容 | 大按钮、明确设计为多行的 cell、嵌套表单组 | R16 | `--dsw-radius-lg` |
-| 独立内容卡片 | 设置卡片、消息气泡、引导入口卡片 | R20 | `--dsw-radius-xl` |
-| 主容器 | 对话输入框、对话框、主面板或悬浮面板 | R28 | `--dsw-radius-panel` |
+| 小细节 | 低于 H20；键帽、行内代码、微型控件 | R4 | `--yh-radius-xs` |
+| 紧凑控件 | H20–28；小按钮、紧凑图标按钮、紧凑菜单项 | R8 | `--yh-radius-sm` |
+| 标准控件或单行 cell | H32–40；按钮、输入框、选择器、导航行 | R12 | `--yh-radius-md` |
+| 大控件或分组内容 | 大按钮、明确设计为多行的 cell、嵌套表单组 | R16 | `--yh-radius-lg` |
+| 独立内容卡片 | 设置卡片、消息气泡、引导入口卡片 | R20 | `--yh-radius-xl` |
+| 主容器 | 对话输入框、对话框、主面板或悬浮面板 | R28 | `--yh-radius-panel` |
 
 拟定控件尺寸落在档位之间时，优先复用已有的公共尺寸变体。高卡片仍是卡片，不因高度超过按钮就升到 R28。专门设计为多行的 cell 使用 R16；普通按钮的文字发生换行时，仍保留其按钮变体。
 
@@ -86,7 +86,7 @@ H 表示以 CSS 像素计、包含边框的设计外部高度。R 表示浏览�
 }
 ```
 
-外围引导页设置 `--dsl-guide-entry-radius: var(--dsw-radius-xl)`。外层卡片为 R20 时，不要再给内部按钮设置独立的 R28 端部。
+外围引导页设置 `--dsl-guide-entry-radius: var(--yh-radius-xl)`。外层卡片为 R20 时，不要再给内部按钮设置独立的 R28 端部。
 
 <a id="settings-cards"></a>
 ## 设置卡片材质
@@ -95,15 +95,15 @@ H 表示以 CSS 像素计、包含边框的设计外部高度。R 表示浏览�
 
 ```css
 .card {
-  border-radius: var(--dsw-radius-xl);
-  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
-  background: var(--dsw-alias-settings-card-fill);
+  border-radius: var(--yh-radius-xl);
+  border: 0.5px solid var(--yh-alias-settings-card-stroke);
+  background: var(--yh-alias-settings-card-fill);
 }
 ```
 
-主题在色板别名所在的 `body` 上，将卡片底色解析为 `--dsw-alias-bg-layer-2`，描边解析为 `--dsw-alias-border-l4`。功能样式在明暗主题中均使用这些别名。嵌套编辑器使用 R16 和既有模块底色。账号的查询用量、充值链接遵循 H36/R12 的 Button 几何；授权按钮使用公共 Button。
+主题在色板别名所在的 `body` 上，将卡片底色解析为 `--yh-alias-bg-layer-2`，描边解析为 `--yh-alias-border-l4`。功能样式在明暗主题中均使用这些别名。嵌套编辑器使用 R16 和既有模块底色。账号的查询用量、充值链接遵循 H36/R12 的 Button 几何；授权按钮使用公共 Button。
 
-平面中性边框使用共享的 0.5px 发丝线。具有层级阴影的菜单、浮层、对话框和面板使用 `border: 0` 与既有 `--dsw-elevation-*` 材质，其阴影已包含发丝描边。不要在该描边上再叠一层中性边框，也不要仅为区分设置 tab 就给普通设置卡片加阴影。保留语义状态色边框与既有的半透明菜单背景效果。
+平面中性边框使用共享的 0.5px 发丝线。具有层级阴影的菜单、浮层、对话框和面板使用 `border: 0` 与既有 `--yh-elevation-*` 材质，其阴影已包含发丝描边。不要在该描边上再叠一层中性边框，也不要仅为区分设置 tab 就给普通设置卡片加阴影。保留语义状态色边框与既有的半透明菜单背景效果。
 
 <a id="verification"></a>
 ## 应用与验证

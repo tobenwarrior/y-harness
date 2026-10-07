@@ -11,8 +11,8 @@
    * rebind the scrollbar indirection to the elevation pair here, on the
    * surface, so it inherits down to whichever descendant scrolls (the
    * rebinding contract in ui-theme styles/scrollbar.css). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 /* Card-scope wrapper hosting the path editor's Escape and focus-leave
@@ -29,7 +29,7 @@
   gap: 8px;
   flex: none;
   padding: 16px 14px 8px 24px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  border-bottom: 0.5px solid var(--yh-alias-border-l3);
 }
 
 .title {
@@ -40,7 +40,7 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 510;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* The bar IS the editor's box in both modes: it carries the rounded outline
@@ -57,7 +57,7 @@
   margin-left: -9px;
   padding: 0 8px;
   border: 1px solid transparent;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 /* Lit by the affordance the row belongs to, never by a crumb: a crumb's hover
@@ -65,7 +65,7 @@
 .crumbBar:has(.crumbEditZone:enabled:hover),
 .crumbBar:has(.crumbEditZone:focus-visible),
 .crumbBar:has(.pathInput) {
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--yh-alias-border-l2);
 }
 
 /* Deep chains scroll inside the trail (the effect pins the tail into view)
@@ -117,23 +117,23 @@
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .crumb:focus-visible {
   /* The trail scrolls, so an outer ring would be clipped; keep it inside. */
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
 .crumb:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .crumbChevron {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The empty remainder of the bar: a real click target that flips the bar into
@@ -156,12 +156,12 @@
 
 .crumbEditGlyph {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .crumbEditZone:enabled:hover .crumbEditGlyph,
 .crumbEditZone:focus-visible .crumbEditGlyph {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .crumbEditZone:disabled {
@@ -169,7 +169,7 @@
 }
 
 .crumbEditZone:disabled .crumbEditGlyph {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* Chrome-free: the bar around it draws the box (border, radius, padding). */
@@ -184,7 +184,7 @@
   background: transparent;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Miller content: symmetric 16px vertical padding so the divider clears the
@@ -222,7 +222,7 @@
 .divider {
   flex: none;
   width: 0.5px;
-  background: var(--dsw-alias-border-l3);
+  background: var(--yh-alias-border-l3);
 }
 
 .rowSeat {
@@ -239,7 +239,7 @@
   flex: none;
   padding: 4px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -247,28 +247,28 @@
 
 .row:focus-visible {
   /* The column scrolls and its left edge carries no padding; keep the ring inside. */
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
 .row:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Selection: pill fill + the open-folder glyph in the info accent. */
 .rowSelected,
 .rowSelected:hover {
-  background: var(--dsw-alias-interactive-bg-active, var(--dsw-alias-interactive-bg-hover));
+  background: var(--yh-alias-interactive-bg-active, var(--yh-alias-interactive-bg-hover));
 }
 
 .rowIcon {
   flex: none;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .rowIconSelected {
   flex: none;
-  color: var(--dsw-alias-button-info-fill);
+  color: var(--yh-alias-button-info-fill);
 }
 
 .rowName {
@@ -280,12 +280,12 @@
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .rowChevron {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .status,
@@ -300,11 +300,11 @@
 }
 
 .status {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .error {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 /* The slow-scan indicator floats over the content's bottom-RIGHT corner on
@@ -321,7 +321,7 @@
   right: 16px;
   bottom: 8px;
   padding: 2px 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--yh-alias-bg-layer-2);
 }
 
 /* Footer: l3 separator on top, symmetric padding so the row sits vertically
@@ -335,7 +335,7 @@
   gap: 8px;
   flex: none;
   padding: 16px 24px;
-  border-top: 0.5px solid var(--dsw-alias-border-l3);
+  border-top: 0.5px solid var(--yh-alias-border-l3);
 }
 
 /* Show-hidden toggle: a subtle fixed-label text button left of the gap;
@@ -352,22 +352,22 @@
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .showHiddenToggle:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .showHiddenToggle:disabled {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   cursor: default;
 }
 
 .showHiddenToggleActive {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .footerGap {
@@ -397,14 +397,14 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 510;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .createIn {
   margin: 0;
   font-size: 14px;
   line-height: 22px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .createInput {
@@ -412,17 +412,17 @@
   width: 100%;
   height: 44px;
   padding: 7px 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-lg);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-lg);
   outline: none;
   background: transparent;
   font-size: 14px;
   line-height: 22px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .createInput::placeholder {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .createActions {

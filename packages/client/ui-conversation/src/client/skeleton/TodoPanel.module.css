@@ -20,16 +20,16 @@
     var(--dsh-composer-dock-inset)
   );
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  box-shadow: var(--dsw-elevation-panel);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
+  box-shadow: var(--yh-elevation-panel);
   /* The menu surface and the scrolling `.list` use the l2 scrollbar colors.
      Declared here because the custom properties inherit into `.list` (see
      ui-theme styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .body {
@@ -55,7 +55,7 @@
   display: grid;
   flex: none;
   place-items: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .title {
@@ -63,7 +63,7 @@
   font-size: 13px;
   line-height: 24px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .progress {
@@ -73,7 +73,7 @@
   font-size: 13px;
   line-height: 20px;
   font-weight: 400;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -82,7 +82,7 @@
   display: grid;
   flex: none;
   place-items: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .list {
@@ -103,7 +103,7 @@
   min-width: 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .glyph {

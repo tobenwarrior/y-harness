@@ -10,7 +10,7 @@
   margin: 0 0 12px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .footer {
@@ -26,20 +26,20 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--dsw-alias-label-error);
+  color: var(--yh-alias-label-error);
 }
 
 .save {
   appearance: none;
   border: 1px solid transparent;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   padding: 5px 14px;
   font: inherit;
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
-  background: var(--dsw-alias-label-primary);
-  color: var(--dsw-alias-bg-layer-3);
+  background: var(--yh-alias-label-primary);
+  color: var(--yh-alias-bg-layer-3);
 }
 
 .save:disabled {
@@ -48,6 +48,6 @@
 }
 
 .save:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }

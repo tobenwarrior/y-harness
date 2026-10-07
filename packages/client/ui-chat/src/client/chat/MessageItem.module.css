@@ -24,15 +24,15 @@
      the bubble widens with a user-dragged or adaptive column; percentage
      keeps narrow windows sane. */
   max-width: 100%;
-  background: var(--dsw-specific-bubble);
-  border-radius: var(--dsw-radius-xl);
+  background: var(--yh-specific-bubble);
+  border-radius: var(--yh-radius-xl);
   /* 42px single-line bubble at the default size: 22 line + 10 vertical
      padding each side; the Settings font-size preference moves size and line
      height together through the body-published axis. */
   padding: 10px 16px;
   font-size: var(--dsh-content-font-size, 14px);
   line-height: calc(22px + var(--dsh-content-font-delta, 0px));
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   /* The projected user text is inline runs; the bubble owns wrapping so a
      decorated single-line message stays one line. */
   white-space: pre-wrap;
@@ -40,7 +40,7 @@
 }
 
 .referenceSummary {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
 }
@@ -66,9 +66,9 @@
   min-width: 0;
   padding: 0;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: color 100ms ease;
   font: inherit;
   text-align: left;
@@ -89,7 +89,7 @@
   top: 0;
   z-index: 7;
   border-radius: 0;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 /* A fenced code block in the summary pins its banner at the scrollport top,
@@ -106,7 +106,7 @@
    token below would let the scrolling prose show through the moment the pointer
    lands on the toggle to collapse it. */
 .compactionRow:has(.compactionBody) .compactionButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+  background: var(--yh-alias-interactive-bg-hover-solid);
 }
 
 .compactionButton:not(:disabled) {
@@ -114,11 +114,11 @@
 }
 
 .compactionButton:hover {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .compactionButton:not(:disabled):hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .compactionLeading {
@@ -173,7 +173,7 @@
   height: 2px;
   margin: 0 8px;
   border-radius: 1px;
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 .compactionSummary {
@@ -190,13 +190,13 @@
 .compactionBody {
   /* Indent under the title, which starts at leading (16 + delta) + gap 6. */
   padding: 4px 0 4px calc(22px + var(--dsh-content-font-delta, 0px));
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
 }
 
 .retryRow {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
 }
@@ -208,7 +208,7 @@
   max-width: 100%;
   padding: 2px 0;
   gap: 7px;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   color: inherit;
   cursor: pointer;
   list-style: none;
@@ -232,7 +232,7 @@
 }
 
 .retrySummary:hover {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -242,7 +242,7 @@
 }
 
 .retrySummary:focus-visible {
-  outline: 1.5px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 1.5px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -266,7 +266,7 @@
 }
 
 .retryDetailLabel {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .turnErrorRow {
@@ -290,22 +290,22 @@
 
 .turnErrorTitle {
   margin-right: 6px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font-weight: 600;
 }
 
 .turnErrorMessage {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .turnErrorCode {
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-markdown-code-block-small);
+  color: var(--yh-alias-label-tertiary);
+  font: var(--yh-font-markdown-code-block-small);
 }
 
 .maxTokensTitle {
   margin-right: 6px;
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--yh-alias-state-warn-primary);
   font-weight: 600;
 }
 
@@ -325,9 +325,9 @@
   width: 240px;
   min-height: 64px;
   padding: 8px 12px;
-  border: 0.5px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.12));
-  border-radius: var(--dsw-radius-xl);
-  background: var(--dsw-specific-input-major, transparent);
+  border: 0.5px solid var(--yh-alias-border-l2, rgba(0, 0, 0, 0.12));
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-specific-input-major, transparent);
   box-sizing: border-box;
 }
 
@@ -348,7 +348,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   font-weight: 500;
   line-height: 22px;
@@ -358,7 +358,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--dsw-alias-label-tertiary, rgba(0, 0, 0, 0.45));
+  color: var(--yh-alias-label-tertiary, rgba(0, 0, 0, 0.45));
   font-size: 12px;
   line-height: 15px;
 }

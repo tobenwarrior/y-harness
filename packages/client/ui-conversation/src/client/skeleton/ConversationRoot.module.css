@@ -4,7 +4,7 @@
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 /* 76px with its rule: the height of the Sidebar's tab strip and header row
@@ -19,7 +19,7 @@
   box-sizing: border-box;
   min-height: 76px;
   padding: 10px 28px 0 20px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  border-bottom: 0.5px solid var(--yh-alias-border-l3);
 }
 
 .header:where(:not(:has(.tabs))) {
@@ -117,7 +117,7 @@
 
 .crumbSep {
   /* figma: "/" separators are 14px caption gray (75:7903), one tint lighter than crumb text. */
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 14px;
   line-height: 20px;
 }
@@ -128,11 +128,11 @@
   overflow: hidden;
   padding: 4px 8px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
   font-size: 14px;
   line-height: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -144,12 +144,12 @@
 }
 
 button.crumb:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .crumbCurrent {
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   cursor: default;
 }
 
@@ -211,7 +211,7 @@ button.crumb:hover {
   font-size: 13px;
   line-height: 16px;
   font-weight: 500;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
@@ -230,11 +230,11 @@ button.crumb:hover {
    this token sheet, so the selected state rides the business blue — the
    nearest semantic token that stays blue in both themes. */
 .tabActive {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .tabActive::after {
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
 }
 
 .viewArea {
@@ -296,8 +296,8 @@ button.crumb:hover {
   background: linear-gradient(
     to bottom,
     transparent calc(var(--dsh-width-handle-pointer-y, 50%) - 36px),
-    var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y, 50%) - 8px),
-    var(--dsw-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y, 50%) + 8px),
+    var(--yh-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y, 50%) - 8px),
+    var(--yh-alias-scrollbar-bg-l1) calc(var(--dsh-width-handle-pointer-y, 50%) + 8px),
     transparent calc(var(--dsh-width-handle-pointer-y, 50%) + 36px)
   );
   opacity: 0;
@@ -447,8 +447,8 @@ button.crumb:hover {
      fade from their own base. */
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
-    var(--dsw-alias-bg-base) 36px
+    color-mix(in srgb, var(--yh-alias-bg-base) 0%, transparent) 0px,
+    var(--yh-alias-bg-base) 36px
   );
 }
 

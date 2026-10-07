@@ -12,12 +12,12 @@
   align-items: center;
   height: calc(24px + var(--dsh-content-font-delta, 0px));
   min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: color 100ms ease;
 }
 
 .row:hover {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .row[data-expandable] {
@@ -79,7 +79,7 @@
   height: 2px;
   border-radius: 1px;
   margin: 0 8px;
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 .summary {
@@ -93,11 +93,11 @@
 }
 
 .errorSummary {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .stoppedSummary {
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .bodyWrap {
@@ -111,20 +111,20 @@
   max-height: 260px;
   margin: 4px 0 4px 4px;
   overflow: hidden;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-markdown-code-block);
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-markdown-code-block);
 }
 
 .instructionsHeader {
   flex: none;
   padding: 8px 12px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-markdown-code-block-banner);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-markdown-code-block-banner);
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -136,18 +136,18 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-secondary);
+  font: var(--yh-font-markdown-code-block-small);
+  color: var(--yh-alias-label-secondary);
 }
 
 .instructions[data-error] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .instructions::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   background-clip: padding-box;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 .instructions::-webkit-scrollbar-track {
@@ -161,11 +161,11 @@
   gap: 4px;
   margin: 4px 0 2px 4px;
   padding: 2px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
+  border: 0.5px solid var(--yh-alias-border-l4);
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
@@ -179,8 +179,8 @@
 }
 
 .inspectButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover-solid);
+  color: var(--yh-alias-label-primary);
 }
 
 .visuallyHidden {

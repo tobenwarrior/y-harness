@@ -13,13 +13,13 @@
   height: 100%;
   padding: 6px var(--dsh-sidebar-inline-padding);
   box-sizing: border-box;
-  background: var(--dsw-specific-sidebar-fill);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-specific-sidebar-fill);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   /* The sidebar is elevated above the conversation surface, so a revealed
      scrollbar uses the l2 pair. .quietBars hides it without changing layout. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 /* macOS desktop: the AppFrame column owns the translucent sidebar tint; an
@@ -111,7 +111,7 @@
   height: 28px;
   border-radius: 50%;
   corner-shape: round;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 :global([data-windows-titlebar]) .collapsed .toggle .panelIcon {
@@ -324,21 +324,21 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .iconButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The toggle is flush with .logoRow, which clips its own overflow, so an outward ring loses
    the pixels that leave the row. Draw this control's ring inside its own box instead. */
 .iconButton.toggle:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
@@ -346,7 +346,7 @@
   width: 36px;
   height: 36px;
   /* Rail hovers share the panel rows' and New Session's 12px rounding. */
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 /* Rail logo swap: collapsed, the toggle rests as the whale mark (brand ink,
@@ -373,7 +373,7 @@
 /* Rail icons ride the primary ink (figma rail spec); expanded keeps the
    secondary icon-button ink. */
 .collapsed .iconButton {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .buildVersion {
@@ -383,8 +383,8 @@
   height: 10px;
   padding: 0 3px;
   border-radius: 2px;
-  color: var(--dsw-alias-label-primary-inverted);
-  background: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary-inverted);
+  background: var(--yh-alias-label-primary);
   font-family: var(--ds-font-family-code);
   font-size: 6px;
   font-weight: 500;
@@ -406,10 +406,10 @@
   padding: 8px 12px;
   margin: 0 2px 12px;
   box-sizing: border-box;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-button-elevated-fill);
-  color: var(--dsw-alias-label-primary);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-button-elevated-fill);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   font-weight: 500;
   line-height: 22px;
@@ -418,7 +418,7 @@
 }
 
 .newSession:hover {
-  background: var(--dsw-alias-button-floating-hover);
+  background: var(--yh-alias-button-floating-hover);
 }
 
 /* macOS: the themed elevated fill reads as a foreign slab on the vibrancy
@@ -452,7 +452,7 @@
 }
 
 .collapsed .newSession:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .newSessionLabel {
@@ -499,9 +499,9 @@
   padding: 7px 8px;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font: inherit;
   line-height: 22px;
   text-align: left;
@@ -509,16 +509,16 @@
 }
 
 .panelRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .panelRow.panelActive {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .panelRow:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -2px;
 }
 
@@ -547,7 +547,7 @@
   justify-content: center;
   margin: 0;
   padding: 0;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Region seat: always mounted so the foot never moves. Its trailing margin

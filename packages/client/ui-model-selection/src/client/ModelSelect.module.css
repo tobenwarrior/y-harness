@@ -19,10 +19,10 @@
   padding: 0 4px 0 8px;
   border: none;
   /* Rounded chip chrome, matching the sibling permission trigger. */
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   outline: none;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   font-weight: 400;
@@ -30,15 +30,15 @@
 }
 
 .trigger:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .trigger:focus-visible:not([data-selection-focus]) {
-  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  box-shadow: 0 0 0 2px var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
 }
 
 .trigger:disabled {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--yh-alias-label-dimmed);
   cursor: default;
 }
 
@@ -59,7 +59,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* The Models glyph replaces the text when the composer row cannot fit it. */
@@ -77,7 +77,7 @@
 
 .chevron {
   flex: 0 0 auto;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   transition: transform 120ms ease;
 }
 
@@ -104,22 +104,22 @@
   /* Surface tokens match the Menu primitive card (ui-primitives
    * Menu.module.css) so every dropdown reads as the same material. */
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
-  color: var(--dsw-alias-label-primary);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
+  color: var(--yh-alias-label-primary);
   /* Elevated surface: the scrollbar thumb takes the l2 elevation tokens.
      Declared here rather than on the scrolling `.groups` child so the
      elevation choice sits with the surface; the custom properties inherit
      down to whichever descendant actually scrolls (see ui-theme
      styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .status,
 .empty {
   padding: 8px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
 }
@@ -132,16 +132,16 @@
   gap: 6px;
   margin-bottom: 3px;
   padding: 6px 7px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-  color: var(--dsw-alias-state-error-primary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-interactive-bg-hover-danger);
+  color: var(--yh-alias-state-error-primary);
   font-size: 11px;
   line-height: 16px;
 }
 
 .warning {
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-state-warn-label);
+  background: var(--yh-alias-bg-module-platform);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .retry {
@@ -166,7 +166,7 @@
   height: auto;
   padding: 5px 7px;
   border: 0 solid transparent;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
 }
 
@@ -189,14 +189,14 @@
   border-radius: 50%;
   corner-shape: round;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
 }
 
 .searchClear:hover,
 .searchClear:focus-visible {
   outline: none;
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .searchRow .search:focus-within {
@@ -210,7 +210,7 @@
 }
 
 .searchRow .search input::placeholder {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .groups {
@@ -231,9 +231,9 @@
   min-height: 34px;
   padding: 5px 7px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -244,8 +244,8 @@
 
 .groupHeader:hover,
 .groupHeader:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .groupLabel {
@@ -258,7 +258,7 @@
 
 .groupCount {
   flex: 0 0 auto;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   font-weight: 400;
 }
@@ -267,7 +267,7 @@
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: transform 120ms ease;
 }
 
@@ -288,9 +288,9 @@
   min-height: 34px;
   padding: 5px 7px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -301,8 +301,8 @@
 
 .groupHeader:hover,
 .groupHeader:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .groupLabel {
@@ -315,7 +315,7 @@
 
 .groupCount {
   flex: 0 0 auto;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   font-weight: 400;
 }
@@ -324,7 +324,7 @@
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: transform 120ms ease;
 }
 
@@ -345,9 +345,9 @@
   min-height: 34px;
   padding: 5px 7px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -358,8 +358,8 @@
 
 .groupHeader:hover,
 .groupHeader:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .groupLabel {
@@ -372,7 +372,7 @@
 
 .groupCount {
   flex: 0 0 auto;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   font-weight: 400;
 }
@@ -381,7 +381,7 @@
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: transform 120ms ease;
 }
 
@@ -399,7 +399,7 @@
   min-height: 34px;
   padding: 5px 7px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   outline: none;
   background: transparent;
   color: inherit;
@@ -410,7 +410,7 @@
 .option:not(.modelOption):hover:not(:disabled),
 .option:focus-visible,
 .optionActive:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Selection marker is the trailing check, not a fill — matches the Menu
@@ -420,7 +420,7 @@
 }
 
 .option:disabled {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--yh-alias-label-dimmed);
   cursor: default;
 }
 
@@ -445,7 +445,7 @@
   display: grid;
   place-items: center;
   flex: 0 0 14px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .check svg {
@@ -464,9 +464,9 @@
   height: 34px;
   padding: 0 8px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 13px;
   line-height: 20px;
   cursor: pointer;
@@ -476,7 +476,7 @@
 
 .cell:hover,
 .cell:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .cellLabel {
@@ -491,12 +491,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .cellChevron {
   flex: 0 0 auto;
   width: 12px;
   height: 12px;
-  color: var(--dsw-alias-menu-icon);
+  color: var(--yh-alias-menu-icon);
 }

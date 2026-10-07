@@ -5,16 +5,16 @@
 .toggle {
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   padding: 2px 6px;
   border: none;
   background: transparent;
   cursor: pointer;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 .toggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .body {
@@ -22,11 +22,11 @@
   padding: 8px;
   max-height: 200px;
   overflow: auto;
-  background: var(--dsw-alias-markdown-code-block);
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
+  background: var(--yh-alias-markdown-code-block);
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
   font-family: var(--ds-font-family-code);
   font-size: 11px;
   line-height: 16px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }

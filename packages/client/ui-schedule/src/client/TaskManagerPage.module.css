@@ -5,8 +5,8 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-base);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-bg-base);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -122,7 +122,7 @@
   border: 0;
   border-radius: 14px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font: inherit;
   font-size: 14px;
   line-height: 22px;
@@ -131,12 +131,12 @@
 }
 
 .filterTab:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .filterTabActive {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 /* The mock's `.searchbox`: the 40px field on the mock's 4px/12px inset, the
@@ -149,18 +149,18 @@
   height: 36px;
   margin: 0 0 16px;
   padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   border-radius: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: border-color 0.15s;
 }
 
 .searchField:hover {
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--yh-alias-border-l2);
 }
 
 .searchField:focus-within {
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }
 
 /* The search atom's own box would double the field's hairline, so the wrapper
@@ -185,7 +185,7 @@
 }
 
 .searchField input::placeholder {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .searchField input:focus-visible {
@@ -205,7 +205,7 @@
   height: 28px;
   margin-right: -6px;
   padding: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .searchClear svg {
@@ -245,7 +245,7 @@
 }
 
 .row:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .rowGlyph {
@@ -253,7 +253,7 @@
   width: 16px;
   height: 20px;
   margin-top: 2px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .rowContent {
@@ -278,7 +278,7 @@
 .rowSummary {
   display: block;
   margin-top: 2px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 21px;
   overflow-wrap: anywhere;
@@ -297,18 +297,18 @@
 }
 
 .selectedRow {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* An ended task reads dimmer as a whole row — its status word is gone, so the
    lighter ink is what marks it — and returns to the usual steps while hovered
    or selected. */
 .endedRow .rowTitle {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .endedRow .rowSummary {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .endedRow:hover .rowTitle,
@@ -318,7 +318,7 @@
 
 .endedRow:hover .rowSummary,
 .endedRow.selectedRow .rowSummary {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The mock's `.notice`: the catalog loading and failure text keeps the caption
@@ -334,8 +334,8 @@
   margin: 0 0 20px;
   padding: 12px 14px;
   border-radius: 10px;
-  background: var(--dsw-specific-sidebar-fill);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-specific-sidebar-fill);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 20px;
 }
@@ -357,7 +357,7 @@
   flex-direction: column;
   padding: 48px 20px;
   text-align: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 14px;
 }
 
@@ -372,7 +372,7 @@
 .empty h3,
 .empty .emptyTitle {
   margin-bottom: 8px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 14px;
   line-height: 1.6;
   font-weight: 400;
@@ -382,7 +382,7 @@
    render and takes the mock's 12px below, one ink step lighter than the box. */
 .emptyGlyph {
   margin-bottom: 12px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* The mock's `.empty h3 + .btn`: the empty state's action keeps the mock's 16px
@@ -401,8 +401,8 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-left: 0.5px solid var(--dsw-alias-border-l4);
-  background: var(--dsw-alias-bg-base);
+  border-left: 0.5px solid var(--yh-alias-border-l4);
+  background: var(--yh-alias-bg-base);
 }
 
 /* The panel takes focus programmatically for reader context (tabIndex -1);
@@ -475,18 +475,18 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 20px;
   line-height: 28px;
   font-weight: 500;
 }
 
 .editName:hover {
-  box-shadow: 0 1px var(--dsw-alias-border-l3);
+  box-shadow: 0 1px var(--yh-alias-border-l3);
 }
 
 .editName:focus {
-  box-shadow: 0 1px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  box-shadow: 0 1px var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
 }
 
 /* An ended task's stored name as plain text on the control's step, padded to
@@ -511,7 +511,7 @@
   gap: 6px;
   min-height: 20px;
   margin-bottom: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
 }
@@ -533,7 +533,7 @@
    is pinned so it does not follow the chip's selected/unselected text color. */
 .tabTitleIcon {
   flex: none;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* The panel's top strip is the mock's `.detail-titlebar`: the detail views on the
@@ -550,7 +550,7 @@
   height: 44px;
   min-height: 44px;
   padding: 0 var(--detail-gutter);
-  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  border-bottom: 0.5px solid var(--yh-alias-border-l3);
 }
 
 .detailTabs {
@@ -587,7 +587,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* 13/16 text with 13px below it, the Tasks page's own 44px bar, so the label
@@ -602,7 +602,7 @@
   font-size: 13px;
   line-height: 16px;
   font-weight: 500;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
@@ -618,11 +618,11 @@
 }
 
 .detailTab[aria-selected="true"] {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .detailTab[aria-selected="true"]::after {
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
 }
 
 /* The theme's WebKit bar takes layout space: the reservation keeps the content
@@ -662,7 +662,7 @@
 .retentionEnd {
   flex: none;
   padding: 0 var(--detail-gutter) 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   line-height: 20px;
 }
@@ -685,16 +685,16 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .retentionInfo:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .retentionInfo:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -702,7 +702,7 @@
   margin-top: 12px;
   padding: 12px 14px;
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--yh-alias-bg-layer-1);
 }
 
 .retentionRule p {
@@ -724,7 +724,7 @@
    lead-in nudges it off the card's rounded edge, as the hint below. */
 .ruleCard h3 {
   margin: 0 0 8px 10px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
   font-weight: 400;
@@ -734,7 +734,7 @@
   display: flex;
   flex-direction: column;
   padding: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   border-radius: 16px;
 }
 
@@ -755,14 +755,14 @@
 .zoneMenu [role='separator'] {
   height: 0.5px;
   margin: 6px 4px;
-  background: var(--dsw-alias-border-l3);
+  background: var(--yh-alias-border-l3);
 }
 
 .ruleRow,
 .ruleRowMenu {
   display: flex;
   width: 100%;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  border-bottom: 0.5px solid var(--yh-alias-border-l3);
 }
 
 .ruleRow {
@@ -781,7 +781,7 @@
 
 .ruleLabel {
   flex: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -794,7 +794,7 @@
 }
 
 .ruleRows .ruleControl:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
@@ -812,7 +812,7 @@
   margin: 0;
   border: none;
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   line-height: 1.6;
   text-align: left;
@@ -834,7 +834,7 @@
 }
 
 .ruleValue:not(:disabled):hover .ruleValueFace {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The trigger's own ring would box the row label as well; the value face
@@ -844,18 +844,18 @@
 }
 
 .ruleValue:focus-visible .ruleValueFace {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
 .ruleValueFace > svg {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* An ended task keeps its values readable: tertiary rather than dimmed ink. */
 .ruleValue:disabled {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: default;
 }
 
@@ -872,18 +872,18 @@
   box-sizing: border-box;
   width: 100%;
   padding: 6px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
+  border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: 7px;
   outline: none;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-primary);
   font: inherit;
   font-size: 13px;
   line-height: 20px;
 }
 
 .zoneSearch:focus {
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }
 
 .ruleWeekdays {
@@ -919,7 +919,7 @@
   border: none;
   border-radius: 18px;
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font: inherit;
   font-size: 14px;
   text-align: right;
@@ -927,12 +927,12 @@
 }
 
 .ruleInput:not(:disabled):hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* An ended task keeps its values readable: tertiary rather than dimmed ink. */
 .ruleInput:disabled {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The elapsed-interval row keeps the quantity and its unit on one right-aligned
@@ -956,7 +956,7 @@
   min-width: 72px;
   height: 36px;
   border-radius: 18px;
-  background: var(--dsw-alias-bg-module-platform);
+  background: var(--yh-alias-bg-module-platform);
 }
 
 /* The input sizes the pill from its digit count (`--interval-digits`, set by
@@ -1015,23 +1015,23 @@
   padding: 0;
   border: none;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 75%, transparent);
-  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--yh-alias-bg-layer-1) 75%, transparent);
+  color: var(--yh-alias-label-primary);
   cursor: pointer;
 }
 
 .ruleIntervalArrow:hover:not(:disabled) {
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--yh-alias-bg-layer-1);
 }
 
 .ruleIntervalArrow:disabled {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   cursor: default;
 }
 
 .ruleIntervalUnit {
   flex: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
 }
 
@@ -1052,13 +1052,13 @@
 
 .pickerIcon {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The 6px lead-in matches the card heading above, off the rounded edge. */
 .ruleHint {
   margin: 8px 0 0 10px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -1066,7 +1066,7 @@
 /* The cron hint doubles as the row's rejection line, so its unreadable-expression
    state takes the save failure's error color in place of a second message. */
 .ruleHintError {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 /* The mock's `.automation-detail .instruction`: the editable instruction box on
@@ -1087,11 +1087,11 @@
   field-sizing: content;
   margin: 0;
   padding: 12px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   border-radius: 16px;
   outline: 0;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-primary);
   font: inherit;
   font-size: 14px;
   line-height: 24px;
@@ -1105,11 +1105,11 @@
 }
 
 .instruction:hover {
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--yh-alias-border-l2);
 }
 
 .instruction:focus {
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }
 
 /* An ended task's stored instruction reads as plain text: no box and no edit
@@ -1158,7 +1158,7 @@
      hairline's own 0.5px, so the line sits exactly on the centre. */
   left: 15.75px;
   width: 0.5px;
-  background: var(--dsw-alias-border-l3);
+  background: var(--yh-alias-border-l3);
 }
 
 .delivery:not(:first-of-type)::before {
@@ -1180,7 +1180,7 @@
 .deliveryGlyph {
   flex: none;
   margin-top: 6px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .deliveryBody {
@@ -1197,7 +1197,7 @@
 
 .deliveryTime {
   display: block;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
@@ -1218,7 +1218,7 @@
   line-clamp: 2;
   overflow: hidden;
   margin: 6px 0 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 22px;
   white-space: pre-wrap;
@@ -1240,9 +1240,9 @@
   margin: 2px 0 0 -6px;
   padding: 1px 6px;
   border: 0;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font: inherit;
   font-size: 12px;
   line-height: 20px;
@@ -1250,11 +1250,11 @@
 }
 
 .savedPromptToggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .savedPromptToggle:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -1299,8 +1299,8 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 20px var(--detail-gutter);
-  border-top: 0.5px solid var(--dsw-alias-border-l4);
-  background: var(--dsw-alias-bg-base);
+  border-top: 0.5px solid var(--yh-alias-border-l4);
+  background: var(--yh-alias-bg-base);
 }
 
 .saveFooter > button {
@@ -1314,7 +1314,7 @@
 
 .saveNotice {
   margin-right: auto;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
 }
 
@@ -1325,8 +1325,8 @@
   flex-shrink: 0;
   margin: 0;
   padding: 12px var(--detail-gutter) 0;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-state-error-primary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-state-error-primary);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1348,7 +1348,7 @@
 }
 
 .linkedSession:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
@@ -1357,15 +1357,15 @@
   flex-shrink: 0;
   margin: 0;
   padding: 0 var(--detail-gutter) 6px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   overflow-wrap: anywhere;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 .linkedSessionLabel {
   flex-shrink: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
 }
 
@@ -1403,8 +1403,8 @@
   /* The confirmation dialog's own surface is elevated, so the bar drawn against
      it takes that rung's colours; the sheet's base-surface scrollers keep the
      shell's pair. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .confirmDialog > :last-child {
@@ -1412,11 +1412,11 @@
 }
 
 .deleteButton {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .page :focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 

@@ -77,7 +77,7 @@ const DataRow = memo(function DataRow({ row, selected, branch, collapsed, added,
     previousPulse.current = pulse
     if ((!flash && !navigated) || (!changed && !added && !navigated) || element.current === null
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const color = getComputedStyle(element.current).getPropertyValue('--dsw-specific-bubble-highlight')
+    const color = getComputedStyle(element.current).getPropertyValue('--yh-specific-bubble-highlight')
     const animation = element.current.animate([{ backgroundColor: color }, { backgroundColor: 'transparent' }], { duration: 700 })
     return () => { animation.cancel() }
   }, [record, added, flash, pulse])

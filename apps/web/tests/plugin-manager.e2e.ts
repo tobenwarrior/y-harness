@@ -424,7 +424,7 @@ describe('web e2e: plugin manager', () => {
       const style = getComputedStyle(element, '::after')
       return {
         radius: style.borderRadius,
-        cardRadius: style.getPropertyValue('--dsw-radius-xl').trim(),
+        cardRadius: style.getPropertyValue('--yh-radius-xl').trim(),
         outlineStyle: style.outlineStyle,
         outlineWidth: Number.parseFloat(style.outlineWidth),
       }

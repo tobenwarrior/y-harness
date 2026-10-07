@@ -1,9 +1,9 @@
-/* Scrollbar skin: the sole consumer of the four --dsw-alias-scrollbar-*
+/* Scrollbar skin: the sole consumer of the four --yh-alias-scrollbar-*
  * tokens. Without it every scrolling region renders the UA scrollbar, which
  * ignores the theme — a light native bar over the dark palette.
  *
  * The rules sit on `body`, not `html`: design-platform.css declares the
- * --dsw-alias-* tokens on `body` (and the dark overrides on
+ * --yh-alias-* tokens on `body` (and the dark overrides on
  * `body[data-ds-dark-theme]`), and custom properties only inherit downward,
  * so an `html` rule resolves them to the guaranteed-invalid value and
  * `scrollbar-color` falls back to `auto`.
@@ -14,8 +14,8 @@
  * scroll container may also rebind the three geometry variables below. */
 
 body {
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l1);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l1);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l1);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l1);
   --dsh-scrollbar-thumb-border: 0px;
   --dsh-scrollbar-track-margin: 0px;
   /* The WebKit bar's layout width, mirrored by the ::-webkit-scrollbar rule

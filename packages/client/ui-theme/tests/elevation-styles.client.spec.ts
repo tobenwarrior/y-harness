@@ -14,11 +14,11 @@ import { describe, expect, it } from 'vitest'
 import { packageStylesheets, parseRules } from './stylesheet-scan.ts'
 
 /** Stroke-color indirection components may rebind per surface or state. */
-const STROKE_COLOR = '--dsw-elevation-stroke-color'
+const STROKE_COLOR = '--yh-elevation-stroke-color'
 /** Shadow-token references that mark a rule as an elevated surface. */
-const ELEVATED_SHADOW = /--dsw-(?:shadow-lv|elevation-)/
-/** Neutral border tokens; the state palette (--dsw-alias-state-*) stays allowed. */
-const NEUTRAL_BORDER = /--dsw-alias-border-/
+const ELEVATED_SHADOW = /--yh-(?:shadow-lv|elevation-)/
+/** Neutral border tokens; the state palette (--yh-alias-state-*) stays allowed. */
+const NEUTRAL_BORDER = /--yh-alias-border-/
 
 const sheetCss = readFileSync(
   fileURLToPath(new URL('../src/styles/gradient-shadow-text.css', import.meta.url)), 'utf8')
@@ -38,7 +38,7 @@ describe('elevation tokens', () => {
     // Declared per element, `body *` would beat inheritance on every
     // descendant and a surface's rebind could not reach the box that carries
     // the shadow; declared on body alone, the rebind inherits down.
-    expect(bodyOnly.get(STROKE_COLOR)).toBe('var(--dsw-alias-border-l4)')
+    expect(bodyOnly.get(STROKE_COLOR)).toBe('var(--yh-alias-border-l4)')
     expect(perElement.has(STROKE_COLOR)).toBe(false)
   })
 
@@ -46,29 +46,29 @@ describe('elevation tokens', () => {
     // A custom property computes with var() already substituted, and
     // descendants inherit that computed value: derived tokens declared only on
     // body would bake in body's stroke color, making every
-    // --dsw-elevation-stroke-color rebind a no-op. Per-element declarations
+    // --yh-elevation-stroke-color rebind a no-op. Per-element declarations
     // re-substitute against the color each element sees (the same contract
     // scrollbar.css states for --dsh-scrollbar-thumb).
-    expect(perElement.get('--dsw-elevation-stroke')).toBe(`0 0 0 0.5px var(${STROKE_COLOR})`)
-    for (const name of ['--dsw-elevation-panel', '--dsw-elevation-prominent', '--dsw-elevation-soft']) {
-      expect(perElement.get(name), name).toMatch(/^var\(--dsw-elevation-stroke\), 0 /)
+    expect(perElement.get('--yh-elevation-stroke')).toBe(`0 0 0 0.5px var(${STROKE_COLOR})`)
+    for (const name of ['--yh-elevation-panel', '--yh-elevation-prominent', '--yh-elevation-soft']) {
+      expect(perElement.get(name), name).toMatch(/^var\(--yh-elevation-stroke\), 0 /)
       expect(bodyOnly.has(name), name).toBe(false)
     }
   })
 
   it('defines the translucent menu material for both palettes', () => {
-    expect(bodyOnly.get('--dsw-mask-blur')).toBe('none')
-    expect(bodyOnly.get('--dsw-menu-backdrop-filter')).toBe('blur(40px) saturate(150%)')
+    expect(bodyOnly.get('--yh-mask-blur')).toBe('none')
+    expect(bodyOnly.get('--yh-menu-backdrop-filter')).toBe('blur(40px) saturate(150%)')
     const platformRules = parseRules(platformCss)
-    const value = (selector: string, token = '--dsw-menu-surface-fill'): string | undefined => platformRules
+    const value = (selector: string, token = '--yh-menu-surface-fill'): string | undefined => platformRules
       .filter(rule => rule.selectors.includes(selector))
       .flatMap(rule => rule.declarations)
       .findLast(([property]) => property === token)?.[1]
     expect(value('body')).toBe('rgba(248, 249, 250, 0.58)')
     expect(value('body[data-ds-dark-theme]')).toBe('rgba(67, 69, 74, 0.45)')
-    expect(value('body', '--dsw-specific-menu')).toBe('var(--dsw-menu-surface-fill)')
-    expect(value("html[data-platform='darwin'] body", '--dsw-specific-menu')).toBe('rgba(248, 249, 250, 0.94)')
-    expect(value("html[data-platform='darwin'] body[data-ds-dark-theme]", '--dsw-specific-menu')).toBe('rgba(48, 49, 54, 0.94)')
+    expect(value('body', '--yh-specific-menu')).toBe('var(--yh-menu-surface-fill)')
+    expect(value("html[data-platform='darwin'] body", '--yh-specific-menu')).toBe('rgba(248, 249, 250, 0.94)')
+    expect(value("html[data-platform='darwin'] body[data-ds-dark-theme]", '--yh-specific-menu')).toBe('rgba(48, 49, 54, 0.94)')
   })
 })
 
@@ -77,37 +77,37 @@ function translucentMenusWithoutBackdrop(css: string): string[] {
   return parseRules(css)
     .filter(rule => rule.declarations.some(([property, value]) =>
       (property === 'background' || property === 'background-color')
-      && /^var\(--dsw-(?:specific-menu|menu-surface-fill)\)$/.test(value)))
+      && /^var\(--yh-(?:specific-menu|menu-surface-fill)\)$/.test(value)))
     .filter(rule => rule.declarations.some(([property, value]) =>
       property === 'box-shadow' && ELEVATED_SHADOW.test(value))
       || rule.selectors.some(selector => /::(?:before|after)$/.test(selector)))
     .filter(rule => !rule.declarations.some(([property, value]) =>
-      property === 'backdrop-filter' && value === 'var(--dsw-menu-backdrop-filter)'))
+      property === 'backdrop-filter' && value === 'var(--yh-menu-backdrop-filter)'))
     .map(rule => rule.selectors.join(', '))
 }
 
 describe('translucent menu surfaces pair fill and filter', () => {
   it('rejects a menu fill without the shared backdrop filter', () => {
     expect(translucentMenusWithoutBackdrop(
-      '.a { background: var(--dsw-specific-menu); box-shadow: var(--dsw-elevation-panel); }',
+      '.a { background: var(--yh-specific-menu); box-shadow: var(--yh-elevation-panel); }',
     )).toEqual(['.a'])
     expect(translucentMenusWithoutBackdrop(
-      '.a { background: var(--dsw-specific-menu); box-shadow: var(--dsw-elevation-panel); backdrop-filter: var(--dsw-menu-backdrop-filter); }',
+      '.a { background: var(--yh-specific-menu); box-shadow: var(--yh-elevation-panel); backdrop-filter: var(--yh-menu-backdrop-filter); }',
     )).toEqual([])
     expect(translucentMenusWithoutBackdrop(
-      '.a::before { background: var(--dsw-specific-menu); }',
+      '.a::before { background: var(--yh-specific-menu); }',
     )).toEqual(['.a::before'])
     expect(translucentMenusWithoutBackdrop(
-      '.a::before { background: var(--dsw-specific-menu); backdrop-filter: var(--dsw-menu-backdrop-filter); }',
+      '.a::before { background: var(--yh-specific-menu); backdrop-filter: var(--yh-menu-backdrop-filter); }',
     )).toEqual([])
   })
 
   it('rejects a backed menu fill without the shared backdrop filter', () => {
     expect(translucentMenusWithoutBackdrop(
-      '.a { background: var(--dsw-menu-surface-fill); box-shadow: var(--dsw-elevation-panel); }',
+      '.a { background: var(--yh-menu-surface-fill); box-shadow: var(--yh-elevation-panel); }',
     )).toEqual(['.a'])
     expect(translucentMenusWithoutBackdrop(
-      '.a { background: var(--dsw-menu-surface-fill); box-shadow: var(--dsw-elevation-panel); backdrop-filter: var(--dsw-menu-backdrop-filter); }',
+      '.a { background: var(--yh-menu-surface-fill); box-shadow: var(--yh-elevation-panel); backdrop-filter: var(--yh-menu-backdrop-filter); }',
     )).toEqual([])
   })
 
@@ -134,9 +134,9 @@ describe('translucent menu surfaces pair fill and filter', () => {
         .filter(rule => rule.selectors.length === 1 && rule.selectors[0] === selector)
         .flatMap(rule => rule.declarations))
       expect(declarations(container).has('backdrop-filter'), container).toBe(false)
-      expect(declarations(background).get('background'), background).toBe(container === '.surface' ? 'var(--dsw-menu-surface-fill)' : 'var(--dsw-specific-menu)')
+      expect(declarations(background).get('background'), background).toBe(container === '.surface' ? 'var(--yh-menu-surface-fill)' : 'var(--yh-specific-menu)')
       expect(declarations(background).get('backdrop-filter'), background)
-        .toBe('var(--dsw-menu-backdrop-filter)')
+        .toBe('var(--yh-menu-backdrop-filter)')
     }
   })
 })
@@ -158,10 +158,10 @@ function neutralBordersBesideElevation(css: string): string[] {
 describe('elevated surfaces carry no neutral border', () => {
   it('rejects a rule that pairs the shadow with a neutral border', () => {
     expect(neutralBordersBesideElevation(
-      '.a { box-shadow: var(--dsw-elevation-panel); border: 0.5px solid var(--dsw-alias-border-l2); }',
+      '.a { box-shadow: var(--yh-elevation-panel); border: 0.5px solid var(--yh-alias-border-l2); }',
     )).toEqual(['.a'])
     expect(neutralBordersBesideElevation(
-      '.a { box-shadow: var(--dsw-elevation-panel); border: 0; }',
+      '.a { box-shadow: var(--yh-elevation-panel); border: 0; }',
     )).toEqual([])
   })
 
@@ -233,12 +233,12 @@ describe('neutral solid borders are hairlines', () => {
   ])
 
   it('rejects a wide neutral border and a wide filled divider', () => {
-    expect(wideNeutralBorders('.a { border: 1px solid var(--dsw-alias-border-l2); }'))
-      .toEqual(['.a border: 1px solid var(--dsw-alias-border-l2)'])
-    expect(wideNeutralBorders('.a { border: 0.5px solid var(--dsw-alias-border-l2); }')).toEqual([])
-    expect(wideFilledDividers('.a { background: var(--dsw-alias-border-l2); height: 1px; }'))
+    expect(wideNeutralBorders('.a { border: 1px solid var(--yh-alias-border-l2); }'))
+      .toEqual(['.a border: 1px solid var(--yh-alias-border-l2)'])
+    expect(wideNeutralBorders('.a { border: 0.5px solid var(--yh-alias-border-l2); }')).toEqual([])
+    expect(wideFilledDividers('.a { background: var(--yh-alias-border-l2); height: 1px; }'))
       .toEqual(['.a height: 1px'])
-    expect(wideFilledDividers('.a { background: var(--dsw-alias-border-l2); height: 0.5px; }')).toEqual([])
+    expect(wideFilledDividers('.a { background: var(--yh-alias-border-l2); height: 0.5px; }')).toEqual([])
   })
 
   it('draws every solid neutral-token border at 0.5px under packages/', () => {

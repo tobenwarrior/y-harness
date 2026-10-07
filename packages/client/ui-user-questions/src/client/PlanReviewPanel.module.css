@@ -12,12 +12,12 @@
   flex-direction: column;
   width: 100%;
   max-width: var(--dsh-chat-content-width);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l2);
   border: 0;
-  border-radius: var(--dsw-radius-xl);
-  background: var(--dsw-specific-input-major);
-  box-shadow: var(--dsw-elevation-panel);
-  color: var(--dsw-alias-label-primary);
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-specific-input-major);
+  box-shadow: var(--yh-elevation-panel);
+  color: var(--yh-alias-label-primary);
 }
 
 .card,
@@ -32,8 +32,8 @@
   flex-shrink: 0;
   gap: 8px;
   padding: 12px 16px;
-  background: var(--dsw-alias-state-warn-tertiary);
-  color: var(--dsw-alias-state-warn-primary);
+  background: var(--yh-alias-state-warn-tertiary);
+  color: var(--yh-alias-state-warn-primary);
   font-size: 14px;
   line-height: 20px;
 }
@@ -49,7 +49,7 @@
 
 .feedback {
   min-height: 16px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font-size: 11px;
   line-height: 16px;
 }
@@ -82,7 +82,7 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   margin: 8px 0 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 14px;
   line-height: 24px;
 }
@@ -93,7 +93,7 @@
 
 @media (max-width: 720px) {
   .card {
-    border-radius: var(--dsw-radius-xl);
+    border-radius: var(--yh-radius-xl);
   }
 
   .footer {

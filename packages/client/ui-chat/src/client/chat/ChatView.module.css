@@ -101,14 +101,14 @@
 }
 
 .callRow {
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 /* Selection still sets data-selected for details linkage; no outline —
    tool rows match Think chrome (no selected ring). */
 
 .hint {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
 }
@@ -118,8 +118,8 @@
   flex-direction: column;
   align-items: flex-start;
   --dsh-chat-flow-gap: 12px;
-  --dsw-alias-label-shimmer: var(--dsw-alias-label-deep-diving-shimmer);
-  color: var(--dsw-alias-label-deep-diving);
+  --yh-alias-label-shimmer: var(--yh-alias-label-deep-diving-shimmer);
+  color: var(--yh-alias-label-deep-diving);
   font-size: calc(var(--dsh-content-font-size, 14px) - 2px);
   line-height: calc(22px + var(--dsh-content-font-delta, 0px));
 }
@@ -138,7 +138,7 @@
   width: 100%;
   height: 0.5px;
   margin: 8px 0 10px;
-  background: color-mix(in srgb, var(--dsw-alias-border-l1) 75%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--yh-alias-border-l1) 75%, var(--yh-alias-border-l2));
   pointer-events: none;
 }
 
@@ -165,35 +165,35 @@
   overflow: hidden;
 }
 
-.runningWhaleAnimated {
+.runningMarkAnimated {
   display: none;
   position: absolute;
   inset: 0;
 }
 
-.runningWhaleStill {
+.runningMarkStill {
   display: initial;
 }
 
 @supports (mask-mode: alpha) and (mask-image: url('')) {
   @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
-    .runningWhaleAnimated {
+    .runningMarkAnimated {
       display: block;
       background: currentColor;
-      mask: url('./running-whale@2x.png') center / 100% 100% no-repeat;
+      mask: url('./running-mark@2x.png') center / 100% 100% no-repeat;
       mask-mode: alpha;
       /* Keep animated-mask repaints on an icon-sized composited layer. */
       will-change: transform;
     }
 
-    .runningWhaleStill {
+    .runningMarkStill {
       display: none;
     }
   }
 }
 
 .openError {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
 }
@@ -205,11 +205,11 @@
 
 .older button {
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   padding: 4px 12px;
   font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+  color: var(--yh-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover-solid);
   cursor: pointer;
 }
 
@@ -258,18 +258,18 @@
   margin-top: -34px;
   padding: 0;
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l3);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l3);
   border-radius: 100px;
   corner-shape: round;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-button-floating-fill);
-  box-shadow: var(--dsw-elevation-panel);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-button-floating-fill);
+  box-shadow: var(--yh-elevation-panel);
   cursor: pointer;
   pointer-events: auto;
 }
 
 .toBottom:hover {
-  background: var(--dsw-alias-button-floating-hover);
+  background: var(--yh-alias-button-floating-hover);
 }
 
 /* Host open-path refusal: same dialog family as the workspace folder error. */

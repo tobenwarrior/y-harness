@@ -13,11 +13,11 @@
    pinned; 224px = the 260px card cap minus the ~36px banner); the margin
    replaces the primitive's standalone vertical margin with the flow's. */
 .terminal {
-  --dsl-terminal-font: var(--dsw-font-markdown-code-block-small);
+  --dsl-terminal-font: var(--yh-font-markdown-code-block-small);
   --dsl-terminal-line-height: 18px;
   --dsl-terminal-output-max-height: 224px;
   margin: 4px 0 4px 4px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
+  border: 0.5px solid var(--yh-alias-border-l1);
 }
 
 /* A bash execution error can settle without terminal-card material (for
@@ -27,10 +27,10 @@
   display: flex;
   flex-direction: column;
   margin: 4px 0 4px 4px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-markdown-code-block);
-  font: var(--dsw-font-markdown-code-block-small);
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-markdown-code-block);
+  font: var(--yh-font-markdown-code-block-small);
 }
 
 .ioSection {
@@ -46,7 +46,7 @@
 .ioSection::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   background-clip: padding-box;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 .ioSection::-webkit-scrollbar-track {
@@ -57,24 +57,24 @@
   position: sticky;
   top: 0;
   align-self: start;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .ioDivider {
   flex: none;
   height: 0.5px;
-  background: var(--dsw-alias-border-l2);
+  background: var(--yh-alias-border-l2);
 }
 
 .ioText {
   min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .ioText[data-error] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 /* ToolRow's unified expand interaction, replicated per the registrant
@@ -89,12 +89,12 @@
   align-items: center;
   height: calc(24px + var(--dsh-content-font-delta, 0px));
   min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   transition: color 100ms ease;
 }
 
 .root:hover {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -166,7 +166,7 @@
   height: 2px;
   border-radius: 1px;
   margin: 0 8px;
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 .summary {
@@ -181,11 +181,11 @@
 
 /* Error row's collapsed summary: the failure's first line in the error color. */
 .errorSummary {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .stoppedSummary {
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 /* Hover-revealed Inspect pill under the expanded terminal's bottom-left —
@@ -204,12 +204,12 @@
   gap: 4px;
   margin: 4px 0 2px 4px;
   padding: 2px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
+  border: 0.5px solid var(--yh-alias-border-l4);
   border-radius: 999px;
   corner-shape: round;
   /* Base background, not bg-overlay: the overlay token reads too heavy. */
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
@@ -225,8 +225,8 @@
 /* Solid hover fill: the pill floats over terminal output, so a translucent
    hover token would let the text underneath bleed through. */
 .inspectButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover-solid);
+  color: var(--yh-alias-label-primary);
 }
 
 

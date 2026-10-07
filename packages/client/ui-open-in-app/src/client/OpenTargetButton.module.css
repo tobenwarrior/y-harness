@@ -13,9 +13,9 @@
   box-sizing: border-box;
   height: 24px;
   overflow: hidden;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-sm);
-  font-family: var(--dsw-font-family);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-sm);
+  font-family: var(--yh-font-family);
 }
 
 .main,
@@ -25,7 +25,7 @@
   justify-content: center;
   border: 0;
   background: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 11px;
   line-height: 16px;
   white-space: nowrap;
@@ -39,15 +39,15 @@
 
 .chevron {
   padding: 3px 4px 3px 3px;
-  border-left: 0.5px solid var(--dsw-alias-border-l4);
-  color: var(--dsw-alias-label-secondary);
+  border-left: 0.5px solid var(--yh-alias-border-l4);
+  color: var(--yh-alias-label-secondary);
 }
 
 .main:hover:not(:disabled),
 .main:focus-visible,
 .chevron:hover:not(:disabled),
 .chevron:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Pending disables clicks without a restyle; only hover feedback pauses. */
@@ -63,8 +63,8 @@
 /* The unavailable preview emphasizes the same actions with a labeled button. */
 .split[data-size='large'] {
   height: 36px;
-  border-radius: var(--dsw-radius-md);
-  border-color: var(--dsw-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  border-color: var(--yh-alias-border-l2);
 }
 
 .split[data-size='large'] .main {
@@ -77,4 +77,4 @@
   padding: 6px 10px;
 }
 
-.skeleton { display: inline-block; flex: none; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-interactive-bg-hover); }
+.skeleton { display: inline-block; flex: none; border-radius: var(--yh-radius-xs); background: var(--yh-alias-interactive-bg-hover); }

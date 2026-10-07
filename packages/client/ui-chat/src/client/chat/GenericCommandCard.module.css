@@ -17,7 +17,7 @@
   height: 2px;
   margin: 0 8px;
   border-radius: 1px;
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 .summary {
@@ -32,7 +32,7 @@
 
 .summary[data-error],
 .body[data-error] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .body {
@@ -40,10 +40,10 @@
   margin: 4px 0 4px 4px;
   padding: 12px 16px;
   overflow: auto;
-  border: 0.5px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-markdown-code-block);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-markdown-code-block-small);
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-markdown-code-block);
+  color: var(--yh-alias-label-primary);
+  font: var(--yh-font-markdown-code-block-small);
   white-space: pre-wrap;
 }

@@ -1,4 +1,4 @@
-/* Every color resolves through a `--dsw-alias-*` token. Bare `--border` /
+/* Every color resolves through a `--yh-alias-*` token. Bare `--border` /
  * `--surface` / `--text-*` names, which nothing in this app defines, would
  * render the light-mode literals written as their fallbacks and stay light
  * under the dark theme. */
@@ -8,7 +8,7 @@
   flex-direction: column;
   gap: 12px;
   max-width: 720px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .title {
@@ -16,28 +16,28 @@
   font-size: 16px;
   line-height: 24px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .intro {
   margin: 0;
   font-size: 14px;
   line-height: 22px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .notice {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .savedNotice {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--yh-alias-state-success-primary);
 }
 
 .rows {
@@ -52,9 +52,9 @@
 
 /* Provider cards share the settings material; editors use the inset module fill. */
 .rowCard {
-  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
-  background: var(--dsw-alias-settings-card-fill);
-  border-radius: var(--dsw-radius-xl);
+  border: 0.5px solid var(--yh-alias-settings-card-stroke);
+  background: var(--yh-alias-settings-card-fill);
+  border-radius: var(--yh-radius-xl);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -78,7 +78,7 @@
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Reads as an annotation on the name, not as a second name: caption size and
@@ -88,11 +88,11 @@
 .rowTag {
   flex: none;
   padding: 1px 6px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-xs);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-xs);
   font-size: 11px;
   line-height: 16px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .credentialDot {
@@ -106,11 +106,11 @@
 }
 
 .credentialDotConfigured {
-  background: var(--dsw-alias-state-success-primary);
+  background: var(--yh-alias-state-success-primary);
 }
 
 .credentialDotMissing {
-  background: var(--dsw-alias-state-error-primary);
+  background: var(--yh-alias-state-error-primary);
 }
 
 .rowActions {
@@ -134,7 +134,7 @@
   height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   font: inherit;
   font-size: 14px;
   line-height: 22px;
@@ -142,28 +142,28 @@
 }
 
 .primaryButton {
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--yh-alias-button-primary-fill);
+  color: var(--yh-alias-label-primary-foreground);
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+  background: var(--yh-alias-button-primary-hover);
 }
 
 .secondaryButton,
 .addButton {
-  border: 0.5px solid var(--dsw-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .secondaryButton:hover:not(:disabled),
 .addButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .secondaryButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
+  background: var(--yh-alias-interactive-bg-hover-solid);
 }
 
 .dangerButton {
@@ -174,9 +174,9 @@
   height: 36px;
   padding: 0 14px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font: inherit;
   font-size: 14px;
   line-height: 22px;
@@ -184,7 +184,7 @@
 }
 
 .dangerButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  background: var(--yh-alias-interactive-bg-hover-danger);
 }
 
 /* Provider-row controls use the compact Button size. */
@@ -192,7 +192,7 @@
 .rowActions .dangerButton {
   height: 28px;
   padding: 0 10px;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   font-size: 12px;
   line-height: 18px;
 }
@@ -216,14 +216,14 @@
 .iconButton:focus-visible,
 .customizedSummary:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  box-shadow: 0 0 0 2px var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
 }
 
 /* Editing surface: a filled module on the panel, matching the settings
    selector fill rather than adding another outline inside the row. */
 .editor {
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-module-platform);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-module-platform);
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -241,13 +241,13 @@
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .editorRoute {
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .field {
@@ -263,7 +263,7 @@
   font-size: 12px;
   line-height: 18px;
   font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .linkButton {
@@ -273,9 +273,9 @@
   height: 28px;
   padding: 0 10px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font: inherit;
   font-size: 12px;
   line-height: 18px;
@@ -283,15 +283,15 @@
 }
 
 .linkButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
 }
 
 .advancedHint {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .editorActions {
@@ -320,8 +320,8 @@
   min-width: 180px;
   gap: 6px;
   height: 44px;
-  border: 1px dashed var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-lg);
+  border: 1px dashed var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-lg);
 }
 
 /* The add card's mode switch with the one-line purpose of the chosen mode
@@ -348,8 +348,8 @@
 
 .addCard,
 .setupCard {
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-module-platform);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-module-platform);
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -365,7 +365,7 @@
 }
 
 .customized {
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
   padding-top: 10px;
 }
 
@@ -378,12 +378,12 @@
   width: fit-content;
   padding: 2px 4px;
   margin-left: -4px;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
   font-size: 12px;
   line-height: 18px;
   font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   list-style: none;
 }
 
@@ -406,7 +406,7 @@
 }
 
 .customizedSummary:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .customizedBody {
@@ -421,7 +421,7 @@
   flex-direction: column;
   gap: 10px;
   padding-top: 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .modelCatalogHeading {
@@ -434,13 +434,13 @@
   font-size: 12px;
   line-height: 18px;
   font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .modelCatalogMeta,
 .modelEmpty {
   margin: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
 }
@@ -459,8 +459,8 @@
 }
 
 .modelEntry {
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-lg);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-lg);
   padding: 6px;
 }
 
@@ -481,15 +481,15 @@
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .iconButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .iconButton:disabled {
@@ -499,8 +499,8 @@
 
 /* The delete glyph keeps the danger tint the rest of the section uses. */
 .iconButtonDanger:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-  color: var(--dsw-alias-state-error-primary);
+  background: var(--yh-alias-interactive-bg-hover-danger);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .modelAdvanced {
@@ -539,15 +539,15 @@
 }
 
 .modelFieldLabel {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
 }
 
 .modelEmpty {
   padding: 12px;
-  border: 1px dashed var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-lg);
+  border: 1px dashed var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-lg);
   text-align: center;
 }
 
@@ -559,10 +559,10 @@
   gap: 4px;
   height: 28px;
   padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-sm);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font: inherit;
   font-size: 12px;
   line-height: 18px;
@@ -570,7 +570,7 @@
 }
 
 .addModelButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .input {
@@ -578,13 +578,13 @@
   width: 100%;
   height: 32px;
   padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-md);
   font: inherit;
   font-size: 14px;
   line-height: 22px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-bg-layer-1);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Enum pickers hold a handful of short options; a field-width dropdown reads
@@ -596,11 +596,11 @@ select.input {
 
 .input:focus {
   outline: none;
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }
 
 .input::placeholder {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--yh-alias-label-dimmed);
 }
 
 .input:disabled {
@@ -626,7 +626,7 @@ select.input {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .deleteDialog {
@@ -634,12 +634,12 @@ select.input {
 }
 
 .deleteConfirm:not(:disabled) {
-  border-color: var(--dsw-alias-state-error-primary);
-  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--yh-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .deleteConfirm:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  background: var(--yh-alias-interactive-bg-hover-danger);
 }
 
 /* Icon-button label seat: named for assistive tech and for the tests that
@@ -667,8 +667,8 @@ select.input {
      scrollbar indirection is rebound here rather than on the scrolling child:
      the elevation choice belongs with the surface and inherits down (see
      ui-theme styles/scrollbar.css for the contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .candidateToolbar {
@@ -695,7 +695,7 @@ select.input {
 }
 
 .candidate {
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 .candidateLabel {
@@ -718,7 +718,7 @@ select.input {
 
 .candidateEmpty {
   margin: 24px 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
   text-align: center;
@@ -732,7 +732,7 @@ select.input {
   justify-content: space-between;
   gap: 12px;
   padding-top: 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 /* Account-catalog picker: the card's long list lives here instead, so search
@@ -785,5 +785,5 @@ select.input {
   justify-content: space-between;
   gap: 12px;
   padding: 4px 0;
-  background: var(--dsw-alias-bg-module-platform);
+  background: var(--yh-alias-bg-module-platform);
 }

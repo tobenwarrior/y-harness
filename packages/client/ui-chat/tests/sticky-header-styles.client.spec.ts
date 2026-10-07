@@ -26,7 +26,7 @@ describe('pinned collapsible headers', () => {
       'position: sticky',
       'top: 0',
       'z-index: 1',
-      'background: var(--dsw-alias-bg-base)',
+      'background: var(--yh-alias-bg-base)',
     ]))
   })
 
@@ -42,7 +42,7 @@ describe('pinned collapsible headers', () => {
       // The opaque fill masks the prose only if the box has no rounded corners
       // for it to show through.
       'border-radius: 0',
-      'background: var(--dsw-alias-bg-base)',
+      'background: var(--yh-alias-bg-base)',
     ]))
   })
 
@@ -65,6 +65,6 @@ describe('pinned collapsible headers', () => {
   it('keeps the pinned compaction header opaque under hover', () => {
     expect(
       declarationsFrom(read('MessageItem.module.css'), '.compactionRow:has(.compactionBody) .compactionButton:hover'),
-    ).toEqual(expect.arrayContaining(['background: var(--dsw-alias-interactive-bg-hover-solid)']))
+    ).toEqual(expect.arrayContaining(['background: var(--yh-alias-interactive-bg-hover-solid)']))
   })
 })

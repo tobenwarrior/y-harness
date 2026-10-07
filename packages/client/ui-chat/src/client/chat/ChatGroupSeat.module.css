@@ -10,7 +10,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font: inherit;
   font-size: var(--dsh-content-font-size, 14px);
   text-align: left;
@@ -19,7 +19,7 @@
 }
 
 .title:hover {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* The leading box and its glyph ride the body font-size delta so the icon

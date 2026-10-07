@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-client-ui-primitives` to build web-client controls and render agent output with shared React UI. It includes standard controls, icons, anchored overlays, and renderers for Markdown with TeX, terminal output, file reads, diffs, search, web retrieval, and JSON. The renderers handle untrusted model output by dropping raw HTML, restricting links, and parsing ANSI escape sequences. The components import no Cordis runtime; callers supply localized labels, and theme-facing colors use `--dsw-*` design tokens.
+Use `dsh-client-ui-primitives` to build web-client controls and render agent output with shared React UI. It includes standard controls, icons, anchored overlays, and renderers for Markdown with TeX, terminal output, file reads, diffs, search, web retrieval, and JSON. The renderers handle untrusted model output by dropping raw HTML, restricting links, and parsing ANSI escape sequences. The components import no Cordis runtime; callers supply localized labels, and theme-facing colors use `--yh-*` design tokens.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ Automatic modal entry and modal/menu return focus, including after Escape and ap
 
 This package is a Web-shell build input. Its static ESM retains third-party imports and styles for Vite; independent consumers supply its development dependencies ([dependency rules](../AGENTS.md#dependency-declaration)).
 
-Compose feature UI from these atoms whenever the web client needs a standard control or an agent-output renderer. They render through React only and take `--dsw-*` design tokens from the theme, so they fit any plugin without importing the theme or the slot system.
+Compose feature UI from these atoms whenever the web client needs a standard control or an agent-output renderer. They render through React only and take `--yh-*` design tokens from the theme, so they fit any plugin without importing the theme or the slot system.
 
 <a id="component-catalog"></a>
 ### Component catalog
@@ -41,7 +41,7 @@ Check this table before writing a control in a feature package. A plugin cannot 
 | Export | What it is |
 |---|---|
 | `Button` | Clickable action; `variant` selects `primary`, `ghost`, `outline`, or `toolbar`. Its ref targets the native button for focus and overlay anchoring. |
-| `Switch` | Two-state toggle, 36×20. The off-state thumb reads `--dsw-alias-switch-thumb` so it stays light in both themes, and the on-state thumb contrasts with the brand track. Disabled controls use half opacity. `label` is required, so the control cannot ship unnamed. |
+| `Switch` | Two-state toggle, 36×20. The off-state thumb reads `--yh-alias-switch-thumb` so it stays light in both themes, and the on-state thumb contrasts with the brand track. Disabled controls use half opacity. `label` is required, so the control cannot ship unnamed. |
 | `SegmentedControl` | Tablist of two or more equal-width segments with one sliding indicator, for switching a card or panel between a few modes; the owner holds the selection and `label` names the list. `id` seeds each tab's id (`<id>-<value>`) and the panel it controls (`<id>-<value>-panel`), which the owner renders and points back at the tab with `aria-labelledby`; a segment may be `disabled` with a `title`, and `disabled` on the control locks every segment while the shown panel has work in flight. |
 | `Checkbox` | Labeled native checkbox with controlled state, keyboard interaction, and disabled styling; the caller supplies localized `label` text. |
 | `Input` | Single-line text entry for search boxes and inline forms. Its ref targets the native input for focus and is cleared on unmount. |
@@ -118,11 +118,11 @@ The atoms cannot read the application locale, so every piece of user-facing copy
 
 `Button` uses H36/R12 for `md` and H28/R8 for `sm`, including outlined controls. Menus and cards follow the [shared radius rules](../../../docs/web-styling.md#corner-radii-and-settings-cards); feature classes preserve control geometry.
 
-`Menu.listClassName` styles the menu card independently of the anchor wrapper, including in portal mode. Leading icons use the `--dsw-alias-menu-icon` color; destructive icons retain their error color.
+`Menu.listClassName` styles the menu card independently of the anchor wrapper, including in portal mode. Leading icons use the `--yh-alias-menu-icon` color; destructive icons retain their error color.
 
 `Menu` delegates its card material to `MenuSurface`; custom menus use the same component. `MenuSurface` forwards div props and refs, uses translucent fill and blur, and accepts `compact` for the smaller radius. Its default relative positioning contains the material layer; caller classes can supply fixed or absolute placement. On macOS, its non-interactive backing follows the card through CSS anchors and unmounts with it; the backing requires the Web shell’s isolated body. Feature classes control layout and elevation, while the component owns material and outer radius ([menu rules](../../../docs/web-styling.md#component-rules)). Modal masks retain their dark translucent fill without background blur.
 
-`MenuGroup` renders a `role="group"` section named by its localized heading, with an instance-owned heading id. It shares heading typography, spacing, and sticky positioning between custom menus and listboxes. Headings are transparent at rest; only `data-stuck` enables the theme's 94%-opaque group-header fill in either palette. Outside `data-platform="darwin"`, headings use `--dsw-radius-md` corners; the enclosing menu keeps its translucent material.
+`MenuGroup` renders a `role="group"` section named by its localized heading, with an instance-owned heading id. It shares heading typography, spacing, and sticky positioning between custom menus and listboxes. Headings are transparent at rest; only `data-stuck` enables the theme's 94%-opaque group-header fill in either palette. Outside `data-platform="darwin"`, headings use `--yh-radius-md` corners; the enclosing menu keeps its translucent material.
 
 Call `observeStickyMenuGroups(viewport)` from an ordinary effect after rendering `MenuGroup` sections as direct children of an unpadded, borderless scroll container. Native intersection and viewport-size observations update the background asynchronously, without synchronous layout reads or scroll listeners. Headings remain transparent until observations identify a group crossing the viewport top; CSS owns their sticky positioning.
 
@@ -131,7 +131,7 @@ Group membership is captured at setup. Dispose before observing changed groups, 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The package enforces one separation: presentational React atoms with zero Cordis and zero slot knowledge, styled only through `--dsw-*` tokens, while every feature-specific concern (locale, session data, composition) stays in the composing plugin.
+The package enforces one separation: presentational React atoms with zero Cordis and zero slot knowledge, styled only through `--yh-*` tokens, while every feature-specific concern (locale, session data, composition) stays in the composing plugin.
 
 ### Source map
 
@@ -174,7 +174,7 @@ These pages place the atoms in the client stack and the design system.
 - [ui-renderer](../ui-renderer/README.md) — the React renderer that mounts the assembled application and binds slot data.
 - [ui-tool](../ui-tool/README.md) — the tool-call presentation layer that composes these output cards.
 - [ui-conversation](../ui-conversation/README.md) — the chat surface that renders markdown replies and tool cards.
-- [ui-theme](../ui-theme/README.md) — the `--dsw-*` token system these atoms style through.
+- [ui-theme](../ui-theme/README.md) — the `--yh-*` token system these atoms style through.
 - [Web styling](../../../docs/web-styling.md) — the authoritative styling rules for web client components.
 
 -----

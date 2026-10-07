@@ -7,9 +7,9 @@
   height: calc(33px + var(--dsh-content-font-delta, 0px));
   padding: 0 0 8px;
   border: none;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font: inherit;
   font-size: var(--dsh-content-font-size, 14px);
   cursor: pointer;
@@ -22,7 +22,7 @@
 }
 
 .root:hover:not(:disabled) {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .chevron {

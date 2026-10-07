@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { RunningWhaleTail } from '../src/client/chat/RunningWhaleTail.tsx'
+import { RunningMark } from '../src/client/chat/RunningMark.tsx'
 
 afterEach(cleanup)
 
-describe('RunningWhaleTail', () => {
+describe('RunningMark', () => {
   it('renders a decorative mask seat and static SVG without inline styles', () => {
-    const view = render(<RunningWhaleTail />)
+    const view = render(<RunningMark />)
     const icon = view.container.firstElementChild!
     expect(icon.tagName).toBe('SPAN')
     expect(icon.getAttribute('aria-hidden')).toBe('true')
@@ -28,7 +28,7 @@ describe('RunningWhaleTail', () => {
   })
 
   it('ships a 28px alpha APNG with sixty 50ms frames and infinite playback', () => {
-    const png = readFileSync(resolve(import.meta.dirname, '../src/client/chat/running-whale@2x.png'))
+    const png = readFileSync(resolve(import.meta.dirname, '../src/client/chat/running-mark@2x.png'))
     expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
     const chunks: { type: string; data: Buffer }[] = []
     for (let offset = 8; offset < png.length;) {

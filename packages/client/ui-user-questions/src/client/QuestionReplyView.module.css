@@ -10,9 +10,9 @@
 .bubble {
   max-width: 72%;
   padding: 10px 16px;
-  border-radius: var(--dsw-radius-xl);
-  background: var(--dsw-specific-bubble);
-  color: var(--dsw-alias-label-primary);
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-specific-bubble);
+  color: var(--yh-alias-label-primary);
   cursor: pointer;
   font-size: var(--dsh-content-font-size, 14px);
   line-height: calc(22px + var(--dsh-content-font-delta, 0px));
@@ -33,12 +33,12 @@
 }
 
 .toggle:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
 .bubble:has(.toggle:focus-visible) {
-  box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  box-shadow: 0 0 0 2px var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
 }
 
 .labelRow {
@@ -49,7 +49,7 @@
 
 .caret {
   display: inline-flex;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .caret svg {
@@ -58,7 +58,7 @@
 }
 
 .label {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   display: block;
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
@@ -67,7 +67,7 @@
 .summary {
   display: block;
   margin-top: 3px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: var(--dsh-content-font-size, 14px);
 }
 
@@ -78,7 +78,7 @@
 .details {
   margin: 8px 0 0;
   padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-label-secondary) 24%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--yh-alias-label-secondary) 24%, transparent);
 }
 
 .details > div + div {
@@ -86,7 +86,7 @@
 }
 
 .details dt {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
 }
 
@@ -98,12 +98,12 @@
 .header,
 .detail,
 .options {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 11px;
 }
 
 .questionText {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .options {
@@ -121,7 +121,7 @@
 
 .answerLabel {
   margin-right: 4px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
 }
 
@@ -131,7 +131,7 @@
   gap: 8px;
   height: 28px;
   padding-right: 4px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .time {
@@ -149,7 +149,7 @@
   height: 28px;
   padding: 6px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -161,6 +161,6 @@
 }
 
 .action:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
 }

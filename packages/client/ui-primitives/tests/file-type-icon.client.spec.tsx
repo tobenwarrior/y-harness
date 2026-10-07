@@ -77,7 +77,7 @@ describe('FileTypeIcon', () => {
     )
     expect(paints).toContain('currentColor')
     expect(paints.every(value => [
-      'currentColor', 'none', 'var(--dsw-static-neutral-00)', 'var(--dsw-static-neutral-400)',
+      'currentColor', 'none', 'var(--yh-static-neutral-00)', 'var(--yh-static-neutral-400)',
     ].includes(value))).toBe(true)
   })
 
@@ -91,13 +91,13 @@ describe('FileTypeIcon', () => {
   it('uses white marks and fold for coloured sheets, with a darker grey fold for other', () => {
     const coloured = render(<FileTypeIcon kind="pdf" />).container
     expect(coloured.querySelector('[data-file-type-mark]')?.getAttribute('color'))
-      .toBe('var(--dsw-static-neutral-00)')
+      .toBe('var(--yh-static-neutral-00)')
     expect(coloured.querySelector('svg > path:nth-of-type(2)')?.getAttribute('fill'))
-      .toBe('var(--dsw-static-neutral-00)')
+      .toBe('var(--yh-static-neutral-00)')
 
     const other = render(<FileTypeIcon kind="other" />).container
     expect(other.querySelector('svg > path:nth-of-type(2)')?.getAttribute('fill'))
-      .toBe('var(--dsw-static-neutral-400)')
+      .toBe('var(--yh-static-neutral-400)')
   })
 
   it('draws one distinct glyph for every category', () => {

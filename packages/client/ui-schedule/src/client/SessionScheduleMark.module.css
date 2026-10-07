@@ -7,7 +7,7 @@
   justify-content: center;
   width: 16px;
   height: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Task rows inside the Session hover card (surface is #2C2C2E in both themes,

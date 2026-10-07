@@ -409,7 +409,7 @@ describe('web e2e: settings modal and General preferences', () => {
         legacy: localStorage.getItem('dsh.theme'),
         themeColor: metas[0]?.content ?? null,
         themeColorCount: metas.length,
-        token: computed.getPropertyValue('--dsw-alias-bg-base').trim(),
+        token: computed.getPropertyValue('--yh-alias-bg-base').trim(),
       }
     })
     const expectThemeColorSynchronized = (state: ThemeState): void => {

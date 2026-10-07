@@ -2,17 +2,17 @@
    stay on the existing shiki `--shiki-*` sheet (not Prism highlight.css). */
 
 .block {
-  --dsl-code-block-banner-background-color: var(--dsw-alias-markdown-code-block-banner);
-  --dsl-code-block-border-radius: var(--dsw-radius-lg);
-  /* Local 11/18 instead of the shared --dsw-font-xs-13: the banner scales
+  --dsl-code-block-banner-background-color: var(--yh-alias-markdown-code-block-banner);
+  --dsl-code-block-border-radius: var(--yh-radius-lg);
+  /* Local 11/18 instead of the shared --yh-font-xs-13: the banner scales
      with the markdown 0.875 ladder without shrinking every other xs-13 use. */
-  --dsl-code-block-banner-font: 11px/18px var(--dsw-font-family);
-  --dsl-code-block-content-font: var(--dsw-font-markdown-code-block);
-  --dsl-code-block-background: var(--dsw-alias-markdown-code-block);
+  --dsl-code-block-banner-font: 11px/18px var(--yh-font-family);
+  --dsl-code-block-content-font: var(--yh-font-markdown-code-block);
+  --dsl-code-block-background: var(--yh-alias-markdown-code-block);
 
   position: relative;
   margin: 16px 0;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   background: var(--dsl-code-block-background);
   border-radius: var(--dsl-code-block-border-radius);
 }
@@ -25,7 +25,7 @@
   position: sticky;
   top: 0;
   z-index: 6;
-  background-color: var(--dsw-alias-bg-base);
+  background-color: var(--yh-alias-bg-base);
   border-top-left-radius: var(--dsl-code-block-border-radius);
   border-top-right-radius: var(--dsl-code-block-border-radius);
 }
@@ -43,7 +43,7 @@
 }
 
 .infostring {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-family: var(--ds-font-family-code);
   font-size: 11px;
   line-height: 18px;
@@ -101,7 +101,7 @@
 }
 
 .plain {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .card :where(pre) {
@@ -138,7 +138,7 @@
   position: absolute;
   inset-inline-start: 0;
   width: var(--dsl-code-block-line-number-width);
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   text-align: end;
   content: counter(source-line);
   user-select: none;

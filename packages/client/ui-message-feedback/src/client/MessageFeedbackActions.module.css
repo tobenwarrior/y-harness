@@ -9,9 +9,9 @@
   height: calc(28px + var(--dsh-content-font-delta, 0px));
   padding: 6px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
@@ -23,8 +23,8 @@
 }
 
 .action:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
 }
 
 .action:disabled {
@@ -35,12 +35,12 @@
 /* A recorded rating stays legible without hover, so the signal survives a
    pointer leaving the row. */
 .action[data-active] {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .failure {
   padding-left: 4px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 13px;
   line-height: 20px;
 }

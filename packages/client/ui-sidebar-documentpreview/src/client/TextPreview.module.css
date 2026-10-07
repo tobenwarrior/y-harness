@@ -25,7 +25,7 @@
   box-sizing: border-box;
   height: 38px;
   padding: 0 6px 0 16px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  border-bottom: 0.5px solid var(--yh-alias-border-l3);
 }
 
 .path {
@@ -40,10 +40,10 @@
   align-items: center;
   margin: 0;
   padding: 6px 10px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
-  background: var(--dsw-alias-bg-layer-2);
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--yh-alias-bg-layer-2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l1);
 }
 
 .body {
@@ -56,11 +56,11 @@
   overflow: auto;
   /* The notice and retry surfaces in this sheet are elevated, so the file body's
      scroller rebinds the thumb indirection in a complete pair. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-  color: var(--dsw-alias-label-primary);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
+  color: var(--yh-alias-label-primary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
-  font-family: var(--dsw-font-mono, ui-monospace, monospace);
+  font-family: var(--yh-font-mono, ui-monospace, monospace);
   line-height: 1.6;
   white-space: pre;
 }
@@ -78,7 +78,7 @@
 }
 
 .body:has([data-pdf-preview]) {
-  background: var(--dsw-alias-bg-document-preview);
+  background: var(--yh-alias-bg-document-preview);
 }
 
 .wrap {
@@ -98,7 +98,7 @@
 /* One page of lines; pages abut so the file reads as one. */
 .page {
   margin: 0;
-  font: var(--dsw-font-markdown-code-block);
+  font: var(--yh-font-markdown-code-block);
   white-space: inherit;
 }
 
@@ -108,7 +108,7 @@
 }
 
 .lineTarget {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The failure with nothing read yet: the whole body, centred a little above
@@ -124,9 +124,9 @@
   box-sizing: border-box;
   height: 100%;
   padding: 0 24px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
-  font-family: var(--dsw-font-family);
+  font-family: var(--yh-font-family);
   line-height: 1.6;
   text-align: center;
   white-space: normal;
@@ -160,17 +160,17 @@
   align-items: center;
   height: 32px;
   padding: 0 14px 0 12px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   font-family: inherit;
   background: transparent;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
   cursor: pointer;
 }
 
 .retry:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The type's 16px sheet before the chip's text; the chip's title row centres
@@ -185,7 +185,7 @@
   align-items: center;
   margin: 0;
   padding: 6px 10px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: 1.6;
   white-space: normal;
@@ -206,18 +206,18 @@
 
 .action {
   padding: 4px 10px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
-  font-family: var(--dsw-font, inherit);
+  font-family: var(--yh-font, inherit);
   white-space: normal;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  background: var(--yh-alias-bg-layer-2);
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
 .action:hover {
-  background: var(--dsw-alias-bg-layer-3);
+  background: var(--yh-alias-bg-layer-3);
 }
 
 /* The next page, asked for where the loaded text ends. */
@@ -225,23 +225,23 @@
   display: block;
   margin: 8px 10px;
   padding: 4px 10px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
-  font-family: var(--dsw-font, inherit);
+  font-family: var(--yh-font, inherit);
   white-space: normal;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  background: var(--yh-alias-bg-layer-2);
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
 .more:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-3);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-bg-layer-3);
 }
 
 .more:disabled {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: default;
 }
 
@@ -256,11 +256,11 @@
   width: 28px;
   height: 28px;
   padding: 6px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   line-height: 1;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
@@ -270,13 +270,13 @@
 }
 
 .tool:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .tool[data-textpreview-tool='auto-refresh'][aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 .viewerTool {
   flex: none;
@@ -284,7 +284,7 @@
   max-width: 160px;
   padding: 0 6px;
   overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;

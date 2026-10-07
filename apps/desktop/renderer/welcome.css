@@ -3,37 +3,37 @@
 /* Figma 2121:39336 / 2138:44626, Platform modes. Native material supplies the blur. */
 body {
   color-scheme: light dark;
-  --dsw-alias-label-primary: #0f1115;
-  --dsw-alias-label-secondary: #61666b;
-  --dsw-alias-label-tertiary: #81858c;
-  --dsw-alias-label-primary-inverted: #fff;
-  --dsw-alias-brand-primary: var(--dsw-alias-label-primary);
-  --dsw-alias-button-primary-hover: #43454a;
-  --dsw-alias-button-elevated-fill: #fff;
-  --dsw-alias-button-floating-hover: #f1f3f5;
-  --dsw-alias-border-l2: #0000001a;
-  --dsw-alias-border-l4: #00000029;
-  --dsw-alias-label-caption: #adb2b8;
-  --welcome-tint: var(--dsw-desktop-window-tint);
+  --yh-alias-label-primary: #0f1115;
+  --yh-alias-label-secondary: #61666b;
+  --yh-alias-label-tertiary: #81858c;
+  --yh-alias-label-primary-inverted: #fff;
+  --yh-alias-brand-primary: var(--yh-alias-label-primary);
+  --yh-alias-button-primary-hover: #43454a;
+  --yh-alias-button-elevated-fill: #fff;
+  --yh-alias-button-floating-hover: #f1f3f5;
+  --yh-alias-border-l2: #0000001a;
+  --yh-alias-border-l4: #00000029;
+  --yh-alias-label-caption: #adb2b8;
+  --welcome-tint: var(--yh-desktop-window-tint);
   --ds-transition-duration: 0.2s;
   --ds-transition-duration-slow: 0.3s;
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-  --dsw-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --dsw-font-family-brand: 'Montserrat', var(--dsw-font-family);
+  --yh-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --yh-font-family-brand: 'Montserrat', var(--yh-font-family);
 }
 
 @media (prefers-color-scheme: dark) {
   body {
-    --dsw-alias-label-primary: #f9fafb;
-    --dsw-alias-label-secondary: #cfd3d6;
-    --dsw-alias-label-tertiary: #adb2b8;
-    --dsw-alias-label-primary-inverted: #353638;
-    --dsw-alias-button-primary-hover: #ebeef2;
-    --dsw-alias-button-elevated-fill: #43454a;
-    --dsw-alias-button-floating-hover: #353638;
-    --dsw-alias-border-l2: #ffffff1f;
-    --dsw-alias-border-l4: #ffffff33;
-    --dsw-alias-label-caption: #81858c;
+    --yh-alias-label-primary: #f9fafb;
+    --yh-alias-label-secondary: #cfd3d6;
+    --yh-alias-label-tertiary: #adb2b8;
+    --yh-alias-label-primary-inverted: #353638;
+    --yh-alias-button-primary-hover: #ebeef2;
+    --yh-alias-button-elevated-fill: #43454a;
+    --yh-alias-button-floating-hover: #353638;
+    --yh-alias-border-l2: #ffffff1f;
+    --yh-alias-border-l4: #ffffff33;
+    --yh-alias-label-caption: #81858c;
   }
 }
 
@@ -52,7 +52,7 @@ body {
   margin: 0;
   overflow: hidden;
   background: transparent;
-  font-family: var(--dsw-font-family);
+  font-family: var(--yh-font-family);
   font-weight: 400;
 }
 
@@ -64,8 +64,8 @@ body {
   gap: 8px;
   padding: 6px 16px;
   background: var(--welcome-tint);
-  color: var(--dsw-alias-label-primary);
-  font-family: var(--dsw-font-family-brand);
+  color: var(--yh-alias-label-primary);
+  font-family: var(--yh-font-family-brand);
   font-weight: 300;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -104,7 +104,7 @@ body {
 
 .tagline {
   margin: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 24px;
   font-weight: 300;
   line-height: 40px;
@@ -119,8 +119,8 @@ body {
 }
 
 .tagline em {
-  color: var(--dsw-alias-label-primary);
-  font-family: var(--dsw-font-family-brand);
+  color: var(--yh-alias-label-primary);
+  font-family: var(--yh-font-family-brand);
   font-size: 26px;
   font-style: normal;
   font-weight: 500;
@@ -150,7 +150,7 @@ body {
   padding: 8px 16px;
   border: 1px solid transparent;
   border-radius: 10px;
-  font-family: var(--dsw-font-family);
+  font-family: var(--yh-font-family);
   font-size: 14px;
   font-weight: 500;
   line-height: 22px;
@@ -170,23 +170,23 @@ body {
 }
 
 .actions button:focus-visible {
-  outline: 2px solid var(--dsw-alias-label-primary);
+  outline: 2px solid var(--yh-alias-label-primary);
   outline-offset: 3px;
 }
 
 .primary {
-  background: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-label-primary-inverted);
+  background: var(--yh-alias-brand-primary);
+  color: var(--yh-alias-label-primary-inverted);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+  background: var(--yh-alias-button-primary-hover);
 }
 
 .actions .secondary {
-  border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-button-elevated-fill);
-  color: var(--dsw-alias-label-primary);
+  border-color: var(--yh-alias-border-l2);
+  background: var(--yh-alias-button-elevated-fill);
+  color: var(--yh-alias-label-primary);
 }
 
 .actions .back {
@@ -202,8 +202,8 @@ body {
   border-radius: 24px;
   corner-shape: round;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font-family: var(--dsw-font-family-brand);
+  color: var(--yh-alias-label-secondary);
+  font-family: var(--yh-font-family-brand);
   font-weight: 300;
   font-size: 14px;
   line-height: 20px;
@@ -211,11 +211,11 @@ body {
 
 /* Platform text actions use color-only hover, preserving the native backdrop. */
 .actions .back:hover:not(:disabled) {
-  color: var(--dsw-alias-brand-primary);
+  color: var(--yh-alias-brand-primary);
 }
 
 .actions .back:disabled {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   opacity: 1;
 }
 
@@ -226,7 +226,7 @@ body {
 }
 
 .actions .secondary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-floating-hover);
+  background: var(--yh-alias-button-floating-hover);
 }
 
 .key-form {
@@ -255,7 +255,7 @@ body {
 
 .key-heading p {
   margin: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 16px;
   font-weight: 300;
   line-height: 22px;
@@ -273,11 +273,11 @@ body {
   width: 100%;
   height: 48px;
   padding: 7px 14px;
-  border: 1px solid var(--dsw-alias-border-l4);
+  border: 1px solid var(--yh-alias-border-l4);
   border-radius: 12px;
   outline: none;
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-family: inherit;
   font-weight: inherit;
   font-size: 14px;
@@ -286,11 +286,11 @@ body {
 }
 
 .key-field input:focus {
-  border-color: var(--dsw-alias-brand-primary);
+  border-color: var(--yh-alias-brand-primary);
 }
 
 .key-field input::placeholder {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   opacity: 1;
 }
 
@@ -299,7 +299,7 @@ body {
   top: 100%;
   width: 100%;
   margin: 8px 0 0;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 14px;
   line-height: 22px;
 }
@@ -328,7 +328,7 @@ body {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-family: inherit;
   font-weight: inherit;
   font-size: 14px;

@@ -281,7 +281,7 @@ describe('ScheduleCreateCard', () => {
     const stylesheet = readFileSync(resolve(import.meta.dirname, '../src/client/ScheduleCreateCard.module.css'), 'utf8')
     expect(stylesheet).toMatch(/\.title\s*\{[^}]*font-size:\s*13px;[^}]*line-height:\s*20px;[^}]*font-weight:\s*500;/)
     const frequency = /\.frequency\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? ''
-    expect(frequency).toMatch(/color:\s*var\(--dsw-alias-label-tertiary\);/)
+    expect(frequency).toMatch(/color:\s*var\(--yh-alias-label-tertiary\);/)
     expect(frequency).toMatch(/font-size:\s*10px;/)
     expect(frequency).toMatch(/line-height:\s*16px;/)
     // The box is the delivery card's (ui-deliverables `.file`): fill/hover pair,

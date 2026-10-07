@@ -119,11 +119,11 @@
   width: 28px;
   height: 28px;
   padding: 6px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   line-height: 1;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
@@ -133,7 +133,7 @@
 }
 
 .iconButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The expand button's glyph, so collapse and expand share one affordance. */
@@ -150,7 +150,7 @@
 .unavailable {
   margin: 0;
   padding: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
 }
 

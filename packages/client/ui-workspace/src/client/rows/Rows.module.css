@@ -3,21 +3,21 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   padding: 0 8px;
   padding-inline-start: calc(8px + var(--dsh-workspace-indent, 0px));
   cursor: pointer;
   user-select: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .projectRow:hover,
 .sessionRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .sessionRow.selected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .searchResultRow {
@@ -28,20 +28,20 @@
   min-height: 48px;
   box-sizing: border-box;
   border: none;
-  border-radius: var(--dsw-radius-lg);
+  border-radius: var(--yh-radius-lg);
   padding: 4px 8px;
   background: transparent;
   cursor: pointer;
   text-align: left;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .searchResultRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .searchResultRow.selected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .searchResultHeading {
@@ -81,7 +81,7 @@
 .searchResultWorkspace {
   flex: none;
   max-width: 40%;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The 40% share only protects a snippet; a snippetless match keeps the row. */
@@ -92,7 +92,7 @@
 .searchResultSnippet {
   flex: 1;
   min-width: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* Compact one-line Workspace row after removing the session-count subtitle. */
@@ -123,7 +123,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .visuallyHidden {
@@ -136,7 +136,7 @@
 }
 
 .folderActive {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 
@@ -176,9 +176,9 @@
   font-size: 14px;
   line-height: 20px;
   padding: 0 2px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-button-elevated-fill);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-button-elevated-fill);
   color: inherit;
   outline: none;
 }
@@ -216,14 +216,14 @@
   white-space: nowrap;
   font-size: 12px;
   line-height: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .time {
   flex: none;
   font-size: 10px;
   line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .pinIndicator {
@@ -234,7 +234,7 @@
   align-items: center;
   justify-content: center;
   margin-left: 6px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* Archived rows stay in place but read as inactive: titles drop to
@@ -245,7 +245,7 @@
 .searchResultRow.archived .searchResultTitle,
 .searchResultRow.archived .searchResultWorkspace,
 .searchResultRow.archived .searchResultSnippet {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .dot {
@@ -303,7 +303,7 @@
    hover fill while its dropdown is up). */
 .projectRow.menuOpen,
 .sessionRow.menuOpen {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Session drag insert marker: a leading chevron and 2px rule between rows,
@@ -325,17 +325,17 @@
     linear-gradient(
       55deg,
       transparent calc(50% - 1px),
-      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      var(--yh-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
       transparent calc(50% + 1px)
     ) 0 0 / 5px 7px no-repeat,
     linear-gradient(
       125deg,
       transparent calc(50% - 1px),
-      var(--dsw-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
+      var(--yh-alias-state-business-primary) calc(50% - 1px) calc(50% + 1px),
       transparent calc(50% + 1px)
     ) 0 5px / 5px 7px no-repeat,
     linear-gradient(
-      var(--dsw-alias-state-business-primary) 0 0
+      var(--yh-alias-state-business-primary) 0 0
     ) 4px 5px / calc(100% - 4px) 2px no-repeat;
   pointer-events: none;
 }
@@ -398,21 +398,21 @@
   width: 16px;
   height: 16px;
   border: none;
-  border-radius: var(--dsw-radius-xs);
+  border-radius: var(--yh-radius-xs);
   padding: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .iconButton:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Chevrons ride the caption grey (#ADB2B8); the folder glyph stays one step
    darker (tertiary, #81858C) per the cell spec. */
 .chevron {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 @media (prefers-reduced-motion: reduce) {

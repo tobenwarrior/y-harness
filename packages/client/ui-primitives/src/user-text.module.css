@@ -16,7 +16,7 @@
   display: inline;
   max-width: 100%;
   margin: 0 2px;
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
   font-weight: 500;
   white-space: inherit;
   overflow-wrap: anywhere;
@@ -28,7 +28,7 @@
    like the plain runs around it. `@` chips keep the body face — a file or
    session name is a label, not code. */
 .slashChip {
-  font-family: var(--dsw-font-markdown-code-font-family);
+  font-family: var(--yh-font-markdown-code-font-family);
 }
 
 /* Inline reference glyphs (always ReferenceIcon svgs) ride the consumer's own

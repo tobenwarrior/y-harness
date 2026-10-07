@@ -12,7 +12,7 @@
      (`.pageHead`, `.detailTop`). macOS window dragging is owned by a row's own box,
      so an inset above that box leaves a top strip no drag region covers. */
   padding: 0 clamp(24px, 4vw, 48px) 48px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .page > * {
@@ -53,7 +53,7 @@
   margin: 4px 0 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .infoButton {
@@ -61,7 +61,7 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .toolbar {
@@ -98,7 +98,7 @@
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -109,14 +109,14 @@
   margin: 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .failure {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .statusWithDot {
@@ -146,7 +146,7 @@
 
 .count {
   font-size: 14px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -155,12 +155,12 @@
   display: inline-flex;
   align-items: center;
   align-self: center;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .groupInfo:hover,
 .groupInfo:focus-visible {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* Center the status label geometrically: beside larger titles the capsule's line-box offset shows. */
@@ -179,7 +179,7 @@
 @keyframes dsh-plugin-highlight {
   0%,
   55% {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--yh-alias-state-business-primary) 40%, transparent);
   }
 
   100% {
@@ -190,12 +190,12 @@
 @media (prefers-reduced-motion: reduce) {
   .card[data-plugin-highlight] {
     animation: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--yh-alias-state-business-primary) 40%, transparent);
   }
 }
 
 .iconButton:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
@@ -216,11 +216,11 @@
   /* The hover surface reaches 8px past the content on both sides while the
      row's content stays aligned with the page header. */
   margin: 0 -8px;
-  border-radius: var(--dsw-radius-xl);
+  border-radius: var(--yh-radius-xl);
   /* The page itself scrolls on the base surface. Anything that scrolls inside
      a card draws the l2 thumb (ui-theme styles/scrollbar.css rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .cardHead {
@@ -238,9 +238,9 @@
   width: 48px;
   height: 48px;
   /* The same hairline frame as the component rows below. */
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-lg);
-  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-lg);
+  color: var(--yh-alias-label-secondary);
 }
 
 .packageImage {
@@ -282,7 +282,7 @@
 }
 
 .cardLink:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .cardOpen {
@@ -304,7 +304,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: var(--dsw-radius-xl);
+  border-radius: var(--yh-radius-xl);
 }
 
 .cardOpen:focus-visible {
@@ -312,14 +312,14 @@
 }
 
 .cardOpen:focus-visible::after {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
 .cardDesc {
   font-size: 13px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
@@ -328,7 +328,7 @@
 
 /* Match Session search's pulse without coupling the two feature packages. */
 .skeletonFill {
-  background: var(--dsw-alias-bg-skeleton);
+  background: var(--yh-alias-bg-skeleton);
   animation: dsh-plugin-skeleton 2s cubic-bezier(0.36, 0, 0.64, 1) infinite;
 }
 
@@ -342,7 +342,7 @@
 .skeletonBar {
   width: 100%;
   height: 12px;
-  border-radius: var(--dsw-radius-xs);
+  border-radius: var(--yh-radius-xs);
 }
 
 .skeletonHeading { width: 48px; }
@@ -383,15 +383,15 @@
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   cursor: pointer;
 }
 
 .iconButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
 }
 
 .iconButton:disabled {
@@ -407,7 +407,7 @@
   font-size: 13px;
   line-height: 20px;
   padding: 0 12px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 .addGroup {
@@ -424,7 +424,7 @@
 .addMore {
   width: 32px;
   padding: 0;
-  border-left: 0.5px solid color-mix(in srgb, var(--dsw-alias-label-primary-foreground) 30%, transparent);
+  border-left: 0.5px solid color-mix(in srgb, var(--yh-alias-label-primary-foreground) 30%, transparent);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
@@ -436,9 +436,9 @@
 /* The destructive text action in a card body: red ink inside a 30% red frame,
    and the outline hover rebinds to a red wash instead of the gray one. */
 .danger {
-  color: var(--dsw-alias-state-error-primary);
-  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 30%, transparent);
-  --dsw-alias-interactive-bg-hover: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+  color: var(--yh-alias-state-error-primary);
+  border-color: color-mix(in srgb, var(--yh-alias-state-error-primary) 30%, transparent);
+  --yh-alias-interactive-bg-hover: color-mix(in srgb, var(--yh-alias-state-error-primary) 8%, transparent);
 }
 
 /* Retry, uninstall, and the switch at the end of the page's head. */
@@ -463,14 +463,14 @@
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   cursor: pointer;
 }
 
 .deleteButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger, var(--dsw-alias-interactive-bg-hover));
+  background: var(--yh-alias-interactive-bg-hover-danger, var(--yh-alias-interactive-bg-hover));
 }
 
 .deleteButton:disabled {
@@ -479,7 +479,7 @@
 }
 
 .deleteButton:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
@@ -488,7 +488,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   overflow-wrap: anywhere;
   /* The Host's captured tail, when no output streamed, keeps its lines. */
   white-space: pre-wrap;
@@ -503,7 +503,7 @@
 }
 
 .partsFilter:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 1px;
 }
 
@@ -540,7 +540,7 @@
   margin: -4px 0 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* Where pnpm installs: the profile directory the first run names. */
@@ -548,7 +548,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
@@ -562,30 +562,30 @@
 .installField input[type='text'] {
   height: 40px;
   padding: 0 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-md);
   outline: none;
-  background: var(--dsw-alias-bg-layer-3);
+  background: var(--yh-alias-bg-layer-3);
   font: inherit;
   font-size: 13px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .installField input[type='text']:focus,
 .registryCustomField:focus {
-  border-color: var(--dsw-alias-state-business-primary);
-  box-shadow: inset 0 0 0 0.5px var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
+  box-shadow: inset 0 0 0 0.5px var(--yh-alias-state-business-primary);
 }
 
 .installField input[type='text'][aria-invalid='true'],
 .registryCustomField[aria-invalid='true'] {
-  border-color: var(--dsw-alias-state-error-primary);
+  border-color: var(--yh-alias-state-error-primary);
   box-shadow: none;
 }
 
 .installField input[type='text'][aria-invalid='true']:focus,
 .registryCustomField[aria-invalid='true']:focus {
-  box-shadow: inset 0 0 0 0.5px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  box-shadow: inset 0 0 0 0.5px var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
 }
 
 /* The guide under the field: opened by a text button, it names the npm package name and shows its example. */
@@ -600,12 +600,12 @@
   background: none;
   font: inherit;
   font-size: 12.5px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
 }
 
 .guideToggle:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .guideChevron {
@@ -621,16 +621,16 @@
   flex-direction: column;
   gap: 10px;
   padding: 8px 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-1);
 }
 
 .guideHint {
   margin: 6px 0 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Trust guidance stays beside the install action, including while examples are collapsed. */
@@ -640,11 +640,11 @@
   gap: 8px;
   margin: 0;
   padding: 10px 12px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-state-warn-tertiary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-state-warn-tertiary);
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .installSafetyText {
@@ -657,7 +657,7 @@
 .installSafety > svg {
   flex: none;
   margin-top: 2px;
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--yh-alias-state-warn-primary);
 }
 
 .guideList {
@@ -692,13 +692,13 @@
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .guideExample {
   font-size: 12px;
   line-height: 20px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
@@ -707,7 +707,7 @@
 }
 
 .guideExampleLabel {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* The row under the field: the guide's toggle on the left, the registry's on the right, both folded by default. */
@@ -726,17 +726,17 @@
   gap: 6px;
   height: 28px;
   padding: 0 8px 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
   font: inherit;
   font-size: 12.5px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
 }
 
 .registryToggle:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .registryToggle:disabled {
@@ -745,8 +745,8 @@
 }
 
 .registryToggle[aria-expanded='true'] {
-  border-color: var(--dsw-alias-border-l3);
-  background: var(--dsw-alias-bg-layer-3);
+  border-color: var(--yh-alias-border-l3);
+  background: var(--yh-alias-bg-layer-3);
 }
 
 .registryToggle[aria-expanded='true'] .guideChevron {
@@ -755,7 +755,7 @@
 
 .registryChosen {
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* The registry options float from their toggle over the dialog: pnpm's own, the configured mirrors, and a typed
@@ -772,10 +772,10 @@
   padding: 8px;
   border: 0;
   /* An opaque layer keeps the registry form controls readable over the dialog. */
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: var(--dsw-radius-lg);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  background: var(--yh-alias-bg-layer-2);
+  border-radius: var(--yh-radius-lg);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
   min-width: 0;
 }
 
@@ -785,12 +785,12 @@
   gap: 4px;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   cursor: pointer;
 }
 
 .registryOption:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* An offered registry is one row: the radio beside its title and the line under it. */
@@ -805,7 +805,7 @@ label.registryOption {
   width: 16px;
   height: 16px;
   margin: 2px 0 0;
-  accent-color: var(--dsw-alias-brand-primary);
+  accent-color: var(--yh-alias-brand-primary);
 }
 
 .registryTitle {
@@ -815,13 +815,13 @@ label.registryOption {
   gap: 8px;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .registryHint {
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
@@ -837,12 +837,12 @@ label.registryOption {
   height: 32px;
   margin-left: 26px;
   padding: 0 10px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-3);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-3);
   font: inherit;
   font-size: 13px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* The typed address's field, refusal, and line sit under its title, past the radio and its gap. */
@@ -856,7 +856,7 @@ label.registryOption {
   margin: -4px 0 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 /* The footer's only action spans the dialog, as the primary action of a short form does. */
@@ -864,7 +864,7 @@ label.registryOption {
   width: 100%;
   height: 40px;
   justify-content: center;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 /* The installing, installed, and failed screens: a head row, the centred
@@ -906,7 +906,7 @@ label.registryOption {
   font: inherit;
   font-size: 15px;
   font-weight: 600;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   cursor: pointer;
 }
 
@@ -918,15 +918,15 @@ label.registryOption {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .wizardClose:hover {
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-bg-layer-3);
+  color: var(--yh-alias-label-primary);
 }
 
 .wizardHero {
@@ -944,15 +944,15 @@ label.registryOption {
   justify-content: center;
   width: 44px;
   height: 44px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .wizardIcon[data-state='done'] {
-  color: var(--dsw-alias-state-success-secondary);
+  color: var(--yh-alias-state-success-secondary);
 }
 
 .wizardIcon[data-state='error'] {
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .wizardTitle {
@@ -966,7 +966,7 @@ label.registryOption {
   margin: 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -976,8 +976,8 @@ label.registryOption {
   align-items: center;
   gap: 6px;
   padding: 16px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-lg);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-lg);
   text-align: center;
 }
 
@@ -994,7 +994,7 @@ label.registryOption {
   margin: 0;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -1007,7 +1007,7 @@ label.registryOption {
 
 .footAction {
   height: 32px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 .detailsToggle {
@@ -1019,7 +1019,7 @@ label.registryOption {
   background: none;
   font: inherit;
   font-size: 13px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   cursor: pointer;
 }
 
@@ -1057,11 +1057,11 @@ label.registryOption {
   align-self: flex-start;
   margin: 0;
   padding: 0 6px;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-3);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-bg-layer-3);
   font-size: 11px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1074,15 +1074,15 @@ label.registryOption {
 .resultWarn {
   margin: 0;
   padding: 8px 12px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   font-size: 13px;
   line-height: 20px;
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
-  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--yh-alias-state-success-primary) 10%, transparent);
+  color: var(--yh-alias-label-primary);
 }
 
 .resultWarn {
-  background: var(--dsw-alias-state-warn-tertiary);
+  background: var(--yh-alias-state-warn-tertiary);
 }
 
 /* The approval a blocked run asks for: the packages whose install scripts pnpm did not run, and the one action. */
@@ -1091,23 +1091,23 @@ label.registryOption {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border: 0.5px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-state-warn-tertiary);
+  border: 0.5px solid color-mix(in srgb, var(--yh-alias-state-warn-primary) 40%, transparent);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-state-warn-tertiary);
 }
 
 .approvalTitle {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .approvalText {
   margin: 0;
   font-size: 12.5px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .approvalCaution {
@@ -1115,7 +1115,7 @@ label.registryOption {
   font-size: 12.5px;
   line-height: 18px;
   font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .approvalList {
@@ -1130,21 +1130,21 @@ label.registryOption {
 .approvalList code {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-3);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-bg-layer-3);
   font-family: var(--ds-font-family-code);
   font-size: 12px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* The install terminal: the shared TerminalBlock at the bash card's smaller
    size, its output capped so an expanded log scrolls inside the dialog. */
 .terminal {
-  --dsl-terminal-font: var(--dsw-font-markdown-code-block-small);
+  --dsl-terminal-font: var(--yh-font-markdown-code-block-small);
   --dsl-terminal-line-height: 18px;
   --dsl-terminal-output-max-height: 240px;
   margin: 4px 0 0;
-  border: 0.5px solid var(--dsw-alias-border-l1);
+  border: 0.5px solid var(--yh-alias-border-l1);
 }
 
 .dependents {
@@ -1152,12 +1152,12 @@ label.registryOption {
   padding-left: 18px;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .dangerButton {
-  --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
-  --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
+  --yh-alias-button-primary-fill: var(--yh-alias-state-error-primary);
+  --yh-alias-button-primary-hover: var(--yh-alias-state-error-primary);
 }
 
 .detail {
@@ -1190,18 +1190,18 @@ label.registryOption {
   border: 0;
   padding: 0;
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font: inherit;
   font-size: 12.5px;
   cursor: pointer;
 }
 
 .crumb:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .crumb:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: 2px;
 }
 
@@ -1241,7 +1241,7 @@ label.registryOption {
 
 .detailDesc {
   margin: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 14px;
   line-height: 22px;
 }
@@ -1252,12 +1252,12 @@ label.registryOption {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
 .detailName code {
-  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--yh-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
 /* The unknown-package note under the name block. */
@@ -1294,7 +1294,7 @@ label.registryOption {
 .sectionCount {
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* A bundle's source facts: label at the start, value at the end, one ruled line each. */
@@ -1309,14 +1309,14 @@ label.registryOption {
   gap: 16px;
   min-height: 44px;
   padding: 8px 2px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .facts dt {
   flex: none;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .facts dd {
@@ -1331,16 +1331,16 @@ label.registryOption {
 .facts code {
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--dsw-alias-bg-module-platform);
+  background: var(--yh-alias-bg-module-platform);
   box-decoration-break: clone;
-  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--yh-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
 }
 
 /* The way into a package's page. */
 .cardArrow {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Rows sit on the page ground, one hairline apart, so they read on a white page too. */
@@ -1354,7 +1354,7 @@ label.registryOption {
 
 .row {
   padding: 12px 2px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .row:last-child {
@@ -1375,9 +1375,9 @@ label.registryOption {
   justify-content: center;
   width: 40px;
   height: 40px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-md);
-  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-md);
+  color: var(--yh-alias-label-secondary);
 }
 
 .rowMain {
@@ -1392,19 +1392,19 @@ label.registryOption {
   font-size: 13.5px;
   line-height: 20px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   overflow-wrap: anywhere;
 }
 
 .row[data-state='off'] .rowId {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 .rowModule {
-  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--yh-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11.5px;
   line-height: 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   overflow-wrap: anywhere;
 }
 
@@ -1429,11 +1429,11 @@ label.registryOption {
 
 .rowOpenIcon {
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .rowOpen:hover .rowOpenIcon {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .rowState {
@@ -1443,12 +1443,12 @@ label.registryOption {
   gap: 6px;
   font-size: 12.5px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   white-space: nowrap;
 }
 
 .row[data-state='failed'] .rowState {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 
@@ -1457,6 +1457,6 @@ label.registryOption {
   margin: 4px 0 0 56px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   overflow-wrap: anywhere;
 }

@@ -9,7 +9,7 @@
   height: max-content;
   min-height: 100%;
   padding: 12px;
-  font-family: var(--dsw-font, sans-serif);
+  font-family: var(--yh-font, sans-serif);
   white-space: normal;
 }
 
@@ -34,7 +34,7 @@
   max-width: none;
   height: auto;
   max-height: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   user-select: none;
 }
 
@@ -47,7 +47,7 @@
   min-height: 100%;
   margin: 0;
   padding: 10px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 1.5;
   white-space: normal;

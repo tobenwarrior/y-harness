@@ -18,7 +18,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 .leading {
@@ -35,7 +35,7 @@
   height: 2px;
   margin: 0 8px;
   border-radius: 1px;
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 /* Think text reads the secondary tier — one step under the body size

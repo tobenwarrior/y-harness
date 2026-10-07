@@ -17,7 +17,7 @@
   width: 100%;
   margin: 8px 0;
   border-collapse: collapse;
-  border-block: 0.5px solid var(--dsw-alias-border-l2);
+  border-block: 0.5px solid var(--yh-alias-border-l2);
   font: inherit;
   text-align: left;
 }
@@ -33,9 +33,9 @@
   padding-right: 8px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .depthTable tr + tr {
-  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }

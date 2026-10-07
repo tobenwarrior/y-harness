@@ -24,9 +24,9 @@
   min-height: 28px;
   padding: 0 8px;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 13px;
   line-height: 20px;
   font-weight: 500;
@@ -36,17 +36,17 @@
 
 .seat:not(:disabled):hover,
 .seat[aria-expanded='true'] {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .seat:disabled {
   cursor: default;
-  color: var(--dsw-alias-label-quaternary);
+  color: var(--yh-alias-label-quaternary);
 }
 
 .seatIcon {
   flex: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .seatLabel {
@@ -113,7 +113,7 @@
 
 .chevron {
   flex: none;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* Menu rows carry the name over its description: the id alone never said what
@@ -128,12 +128,12 @@
 .itemName {
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .itemDesc {
   font-size: 12px;
   line-height: 16px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   white-space: normal;
 }

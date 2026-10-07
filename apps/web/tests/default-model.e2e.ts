@@ -349,7 +349,7 @@ describe('web e2e: the composer model switch is the default for later sessions',
     const searchStyle = await search.evaluate((input) => {
       const wrapper = input.parentElement!
       const caption = input.ownerDocument.createElement('span')
-      caption.style.color = 'var(--dsw-alias-label-caption)'
+      caption.style.color = 'var(--yh-alias-label-caption)'
       wrapper.append(caption)
       try {
         return {

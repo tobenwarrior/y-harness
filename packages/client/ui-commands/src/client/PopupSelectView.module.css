@@ -22,11 +22,11 @@
   overflow: hidden;
   /* Elevated surface: the scrollbar thumb takes the l2 elevation tokens
      (see ui-theme styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
   outline: none;
 }
 
@@ -42,14 +42,14 @@
   align-items: center;
   gap: 6px;
   padding: 5px 7px;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   cursor: pointer;
   font-size: 12px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .rowActive {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .label {
@@ -71,7 +71,7 @@
   flex: none;
   align-self: flex-start;
   margin-top: -1px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 8px;
   line-height: 10px;
   font-weight: 600;
@@ -82,7 +82,7 @@
   flex: 1;
   min-width: 0;
   font-size: 11px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -92,7 +92,7 @@
   display: inline-flex;
   flex: none;
   margin-left: auto;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .check svg {
@@ -103,17 +103,17 @@
 .status {
   padding: 7px 8px;
   font-size: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .search {
   margin: 2px 2px 3px;
   padding: 5px 7px;
   border: 0.5px solid transparent;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
   font-size: 12px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   outline: none;
 }
 
@@ -123,7 +123,7 @@
   gap: 6px;
   padding: 5px 7px;
   font-size: 11px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .errorText {
@@ -134,10 +134,10 @@
 
 .retry {
   padding: 2px 7px;
-  border: 0.5px solid var(--dsw-alias-border-inverted);
-  border-radius: var(--dsw-radius-sm);
+  border: 0.5px solid var(--yh-alias-border-inverted);
+  border-radius: var(--yh-radius-sm);
   background: transparent;
   font-size: 11px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   cursor: pointer;
 }

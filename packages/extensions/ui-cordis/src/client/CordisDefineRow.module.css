@@ -10,7 +10,7 @@
 /* Definition cards keep a brand accent to distinguish their editable source. */
 .card .title,
 .card .chevron {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .title {
@@ -30,7 +30,7 @@
   height: 2px;
   border-radius: 1px;
   margin: 0 8px;
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
 }
 
 .name {
@@ -41,7 +41,7 @@
   white-space: nowrap;
   font-size: 14px;
   line-height: 24px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* The purpose absorbs the remaining width and clips first: the name and the
@@ -55,7 +55,7 @@
   white-space: nowrap;
   font-size: 13px;
   line-height: 24px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .errorSummary {
@@ -66,7 +66,7 @@
   white-space: nowrap;
   font-size: 14px;
   line-height: 24px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .requestError {
@@ -78,7 +78,7 @@
   white-space: nowrap;
   font-size: 12px;
   line-height: 24px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .readout {
@@ -93,13 +93,13 @@
   margin: 4px 0 2px 4px;
   font-size: 11px;
   line-height: 16px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .statusLabel {
   font-size: 12px;
   line-height: 24px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* The model's question, shown beside the approve/decline pair. */
@@ -112,7 +112,7 @@
   white-space: nowrap;
   font-size: 12px;
   line-height: 24px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
 }
 
 /* A qualified success (nothing acknowledged the dispatch, or the browser half
@@ -127,7 +127,7 @@
   white-space: nowrap;
   font-size: 12px;
   line-height: 24px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .switch {
@@ -143,11 +143,11 @@
 .card[data-terminal] .name,
 .card[data-terminal] .purpose,
 .card[data-terminal] .statusLabel {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 .card[data-terminal] .separator {
-  background: var(--dsw-alias-label-caption);
+  background: var(--yh-alias-label-caption);
 }
 
 .bodyWrap {
@@ -164,7 +164,7 @@
 .sourceTabs {
   display: flex;
   height: 32px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .sourceTab {
@@ -172,14 +172,14 @@
   padding: 0 10px;
   border: 0;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
-  font: var(--dsw-font-xs-13);
+  font: var(--yh-font-xs-13);
 }
 
 .sourceTab:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .sourceTab:disabled {
@@ -188,7 +188,7 @@
 }
 
 .sourceTabActive {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .sourceTabActive::after {
@@ -198,12 +198,12 @@
   left: 10px;
   height: 2px;
   border-radius: 1px 1px 0 0;
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
   content: '';
 }
 
 .sourceTab:focus-visible {
-  outline: 1px solid var(--dsw-alias-state-business-primary);
+  outline: 1px solid var(--yh-alias-state-business-primary);
   outline-offset: -1px;
 }
 
@@ -230,7 +230,7 @@
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -238,17 +238,17 @@
 .output {
   margin: 0;
   padding: 8px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l1);
+  border: 0.5px solid var(--yh-alias-border-l1);
   border-radius: 8px;
-  background: var(--dsw-alias-markdown-code-block);
+  background: var(--yh-alias-markdown-code-block);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-secondary);
+  font: var(--yh-font-markdown-code-block-small);
+  color: var(--yh-alias-label-secondary);
 }
 
 .output[data-error] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .inspectButton {
@@ -258,11 +258,11 @@
   gap: 4px;
   margin: 4px 0 2px 4px;
   padding: 2px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
+  border: 0.5px solid var(--yh-alias-border-l4);
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
@@ -276,8 +276,8 @@
 }
 
 .inspectButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover-solid);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover-solid);
+  color: var(--yh-alias-label-primary);
 }
 
 .visuallyHidden {

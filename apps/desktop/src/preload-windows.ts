@@ -19,7 +19,7 @@ export function syncWindowsAppearance(): void {
     const root = document.documentElement
     const menu = installWindowsMenu()
     const probe = document.createElement('span')
-    probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;background-color:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-primary)'
+    probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;background-color:var(--yh-specific-sidebar-fill);color:var(--yh-alias-label-primary)'
     document.body.append(probe)
     const canvas = document.createElement('canvas')
     canvas.width = canvas.height = 1

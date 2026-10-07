@@ -2,7 +2,7 @@
 .document {
   min-width: 0;
   padding: 10px 12px;
-  font-family: var(--dsw-font, inherit);
+  font-family: var(--yh-font, inherit);
   white-space: normal;
 }
 
@@ -10,11 +10,11 @@
 .frontmatter {
   margin: 0 0 16px;
   padding: 10px 12px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  font: var(--dsw-font-markdown-small);
-  color: var(--dsw-alias-label-primary);
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+  font: var(--yh-font-markdown-small);
+  color: var(--yh-alias-label-primary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

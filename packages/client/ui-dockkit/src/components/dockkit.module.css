@@ -8,8 +8,8 @@
  * follows the embedder's content axis (`--dsh-content-font-size` and its
  * secondary step) so a surface reads at the same size as the page around it.
  * Emphasis — the drop caret, the drop-zone hint — takes the platform's accent
- * (`--dsw-alias-brand-primary-new-colorprimary-new-color`), not
- * `--dsw-alias-brand-primary`, which this platform binds to its near-black
+ * (`--yh-alias-brand-primary-new-colorprimary-new-color`), not
+ * `--yh-alias-brand-primary`, which this platform binds to its near-black
  * (light) or near-white (dark) foreground. A hovered divider takes the
  * caption label ink instead, reading as a handle rather than a highlight.
  */
@@ -57,7 +57,7 @@
 }
 
 .divider::before {
-  background: var(--dsw-alias-border-l4);
+  background: var(--yh-alias-border-l4);
 }
 
 .splitRow > .divider {
@@ -112,11 +112,11 @@
 }
 
 .splitRow > .divider::after {
-  background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
+  background: linear-gradient(to bottom, transparent, var(--yh-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
 }
 
 .splitColumn > .divider::after {
-  background: linear-gradient(to right, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 100% 1px no-repeat;
+  background: linear-gradient(to right, transparent, var(--yh-alias-label-caption) 50%, transparent) center / 100% 1px no-repeat;
 }
 
 /* Both floors: a flex item's minimum is its content's, and a body's longest
@@ -167,11 +167,11 @@
 
 .tabHost:not(.float),
 .emptyTabHost {
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 .tabCell[data-dockkit-host='dock'][data-dockkit-column='0'] > .tabHost {
-  border-left: 0.5px solid var(--dsw-alias-border-l4);
+  border-left: 0.5px solid var(--yh-alias-border-l4);
 }
 
 .tabHostHeader {
@@ -202,7 +202,7 @@
   bottom: 0;
   left: -4px;
   right: -4px;
-  background: linear-gradient(to bottom, transparent, var(--dsw-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
+  background: linear-gradient(to bottom, transparent, var(--yh-alias-label-caption) 50%, transparent) center / 1px 100% no-repeat;
 }
 
 /* A body that overflows scrolls inside its pane; nothing escapes the pane. */
@@ -337,7 +337,7 @@
   content: '';
   width: 0.5px;
   height: 14px;
-  background: var(--dsw-alias-border-l4);
+  background: var(--yh-alias-border-l4);
 }
 
 /* The active chip is a filled tab and needs no rule against it: the two
@@ -351,7 +351,7 @@
 .slotCaret::before {
   width: 2px;
   height: 20px;
-  background: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
+  background: var(--yh-alias-brand-primary-new-colorprimary-new-color);
 }
 
 /* The chip: a 28px tab whose title runs to the right inset. The close
@@ -367,11 +367,11 @@
   max-width: 170px;
   height: 28px;
   padding: 0 10px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
   line-height: 1;
   white-space: nowrap;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
   touch-action: none;
   user-select: none;
@@ -424,11 +424,11 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   line-height: 1;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
   opacity: 0;
   /* Hidden means untouchable too: without this a touch press on the chip's
@@ -454,32 +454,32 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   line-height: 1;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
 .addTab:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .tabClose:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .tab:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* The active chip is the filled tab, in the tag fill; the rest are bare text. */
 .tabActive {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-markdown-tag);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-markdown-tag);
 }
 
 /* A pane's lone unclosable chip is a label, not a choice: no tab, no
@@ -487,7 +487,7 @@
    yields to a close control, so it keeps the clipped fade alone. */
 .tab.tabQuiet,
 .tab.tabQuiet:hover {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   background: transparent;
   cursor: default;
 }
@@ -516,11 +516,11 @@
   width: 28px;
   height: 28px;
   padding: 6px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   line-height: 1;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
   cursor: pointer;
 }
 
@@ -530,7 +530,7 @@
 }
 
 .iconButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .iconButton:disabled {
@@ -551,7 +551,7 @@
   flex-direction: column;
   min-width: 96px;
   padding: 4px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
+  border: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .menu:not(:has([role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'])) {
@@ -560,17 +560,17 @@
 
 .menuItem {
   padding: 4px 7px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   cursor: pointer;
 }
 
 .menuItem:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* No padding of its own: a tab's body reaches the pane's edges and the strip's
@@ -584,14 +584,14 @@
   overflow: auto;  /* This sheet draws elevated surfaces (the strip and the menu), so a scroller
      inside it rebinds the thumb indirection in a complete pair — a base-surface
      thumb on an elevated ground reads as a smudge. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .empty {
   margin: 0;
   padding: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: var(--dsh-content-font-size-secondary, 13px);
 }
 
@@ -615,7 +615,7 @@
   /* The ground the panes sit on, not a raised layer: in dark mode `bg-layer-2`
      is a lighter bluish step than the column's `bg-base`, which tinted the
      whole scrim away from the content beneath it. */
-  background: color-mix(in srgb, var(--dsw-alias-bg-base) 72%, transparent);
+  background: color-mix(in srgb, var(--yh-alias-bg-base) 72%, transparent);
   backdrop-filter: blur(6px);
   animation: dockScrimIn 140ms ease-out;
 }
@@ -668,9 +668,9 @@
   min-height: 0;
   padding: 12px;
   overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  border: 1.5px dashed var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-lg);
+  color: var(--yh-alias-label-tertiary);
+  border: 1.5px dashed var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
   transition: color 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
   animation: dockHintIn 140ms ease-out;
 }
@@ -678,9 +678,9 @@
 /* The card under the pointer takes the accent: a tinted ground over the scrim,
    an accent dashed frame, and secondary ink for the glyph and caption. */
 .dockHint[data-dockkit-drop-active] .dockHintCard {
-  color: var(--dsw-alias-label-secondary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary-new-colorprimary-new-color) 8%, transparent);
-  border-color: var(--dsw-alias-brand-primary-new-colorprimary-new-color);
+  color: var(--yh-alias-label-secondary);
+  background: color-mix(in srgb, var(--yh-alias-brand-primary-new-colorprimary-new-color) 8%, transparent);
+  border-color: var(--yh-alias-brand-primary-new-colorprimary-new-color);
 }
 
 .dockHintCard svg {
@@ -754,13 +754,13 @@
   /* The body inside is unpadded and reaches the edges, so the frame clips it
      to its own corners. */
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2);
-  border-radius: var(--dsw-radius-panel);
+  background: var(--yh-alias-bg-layer-2);
+  border-radius: var(--yh-radius-panel);
   /* The menu's shadow with the stroke rebound one step lighter than the
      default (l2): the panel reads as the same kind of raised surface, and the
      shadow's hairline outlines it, so the frame draws no border of its own. */
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-  box-shadow: var(--dsw-elevation-prominent);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l2);
+  box-shadow: var(--yh-elevation-prominent);
   pointer-events: auto;
 }
 
@@ -798,8 +798,8 @@
   overflow: auto;  /* This sheet draws elevated surfaces (the strip and the menu), so a scroller
      inside it rebinds the thumb indirection in a complete pair — a base-surface
      thumb on an elevated ground reads as a smudge. */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .floatResize {
@@ -819,11 +819,11 @@
   position: absolute;
   right: 4px;
   bottom: 4px;
-  width: calc(var(--dsw-radius-panel) - 4px);
-  height: calc(var(--dsw-radius-panel) - 4px);
-  border-right: 1.5px solid var(--dsw-alias-label-caption);
-  border-bottom: 1.5px solid var(--dsw-alias-label-caption);
-  border-bottom-right-radius: calc(var(--dsw-radius-panel) - 4px);
+  width: calc(var(--yh-radius-panel) - 4px);
+  height: calc(var(--yh-radius-panel) - 4px);
+  border-right: 1.5px solid var(--yh-alias-label-caption);
+  border-bottom: 1.5px solid var(--yh-alias-label-caption);
+  border-bottom-right-radius: calc(var(--yh-radius-panel) - 4px);
   opacity: 0;
   transition: opacity 120ms ease-out;
 }
@@ -834,5 +834,5 @@
 }
 
 .floatResize:hover::after {
-  border-color: var(--dsw-alias-label-tertiary);
+  border-color: var(--yh-alias-label-tertiary);
 }

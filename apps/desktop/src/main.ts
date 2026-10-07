@@ -180,7 +180,7 @@ function developmentHostInspectPort(enabled: boolean): number | undefined {
 
 /**
  * Opaque chrome fallback matching the built-in sidebar palette (the resolved
- * `--dsw-static-neutral-bluish-900` / `-50` tokens). An approximation for
+ * `--yh-static-neutral-bluish-900` / `-50` tokens). An approximation for
  * custom themes: Windows swaps in the renderer's measured palette over the
  * windowsAppearance IPC, and macOS shows it only while minimized or hidden.
  * @returns the sidebar fill hex for the active system color scheme.

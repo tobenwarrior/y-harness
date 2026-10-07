@@ -16,17 +16,17 @@
   gap: 0;
   border: 0;
   border-radius: 16px;
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
   /* Elevated surface: the scrollbar thumb takes the l2 elevation tokens. The
      declaration sits on the card rather than on `.scrollable .viewport`
      because the elevation is a property of this surface, and the custom
      properties inherit down to whichever descendant actually scrolls (see
      ui-theme styles/scrollbar.css for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -72,7 +72,7 @@
 .header {
   flex: none;
   padding: 5px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .itemWrap {
@@ -93,19 +93,19 @@
   cursor: pointer;
   font-size: 13px;
   line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   text-align: left;
 }
 
 .item:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 /* Arrow navigation moves real focus, so the row the keyboard is on carries the
    same fill the pointer gets: the fill is the row's focus indication, and the
    browser's default ring would double it. */
 .item:focus-visible:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
   outline: none;
 }
 
@@ -121,7 +121,7 @@
   height: 14px;
   align-items: center;
   justify-content: center;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .itemIcon svg,
@@ -140,7 +140,7 @@
 
 .check {
   flex: none;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Selected cell keeps the plain fill (marker is the trailing check); the
@@ -151,19 +151,19 @@
 
 /* Destructive row: error text/icon, danger hover fill. */
 .danger {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .danger .itemIcon {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .danger:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  background: var(--yh-alias-interactive-bg-hover-danger);
 }
 
 .danger:focus-visible:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  background: var(--yh-alias-interactive-bg-hover-danger);
   outline: none;
 }
 
@@ -172,7 +172,7 @@
   padding: 6px 8px;
   font-size: 11px;
   line-height: 15px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 /* Separator cell (figma 122:9481): py 4 / px 2 around the hairline. l2, not
@@ -180,7 +180,7 @@
 .separator {
   height: 0.5px;
   margin: 3px 2px;
-  background: var(--dsw-alias-border-l2);
+  background: var(--yh-alias-border-l2);
 }
 
 /* Two data separators in a row draw one line. */

@@ -1,10 +1,10 @@
 .surface,
 .backing {
-  border-radius: var(--dsw-radius-lg);
+  border-radius: var(--yh-radius-lg);
 }
 
 .compact {
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
 }
 
 :where(.surface) {
@@ -23,8 +23,8 @@
   inset: 0;
   z-index: -1;
   border-radius: inherit;
-  background: var(--dsw-menu-surface-fill);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  background: var(--yh-menu-surface-fill);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
   pointer-events: none;
 }
 
@@ -44,6 +44,6 @@
   width: anchor-size(width, 0px);
   height: anchor-size(height, 0px);
   z-index: -1;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
   pointer-events: none;
 }

@@ -4,7 +4,7 @@
   z-index: 900;
   display: flex;
   flex-direction: column;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
   user-select: none;
 }
 

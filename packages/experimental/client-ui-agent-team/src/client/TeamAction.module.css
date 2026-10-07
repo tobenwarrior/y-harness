@@ -11,14 +11,14 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   cursor: pointer;
 }
 
 .trigger:hover,
 .trigger:focus-visible {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 /* Second sacrifice after the preset label: past this title-row width the
@@ -31,7 +31,7 @@
 }
 
 .count {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 12px;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
@@ -39,8 +39,8 @@
 }
 
 .panel {
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 
   display: flex;
   flex-direction: column;
@@ -57,8 +57,8 @@
   overflow: hidden;
   border: 0;
   border-radius: 12px;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-elevation-prominent);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l1);
+  box-shadow: var(--yh-elevation-prominent);
 }
 
 /* The menu skin lives on a pseudo-element: backdrop-filter on the panel
@@ -71,8 +71,8 @@
   z-index: -1;
   inset: 0;
   border-radius: 12px;
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  background: var(--yh-specific-menu);
+  backdrop-filter: var(--yh-menu-backdrop-filter);
 }
 
 /* A lone member with no shared tasks fits one card; the full panel width
@@ -111,7 +111,7 @@
   align-items: center;
   gap: 8px;
   margin: 16px 0 8px 4px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   font-size: 13px;
   font-weight: 500;
 }
@@ -135,11 +135,11 @@
   min-width: 0;
   padding: 10px 12px;
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
-  box-shadow: var(--dsw-elevation-stroke);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l2);
+  box-shadow: var(--yh-elevation-stroke);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-primary);
   text-align: left;
   cursor: pointer;
 }
@@ -151,14 +151,14 @@
 /* The Current tag and card share a tint; the inset ring adds emphasis
    without changing the card's dimensions. */
 .memberCurrent {
-  --dsw-elevation-stroke-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, transparent);
-  box-shadow: var(--dsw-elevation-stroke), inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, transparent);
+  --yh-elevation-stroke-color: color-mix(in srgb, var(--yh-alias-state-business-primary) 40%, transparent);
+  box-shadow: var(--yh-elevation-stroke), inset 0 0 0 1px color-mix(in srgb, var(--yh-alias-state-business-primary) 40%, transparent);
 }
 
 .member:not(:disabled):hover,
 .member:not(:disabled):focus-visible {
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l3);
-  box-shadow: var(--dsw-elevation-panel);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l3);
+  box-shadow: var(--yh-elevation-panel);
 }
 
 /* Seat height 1lh tracks the member name's first text line, so any dot
@@ -171,7 +171,7 @@
 }
 
 .inactiveIcon {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
 }
 
 .memberText {
@@ -222,14 +222,14 @@
 
 .memberText small,
 .meta {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
 }
 
 .diagnostic,
 .error,
 .warning {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .tasks {
@@ -242,15 +242,15 @@
    flush with the body's bottom padding. */
 .emptyNotice {
   margin: 16px 0 0 4px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
 }
 
 .task {
   padding: 11px 13px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
+  border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: 9px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--yh-alias-bg-layer-2);
 }
 
 .taskState {
@@ -258,13 +258,13 @@
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
 }
 
 .task p {
   margin: 5px 0;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
   white-space: pre-wrap;
@@ -289,7 +289,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   line-height: 20px;
   cursor: pointer;
@@ -297,7 +297,7 @@
 
 .expandToggle:hover,
 .expandToggle:focus-visible {
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .expandToggle svg {

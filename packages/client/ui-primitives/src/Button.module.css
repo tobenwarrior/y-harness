@@ -6,11 +6,11 @@
   justify-content: center;
   gap: 4px;
   border: none;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   cursor: pointer;
   font-size: 14px;
   line-height: 22px;
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
   background: transparent;
   padding: 0 14px;
 }
@@ -30,42 +30,42 @@
   font-size: 12px;
   line-height: 18px;
   padding: 0 10px;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--yh-radius-sm);
 }
 
 .primary {
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--yh-alias-button-primary-fill);
+  color: var(--yh-alias-label-primary-foreground);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
+  background: var(--yh-alias-button-primary-hover);
 }
 
 .ghost:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .ghost:active:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-active);
+  background: var(--yh-alias-interactive-bg-active);
 }
 
 /* Outlined actions use the same neutral stroke as settings links. */
 .outline {
-  border: 0.5px solid var(--dsw-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   background: transparent;
 }
 
 .outline:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .toolbar {
-  background: var(--dsw-alias-button-tool-bar-fill);
+  background: var(--yh-alias-button-tool-bar-fill);
 }
 
 .toolbar:hover:not(:disabled) {
-  background: var(--dsw-alias-button-tool-bar-hover);
+  background: var(--yh-alias-button-tool-bar-hover);
 }
 
 .icon {

@@ -134,26 +134,26 @@ describe.each([en, zh])('saved delivery records', (dictionary) => {
     const segmentRule = ruleBlock(stylesheet, 'delivery::before,\n.delivery::after')
     expect(segmentRule).toMatch(/left:\s*15\.75px;/)
     expect(segmentRule).toMatch(/width:\s*0\.5px;/)
-    expect(segmentRule).toMatch(/background:\s*var\(--dsw-alias-border-l3\);/)
+    expect(segmentRule).toMatch(/background:\s*var\(--yh-alias-border-l3\);/)
     expect(ruleBlock(stylesheet, 'delivery:not\\(:first-of-type\\)::before')).toMatch(/height:\s*14px;/)
     expect(ruleBlock(stylesheet, 'delivery:not\\(:last-of-type\\)::after')).toMatch(/top:\s*42px;/)
     expect(ruleBlock(stylesheet, 'delivery:first-of-type:not\\(:last-of-type\\)::after')).toMatch(/top:\s*28px;/)
     // The mock's `.automation-detail .history-row > .icon`.
     const glyphRule = ruleBlock(stylesheet, 'deliveryGlyph')
     expect(glyphRule).toMatch(/margin-top:\s*6px;/)
-    expect(glyphRule).toMatch(/color:\s*var\(--dsw-alias-label-tertiary\);/)
+    expect(glyphRule).toMatch(/color:\s*var\(--yh-alias-label-tertiary\);/)
     // The mock's `.delivery-record-title`: the compact occurrence time.
     const occurrenceRule = ruleBlock(stylesheet, 'deliveryTime')
     expect(occurrenceRule).toMatch(/font-size:\s*14px;/)
     expect(occurrenceRule).toMatch(/line-height:\s*22px;/)
     expect(occurrenceRule).toMatch(/font-weight:\s*500;/)
-    expect(occurrenceRule).toMatch(/color:\s*var\(--dsw-alias-label-primary\);/)
+    expect(occurrenceRule).toMatch(/color:\s*var\(--yh-alias-label-primary\);/)
     // The mock's `.delivery-record .history-caption`: the saved instruction.
     const instructionRule = ruleBlock(stylesheet, 'savedPrompt')
     expect(instructionRule).toMatch(/margin:\s*6px 0 0;/)
     expect(instructionRule).toMatch(/font-size:\s*13px;/)
     expect(instructionRule).toMatch(/line-height:\s*22px;/)
-    expect(instructionRule).toMatch(/color:\s*var\(--dsw-alias-label-tertiary\);/)
+    expect(instructionRule).toMatch(/color:\s*var\(--yh-alias-label-tertiary\);/)
     expect(instructionRule).toMatch(/white-space:\s*pre-wrap;/)
     expect(instructionRule).toMatch(/overflow-wrap:\s*anywhere;/)
     // A collapsed instruction shows two lines; the expanded state lifts the clamp.
@@ -338,8 +338,8 @@ it('keeps the Rules and the Delivery records views on one type scale', () => {
   // leading and hint in tertiary; the records view keeps the same hierarchy.
   expect(declared('ruleValue', 'color')).toBe(declared('deliveryTime', 'color'))
   expect(declared('ruleLabel', 'color')).toBe(declared('ruleValue', 'color'))
-  expect(declared('ruleHint', 'color')).toBe('var(--dsw-alias-label-tertiary)')
-  expect(declared('savedPrompt', 'color')).toBe('var(--dsw-alias-label-tertiary)')
+  expect(declared('ruleHint', 'color')).toBe('var(--yh-alias-label-tertiary)')
+  expect(declared('savedPrompt', 'color')).toBe('var(--yh-alias-label-tertiary)')
 })
 
 it('offers the instruction toggle only while the collapsed instruction overflows at the current width', async () => {

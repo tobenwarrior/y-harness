@@ -8,10 +8,10 @@
   gap: 2px;
   box-sizing: border-box;
   padding: 4px 6px;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: var(--dsw-radius-lg);
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-lg);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-bg-layer-1);
   box-shadow: 0 8px 24px light-dark(#0000001a, #00000060), 0 2px 5px light-dark(#00000009, #00000035);
   font-size: 12px;
   line-height: 18px;

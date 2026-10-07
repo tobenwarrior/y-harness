@@ -1,10 +1,10 @@
 .block {
-  --dsl-web-radius: var(--dsw-radius-lg);
+  --dsl-web-radius: var(--yh-radius-lg);
 
   margin: 16px 0;
   padding: 12px 14px;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-markdown-code-block);
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-markdown-code-block);
   border-radius: var(--dsl-web-radius);
 }
 
@@ -52,7 +52,7 @@
 }
 
 .sourceLink {
-  color: var(--dsw-alias-link);
+  color: var(--yh-alias-link);
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
@@ -77,7 +77,7 @@
 
 .snippet {
   margin-top: 2px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 19px;
   word-break: break-word;
@@ -85,19 +85,19 @@
 
 .published {
   margin-top: 2px;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xs-13);
+  color: var(--yh-alias-label-tertiary);
+  font: var(--yh-font-xs-13);
 }
 
 .truncated {
   margin-top: 8px;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xs-13);
+  color: var(--yh-alias-label-tertiary);
+  font: var(--yh-font-xs-13);
 }
 
 .empty {
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xs-13);
+  color: var(--yh-alias-label-secondary);
+  font: var(--yh-font-xs-13);
 }
 
 /* The fetch card is a compact summary: the URL over a status/truncation row. */
@@ -108,7 +108,7 @@
 }
 
 .fetchUrl {
-  color: var(--dsw-alias-link);
+  color: var(--yh-alias-link);
   font-family: var(--ds-font-family-code);
   font-size: 13px;
   font-weight: 500;
@@ -130,8 +130,8 @@
 }
 
 .status {
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xs-13);
+  color: var(--yh-alias-label-secondary);
+  font: var(--yh-font-xs-13);
 }
 
 /* The fetch card's truncation note sits inline beside the status, so it drops

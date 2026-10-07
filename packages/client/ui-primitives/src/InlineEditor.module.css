@@ -7,17 +7,17 @@
   max-height: 127px;
   margin: 0;
   padding: 3px 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-sm);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-sm);
   outline: none;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xs-13);
-  font-family: Inter, var(--dsw-font-family);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-primary);
+  font: var(--yh-font-xs-13);
+  font-family: Inter, var(--yh-font-family);
   overflow-y: auto;
   resize: none;
 }
 
 .editor:focus {
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }

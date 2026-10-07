@@ -20,19 +20,19 @@
   max-height: min(60vh, 520px);
   padding: 0 0 10px;
   border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2-darkmode-thin);
-  border-radius: var(--dsw-radius-xl);
-  background: var(--dsw-specific-input-major);
-  box-shadow: var(--dsw-elevation-panel);
-  color: var(--dsw-alias-label-primary);
+  --yh-elevation-stroke-color: var(--yh-alias-border-l2-darkmode-thin);
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-specific-input-major);
+  box-shadow: var(--yh-elevation-panel);
+  color: var(--yh-alias-label-primary);
   overflow: hidden;
   /* Elevated surface in dark, same as the menus: the body inside scrolls
      once the card hits the cap above, so the thumb takes the l2 pair. Declared
      on the card because the elevation belongs to the surface, and the custom
      properties inherit down to `.body` (see ui-theme styles/scrollbar.css
      for the rebinding contract). */
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
 }
 
 .card,
@@ -67,7 +67,7 @@
 }
 
 .waitStatus {
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 24px;
   white-space: nowrap;
@@ -91,7 +91,7 @@
 .eyebrow {
   /* Eyebrow-to-title gap widened from the figma 2px (user-tuned). */
   margin-bottom: 5px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
 }
@@ -123,7 +123,7 @@
 
 .progress {
   padding: 0 4px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 14px;
   line-height: 24px;
   font-weight: 500;
@@ -142,17 +142,17 @@
   border-radius: 999px;
   corner-shape: round;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
 }
 
 .iconButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
 }
 
 .iconButton:disabled {
-  color: var(--dsw-alias-label-dimmed);
+  color: var(--yh-alias-label-dimmed);
   cursor: default;
 }
 
@@ -190,7 +190,7 @@
   flex-shrink: 0;
   padding: 8px 12px 8px 8px;
   border: 1px solid transparent;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   background: transparent;
   color: inherit;
   text-align: left;
@@ -200,11 +200,11 @@
 
 .option:hover:not(:disabled),
 .optionSelected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .optionSelected {
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--yh-alias-border-l2);
 }
 
 .option:disabled {
@@ -223,9 +223,9 @@
   /* (24px first-line box − 20px indicator) / 2: centers the indicator against
      the first text line under the row's flex-start alignment. */
   margin-top: 2px;
-  border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-alias-bg-overlay);
-  color: var(--dsw-alias-label-secondary);
+  border-radius: var(--yh-radius-xs);
+  background: var(--yh-alias-bg-overlay);
+  color: var(--yh-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -249,8 +249,8 @@
   grid-area: 1 / 1;
   width: 14px;
   height: 14px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-xs);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-xs);
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
@@ -261,12 +261,12 @@
 /* Checked: label-primary fill with a primary-foreground check — the pair
    inverts with the theme (dark fill in light mode, light fill in dark mode). */
 .checkboxChecked {
-  color: var(--dsw-alias-label-primary-foreground);
+  color: var(--yh-alias-label-primary-foreground);
 }
 
 .checkboxChecked::before {
-  border-color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-label-primary);
+  border-color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-label-primary);
 }
 
 .optionCopy {
@@ -289,16 +289,16 @@
 
 .badge {
   padding: 0 4px;
-  border-radius: var(--dsw-radius-xs);
-  background: var(--dsw-specific-sidebar-nav-item-active-accent);
-  color: var(--dsw-alias-button-info-fill);
+  border-radius: var(--yh-radius-xs);
+  background: var(--yh-specific-sidebar-nav-item-active-accent);
+  color: var(--yh-alias-button-info-fill);
   font-size: 11px;
   line-height: 18px;
   font-weight: 600;
 }
 
 .description {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 14px;
   line-height: 24px;
   font-weight: 400;
@@ -309,7 +309,7 @@
 .reviewNote {
   margin: 0;
   padding: 8px 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   font-size: 14px;
   line-height: 24px;
 }
@@ -329,19 +329,19 @@
   flex-shrink: 0;
   padding: 8px 12px 8px 8px;
   border: 1px solid transparent;
-  border-radius: var(--dsw-radius-md);
+  border-radius: var(--yh-radius-md);
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .customRow:hover,
 .customRow:focus-within,
 .customRowActive {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .customRow:focus-within,
 .customRowActive {
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--yh-alias-border-l2);
 }
 
 /* Auto-growing free-text answer (see AnswerField): mirror and textarea share
@@ -390,12 +390,12 @@
   border: none;
   outline: none;
   background: transparent;
-  color: var(--dsw-alias-label-primary);
-  caret-color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-label-primary);
+  caret-color: var(--yh-alias-state-business-primary);
 }
 
 .fieldInput::placeholder {
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
 }
 
 /* Inline variant: the custom row's copy column, borrowing the row's chrome. */
@@ -411,14 +411,14 @@
   min-height: 64px;
   flex-shrink: 0;
   margin: 0 12px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-module-platform);
+  border: 0.5px solid var(--yh-alias-border-l4);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-module-platform);
   --dsh-answer-field-padding: 8px 12px;
 }
 
 .customBlock:focus-within {
-  border-color: var(--dsw-alias-state-business-primary);
+  border-color: var(--yh-alias-state-business-primary);
 }
 
 .footer {
@@ -434,7 +434,7 @@
 .feedback {
   flex: 1;
   min-height: 16px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
   font-size: 11px;
   line-height: 16px;
   text-align: right;
@@ -442,7 +442,7 @@
 
 @media (max-width: 720px) {
   .card {
-    border-radius: var(--dsw-radius-xl);
+    border-radius: var(--yh-radius-xl);
   }
 
   .header {

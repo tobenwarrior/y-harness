@@ -11,7 +11,7 @@
   flex-direction: column;
   font-size: var(--dsh-content-font-size, 14px);
   line-height: calc(24px + var(--dsh-content-font-delta, 0px));
-  color: var(--dsw-alias-label-primary);
+  color: var(--yh-alias-label-primary);
 }
 
 .body {
@@ -63,9 +63,9 @@
 .stopped {
   align-self: flex-start;
   padding: 0 6px;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-tertiary);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   line-height: 18px;
 }

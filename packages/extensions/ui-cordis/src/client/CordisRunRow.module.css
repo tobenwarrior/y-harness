@@ -14,12 +14,12 @@
   display: inline-flex;
   flex: none;
   margin-right: 8px;
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
 }
 
 .title {
   flex: none;
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--yh-alias-state-business-primary);
   font-size: 14px;
   font-weight: 500;
   line-height: 24px;
@@ -32,7 +32,7 @@
   margin: 0 8px;
   border-radius: 50%;
   corner-shape: round;
-  background: var(--dsw-alias-state-business-primary);
+  background: var(--yh-alias-state-business-primary);
 }
 
 .summary,
@@ -40,7 +40,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 24px;
   text-overflow: ellipsis;
@@ -48,28 +48,28 @@
 }
 
 .error {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .status {
   flex: none;
   margin-left: 8px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--yh-alias-label-caption);
   font-size: 12px;
   line-height: 24px;
 }
 
 .card[data-cordis-status='awaiting-approval'] .status,
 .card[data-cordis-status='client-pending'] .status {
-  color: var(--dsw-alias-state-warn-label);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .card[data-cordis-status='running'] .status {
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--yh-alias-state-success-primary);
 }
 
 .card[data-cordis-status='failed'] .status {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--yh-alias-state-error-primary);
 }
 
 .inspect {
@@ -84,7 +84,7 @@
   border-radius: 999px;
   corner-shape: round;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
   opacity: 0;
 }
@@ -95,14 +95,14 @@
 }
 
 .inspect:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--yh-alias-interactive-bg-hover);
 }
 
 .message {
   padding: 8px 12px;
   border-radius: 8px;
-  background: var(--dsw-alias-button-ghost-active-fill);
-  color: var(--dsw-alias-label-tertiary);
+  background: var(--yh-alias-button-ghost-active-fill);
+  color: var(--yh-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
 }
@@ -110,20 +110,20 @@
 .business {
   min-width: 0;
   overflow: hidden;
-  border: 0.5px solid var(--dsw-alias-border-l4);
+  border: 0.5px solid var(--yh-alias-border-l4);
   border-radius: 12px;
-  background: var(--dsw-alias-bg-base);
+  background: var(--yh-alias-bg-base);
 }
 
 .output {
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
-  border: 0.5px solid var(--dsw-alias-border-l4);
+  border: 0.5px solid var(--yh-alias-border-l4);
   border-radius: 8px;
-  background: var(--dsw-alias-markdown-code-block);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-markdown-code-block-small);
+  background: var(--yh-alias-markdown-code-block);
+  color: var(--yh-alias-label-secondary);
+  font: var(--yh-font-markdown-code-block-small);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
