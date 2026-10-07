@@ -56,7 +56,7 @@ async function openSeededSession(page: Page, workspaceId: string, sessionId: str
   // Startup may auto-expand after the initial state sample but before a delivered click.
   // Observe this exact real header; preserve a bounded trace without changing its state.
   await page.evaluate((key) => {
-    type Event = { time: number; kind: string; oldValue?: string | null; expanded: string | null }
+    type Event = { time: number; kind: string; oldValue?: string | null | undefined; expanded: string | null }
     const observed = globalThis as typeof globalThis & { __rootHmrExpansion?: { rowKey: string; events: Event[] } }
     if (observed.__rootHmrExpansion !== undefined) return
     const trace: { rowKey: string; events: Event[] } = { rowKey: key, events: [] }
