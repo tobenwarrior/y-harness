@@ -1,5 +1,5 @@
 ---
-description: "面向侧栏的官方 DeepSeek Harness 品牌填充，仅在官方构建中生效；供选择或替换品牌呈现的用户与维护者阅读。"
+description: "面向侧栏的 Y Harness 品牌填充，仅在官方构建中生效；供选择或替换品牌呈现的用户与维护者阅读。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包让以 `official` profile 构建的客户端在侧栏显示 DeepSeek Harness 标志与名称。其他构建 profile 保留外壳的鱼形标志与本地构建标签，会话首屏则始终使用动画鱼。品牌为 DeepSeek Harness 的部署应选择本包；使用其他品牌的部署应提供替代品牌包。本包不保留运行时状态，也不影响模型请求。
+本包向以 `official` profile 构建的客户端提供共享 Y 标志与已配置的纯文本应用名称。侧栏仅显示名称；会话首屏使用自身的共享静态 Y 回退。其他构建 profile 使用侧栏本地化的本地构建标签或已配置的显示名称。本包不保留运行时状态，也不影响模型请求。
 
 ## 目录
 
@@ -25,15 +25,15 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在采用 DeepSeek 自有品牌的部署中，将本插件挂载到浏览器插件名单，然后以 `official` profile 构建客户端，让填充得以注册。
+将本插件挂载到浏览器插件名单，然后以 `official` profile 构建客户端，让填充得以注册。
 
 ### 选择 profile
 
-`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪个品牌。`official` 构建在侧栏显示官方标志与名称；任何其他取值都让外壳回退——鱼形标志与本地构建标签——保持原样。会话首屏无论 profile 如何都显示来自 `dsh-client-ui-conversation` 的动画首屏鱼，因为这个回退本身就是官方标志。两种情况下插件都会照常加载并通过校验；只有注册受 profile 门控。
+`DSH_CLIENT_BUILD_PROFILE` 决定本包是否注册 `sidebar.brand.mark` 与 `sidebar.brand.name` 占用方。`official` 构建提供共享的 `YHarnessLogo` 与已配置的纯文本名称；没有 `DSH_CLIENT_DISPLAY_NAME` 时，名称占用方保留原有的 `BrandWordmark` 图形。其他 profile 取值保留外壳的名称回退。侧栏仅渲染名称占用方，不渲染独立标志。会话首屏无论 profile 如何都使用声明包的静态 Y 回退。两种情况下插件都会照常加载并通过校验；只有注册受 profile 门控。
 
 ### 替换品牌
 
-仅修改名称文字时，可使用公开的[应用显示名称配置](../../../apps/desktop/README.zh.md#app-display-name)；其构建值 `DSH_CLIENT_DISPLAY_NAME` 会将名称图形替换为纯文本，同时保留标志。若要替换图形资源，部署不组合本包，而是组合另一个占据侧栏 slot——以及本包留给回退的首屏 slot——的包。slot 占据仍是图形资源的组合路径。
+修改名称时，可使用公开的[应用显示名称配置](../../../apps/desktop/README.zh.md#app-display-name)；其构建值 `DSH_CLIENT_DISPLAY_NAME` 提供纯文本名称，与共享标志独立。部署可以用另一个占据侧栏 slot 的包替换本包，也可以占据首屏 slot 以替换其回退。侧栏标志占用方不会向名称行或收起轨道添加图形。
 
 -----
 
@@ -54,7 +54,7 @@ kind: "package-reference"
 
 当品牌面不够用时阅读以下页面。它们从本包占据的 slot 进入渲染这些 slot 的外壳。
 
-- [ui-sidebar](../ui-sidebar/README.zh.md)——声明 `sidebar.brand.mark` 与 `sidebar.brand.name` 并渲染其回退。
+- [ui-sidebar](../ui-sidebar/README.zh.md)——声明 `sidebar.brand.mark` 与 `sidebar.brand.name` 并仅渲染名称行。
 - [ui-conversation](../ui-conversation/README.zh.md)——在首屏声明 `conversation.hero.brand.mark`。
 - [Web 客户端架构](../../../docs/subsystems/web-client.zh.md)——浏览器插件行如何加载并注册 slot。
 

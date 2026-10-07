@@ -45,6 +45,10 @@ A register call may declare a store seat with `store: defineStore(...)`: `init` 
 
 Declaring a slot is claiming it: the registering entry becomes the only entry allowed to render that key, and registering into an undeclared slot, declaring an already-declared child, mounting one shared handle under two scopes, or registering a chain without `select` throws at load. An entry's disposer collapses its declared child slots recursively — ledger rows, contributions, and store mounts die on one lifecycle axis.
 
+### Product names in localized copy
+
+Dictionary authors may wrap selected product copy in `withProductDisplayName(text)`. It replaces exact `DeepSeek Harness` and `Y Harness` mentions with the public build-time `DSH_CLIENT_DISPLAY_NAME`, preserving the original text when unset. Provider names, legal credits, and other entries remain under their dictionary owner's control. Set the display name in the root [`app-branding.json`](../../../app-branding.json) and rebuild to change these labels.
+
 -----
 
 <a id="understand-the-implementation"></a>

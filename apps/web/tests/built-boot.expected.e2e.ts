@@ -61,19 +61,25 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
 
   // The sidebar renders from the boot graph: every inject layer activated.
   const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
-  if (clientBuildValue('DSH_CLIENT_BUILD_PROFILE') === 'official') {
-    expect(document.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
-    expect(screen.queryByText('Y Harness Local Build')).toBeNull()
+  const brand = document.querySelector<HTMLElement>('[data-slot="sidebar.brand.name"]')
+  if (brand === null) throw new Error('assembled sidebar brand name missing')
+  const header = brand.closest<HTMLElement>('[data-window-drag]')
+  if (header === null) throw new Error('assembled sidebar header missing')
+  expect(header.querySelector('[data-slot="sidebar.brand.mark"]')).toBeNull()
+  expect(header.querySelector('svg[viewBox="0 0 23.16 17.04"]')).toBeNull()
+  expect(header.querySelector('svg[viewBox="213.3 263.5 676.3 560.6"]')).toBeNull()
+  within(header).getByRole('button', { name: 'Collapse sidebar' })
+  const displayName = clientBuildValue('DSH_CLIENT_DISPLAY_NAME')
+  if (displayName !== undefined) {
+    within(brand).getByText(displayName, { exact: true })
+    expect(brand.querySelector('svg')).toBeNull()
+    expect(header.textContent).toBe(displayName)
+  } else if (clientBuildValue('DSH_CLIENT_BUILD_PROFILE') === 'official') {
+    expect(brand.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
+    expect(header.textContent).toBe('')
   } else {
-    expect(document.querySelector('svg[viewBox="0 0 23.16 17.04"]')).not.toBeNull()
-    const version = clientBuildValue('DSH_CLIENT_VERSION')
-    if (version === undefined) throw new Error('default client build record must carry DSH_CLIENT_VERSION')
-    const commit = clientBuildValue('DSH_CLIENT_COMMIT_HASH')
-    const buildVersion = version
-      + (commit === undefined ? '' : `-${commit}`)
-      + (clientBuildValue('DSH_CLIENT_GIT_DIRTY') === 'true' ? '-dirty' : '')
-    screen.getByText('Y Harness Local Build')
-    screen.getByText(buildVersion)
+    within(brand).getByText('Y Harness Local Build', { exact: true })
+    expect(header.textContent).toBe('Y Harness Local Build')
   }
   // The compact layout dropped group session counts; the fixture workspace
   // group row renders immediately with its sessions beneath it.

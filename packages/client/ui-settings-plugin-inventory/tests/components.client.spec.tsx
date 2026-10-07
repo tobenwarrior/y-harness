@@ -672,3 +672,78 @@ it('shows current-page sync errors and retries without re-reading Host inventory
   act(() => { sync.set({ syncing: false, failures: [] }) })
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+describe('first-party inventory description display', () => {
+  afterEach(() => { vi.unstubAllEnvs() })
+
+  it.each(['global', 'preset'].flatMap(scope => [undefined, 'Y Harness', 'Atlas', '星图 $& $`']
+    .map(displayName => [scope, displayName] as const)))('projects %s descriptions for %s in cards, details and search', async (scope, displayName) => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
+    const raw = 'Tools for DeepSeek Harness; DeepSeek Account; MIT copyright DeepSeek'
+    const meta = { description: { en: raw } }
+    const row = {
+      entryId: 'include:description' as PluginEntryId,
+      moduleName: '@deepseek-ai/dsh-agent', enabled: true, fiberPhase: null, meta,
+    }
+    const snapshot: Snapshot = scope === 'global'
+      ? { entries: [row] }
+      : { entries: [], agentPresets: [{ id: 'custom', isDefault: true, rows: [row] }] }
+    const view = await renderReady(snapshot)
+    if (scope === 'global') fireEvent.click(globalToggle())
+    const card = screen.getByRole('button', { name: 'agent, include:description, Enabled' })
+    const expected = `Tools for ${displayName ?? 'DeepSeek Harness'}; DeepSeek Account; MIT copyright DeepSeek`
+    expect(document.getElementById(card.getAttribute('aria-describedby')!)?.textContent).toBe(expected)
+    expect(card.closest('li')?.getAttribute('data-plugin-module')).toBe(row.moduleName)
+    fireEvent.click(card)
+    expect(card.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText(en.moduleLabel).nextElementSibling?.textContent).toBe(row.moduleName)
+    expect(view.container.querySelector('[data-loader-entry]')?.textContent).toBe(row.entryId)
+    expect(screen.getByText(expected)).toBeTruthy()
+    const search = screen.getByRole('searchbox', { name: en.search })
+    for (const query of [expected, row.moduleName, row.entryId]) {
+      fireEvent.change(search, { target: { value: query } })
+      expect(screen.getAllByRole('listitem')).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'agent, include:description, Enabled' })).toBeTruthy()
+    }
+    expect(meta.description.en).toBe(raw)
+  })
+
+  it('preserves third-party, upstream, provider and legal text and does not select a current product name alone', async () => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
+    const values = [
+      ['@acme/dsh-navigation', 'Upstream DeepSeek Harness credit; Y Harness; MIT licence'],
+      ['@deepseek-ai/cordis-plugin-hmr', 'Vendor DeepSeek Harness credit; MIT licence'],
+      ['@deepseek-ai/dsh-web-search-deepseek', 'DeepSeek provider; DeepSeek Account; MIT copyright DeepSeek'],
+      ['@deepseek-ai/dsh-agent', 'Y Harness extension; MIT licence'],
+    ] as const
+    const rows = values.map(([moduleName, description], index) => ({
+      entryId: `include:protected-${String(index)}` as PluginEntryId,
+      moduleName, enabled: true, fiberPhase: null,
+      meta: { title: `DeepSeek Harness technical title ${String(index)}`, description },
+    }))
+    await renderReady({ entries: rows })
+    fireEvent.click(globalToggle())
+    for (const [index, [, description]] of values.entries()) {
+      const card = screen.getByRole('button', { name: `DeepSeek Harness technical title ${String(index)}, include:protected-${String(index)}, Enabled` })
+      expect(document.getElementById(card.getAttribute('aria-describedby')!)?.textContent).toBe(description)
+    }
+  })
+
+  it('projects only the resolved language while retaining locale changes', async () => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
+    const snapshot: Snapshot = { entries: [{
+      entryId: 'include:localized-description' as PluginEntryId,
+      moduleName: '@deepseek-ai/dsh-agent', enabled: true, fiberPhase: null,
+      meta: { description: { en: 'DeepSeek Harness agent tools', zh: '当前语言的工具说明' } },
+    }] }
+    const { locale, pageProps } = localizedProps(async () => snapshot)
+    const view = render(<PluginInventorySettingsTab {...pageProps} />)
+    await screen.findByRole('searchbox', { name: en.search })
+    fireEvent.click(globalToggle())
+    expect(screen.getByText('Atlas agent tools')).toBeTruthy()
+    locale.setLocale('zh')
+    view.rerender(<PluginInventorySettingsTab {...pageProps} />)
+    expect(screen.getByText('当前语言的工具说明')).toBeTruthy()
+    expect(screen.queryByText('Atlas agent tools')).toBeNull()
+  })
+})

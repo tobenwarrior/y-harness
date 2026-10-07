@@ -43,7 +43,7 @@ Nous 请求通过 grant 中经过验证的推理地址使用 Chat Completions。
 
 ### 可选本地 Codex 后端
 
-部署显式提供 `DSH_CODEX_BINARY`、`DSH_CODEX_NODE`、`DSH_CODEX_HOME`、`DSH_CODEX_SHELL_HOME` 和 `DSH_CODEX_CWD` 路径后，可使用独立的 `codex-backend` 路由。本地桌面固定官方 Codex 0.160.0，通过文档规定的 stdio app-server、新配置和用户自行完成的设备登录运行。`DSH_CODEX_CWD` 仅选择 app-server 启动目录，每个原生轮次使用 Harness 会话目录。循环与工具由 Codex 负责；账户连接后会自行发布该路由，直到用户明确启用或禁用为止，此后以用户保存的选择为准。原生 Ultra 保持原值，输入框在目录中的每个速度层级旁提供 Standard；按模型保存的偏好即适配器默认值，会话中的明确选择优先。priority/Fast 转为 `serviceTier: fast`。目录声明的模态会被转发（audio 因 LLM 接缝无法表达而丢弃），当前轮次自身的图片经持久附件存储编码为原生 `image` 输入；引用对话上下文中的图片仍为文本占位。原生轮次要求活动的 Harness 智能体，并从其会话推导工作目录、文件沙箱、可写根目录和批准策略。Harness 文件策略不限制网络。命令、文件修改和权限请求通过 Harness 批准应答器处理；授权仅允许一次操作或本轮请求的权限。原生问题通过 Harness 用户问题应答器处理，保留选项和自定义答案；机密问题要求独立的凭据流程。取消会撤回待处理的交互。单活动轮次；重启、历史或策略变化使用引用对话上下文。原生工具执行详情不进入 Harness 工具记录；模型目录不代表账户访问权限。
+部署显式提供 `DSH_CODEX_BINARY`、`DSH_CODEX_NODE`、`DSH_CODEX_HOME`、`DSH_CODEX_SHELL_HOME` 和 `DSH_CODEX_CWD` 路径后，可使用独立的 `codex-backend` 路由。本地桌面固定官方 Codex 0.160.0，通过文档规定的 stdio app-server、新配置和用户自行完成的设备登录运行。初始化握手使用产品标题 `Y Harness` 和稳定客户端名称 `deepseek-harness-local`。`DSH_CODEX_CWD` 仅选择 app-server 启动目录，每个原生轮次使用 Harness 会话目录。循环与工具由 Codex 负责；账户连接后会自行发布该路由，直到用户明确启用或禁用为止，此后以用户保存的选择为准。原生 Ultra 保持原值，输入框在目录中的每个速度层级旁提供 Standard；按模型保存的偏好即适配器默认值，会话中的明确选择优先。priority/Fast 转为 `serviceTier: fast`。目录声明的模态会被转发（audio 因 LLM 接缝无法表达而丢弃），当前轮次自身的图片经持久附件存储编码为原生 `image` 输入；引用对话上下文中的图片仍为文本占位。原生轮次要求活动的 Harness 智能体，并从其会话推导工作目录、文件沙箱、可写根目录和批准策略。Harness 文件策略不限制网络。命令、文件修改和权限请求通过 Harness 批准应答器处理；授权仅允许一次操作或本轮请求的权限。原生问题通过 Harness 用户问题应答器处理，保留选项和自定义答案；机密问题要求独立的凭据流程。取消会撤回待处理的交互。单活动轮次；重启、历史或策略变化使用引用对话上下文。原生工具执行详情不进入 Harness 工具记录；模型目录不代表账户访问权限。
 
 ### 配置提供方路由
 

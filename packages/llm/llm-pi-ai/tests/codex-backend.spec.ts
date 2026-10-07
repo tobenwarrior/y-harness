@@ -58,7 +58,7 @@ describe('Codex native backend', () => {
     await runtime.cancel(); expect(request).toHaveBeenCalledWith('account/login/cancel', { loginId: 'login' }); expect(runtime.view().busy).toBe(false)
   })
   it('initializes under its own client name and never sends a turn during refresh', async () => {
-    const { runtime, request, peer } = fixture(); await runtime.refresh(); expect(peer.notify).toHaveBeenCalledWith('initialized'); expect(request.mock.calls[0]?.[1]).toMatchObject({ clientInfo: { name: 'deepseek-harness-local' } }); expect(runtime.view().connected).toBe(true); expect(JSON.stringify(runtime.view())).not.toContain('accessToken'); expect(request.mock.calls.map(x => x[0])).not.toContain('turn/start')
+    const { runtime, request, peer } = fixture(); await runtime.refresh(); expect(peer.notify).toHaveBeenCalledWith('initialized'); expect(request.mock.calls[0]?.[1]).toMatchObject({ clientInfo: { name: 'deepseek-harness-local', title: 'Y Harness' } }); expect(runtime.view().connected).toBe(true); expect(JSON.stringify(runtime.view())).not.toContain('accessToken'); expect(request.mock.calls.map(x => x[0])).not.toContain('turn/start')
   })
   it('projects turn images as placeholders and offloaded occurrences as text', () => {
     const ref = { attachmentId: 'image-1', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }

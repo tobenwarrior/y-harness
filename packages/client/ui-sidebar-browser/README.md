@@ -56,7 +56,7 @@ The toolbar provides Back, Forward, Reload, Go, and Open in system browser. Web 
 
 ### Protocol policy
 
-The address parser accepts HTTP and HTTPS, including loopback targets. It rejects `file:` URLs, script/data/blob input, embedded credentials, the DSH application origin, and malformed addresses. Document Preview owns local-file rendering.
+The address parser accepts HTTP and HTTPS, including loopback targets. It rejects `file:` URLs, script/data/blob input, embedded credentials, the application origin, and malformed addresses. Document Preview owns local-file rendering. The application-origin refusal message uses the configured public display name, defaulting to Y Harness when unset.
 
 ### Iframe carrier
 

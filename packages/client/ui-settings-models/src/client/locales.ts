@@ -1,4 +1,5 @@
 /** Copy dictionaries for the Models settings section. */
+import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** English strings (the key-set source of truth for this pair). */
 export const en = {
@@ -32,8 +33,8 @@ export const en = {
   goStorage: 'Save this API key locally in this Harness profile (owner-only, not encrypted).',
   goConsentRequired: 'Allow local storage above before saving this key.',
   nousTitle: 'Nous Portal',
-  nousHint: 'Connect your Nous Portal account in the browser, then choose the account models to add to YHarness.',
-  nousHermesDisclosure: 'Sign-in uses the public hermes-cli client ID, the same one the Hermes agent uses. Nous consent may identify Hermes. Y Harness is a separate application; an independent Y Harness client registration has not been verified.',
+  nousHint: withProductDisplayName('Connect your Nous Portal account in the browser, then choose the account models to add to Y Harness.'),
+  nousHermesDisclosure: withProductDisplayName('Sign-in uses the public hermes-cli client ID, the same one the Hermes agent uses. Nous consent may identify Hermes. Y Harness is a separate application; an independent Y Harness client registration has not been verified.'),
   nousConnected: 'Nous account connected.',
   nousSignedOut: 'Nous account is signed out.',
   nousStorage: 'Save Nous tokens in this Harness profile’s local credential file (owner-only, not encrypted).',
@@ -48,7 +49,7 @@ export const en = {
   nousModels: 'Choose account models',
   nousModelsSummary: '{enabled} of {total} models enabled',
   nousManageModels: 'Manage models',
-  nousModelsHint: 'Search your account catalog and choose the models YHarness offers in the composer.',
+  nousModelsHint: withProductDisplayName('Search your account catalog and choose the models Y Harness offers in the composer.'),
   nousModelsSearch: 'Search models',
   nousModelsAll: 'All',
   nousModelsSelected: 'Enabled',
@@ -167,7 +168,7 @@ export const en = {
   create: 'Create provider',
   creating: 'Creating\u2026',
   welcomeTitle: 'Preview Notice',
-  welcomeBody: 'DeepSeek Harness 0.2 is still in preview, and many areas need continued improvement and refinement. We welcome feedback and suggestions from all developers and users. The new desktop app now targets a broad range of users, while developer-related advanced features can be enabled in the settings. DeepSeek Harness’s product features and plugin APIs are expected to continue rapid iteration and evolution, and will gradually stabilize over time.\n\nWe look forward to exploring the limits of intelligence together with users and developers around the world, building on open-source, reusable, and composable infrastructure. We welcome everyone to bring their ideas to life with DeepSeek Harness and participate in the community to enrich the plugin ecosystem.',
+  welcomeBody: withProductDisplayName('DeepSeek Harness 0.2 is still in preview, and many areas need continued improvement and refinement. We welcome feedback and suggestions from all developers and users. The new desktop app now targets a broad range of users, while developer-related advanced features can be enabled in the settings. DeepSeek Harness’s product features and plugin APIs are expected to continue rapid iteration and evolution, and will gradually stabilize over time.\n\nWe look forward to exploring the limits of intelligence together with users and developers around the world, building on open-source, reusable, and composable infrastructure. We welcome everyone to bring their ideas to life with DeepSeek Harness and participate in the community to enrich the plugin ecosystem.'),
   welcomeContinue: 'Continue',
   welcomeError: 'The acknowledgement could not be saved. Please try again.',
   onboardingTitle: 'Add an API key to get started',
@@ -214,8 +215,8 @@ export const zh: {
   goStorage: '将此 API 密钥保存在此 Harness 配置的本地凭据文件中（仅所有者可读，未加密）。',
   goConsentRequired: '请先勾选上方选项以允许在本地保存此密钥。',
   nousTitle: 'Nous Portal',
-  nousHint: '在浏览器中连接 Nous Portal 账户，然后选择要添加到 YHarness 的账户模型。',
-  nousHermesDisclosure: '登录使用公开的 hermes-cli 客户端 ID，与 Hermes agent 相同。Nous 授权页面可能显示 Hermes。Y Harness 是独立应用；尚未验证独立的 Y Harness 客户端注册。',
+  nousHint: withProductDisplayName('在浏览器中连接 Nous Portal 账户，然后选择要添加到 Y Harness 的账户模型。'),
+  nousHermesDisclosure: withProductDisplayName('登录使用公开的 hermes-cli 客户端 ID，与 Hermes agent 相同。Nous 授权页面可能显示 Hermes。Y Harness 是独立应用；尚未验证独立的 Y Harness 客户端注册。'),
   nousConnected: '已连接 Nous 账户。',
   nousSignedOut: 'Nous 账户尚未登录。',
   nousStorage: '将 Nous 令牌保存在此 Harness 配置的本地凭据文件中（仅所有者可读，未加密）。',
@@ -230,7 +231,7 @@ export const zh: {
   nousModels: '选择账户模型',
   nousModelsSummary: '已启用 {enabled} / {total} 个模型',
   nousManageModels: '管理模型',
-  nousModelsHint: '搜索账户目录，选择 YHarness 在输入框中提供的模型。',
+  nousModelsHint: withProductDisplayName('搜索账户目录，选择 Y Harness 在输入框中提供的模型。'),
   nousModelsSearch: '搜索模型',
   nousModelsAll: '全部',
   nousModelsSelected: '已启用',
@@ -348,7 +349,7 @@ export const zh: {
   create: '创建提供商',
   creating: '创建中\u2026',
   welcomeTitle: '预览版说明',
-  welcomeBody: 'DeepSeek Harness 目前的 0.2 版本仍处于预览阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者和用户的反馈建议。现在，新的桌面端面向广泛用户，开发者相关的进阶功能可在配置中开启使用。预计 DeepSeek Harness 的产品功能以及插件 API 都会继续快速迭代、持续演化，并逐渐趋于稳定。\n\n我们期待与全球用户和开发者一起，在开源、可复用、可组合的基础设施之上，共同探索智能上限。欢迎大家用 DeepSeek Harness 将想法变成现实，与社区一起丰富插件生态。',
+  welcomeBody: withProductDisplayName('DeepSeek Harness 目前的 0.2 版本仍处于预览阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者和用户的反馈建议。现在，新的桌面端面向广泛用户，开发者相关的进阶功能可在配置中开启使用。预计 DeepSeek Harness 的产品功能以及插件 API 都会继续快速迭代、持续演化，并逐渐趋于稳定。\n\n我们期待与全球用户和开发者一起，在开源、可复用、可组合的基础设施之上，共同探索智能上限。欢迎大家用 DeepSeek Harness 将想法变成现实，与社区一起丰富插件生态。'),
   welcomeContinue: '继续',
   welcomeError: '暂时无法保存确认状态，请重试。',
   onboardingTitle: '添加一个 API Key 开始使用',

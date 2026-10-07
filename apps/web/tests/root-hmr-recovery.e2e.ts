@@ -1,9 +1,9 @@
 /** Built client root and Session-service replacement through the real Host HMR transport. */
-import { readFile, realpath, stat, utimes, writeFile } from 'node:fs/promises'
-import { join, sep } from 'node:path'
+import { mkdir, readFile, realpath, stat, utimes, writeFile } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Page } from 'playwright'
-import { expect, it, onTestFailed, onTestFinished } from 'vitest'
+import { expect, it, onTestFinished } from 'vitest'
 import { launchWebScaffold, seedSession, watchConsole } from './scaffold.ts'
 import { newEnglishPage, REPO_ROOT, saveFailureShot } from './support.ts'
 
@@ -48,12 +48,48 @@ async function instrumentClient(client: typeof CLIENTS[number]) {
   return { ...client, file }
 }
 
-async function openSeededSession(page: Page): Promise<void> {
-  // Workspace rows own aria-expanded directly; Session rows do not.
-  const group = page.locator('[role="treeitem"][aria-expanded]').first()
+async function openSeededSession(page: Page, workspaceId: string, sessionId: string, workspaceTitle: string): Promise<void> {
+  const rowKey = `workspace:${workspaceId}`
+  const group = page.locator(`[data-row-key="${rowKey}"][role="treeitem"]`)
   await group.waitFor({ state: 'visible', timeout: 20_000 })
-  if (await group.getAttribute('aria-expanded') === 'false') await group.click()
-  const row = page.getByRole('treeitem').filter({ has: page.getByText(SESSION_TITLE, { exact: true }) })
+  expect(await group.getByText(workspaceTitle, { exact: true }).count()).toBe(1)
+  // Startup may auto-expand after the initial state sample but before a delivered click.
+  // Observe this exact real header; preserve a bounded trace without changing its state.
+  await page.evaluate((key) => {
+    type Event = { time: number; kind: string; oldValue?: string | null; expanded: string | null }
+    const observed = globalThis as typeof globalThis & { __rootHmrExpansion?: { rowKey: string; events: Event[] } }
+    if (observed.__rootHmrExpansion !== undefined) return
+    const trace: { rowKey: string; events: Event[] } = { rowKey: key, events: [] }
+    observed.__rootHmrExpansion = trace
+    const record = (kind: string, element: Element, oldValue?: string | null) => {
+      if (trace.events.length < 100) trace.events.push({ time: performance.now(), kind, oldValue, expanded: element.getAttribute('aria-expanded') })
+    }
+    new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        const element = mutation.target as Element
+        if (element.getAttribute('data-row-key') === key) record('mutation', element, mutation.oldValue)
+      }
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ['aria-expanded'], attributeOldValue: true })
+    for (const kind of ['pointerdown', 'click']) document.addEventListener(kind, (event) => {
+      const element = (event.target as Element | null)?.closest('[data-row-key]')
+      if (element?.getAttribute('data-row-key') === key) record(kind, element)
+    }, { capture: true })
+  }, rowKey)
+  await expect.poll(async () => {
+    const expanded = await group.evaluate((element) => {
+      type Trace = { events: { time: number; kind: string; expanded: string | null }[] }
+      const observed = globalThis as typeof globalThis & { __rootHmrExpansion?: Trace }
+      const expanded = element.getAttribute('aria-expanded')
+      const trace = observed.__rootHmrExpansion
+      if (trace !== undefined && trace.events.length < 100) trace.events.push({ time: performance.now(), kind: 'sample', expanded })
+      return expanded
+    })
+    if (expanded === 'false') await group.click({ timeout: 5_000 })
+    return group.getAttribute('aria-expanded')
+  }, { timeout: 20_000 }).toBe('true')
+  const row = page.locator(`[data-row-key="session:${sessionId}"][role="treeitem"]`)
+  await row.waitFor({ state: 'visible', timeout: 20_000 })
+  expect(await row.getByText(SESSION_TITLE, { exact: true }).count()).toBe(1)
   await row.click({ timeout: 20_000 })
   await page.getByText('DONE', { exact: true }).waitFor({ timeout: 20_000 })
   await page.locator('[data-composer-input][contenteditable="true"]').first().waitFor()
@@ -69,6 +105,15 @@ it('shows recovery during root and foundational Session teardown and remounts a 
   const sessionId = await seedSession(scaffold, await readFile(SESSION_SEED, 'utf8'), 'client-root-hmr-recovery')
   await workspace.attachSession(sessionId)
   await scaffold.ctx.sessionController.rename({ sessionId, title: SESSION_TITLE })
+  expect(scaffold.ctx.sessions.get(sessionId)?.id).toBe(sessionId)
+  // Materialize the renamed live Session's public projection baseline before the sidebar list reads cached cells.
+  const signal = new AbortController().signal
+  const projection = await scaffold.ctx.sessionController.projections({ sessionId }, signal)
+  expect(projection?.values.title).toBe(SESSION_TITLE)
+  expect(projection?.values.sessionListMetadata?.blank).toBe(false)
+  const listed = (await scaffold.ctx.sessionController.list({}, signal)).items.find(row => row.sessionId === sessionId)
+  expect(listed).toMatchObject({ sessionId, cwd: scaffold.workspaceCwd, blank: false })
+  expect(listed?.projections?.values.title).toBe(SESSION_TITLE)
   const browser = await chromium.launch()
   onTestFinished(() => browser.close())
   const page = await newEnglishPage(browser)
@@ -81,9 +126,16 @@ it('shows recovery during root and foundational Session teardown and remounts a 
       lifecycleErrors.push(message.text())
     }
   })
-  onTestFailed(() => saveFailureShot(page, 'web-e2e-root-hmr-recovery'))
+  // Finished hooks unwind in reverse order; capture failure before browser/Host cleanup closes the page.
+  onTestFinished(async ({ task }) => {
+    const trace = await page.evaluate(() => (globalThis as typeof globalThis & { __rootHmrExpansion?: unknown }).__rootHmrExpansion)
+      .catch((error: unknown) => ({ captureError: error instanceof Error ? error.message : String(error) }))
+    await mkdir(join(REPO_ROOT, '.artifacts'), { recursive: true })
+    await writeFile(join(REPO_ROOT, '.artifacts', 'root-hmr-expansion-trace.json'), JSON.stringify(trace ?? null, null, 2) + '\n')
+    if (task.result?.state === 'fail') await saveFailureShot(page, 'web-e2e-root-hmr-recovery')
+  })
   await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-  await openSeededSession(page)
+  await openSeededSession(page, workspace.id, sessionId, basename(scaffold.workspaceCwd))
   const originalDocument = await page.evaluateHandle(() => document)
   let navigations = 0
   page.on('framenavigated', () => { navigations++ })
@@ -115,7 +167,7 @@ it('shows recovery during root and foundational Session teardown and remounts a 
     await page.locator('[data-shell-bottom]').waitFor({ state: 'attached' })
     await expect.poll(() => page.locator('[data-dsh-boot]').count()).toBe(0)
     expect(scaffold.ctx.clientModules.graph().entries.find(row => row.id === client.id)!.rev).not.toBe(previousRevision)
-    await openSeededSession(page)
+    await openSeededSession(page, workspace.id, sessionId, basename(scaffold.workspaceCwd))
     const input = page.locator('[data-composer-input][contenteditable="true"]').first()
     await input.fill(`draft after ${client.key}`)
     expect(await input.innerText()).toBe(`draft after ${client.key}`)

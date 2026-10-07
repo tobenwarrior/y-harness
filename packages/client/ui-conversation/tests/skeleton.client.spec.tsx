@@ -396,6 +396,17 @@ describe('Hero chrome', () => {
     expect(brandMarkOwner.className).toBeTypeOf('string')
     expect(renderSlot.mock.calls[0]?.[2]?.fallback).toBeTruthy()
   })
+
+  it('uses the static shared Y mark as its fallback without whale hover animation', () => {
+    const renderSlot: HeroShellProps['renderSlot'] = (_key, _owner, options) => options?.fallback ?? null
+    const view = render(<HeroShell t={makeTranslate(en, commonEn)} renderSlot={renderSlot} />)
+    const mark = view.container.querySelector('svg')
+    expect(mark?.getAttribute('viewBox')).toBe('213.3 263.5 676.3 560.6')
+    expect(mark?.querySelectorAll('circle')).toHaveLength(2)
+    if (mark === null) throw new Error('hero mark must be rendered')
+    fireEvent.mouseEnter(mark)
+    expect(mark.querySelector('animate')).toBeNull()
+  })
 })
 
 describe('ConversationRoot resident composer', () => {

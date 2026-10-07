@@ -30,7 +30,7 @@
 
 /* Rail geometry (figma rail spec): 36x36 control boxes centered in the 56px
    rail (10px side padding), 12px vertical rhythm, 18px from the rail top to
-   the whale's box (24px to the 24-wide whale glyph itself). */
+   its first control box. */
 .root.collapsed {
   padding: 18px 10px 6px;
 }
@@ -60,10 +60,6 @@
 
 :global([data-windows-titlebar]) .brandIdentity {
   transform: translateY(1px);
-}
-
-:global([data-windows-titlebar]) .brandMark {
-  transform: translateX(1px);
 }
 
 :global([data-windows-titlebar]) .brandName {
@@ -112,10 +108,6 @@
   border-radius: 50%;
   corner-shape: round;
   color: var(--yh-alias-label-secondary);
-}
-
-:global([data-windows-titlebar]) .collapsed .toggle .panelIcon {
-  display: inline;
 }
 
 /* Scrollbars in the column are a pointer affordance: the shell adds this
@@ -199,7 +191,7 @@
   justify-content: flex-start;
 }
 
-/* The strip's full 52px foot leaves the wordmark too low; the content column
+/* The strip's full 52px foot leaves the title too low; the content column
    tucks 12px back under it, still clear of the toggle (28px control centered
    in the strip ends at y 40). */
 .topStrip + .logoRow {
@@ -212,7 +204,7 @@
    is marked `data-window-drag` in markup (SidebarRoot), so ui-web base.css's
    single darwin rule carries the drag over its own box — below the top strip
    (40–100px: the strip's 52px foot with the row's -12px tuck). The brand rides
-   that box (SidebarRoot renders the wordmark as a plain span there, so the
+   that box (SidebarRoot renders the title as a plain span there, so the
    global interactive no-drag rule never subtracts it); the dedicated New
    Session button below keeps the pointer and keyboard paths. Safe as a drag
    source: it precedes the sidebar's overlay slots in document order, so their
@@ -240,10 +232,7 @@
   overflow: visible;
 }
 
-/* Brand group (figma I133:7632): the full wordmark rides the text ink
-   (figma flows: the main-screen instance is black; blue is brand
-   emphasis only). A button only in behavior (New Session shortcut): the
-   pointer cursor is the sole affordance — no hover chrome on the mark. */
+/* The single-line title retains the existing New Session shortcut without extra chrome. */
 .brand {
   flex: 1;
   min-width: 0;
@@ -263,56 +252,31 @@
   cursor: default;
 }
 
-/* Mark and name are independent slots; the shell owns their shared baseline,
-   spacing, and height so either occupant can vary in width. */
+/* The shell keeps one text row, clipping long configured names within the sidebar. */
 .brandIdentity {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  width: 100%;
   height: 24px;
   min-width: 0;
-}
-
-.brandMark {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .brandName {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: block;
   min-width: 0;
+  max-width: 100%;
   height: 24px;
-  font-size: 18px;
-  font-weight: 600;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 500;
   line-height: 24px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .fallbackBrandName {
-  font-size: 17px;
-  letter-spacing: 0px;
   white-space: nowrap;
-}
-
-.localBuildBrand {
-  flex: none;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 1px;
-  height: 24px;
-  white-space: nowrap;
-}
-
-.localBuildTitle {
-  font-size: 12px;
-  line-height: 13px;
-  letter-spacing: 0;
 }
 
 .iconButton {
@@ -349,47 +313,10 @@
   border-radius: var(--yh-radius-md);
 }
 
-/* Rail logo swap: collapsed, the toggle rests as the whale mark (brand ink,
-   no hover circle) and hovering reveals the panel icon — the expand
-   affordance (figma sidebar-hover flow). Expanded it is a plain panel icon. */
-.collapsed .toggle .panelIcon {
-  display: none;
-}
-
-.collapsed .toggle:hover .panelIcon {
-  display: inline;
-}
-
-.collapsed .toggle:hover .railMark {
-  display: none;
-}
-
-.railMark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 /* Rail icons ride the primary ink (figma rail spec); expanded keeps the
    secondary icon-button ink. */
 .collapsed .iconButton {
   color: var(--yh-alias-label-primary);
-}
-
-.buildVersion {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  height: 10px;
-  padding: 0 3px;
-  border-radius: 2px;
-  color: var(--yh-alias-label-primary-inverted);
-  background: var(--yh-alias-label-primary);
-  font-family: var(--ds-font-family-code);
-  font-size: 6px;
-  font-weight: 500;
-  line-height: 10px;
-  white-space: nowrap;
 }
 
 /* New Session: 38px bar, 12px radius (figma 133:7634 geometry, squared-off

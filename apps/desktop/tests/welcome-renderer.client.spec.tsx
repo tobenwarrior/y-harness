@@ -9,7 +9,7 @@ import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
 import type { WelcomeSaveResult, WelcomeNotice } from '../src/welcome-api.ts'
 
 const html = readFileSync(join(import.meta.dirname, '../renderer/welcome.html'), 'utf8')
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.unstubAllEnvs() })
 
 function mount(language = 'zh-CN', takeNotice = vi.fn<() => Promise<WelcomeNotice | undefined>>().mockResolvedValue(undefined)) {
   cleanup()
@@ -36,7 +36,7 @@ function mount(language = 'zh-CN', takeNotice = vi.fn<() => Promise<WelcomeNotic
   const copy = () => {
     const heading = document.querySelector('main')!.getAttribute('aria-labelledby')!
     return [
-      document.title, document.querySelector('img')!.alt, document.getElementById(heading)!.textContent,
+      document.title, document.querySelector('.brand')!.textContent, document.getElementById(heading)!.textContent,
       ...heading === 'welcome-heading' ? [document.querySelector('#welcome-description')!.textContent] : [],
       ...heading === 'key-title' ? [document.querySelector('#key-description')!.textContent, `${input.placeholder} [password]`] : [],
       ...[...document.querySelectorAll('button')].filter(item => item.closest('[hidden]') === null)
@@ -51,12 +51,25 @@ describe('desktop welcome presentation', () => {
   it.each(['zh-CN', 'en'])('renders the %s entry and API-key step', async (language) => {
     const view = mount(language)
     expect(view.document.documentElement.lang).toBe(language)
-    expect(view.document.querySelector('img')!.getAttribute('src')).toBe('assets/welcome-brand.svg')
+    expect(view.document.querySelector('.brand')!.textContent).toBe(view.api.messages.welcomeBrand)
     await expect(view.copy()).toMatchFileSnapshot(`./expected/welcome/${language}.expected.txt`)
     fireEvent.click(view.button('#api-key'))
     expect(view.document.activeElement).toBe(view.input)
     expect(view.input.type).toBe('password')
     await expect(view.copy()).toMatchFileSnapshot(`./expected/welcome/${language}-api-key.expected.txt`)
+  })
+
+  it.each(['zh-CN', 'en'])('renders the configured name as %s welcome text beside the decorative Y mark', (language) => {
+    for (const displayName of ['Y Harness', 'Atlas']) {
+      vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
+      const view = mount(language)
+      const brand = view.document.querySelector('.brand')!
+      expect(brand.textContent).toBe(displayName)
+      expect(view.document.title).toBe(displayName)
+      expect(view.document.querySelector('#welcome-heading')!.textContent).toContain(displayName)
+      expect(brand.querySelector('svg')!.getAttribute('aria-hidden')).toBe('true')
+      expect(brand.querySelector('img')).toBeNull()
+    }
   })
 
   it('sends one trimmed key, prevents competing actions, and clears it after saving', async () => {

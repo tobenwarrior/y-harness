@@ -96,7 +96,7 @@ Host 插件注入 `webServer` 和 `connection`，接受以下字段：
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-inspector)是全部已接受字段及其声明的详尽来源。
 
-Worker 监听后，Host 会记录一个 `devtools://` URL。同一个 Worker 提供 `/json`、`/json/list`、`/json/version`、`/devtools/page/<id>` target WebSocket 和 `/ingest` Client source。
+Worker 监听后，Host 会记录一个 `devtools://` URL。同一个 Worker 提供 `/json`、`/json/list`、`/json/version`、`/devtools/page/<id>` target WebSocket 和 `/ingest` Client source。发现接口与 CDP 使用 `Y Harness Host` 标题以及相同的 target id 和 `dsh://host` URL。
 
 <a id="observation-api"></a>
 ## 观测 API

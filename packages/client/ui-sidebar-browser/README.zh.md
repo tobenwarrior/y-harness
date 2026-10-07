@@ -56,7 +56,7 @@ Client 插件可以调用 `ctx.sidebarRight.openTab('browser', { params: { url }
 
 ### 协议策略
 
-地址解析器接受 HTTP 与 HTTPS，包括 loopback 目标。`file:` URL、脚本/data/blob 输入、内嵌凭据、DSH 应用自身 origin 和畸形地址会被拒绝。本地文件由 Document Preview 负责渲染。
+地址解析器接受 HTTP 与 HTTPS，包括 loopback 目标。`file:` URL、脚本/data/blob 输入、内嵌凭据、应用自身 origin 和畸形地址会被拒绝。本地文件由 Document Preview 负责渲染。拒绝应用自身 origin 的提示采用已配置的公开显示名称，未配置时使用 Y Harness。
 
 ### Iframe 载体
 

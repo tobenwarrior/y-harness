@@ -81,6 +81,19 @@ describe('experimental Inspector real Worker', () => {
     server = undefined
   })
 
+  it('uses the product title in discovery and CDP without changing target identity', async () => {
+    inspector = await startInspector({ port: 0, captureFetch: false })
+    const authority = new URL(inspector.endpoint.webSocketDebuggerUrl)
+    const targets: unknown = await fetch(`http://${authority.host}/json/list`).then(response => response.json())
+    const discovered = recordArray(targets)
+    expect(discovered).toHaveLength(1)
+    expect(discovered[0]).toMatchObject({ title: 'Y Harness Host', url: 'dsh://host' })
+    cdp = await TestCdpClient.connect(inspector.endpoint.webSocketDebuggerUrl)
+    const targetInfo = asRecord((await cdp.call('Target.getTargetInfo')).result?.targetInfo)
+    expect(targetInfo).toMatchObject({ title: 'Y Harness Host', url: 'dsh://host' })
+    expect(targetInfo.targetId).toBe(discovered[0]!.id)
+  })
+
   it('limits an embedded connection to its Client while direct connections retain every Client', async (test) => {
     inspector = await startInspector({ port: 0, captureFetch: false, clientReconnectBaseMs: 10, clientReconnectMaxMs: 20 })
     const sourceCatalog = (name: string) => ({

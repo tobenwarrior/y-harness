@@ -45,6 +45,10 @@ register 调用可以用 `store: defineStore(...)` 声明 store 席位：`init` 
 
 声明即认领：注册条目成为唯一被允许渲染该键的条目；注册未声明 slot、声明已声明过的子项、在两个 scope 下挂载同一个共享句柄、或注册缺少 `select` 的 chain，都会在加载时抛出。条目的 disposer 会递归移除其声明的子 slot——账本行、贡献与 store 挂载都随同一生命周期结束而移除。
 
+### 本地化文案中的产品名称
+
+词典作者可用 `withProductDisplayName(text)` 包装选定的产品文案。它将精确的 `DeepSeek Harness` 和 `Y Harness` 替换为公开构建时变量 `DSH_CLIENT_DISPLAY_NAME`，未设置时保留原文。提供方名称、法律声明和其他词条仍由各词典的作者控制。在根目录的 [`app-branding.json`](../../../app-branding.json) 中设置显示名称，并重新构建以更改这些标签。
+
 -----
 
 <a id="understand-the-implementation"></a>

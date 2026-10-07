@@ -1,4 +1,7 @@
 /** Locale-owned Browser tab copy. */
+import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
+
+/** Simplified Chinese dictionary and key-set source of truth. */
 export const zh = {
   'type.label': '浏览器',
   'guide.title': '浏览器',
@@ -22,7 +25,7 @@ export const zh = {
   'error.invalid': '这个地址无效或过长。',
   'error.protocol': '只支持 HTTP 和 HTTPS 地址；本地文件请使用文档预览。',
   'error.credentials': '地址不能包含用户名或密码。',
-  'error.application-origin': '不能在嵌入浏览器中打开 DSH 应用自身。',
+  'error.application-origin': withProductDisplayName('不能在嵌入浏览器中打开 Y Harness 应用自身。'),
   'load.failed': '页面加载失败；请刷新重试或在系统浏览器中打开。',
   'load.failed.detail': '页面加载失败 ({code}): {description}',
   'address.unknown': '页面已跳转；当前载体无法读取新的 URL。',
@@ -55,7 +58,7 @@ export const en = {
   'error.invalid': 'That address is invalid or too long.',
   'error.protocol': 'Only HTTP and HTTPS addresses are supported; use Document Preview for local files.',
   'error.credentials': 'Addresses cannot contain a username or password.',
-  'error.application-origin': 'The embedded browser cannot open the DSH application itself.',
+  'error.application-origin': withProductDisplayName('The embedded browser cannot open the Y Harness application itself.'),
   'load.failed': 'The page could not load; reload or open it in the system browser.',
   'load.failed.detail': 'Page load failed ({code}): {description}',
   'address.unknown': 'The page navigated; this carrier cannot read its new URL.',

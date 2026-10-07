@@ -11,6 +11,17 @@ describe('desktop locale dictionaries', () => {
     expect(resolveDesktopLocale('fr-FR').messages).toEqual(en)
   })
 
+  it.each([undefined, 'Y Harness', 'Atlas', '星图 $& $`'])('names the application in listener-conflict guidance for %s', (displayName) => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
+    const name = displayName ?? 'Y Harness'
+    const english = resolveDesktopLocale('en-US').messages
+    const chinese = resolveDesktopLocale('zh-CN').messages
+    expect(english.startupAddressInUse).toBe(`Another ${name} instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running ${name} instance, then restart.`)
+    expect(chinese.startupAddressInUse).toBe(`有其他正在运行的 ${name}（如其他 dsh web、桌面端），无法同时启动，请退出其他正在运行的 ${name} 后重启。`)
+    expect(english.cliCommandTitle).toBe('Manage dsh Command')
+    expect(english.welcomeKeyDescription).toContain('official DeepSeek models')
+  })
+
   it('formats named values without consuming unknown placeholders', () => {
     expect(formatDesktopMessage('{name}@{version} {missing}', { name: 'plugin', version: '1.2.3' }))
       .toBe('plugin@1.2.3 {missing}')

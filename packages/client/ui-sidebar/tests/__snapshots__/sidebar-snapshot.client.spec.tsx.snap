@@ -20,7 +20,6 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
       >
         <svg
           aria-hidden="true"
-          class="panelIcon"
           data-content="88020f34"
           fill="none"
           height="16"
@@ -114,23 +113,6 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
           class="brandIdentity"
         >
           <span
-            class="brandMark"
-          >
-            <div
-              data-slot="sidebar.brand.mark"
-              style="display: contents;"
-            >
-              <svg
-                aria-hidden="true"
-                data-content="965fe321"
-                fill="none"
-                height="17.6580310880829"
-                viewBox="0 0 23.16 17.04"
-                width="24"
-              />
-            </div>
-          </span>
-          <span
             class="brandName"
           >
             <div
@@ -138,18 +120,9 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
               style="display: contents;"
             >
               <span
-                class="localBuildBrand"
+                class="fallbackBrandName"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  Y Harness Local Build
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                Y Harness Local Build
               </span>
             </div>
           </span>
@@ -162,7 +135,6 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
       >
         <svg
           aria-hidden="true"
-          class="panelIcon"
           data-content="88020f34"
           fill="none"
           height="16"
@@ -252,27 +224,8 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
         class="iconButton toggle"
         type="button"
       >
-        <span
-          aria-hidden="true"
-          class="railMark"
-        >
-          <div
-            data-slot="sidebar.brand.mark"
-            style="display: contents;"
-          >
-            <svg
-              aria-hidden="true"
-              data-content="965fe321"
-              fill="none"
-              height="17.6580310880829"
-              viewBox="0 0 23.16 17.04"
-              width="24"
-            />
-          </div>
-        </span>
         <svg
           aria-hidden="true"
-          class="panelIcon"
           data-content="88020f34"
           fill="none"
           height="18"
@@ -366,23 +319,6 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
           class="brandIdentity"
         >
           <span
-            class="brandMark"
-          >
-            <div
-              data-slot="sidebar.brand.mark"
-              style="display: contents;"
-            >
-              <svg
-                aria-hidden="true"
-                data-content="965fe321"
-                fill="none"
-                height="17.6580310880829"
-                viewBox="0 0 23.16 17.04"
-                width="24"
-              />
-            </div>
-          </span>
-          <span
             class="brandName"
           >
             <div
@@ -390,18 +326,9 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
               style="display: contents;"
             >
               <span
-                class="localBuildBrand"
+                class="fallbackBrandName"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  Y Harness Local Build
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                Y Harness Local Build
               </span>
             </div>
           </span>
@@ -414,7 +341,6 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
       >
         <svg
           aria-hidden="true"
-          class="panelIcon"
           data-content="88020f34"
           fill="none"
           height="16"
@@ -509,23 +435,6 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
           class="brandIdentity"
         >
           <span
-            class="brandMark"
-          >
-            <div
-              data-slot="sidebar.brand.mark"
-              style="display: contents;"
-            >
-              <svg
-                aria-hidden="true"
-                data-content="965fe321"
-                fill="none"
-                height="17.6580310880829"
-                viewBox="0 0 23.16 17.04"
-                width="24"
-              />
-            </div>
-          </span>
-          <span
             class="brandName"
           >
             <div
@@ -533,18 +442,9 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
               style="display: contents;"
             >
               <span
-                class="localBuildBrand"
+                class="fallbackBrandName"
               >
-                <span
-                  class="localBuildTitle"
-                >
-                  Y Harness 本地构建
-                </span>
-                <span
-                  class="buildVersion"
-                >
-                  1.2.3-rc.4-abc1234-dirty
-                </span>
+                Y Harness 本地构建
               </span>
             </div>
           </span>
@@ -557,7 +457,6 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
       >
         <svg
           aria-hidden="true"
-          class="panelIcon"
           data-content="88020f34"
           fill="none"
           height="16"

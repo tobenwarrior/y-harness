@@ -1,5 +1,5 @@
 ---
-description: "Official DeepSeek Harness brand occupants for the sidebar, active only in official builds; for users and maintainers choosing or replacing brand presentation."
+description: "Y Harness brand occupants for the sidebar, active only in official builds; for users and maintainers choosing or replacing brand presentation."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package gives an `official` client build the DeepSeek Harness mark and name in the sidebar. Other build profiles keep the shell's fish mark and local-build label, while the conversation hero always uses the animated fish. Choose it for deployments branded as DeepSeek Harness; deployments with another identity should provide a replacement brand package. It has no runtime state and does not affect model requests.
+This package supplies an `official` client build with the shared Y mark and the configured plain-text app name. The sidebar renders the name alone; the conversation hero uses its own shared static Y fallback. Other build profiles use the sidebar's localized local-build label or configured display name. It has no runtime state and does not affect model requests.
 
 ## Table of Contents
 
@@ -25,15 +25,15 @@ This package gives an `official` client build the DeepSeek Harness mark and name
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this plugin in the browser roster of a deployment whose identity is DeepSeek's own, then build the client with the `official` profile so the occupants register.
+Mount this plugin in the browser roster, then build the client with the `official` profile so the occupants register.
 
 ### Choosing the profile
 
-`DSH_CLIENT_BUILD_PROFILE` selects which brand renders. An `official` build shows the official mark and name in the sidebar; any other value leaves the shell fallbacks — the fish mark and the local-build label — in place. The conversation hero shows the animated hero fish from `dsh-client-ui-conversation` regardless of profile, because that fallback is already the official mark. The plugin still loads and validates in both cases; only the registration is profile-gated.
+`DSH_CLIENT_BUILD_PROFILE` selects whether this package registers its `sidebar.brand.mark` and `sidebar.brand.name` occupants. An `official` build supplies the shared `YHarnessLogo` and the configured plain-text name; without `DSH_CLIENT_DISPLAY_NAME`, the name occupant retains its legacy `BrandWordmark` artwork. Other profile values leave the shell's name fallback in place. The sidebar renders only the name occupant and does not render the separate mark. The conversation hero uses the declaring package's static Y fallback regardless of profile. The plugin still loads and validates in both cases; only the registration is profile-gated.
 
 ### Replacing the brand
 
-A text-only rename uses the public [app display-name configuration](../../../apps/desktop/README.md#app-display-name); its build value `DSH_CLIENT_DISPLAY_NAME` replaces the name artwork with plain text while preserving the mark. To replace artwork, a deployment leaves this package out and composes another package that occupies the sidebar slots — and the hero slot, which this package leaves on its fallback. Slot occupation remains the artwork composition route.
+A rename uses the public [app display-name configuration](../../../apps/desktop/README.md#app-display-name); its build value `DSH_CLIENT_DISPLAY_NAME` supplies the plain-text name independently of the shared mark. A deployment can replace this package with another package occupying the sidebar slots, and can occupy the hero slot to replace its fallback. A sidebar mark occupant does not add artwork to the name row or collapsed rail.
 
 -----
 
@@ -54,7 +54,7 @@ The two occupants install as one declaration-aware registration set: nested `ctx
 
 Read these pages when the brand surface is not enough. They move from the slots this package occupies to the shell that renders them.
 
-- [ui-sidebar](../ui-sidebar/README.md) — declares `sidebar.brand.mark` and `sidebar.brand.name` and renders their fallbacks.
+- [ui-sidebar](../ui-sidebar/README.md) — declares `sidebar.brand.mark` and `sidebar.brand.name` and renders only the name row.
 - [ui-conversation](../ui-conversation/README.md) — declares `conversation.hero.brand.mark` in the hero.
 - [Web client architecture](../../../docs/subsystems/web-client.md) — how browser plugin rows load and register slots.
 

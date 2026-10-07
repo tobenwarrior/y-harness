@@ -11,7 +11,7 @@ import {
   Tag,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState, TagTone } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { withProductDisplayName, type InjectFace, type PropsLocale, type PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PluginInventoryLocaleKey } from './locales.ts'
 import css from './PluginInventorySettingsTab.module.css'
 
@@ -90,12 +90,17 @@ function cardLabel(title: string, entryId: string | null, state: string): string
   return idAddsToTitle(entryId, title) ? `${title}, ${entryId}, ${state}` : `${title}, ${state}`
 }
 
-/** Preserve translated titles and shorten literal package or module name fallbacks in Settings. */
+/** Resolve card text, preserving titles and projecting exact legacy product mentions in first-party descriptions. */
 function pluginText(row: PluginInventoryEntry | AgentPresetRow, resolveText: PluginInventorySettingsTabInjected['resolveText']) {
   const title = row.meta?.title
+  const description = row.meta?.description === undefined
+    ? undefined
+    : resolveText(row.meta.description) || undefined
   return {
     title: typeof title === 'object' ? resolveText(title) : moduleShortName(title ?? row.moduleName),
-    description: row.meta?.description === undefined ? undefined : resolveText(row.meta.description) || undefined,
+    description: row.moduleName.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
+      ? withProductDisplayName(description)
+      : description,
   }
 }
 

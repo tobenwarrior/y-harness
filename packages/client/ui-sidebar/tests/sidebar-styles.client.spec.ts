@@ -64,12 +64,26 @@ describe('SidebarRoot.module.css', () => {
     expect(declarations('.collapsed .newSession')?.get('width')).toBe('36px')
   })
 
-  it('keeps the slotted brand row at the full artwork height', () => {
+  it('keeps the title in one text row and exposes the rail opener without a hover swap', () => {
     expect(declarations('.brandIdentity')?.get('height')).toBe('24px')
     expect(declarations('.brandName')?.get('height')).toBe('24px')
     expect(declarations('.brandName')?.get('line-height')).toBe('24px')
-    expect(declarations('.brandName')?.get('font-size')).toBe('18px')
-    expect(declarations('.fallbackBrandName')?.get('font-size')).toBe('17px')
+    expect(declarations('.brandName')?.get('font-size')).toBe('17px')
+    expect(declarations('.brandName')?.get('font-weight')).toBe('500')
+    expect(declarations('.brandName')?.get('white-space')).toBe('nowrap')
+    expect(declarations('.brandName')?.get('text-overflow')).toBe('ellipsis')
     expect(declarations('.fallbackBrandName')?.get('white-space')).toBe('nowrap')
+    expect(declarations('.collapsed .toggle .panelIcon')).toBeUndefined()
+    expect(declarations('.railMark')).toBeUndefined()
+    expect(declarations('.buildVersion')).toBeUndefined()
+  })
+
+  it('retains macOS drag clearance and Windows caption control anchors', () => {
+    expect(declarations('.logoRow')?.get('height')).toBe('60px')
+    expect(declarations('.topStrip')?.get('height')).toBe('52px')
+    expect(declarations(':global([data-windows-titlebar]) .toggle')?.get('left')).toBe('12px')
+    expect(declarations(':global([data-windows-titlebar]) .collapsed .newSession')?.get('left')).toBe('48px')
+    expect(declarations(':global(html[data-windows-titlebar]:has([data-sidebar-collapsed=\'true\']))')
+      ?.get('--dsh-windows-menu-start')).toBe('84px')
   })
 })

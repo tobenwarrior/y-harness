@@ -96,7 +96,7 @@ The Host plugin injects `webServer` and `connection` and accepts these fields:
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-inspector) is the exhaustive source for accepted fields and their declarations.
 
-The Host logs a `devtools://` URL after the Worker listens. The same Worker serves `/json`, `/json/list`, `/json/version`, the target WebSocket under `/devtools/page/<id>`, and the Client source at `/ingest`.
+The Host logs a `devtools://` URL after the Worker listens. The same Worker serves `/json`, `/json/list`, `/json/version`, the target WebSocket under `/devtools/page/<id>`, and the Client source at `/ingest`. Discovery and CDP identify the target as `Y Harness Host` with the same target id and `dsh://host` URL.
 
 <a id="observation-api"></a>
 ## Observation API

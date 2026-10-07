@@ -94,22 +94,42 @@ body {
 }
 
 .brand {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   flex: none;
   width: 100%;
+  min-width: 0;
   height: 40px;
   user-select: none;
-  -webkit-user-drag: none;
+}
+
+.brand-mark {
+  flex: none;
+  max-height: 40px;
+}
+
+.brand-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 40px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tagline {
   margin: 0;
+  max-width: 100%;
   color: var(--yh-alias-label-secondary);
   font-size: 24px;
   font-weight: 300;
   line-height: 40px;
   text-align: center;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .tagline h1,

@@ -121,11 +121,11 @@ describe('SidebarRoot shell', () => {
     fireEvent.focus(button)
     expect(Array.from(screen.getByRole('tooltip').querySelectorAll('kbd'), key => key.textContent)).toEqual(['Ctrl', 'N'])
   })
-  it('routes New Session (capsule + wordmark) and the column toggle', () => {
+  it('routes New Session from the text title and capsule, and the column toggle', () => {
     const b = mountShell()
-    expect(screen.getByTestId('custom-brand-mark')).toBeTruthy()
+    expect(screen.queryByTestId('custom-brand-mark')).toBeNull()
     expect(screen.getByTestId('custom-brand-name')).toBeTruthy()
-    // Expanded, both the wordmark and the capsule start a session.
+    // Expanded, both the title and the capsule start a session.
     const starters = screen.getAllByRole('button', { name: 'New session' })
     expect(starters).toHaveLength(2)
     for (const button of starters) fireEvent.click(button)
@@ -134,7 +134,7 @@ describe('SidebarRoot shell', () => {
     expect(b.toggleSidebar).toHaveBeenCalledOnce()
   })
 
-  it('renders generic brand fallbacks when no package fills the slots', () => {
+  it('renders a text-only fallback title even when complete build metadata is present', () => {
     vi.stubEnv('DSH_CLIENT_COMMIT_HASH', '0123456')
     vi.stubEnv('DSH_CLIENT_GIT_DIRTY', 'true')
     vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3-rc.4')
@@ -149,14 +149,15 @@ describe('SidebarRoot shell', () => {
     />)
 
     expect(screen.getByText('Y Harness Local Build')).toBeTruthy()
-    expect(screen.getByText('1.2.3-rc.4-0123456-dirty')).toBeTruthy()
+    expect(screen.queryByText('1.2.3-rc.4-0123456-dirty')).toBeNull()
+    expect(screen.getByText('Y Harness Local Build').closest('button')?.querySelector('svg')).toBeNull()
     expect(container.querySelector('svg')).not.toBeNull()
   })
 
   it.each([
     [{ DSH_CLIENT_VERSION: '1.2.3' }, '1.2.3'],
     [{ DSH_CLIENT_COMMIT_HASH: 'abcdef0', DSH_CLIENT_VERSION: '1.2.3' }, '1.2.3-abcdef0'],
-  ])('omits unavailable build-version suffixes from %j', (environment, expected) => {
+  ])('keeps build metadata %j out of the header', (environment, expected) => {
     for (const [name, value] of Object.entries(environment)) vi.stubEnv(name, value)
     render(<SidebarRoot
       collapsed={false} width={300}
@@ -169,7 +170,7 @@ describe('SidebarRoot shell', () => {
     />)
 
     expect(screen.getByText('Y Harness Local Build')).toBeTruthy()
-    expect(screen.getByText(expected)).toBeTruthy()
+    expect(screen.queryByText(expected)).toBeNull()
   })
 
   it('retains the local-build fallback without complete build metadata', () => {
@@ -187,7 +188,7 @@ describe('SidebarRoot shell', () => {
   })
 
   it.each([undefined, '1.2.3'])('shows the configured display name with version %s', (version) => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas & Co')
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas $& <Co> 星')
     vi.stubEnv('DSH_CLIENT_VERSION', version)
     const { container } = render(<SidebarRoot
       collapsed={false} width={300}
@@ -199,10 +200,11 @@ describe('SidebarRoot shell', () => {
         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
     />)
 
-    expect(screen.getByText('Atlas & Co')).toBeTruthy()
+    const title = screen.getByText('Atlas $& <Co> 星')
+    expect(title.closest('button')?.querySelector('svg')).toBeNull()
     expect(screen.queryByText('Y Harness Local Build')).toBeNull()
     expect(container.querySelector('svg')).not.toBeNull()
-    if (version !== undefined) expect(screen.getByText(version)).toBeTruthy()
+    if (version !== undefined) expect(screen.queryByText(version)).toBeNull()
   })
 
   it('hands the region its wide flag and clamps expandSidebar to the collapsed state', () => {
@@ -234,7 +236,11 @@ describe('SidebarRoot shell', () => {
   it('renders statically collapsed on a cold start (no crossfade classes)', () => {
     const b = mountShell({ collapsed: true })
     expect(b.regionOwner().wide).toBe(false)
-    expect(screen.getByRole('button', { name: 'Open sidebar' })).toBeTruthy()
+    const opener = screen.getByRole('button', { name: 'Open sidebar' })
+    expect(opener.querySelectorAll('svg')).toHaveLength(1)
+    expect(screen.queryByTestId('custom-brand-mark')).toBeNull()
+    fireEvent.click(opener)
+    expect(b.toggleSidebar).toHaveBeenCalledOnce()
   })
 
   it('shows only the badge bubble while the rail badge is hovered inside the toggle', () => {
@@ -274,7 +280,8 @@ it('keeps the macOS sidebar toggle in its top strip', () => {
   // role (the global no-drag rule would subtract it); only the dedicated
   // New Session capsule starts a session.
   expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
-  expect(screen.getByTestId('custom-brand-mark')).toBeTruthy()
+  expect(screen.queryByTestId('custom-brand-mark')).toBeNull()
+  expect(screen.getByTestId('custom-brand-name')).toBeTruthy()
 })
 
 it('wires the shell.leading controls to the shared sidebar actions', () => {

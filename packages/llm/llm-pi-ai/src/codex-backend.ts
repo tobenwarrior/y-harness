@@ -167,7 +167,7 @@ export class CodexBackendRuntime {
           ...(active.items.has(text(params.itemId)) ? { item: active.items.get(text(params.itemId)) } : {}) })
       })
       try {
-        await peer.request('initialize', { clientInfo: { name: 'deepseek-harness-local', title: 'DeepSeek Harness', version: '0.2.1-alpha.1' }, capabilities: { experimentalApi: false } })
+        await peer.request('initialize', { clientInfo: { name: 'deepseek-harness-local', title: 'Y Harness', version: '0.2.1-alpha.1' }, capabilities: { experimentalApi: false } })
         if (this.disposed) { peer.close(); throw new Error('Codex backend is closed.') }
         peer.notify('initialized')
         peer.subscribe((method, params) => {
