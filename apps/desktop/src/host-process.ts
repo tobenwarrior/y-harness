@@ -34,6 +34,11 @@ type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { reado
   readonly activeTasks: boolean
   readonly scheduledTasks: boolean
   readonly error?: string
+} | {
+  readonly type: 'boot-injections'
+  readonly requestId: number
+  readonly injections?: readonly unknown[]
+  readonly error?: string
 }
 
 /** Correlated answer to one shell control request. */
@@ -47,6 +52,9 @@ export interface DesktopQuitInspection {
 
 /** Quit inspection deadline; a slower Host counts as unknown work and the shell asks before quitting. */
 export const QUIT_INSPECTION_DEADLINE_MS = 2_000
+
+/** Boot injection deadline; a slower Host fails the page boot rather than serving revisions it may have replaced. */
+export const BOOT_INJECTIONS_DEADLINE_MS = 2_000
 
 const MAX_HOST_DIAGNOSTIC_CHARS = 64 * 1024
 
@@ -85,6 +93,9 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
     case 'quit-inspection':
       return Number.isSafeInteger(candidate.requestId) && typeof candidate.activeTasks === 'boolean'
         && typeof candidate.scheduledTasks === 'boolean' && (candidate.error === undefined || typeof candidate.error === 'string')
+    case 'boot-injections':
+      return Number.isSafeInteger(candidate.requestId) && (candidate.injections === undefined || Array.isArray(candidate.injections))
+        && (candidate.error === undefined || typeof candidate.error === 'string')
     default:
       return false
   }
@@ -247,6 +258,19 @@ export class DesktopHostProcess {
   }
 
   /**
+   * Read the Host's current index injections for one page boot.
+   * @returns Boot injections naming the plugin revisions the Host can serve now.
+   * A revision follows its built bundle, so a page that booted from the
+   * startup-time injections can name a revision the Host has already replaced.
+   */
+  async bootInjections(): Promise<readonly unknown[]> {
+    const response = await this.control({ type: 'boot-injections' }, BOOT_INJECTIONS_DEADLINE_MS,
+      'desktop boot: injections timed out')
+    if (response.type !== 'boot-injections') throw new Error('desktop boot: Host answered with a different control response')
+    return response.injections ?? []
+  }
+
+  /**
    * Ask the Host what quitting now would interrupt.
    * @returns Active tasks and armed scheduled reminders; rejects when the Host is unavailable or misses
    * {@link QUIT_INSPECTION_DEADLINE_MS}, and the shell then asks before quitting.
@@ -258,12 +282,14 @@ export class DesktopHostProcess {
   }
 
   private async control(
-    request: { readonly type: 'update-tasks'; readonly action: 'inspect' | 'lock' | 'unlock' } | { readonly type: 'quit-inspection' },
+    request: { readonly type: 'update-tasks'; readonly action: 'inspect' | 'lock' | 'unlock' }
+    | { readonly type: 'quit-inspection' } | { readonly type: 'boot-injections' },
     deadlineMs: number, deadlineMessage: string,
   ): Promise<DesktopHostControlResponse> {
     const child = this.child
     if (child === undefined || !child.connected || this.failureReported || this.stopping) {
-      throw new Error(`${request.type === 'update-tasks' ? 'desktop update' : 'desktop quit'}: Host is unavailable`)
+      const action = request.type === 'update-tasks' ? 'desktop update' : request.type === 'quit-inspection' ? 'desktop quit' : 'desktop boot'
+      throw new Error(`${action}: Host is unavailable`)
     }
     const requestId = this.nextControlId++
     let timer: ReturnType<typeof setTimeout> | undefined

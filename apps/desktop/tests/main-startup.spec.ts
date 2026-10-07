@@ -77,6 +77,7 @@ const harness = await vi.hoisted(async () => {
       removeInsertedCSS: vi.fn(async () => {}),
       openDevTools: vi.fn(),
       getURL: () => this.urls.at(-1) ?? '',
+      reload: vi.fn(),
       mainFrame: { url: '' },
       getZoomFactor: () => 1,
       isDestroyed: () => this.destroyed,
@@ -132,6 +133,7 @@ const harness = await vi.hoisted(async () => {
   class FakeHost {
     readonly updateTasks = vi.fn(async (_action: 'inspect' | 'lock' | 'unlock') => false)
     readonly inspectQuit = vi.fn(async () => ({ activeTasks: false, scheduledTasks: false }))
+    readonly bootInjections = vi.fn(async (): Promise<readonly unknown[]> => [])
     url = 'http://127.0.0.1:3080/?token=test'
     fetch = vi.fn(async () => Response.json({ hasApiKey: true, writable: true, localePreference: null }))
     readonly ready = deferred()
@@ -994,6 +996,55 @@ describe('desktop main startup', () => {
     harness.hosts[0]!.ready.resolve()
     await expect(boot).resolves.toEqual({ injections: [], streamBaseUrl: 'http://127.0.0.1:3080' })
     expect(harness.windows[0]!.urls).toEqual(['dsh-app://app/'])
+  })
+
+  it('boots from the Host current injections rather than the startup list', async () => {
+    await import('../src/main.ts')
+    await harness.preparing.promise
+    harness.prepared.resolve()
+    await harness.hostStarted.promise
+    harness.hosts[0]!.ready.resolve()
+    const host = harness.hosts[0]!
+    const current = [{ kind: 'script', src: 'plugins/boot.js?rev=current' }]
+    host.bootInjections.mockResolvedValueOnce(current)
+    const handler = harness.handlers.get(DESKTOP_IPC.boot)!
+    await expect(handler({ senderFrame: { url: 'dsh-app://app/' } })).resolves.toEqual({
+      injections: current, streamBaseUrl: 'http://127.0.0.1:3080',
+    })
+    expect(host.bootInjections).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the startup injections when the Host cannot answer for them', async () => {
+    await import('../src/main.ts')
+    await harness.preparing.promise
+    harness.prepared.resolve()
+    await harness.hostStarted.promise
+    harness.hosts[0]!.ready.resolve()
+    harness.hosts[0]!.bootInjections.mockRejectedValueOnce(new Error('control unavailable'))
+    const handler = harness.handlers.get(DESKTOP_IPC.boot)!
+    await expect(handler({ senderFrame: { url: 'dsh-app://app/' } }))
+      .resolves.toEqual({ injections: [], streamBaseUrl: 'http://127.0.0.1:3080' })
+  })
+
+  it('reloads once for a failed page boot and reports only the second failure', async () => {
+    await import('../src/main.ts')
+    await harness.preparing.promise
+    harness.prepared.resolve()
+    await harness.hostStarted.promise
+    harness.hosts[0]!.ready.resolve()
+    const window = harness.windows[0]!
+    const frame = { url: 'dsh-app://app/' }
+    Object.assign(window.webContents, { mainFrame: frame })
+    const event = { sender: window.webContents, senderFrame: frame }
+    await harness.handlers.get(DESKTOP_IPC.boot)!(event)
+    const failed = harness.handlers.get(DESKTOP_IPC.bootFailed)! as (event: unknown, message: unknown) => void
+    failed(event, 'desktop web: failed to load plugins/??boot.js&rev=stale')
+    expect(window.webContents.reload).toHaveBeenCalledOnce()
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled()
+    failed(event, 'desktop web: failed to load plugins/??boot.js&rev=stale')
+    await harness.dialogShown.promise
+    expect(window.webContents.reload).toHaveBeenCalledOnce()
+    expect((harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions).detail).toContain('rev=stale')
   })
 
   it('retains macOS native editing actions on right-click and only copy for selected read-only text', async () => {

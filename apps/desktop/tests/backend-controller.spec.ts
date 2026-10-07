@@ -17,6 +17,7 @@ function fixture() {
   let fail!: (error: Error) => void
   const host = {
     start: vi.fn(() => { started.resolve(); return ready.promise }),
+    bootInjections: vi.fn(async () => []),
     stop: vi.fn(() => { stopping.resolve(); return exited.promise }),
   }
   const create = vi.fn((onFailure: (error: Error) => void) => { fail = onFailure; return host })

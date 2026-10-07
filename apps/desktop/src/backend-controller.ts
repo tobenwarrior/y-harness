@@ -18,6 +18,11 @@ function errorState(failure: unknown): DesktopBackendState {
 export interface DesktopBackendHost {
   /** @returns Readiness after the child accepts application requests. */
   start(): Promise<unknown>
+  /**
+   * Read the child's current boot injections for one page boot.
+   * @returns Index injections naming the plugin revisions the child can serve now.
+   */
+  bootInjections(): Promise<readonly unknown[]>
   /** @returns Completion of child exit. */
   stop(): Promise<void>
 }

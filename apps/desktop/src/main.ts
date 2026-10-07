@@ -401,6 +401,10 @@ async function main(): Promise<void> {
   let hostCookie: string | undefined
   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
   let injections: readonly unknown[] = []
+  /** Whether one automatic reload may still answer a failed page boot. */
+  let bootRetryAvailable = false
+  /** Whether the page boot that just ran ended in a reported failure. */
+  let previousBootFailed = false
   let welcomeBackend: DesktopWelcomeBackend | undefined
   let reportedLaunch = false
   let analyticsEnabled = false
@@ -506,6 +510,7 @@ async function main(): Promise<void> {
       },
       updateTasks: (action: 'inspect' | 'lock' | 'unlock') => host.updateTasks(action),
       inspectQuit: () => host.inspectQuit(),
+      bootInjections: () => host.bootInjections(),
     }
   }, (state) => {
     if (state.phase === 'error') reportFatal(state.failure, 'host')
@@ -685,8 +690,22 @@ async function main(): Promise<void> {
   ipcMain.handle(DESKTOP_IPC.boot, async (event) => {
     assertDesktopSender(event, ['app'])
     await startup
-    if (backend.host === undefined || hostUrl === undefined) throw new Error('Desktop Host is unavailable')
-    return { injections, streamBaseUrl: new URL(hostUrl).origin }
+    const host = backend.host
+    if (host === undefined || hostUrl === undefined) throw new Error('Desktop Host is unavailable')
+    // A failed boot spends the retry; a boot that follows any other attempt
+    // restores it, so one stale revision cannot reload the window forever.
+    if (!previousBootFailed) bootRetryAvailable = true
+    previousBootFailed = false
+    // Plugin bundle revisions follow the built artifacts, so injections are read
+    // per boot: the revisions captured at Host start can name an artifact the
+    // Host has already replaced, and a page that cannot load one never registers
+    // the root slot. The startup list remains the fallback for a Host that
+    // cannot answer.
+    let current = injections
+    try {
+      current = await host.bootInjections()
+    } catch (_error) { /* A Host that cannot answer keeps the startup list; the boot retry covers a stale one. */ }
+    return { injections: current, streamBaseUrl: new URL(hostUrl).origin }
   })
 
   ipcMain.handle(DESKTOP_IPC.bootFailed, (event, message: unknown) => {
@@ -695,6 +714,15 @@ async function main(): Promise<void> {
       throw new Error('dsh desktop: rejected startup failure from a non-primary frame')
     }
     if (typeof message !== 'string') throw new Error('dsh desktop: startup failure must be text')
+    // A rebuild between the injection read and the script fetch leaves the page
+    // holding a revision the Host refuses. One reload boots a fresh document
+    // that re-reads them; a second failure is a real one.
+    previousBootFailed = true
+    if (bootRetryAvailable && !mainWindow.isDestroyed()) {
+      bootRetryAvailable = false
+      mainWindow.webContents.reload()
+      return
+    }
     reportFatal(new Error(message), 'web-boot')
   })
 

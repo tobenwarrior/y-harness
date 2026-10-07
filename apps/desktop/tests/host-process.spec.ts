@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError, QUIT_INSPECTION_DEADLINE_MS } from '../src/host-process.ts'
+import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError, BOOT_INJECTIONS_DEADLINE_MS, QUIT_INSPECTION_DEADLINE_MS } from '../src/host-process.ts'
 
 const roots: string[] = []
 const hosts: DesktopHostProcess[] = []
@@ -32,6 +32,12 @@ server.listen(0, '127.0.0.1', () => {
 process.on('message', message => {
   if (message.type === 'update-tasks') {
     process.send({ type: 'update-tasks', requestId: message.requestId, active: message.action === 'lock' })
+    return
+  }
+  if (message.type === 'boot-injections') {
+    // Ids divisible by three never answer; the others return the fixture list.
+    if (message.requestId % 3 === 0) return
+    process.send({ type: 'boot-injections', requestId: message.requestId, injections: [{ kind: 'script', src: 'plugins/boot.js?rev=fixture' }] })
     return
   }
   if (message.type === 'quit-inspection') {
@@ -94,6 +100,19 @@ describe('desktop host process', () => {
     await expect(host.inspectQuit()).rejects.toThrow('desktop quit: inspection timed out')
     expect(Date.now() - started).toBeGreaterThanOrEqual(QUIT_INSPECTION_DEADLINE_MS - 50)
     expect(await host.inspectQuit()).toEqual({ activeTasks: false, scheduledTasks: false })
+  }, 15_000)
+
+  it('reads current boot injections and fails an unanswered read at its own deadline', async () => {
+    const host = hostProcess(projectWithHost())
+    await expect(host.bootInjections()).rejects.toThrow('desktop boot: Host is unavailable')
+    await host.start()
+    // Request ids 1 and 2 answer; id 3 never does, so the third read hits its own deadline.
+    const expected = [{ kind: 'script', src: 'plugins/boot.js?rev=fixture' }]
+    expect(await host.bootInjections()).toEqual(expected)
+    expect(await host.bootInjections()).toEqual(expected)
+    const started = Date.now()
+    await expect(host.bootInjections()).rejects.toThrow('desktop boot: injections timed out')
+    expect(Date.now() - started).toBeGreaterThanOrEqual(BOOT_INJECTIONS_DEADLINE_MS - 50)
   }, 15_000)
 
   it.each([
