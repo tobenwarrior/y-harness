@@ -1,6 +1,8 @@
 /** Target-scoped Host changes, fresh filesystem metadata, and watcher ownership. */
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest'
 import type { Mock, MockInstance } from 'vitest'
+import { watch as watchFileSystem } from 'node:fs'
+import { once } from 'node:events'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -66,6 +68,27 @@ function open(
 
 async function ready(stream: ReturnType<typeof open>): Promise<void> {
   await expect(stream.next()).resolves.toEqual({ done: false, value: { kind: 'ready' } })
+}
+
+/**
+ * Drain libuv's Darwin registration queue before this fixture mutates its owned root.
+ * Chokidar ready follows fs.watch(), while macOS starts the FSEvents stream
+ * asynchronously. Closing a separate native handle drains that loop's
+ * pending registration work; errors still surface through the real watcher.
+ */
+async function waitForDarwinWatchRegistration(root: string): Promise<void> {
+  if (process.platform !== 'darwin') return
+  const watcher = watchFileSystem(root, { persistent: false }, () => {})
+  const closed = once(watcher, 'close')
+  // Node closes a failing native watcher without emitting public close.
+  // The main await reports that error; cleanup still observes its settlement.
+  const cleanupComplete = closed.then(() => undefined, () => undefined)
+  cleanups.push(async () => {
+    watcher.close()
+    await cleanupComplete
+  })
+  watcher.close()
+  await closed
 }
 
 /** Give disposal cases an independently unloadable service owner. */
@@ -441,6 +464,8 @@ describe('workspaceFiles.changes — backends and access', () => {
     const stream = open(service, path)
     mark('waiting-ready')
     await ready(stream)
+    mark('waiting-registration')
+    await waitForDarwinWatchRegistration(harness.outside)
     const pending = stream.next()
     mark('renaming')
     await rename(staging, path)
@@ -472,6 +497,7 @@ describe('workspaceFiles.changes — backends and access', () => {
       cleanups.push(async () => { detach() })
       const stream = open(service, harness.workspace)
       await ready(stream)
+      await waitForDarwinWatchRegistration(harness.workspace)
       const pending = stream.next()
       if (operation === 'remove') await rm(path)
       else await writeFile(path, 'after external mutation')
