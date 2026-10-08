@@ -192,7 +192,7 @@ export function FilesBody({
   }
   return (
     <div className={css.root} data-files-state="tree" data-files-root={state.root}>
-      <div className={css.header}>
+      <div className={css.header} data-yh-terminal="toolbar">
         <PathLabel path={state.root} className={css.path} data-files-path />
         <span hidden>
           <button type="button" className={css.tool} aria-label={t('autoRefresh')}

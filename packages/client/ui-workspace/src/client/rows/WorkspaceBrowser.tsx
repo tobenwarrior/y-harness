@@ -1206,9 +1206,9 @@ export function WorkspaceBrowser({
 
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
-      <div className={css.sectionHeader}>
+      <div className={css.sectionHeader} data-yh-terminal="toolbar">
         {wide && (
-          <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
+          <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)} data-yh-terminal="metadata">
             {groupBy === 'flat' ? t('section.sessions') : t('section.workspaces')}
           </span>
         )}
@@ -1240,6 +1240,7 @@ export function WorkspaceBrowser({
               <input
                 ref={searchInput}
                 className={css.searchInput}
+                data-yh-terminal="field"
                 type="text"
                 placeholder={t('search.placeholder')}
                 maxLength={SEARCH_QUERY_MAX_CODE_UNITS}

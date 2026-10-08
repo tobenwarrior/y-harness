@@ -6,6 +6,8 @@ import { parseRules } from './stylesheet-scan.ts'
 const sheet = new URL('../src/styles/terminal.css', import.meta.url)
 const gate = "body[data-yh-style='terminal']"
 const gatedSelector = /^(?:html(?:\[data-[^\]]+\])*\s+)?body\[data-yh-style='terminal'\](?:\s|$)/
+const sessionPrompt = `${gate} [data-yh-part='sidebar'] [data-row-key^='session:'][aria-selected='true'] [data-yh-part='session-prompt']`
+const composerPrompt = `${gate} [data-yh-part='composer-editor'] [data-yh-terminal='prompt']`
 
 describe('Terminal appearance isolation', () => {
   it('ships an opt-in stylesheet with every selector behind the appearance gate', () => {
@@ -25,21 +27,22 @@ describe('Terminal appearance isolation', () => {
     ])
     expect(parseRules(css).flatMap(rule => rule.declarations
       .filter(([property, value]) => forbidden.has(property)
-        && !(property === 'display' && value === 'inline-flex' && rule.selectors.every(selector =>
-          selector.endsWith("[aria-selected='true'] [data-yh-part='session-prompt']"))))
+        && !(property === 'display' && value === 'inline-flex' && rule.selectors.every(selector => selector === sessionPrompt))
+        && !((property === 'display' && value === 'block' || property === 'position' && value === 'absolute')
+          && rule.selectors.every(selector => selector === composerPrompt)))
       .map(([property]) => `${rule.selectors.join(', ')}: ${property}`))).toEqual([])
   })
 
-  it('reveals the presentational prompt only on the selected Terminal Session', () => {
+  it('reveals only the selected Session and composer presentational prompts in Terminal', () => {
     const rules = parseRules(readFileSync(sheet, 'utf8'))
     const visiblePrompts = rules.filter(rule => rule.declarations.some(([name, value]) =>
       name === 'display' && value !== 'none'))
-    expect(visiblePrompts).toHaveLength(1)
-    expect(visiblePrompts[0]?.selectors).toEqual([
-      `${gate} [data-yh-part='sidebar'] [data-row-key^='session:'][aria-selected='true'] [data-yh-part='session-prompt']`,
-    ])
+    expect(visiblePrompts.flatMap(rule => rule.selectors)).toEqual([sessionPrompt, composerPrompt])
     const rowStyles = readFileSync(new URL('../../ui-workspace/src/client/rows/Rows.module.css', import.meta.url), 'utf8')
     expect(parseRules(rowStyles).filter(rule => rule.selectors.includes('.terminalPrompt'))
+      .flatMap(rule => rule.declarations)).toContainEqual(['display', 'none'])
+    const composerStyles = readFileSync(new URL('../../ui-conversation/src/client/skeleton/InputBar.module.css', import.meta.url), 'utf8')
+    expect(parseRules(composerStyles).filter(rule => rule.selectors.includes('.terminalPrompt'))
       .flatMap(rule => rule.declarations)).toContainEqual(['display', 'none'])
   })
 
@@ -56,5 +59,25 @@ describe('Terminal appearance isolation', () => {
     expect(rules.filter(rule => rule.selectors.some(selector => selector.includes('assistant-prose')))
       .flatMap(rule => rule.declarations).filter(([name]) => name === 'font-family'))
       .toContainEqual(['font-family', 'var(--yh-font-family)'])
+  })
+
+  it('includes run, activity, code banners, and shared labels in the Terminal chrome', () => {
+    const rules = parseRules(readFileSync(sheet, 'utf8'))
+    const monospaceSelectors = rules.filter(rule => rule.declarations.some(([name, value]) =>
+      name === 'font-family' && value.includes('--ds-font-family-code'))).flatMap(rule => rule.selectors)
+    for (const chrome of ['[data-turn-process]', '[data-process-activity]', '[data-code-block-banner]', "[data-yh-terminal='metadata']", "[data-yh-terminal='control']", "[data-yh-terminal='field']"]) {
+      expect(monospaceSelectors.some(selector => selector.includes(chrome))).toBe(true)
+    }
+    expect(rules.filter(rule => rule.selectors.includes(`${gate} [data-yh-terminal='panel']`))
+      .flatMap(rule => rule.declarations).some(([name]) => name === 'font-family')).toBe(false)
+  })
+
+  it('keeps clickable plugin cards responsive to hover', () => {
+    const rules = parseRules(readFileSync(sheet, 'utf8'))
+    for (const card of ['data-plugin-package', 'data-plugin-item']) {
+      const selectors = rules.filter(rule => rule.declarations.some(([name, value]) =>
+        name === 'background-color' && value === 'var(--yh-alias-interactive-bg-hover)')).flatMap(rule => rule.selectors)
+      expect(selectors).toContain(`${gate} [data-yh-terminal='panel'][${card}]:hover`)
+    }
   })
 })

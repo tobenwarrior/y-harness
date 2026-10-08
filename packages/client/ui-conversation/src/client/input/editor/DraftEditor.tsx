@@ -34,12 +34,14 @@ export function DraftEditor({
 }: DraftEditorProps): ReactNode {
   return (
     <div ref={scrollRef} className={css.scroll} data-input-scroll>
-      <div className={css.grow}>
+      <div className={css.grow} data-yh-part="composer-editor">
+        <span className={css.terminalPrompt} data-yh-terminal="prompt" aria-hidden="true">{'>'}</span>
         <ComposerContentEditable
           editor={workspaceTrigger ? null : editor}
           editable={editable}
           className={clsx(css.input, editorDisabled && css.inputDisabled)}
           data-phase={phase}
+          data-yh-part="composer-draft"
           aria-disabled={editorDisabled || undefined}
           data-placeholder={placeholderText}
           // The placeholder was the textarea's accessible name; a div's

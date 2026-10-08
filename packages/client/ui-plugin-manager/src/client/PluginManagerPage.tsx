@@ -246,13 +246,14 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
     <section className={css.detailSection} data-plugin-rows>
       <div className={css.sectionHead}>
         <h4 className={css.sectionTitle}>{t('partsLabel')}</h4>
-        {rows.length === 0 ? null : <span className={css.sectionCount}>{partsSummary(rows, t)}</span>}
+        {rows.length === 0 ? null : <span className={css.sectionCount} data-yh-terminal="metadata">{partsSummary(rows, t)}</span>}
       </div>
       {rows.length === 0 ? <p className={css.status}>{t('partsEmpty')}</p> : null}
       {rows.length > ROW_FILTER_THRESHOLD
         ? (
           <Input
             type="search"
+            data-yh-terminal="field"
             className={css.partsFilter as string}
             placeholder={t('partsFilter')}
             aria-label={t('partsFilter')}
@@ -288,7 +289,7 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
                     {title === row.rowId ? null : <code className={css.rowModule}>{row.rowId}</code>}
                     {title === row.moduleName ? null : <code className={css.rowModule}>{row.moduleName}</code>}
                   </div>
-                  <span className={css.rowState}>
+                  <span className={css.rowState} data-yh-terminal="metadata">
                     <StateDot state={rowDotState(row)} />
                     {rowStateText(row, t)}
                   </span>
@@ -319,7 +320,7 @@ function SourceSection({ pkg, t }: { readonly pkg: PackageView; readonly t: Tran
   return (
     <section className={css.detailSection} data-plugin-source>
       <h4 className={css.sectionTitle}>{t('sourceTitle')}</h4>
-      <dl className={css.facts}>
+      <dl className={css.facts} data-yh-terminal="metadata">
         <div>
           <dt>{t('sourceSpec')}</dt>
           <dd>{pkg.source === undefined ? t('sourceBuiltIn') : <code>{pkg.source}</code>}</dd>
@@ -402,7 +403,7 @@ function ListSkeleton({ label }: { readonly label: string }): ReactNode {
       </div>
       <ul className={css.cards} aria-hidden="true">
         {[0, 1, 2, 3].map(index => (
-          <li key={index} className={css.card}>
+          <li key={index} className={css.card} data-yh-terminal="panel">
             <div className={css.cardHead}>
               <span className={`${css.cardIcon} ${css.skeletonFill} ${css.skeletonIcon}`} />
               <div className={css.cardMain}>
@@ -433,7 +434,7 @@ function DetailTop({ crumbLabel, crumbText, onBack, icon, actions }: {
   readonly actions?: ReactNode
 }): ReactNode {
   return (
-    <div className={css.detailTop} data-window-drag>
+    <div className={css.detailTop} data-window-drag data-yh-terminal="toolbar">
       <button type="button" className={css.crumb} aria-label={crumbLabel} onClick={onBack}>
         <IconChevronDownOutlineRegular className={css.crumbIcon} aria-hidden="true" />
         <span>{crumbText}</span>
@@ -461,6 +462,7 @@ function PackageCard({ pkg, t, resolveText, busy, highlighted, onOpen, onSetEnab
   return (
     <li
       className={`${css.card} ${css.cardLink}`}
+      data-yh-terminal="panel"
       data-plugin-package={pkg.name}
       data-plugin-status={status}
       {...highlighted ? { 'data-plugin-highlight': '' } : {}}
@@ -495,7 +497,7 @@ function ItemCard({ item, t, onOpen, renderSlot }: {
   readonly renderSlot: RenderConfig
 }): ReactNode {
   return (
-    <li className={`${css.card} ${css.cardLink}`} data-plugin-item={item.id}>
+    <li className={`${css.card} ${css.cardLink}`} data-plugin-item={item.id} data-yh-terminal="panel">
       <CardHead title={item.label} t={t} onOpen={onOpen} icon={itemArtwork(item.id)} description={renderSlot('plugins.item', { view: 'summary' }, { only: item.id })} />
     </li>
   )
@@ -979,6 +981,7 @@ function InstallDialog({
               type="text"
               autoFocus={install.mirrorRecovery === true}
               data-modal-autofocus
+              data-yh-terminal="field"
               value={install.spec}
               placeholder={t('installSpecPlaceholder')}
               disabled={checking}
@@ -1114,6 +1117,7 @@ function InstallDialog({
                     ref={registryCustomRef}
                     type="text"
                     className={css.registryCustomField}
+                    data-yh-terminal="field"
                     aria-label={t('registryCustom')}
                     placeholder={t('registryCustomPlaceholder')}
                     value={choice.kind === 'custom' ? choice.url : customRegistryDraft}
@@ -1407,14 +1411,14 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
       <section className={css.group} data-plugin-scope="global" data-plugin-group={id}>
         <div className={css.groupHead}>
           <h3 className={css.groupTitle}>{heading}</h3>
-          <span className={css.count} data-plugin-count={cards.length}>{cards.length}</span>
+          <span className={css.count} data-plugin-count={cards.length} data-yh-terminal="metadata">{cards.length}</span>
         </div>
         <ul className={css.cards}>{cards}</ul>
       </section>
     )
 
   return (
-    <section className={css.page} data-plugin-panel aria-busy={state.status === 'loading' || refreshing}>
+    <section className={css.page} data-plugin-panel data-yh-terminal="panel" aria-busy={state.status === 'loading' || refreshing}>
       {showsCards
         ? (
           <header className={css.pageHead} data-window-drag>
@@ -1429,7 +1433,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): ReactNode {
                 </Tooltip>
               </div>
             </div>
-            <div className={css.toolbar}>
+            <div className={css.toolbar} data-yh-terminal="toolbar">
               <Tooltip label={t('refresh')} delayMs={500} focusDelayMs={500} side="bottom" portal disabled={!loaded || refreshing}>
                 <button type="button" className={css.iconButton} aria-label={t('refresh')} aria-busy={refreshing} disabled={!loaded || refreshing} onClick={props.refresh}>
                   <span className={css.iconWrap} aria-hidden="true">

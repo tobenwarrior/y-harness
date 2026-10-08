@@ -101,6 +101,7 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
       className={clsx(css.page, selected !== undefined && css.hasDetails)}
       aria-label={t('title')}
       data-testid="task-manager-page"
+      data-yh-terminal="panel"
       onKeyDown={(event) => {
         // A dropdown that closed on this Escape has already consumed the key: the
         // Menu primitive closes from the document capture phase and calls
@@ -116,11 +117,11 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
           <div className={css.pageContent}>
             <div className={css.pageHeading}>
               <h1 ref={headingRef} tabIndex={-1}>{t('title')}</h1>
-              <div className={css.creationActions}>
+              <div className={css.creationActions} data-yh-terminal="toolbar">
                 <Button variant="primary" size="sm" className={css.newButton} icon={<IconPlusOutlineRegular size={13} />} onClick={onNewTask}>{t('new.action')}</Button>
               </div>
             </div>
-            <div className={css.filters}>
+            <div className={css.filters} data-yh-terminal="toolbar">
               <div className={css.filterTabs} role="group" aria-label={t('statusFilter.label')}>
                 {(['all', 'active', 'inactive'] as const).map(value => (
                   <button
@@ -138,6 +139,7 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
             <div className={css.searchField}>
               <Input
                 type="search"
+                data-yh-terminal="field"
                 icon={<IconSearchOutlineRegular />}
                 aria-label={t('search.label')}
                 placeholder={t('search.placeholder')}
@@ -180,7 +182,7 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
                         <IconClockOutlineRegular className={css.rowGlyph} />
                         <span className={css.rowContent}>
                           <span className={css.rowTitle}>{taskName(record)}</span>
-                          <span className={css.rowSummary} id={`${detailId}-metadata-${record.id}`}>
+                          <span className={css.rowSummary} id={`${detailId}-metadata-${record.id}`} data-yh-terminal="metadata">
                             {record.status === 'inactive'
                               && <span className={css.metadata}>{t('status.inactive')}</span>}
                             <span className={css.metadata}>{frequency(record)}</span>

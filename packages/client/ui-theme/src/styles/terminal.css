@@ -35,6 +35,85 @@ html[data-platform='darwin'] body[data-yh-style='terminal'] [data-yh-part='frame
 body[data-yh-style='terminal'] [data-yh-part='conversation-header'],
 body[data-yh-style='terminal'] [data-dockkit-strip] {
   background: var(--yh-terminal-chrome-fill);
+  box-shadow: inset 0 -0.5px 0 var(--yh-alias-border-l3);
+}
+
+/* Shared roles live on painted chrome, never on transcript or editor roots. */
+body[data-yh-style='terminal'] [data-yh-terminal='panel'] {
+  background-color: var(--yh-terminal-surface-fill);
+  border-color: var(--yh-alias-border-l3);
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='panel'] [data-yh-terminal='panel'] {
+  background-color: var(--yh-terminal-raised-fill);
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='panel'][data-plugin-package]:hover,
+body[data-yh-style='terminal'] [data-yh-terminal='panel'][data-plugin-item]:hover {
+  background-color: var(--yh-alias-interactive-bg-hover);
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] {
+  background-color: var(--yh-terminal-chrome-fill);
+  box-shadow: inset 0 -0.5px 0 var(--yh-alias-border-l3);
+  font-family: var(--ds-font-family-code);
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h1,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h2,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h3,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h4,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h5,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] h6,
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] [role='dialog'] {
+  font-family: var(--yh-font-family);
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='metadata'],
+body[data-yh-style='terminal'] [data-yh-terminal='control'],
+body[data-yh-style='terminal'] [data-yh-terminal='field'],
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] button,
+body[data-yh-style='terminal'] [data-turn-process],
+body[data-yh-style='terminal'] [data-process-activity],
+body[data-yh-style='terminal'] [data-code-block-banner] {
+  font-family: var(--ds-font-family-code);
+}
+
+body[data-yh-style='terminal'] [data-yh-terminal='control'],
+body[data-yh-style='terminal'] [data-yh-terminal='field'],
+body[data-yh-style='terminal'] [data-yh-part='field-wrap'],
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] button {
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+}
+
+/* Inset strokes preserve button sizes, primary fills, and status colors. */
+body[data-yh-style='terminal'] button[data-yh-terminal='control'],
+body[data-yh-style='terminal'] [data-yh-terminal='toolbar'] button,
+body[data-yh-style='terminal'] [data-yh-part='sidebar-nav-row'],
+body[data-yh-style='terminal'] [data-yh-part='new-session'] {
+  box-shadow: inset 0 0 0 0.5px var(--yh-alias-border-l3);
+}
+
+/* The native Input keeps its wrapper's focus-within border signal. */
+body[data-yh-style='terminal'] [data-yh-part='field-wrap'],
+body[data-yh-style='terminal'] [data-yh-terminal='field']:not([data-yh-part='field-input']) {
+  background-color: var(--yh-terminal-surface-fill);
+}
+
+body[data-yh-style='terminal'] [data-turn-process],
+body[data-yh-style='terminal'] [data-process-activity] {
+  background-color: var(--yh-terminal-surface-fill);
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+  box-shadow: inset 0 0 0 0.5px var(--yh-alias-border-l3);
+}
+
+body[data-yh-style='terminal'] [data-code-block-banner] {
+  background-color: var(--yh-terminal-chrome-fill);
+  box-shadow: inset 0 -0.5px 0 var(--yh-alias-border-l3);
 }
 
 body[data-yh-style='terminal'] [data-yh-part='sidebar-nav-row'],
@@ -140,6 +219,29 @@ body[data-yh-style='terminal'] [data-composer-card]::after {
 body[data-yh-style='terminal'] [data-composer-card] {
   background: var(--yh-terminal-surface-fill);
   box-shadow: 0 0 0 0.5px var(--yh-elevation-stroke-color);
+}
+
+/* The gutter uses the existing relative grow anchor and follows text size. */
+body[data-yh-style='terminal'] [data-yh-part='composer-editor'] [data-yh-terminal='prompt'] {
+  display: block;
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-start: 14px;
+  width: 1em;
+  font-family: var(--ds-font-family-code);
+  font-size: inherit;
+  line-height: inherit;
+  color: var(--yh-terminal-accent);
+  pointer-events: none;
+  user-select: none;
+}
+
+body[data-yh-style='terminal'] [data-yh-part='composer-draft'] {
+  padding-inline-start: calc(20px + 1em);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='composer-editor'] [data-composer-placeholder] {
+  inset-inline-start: calc(20px + 1em);
 }
 
 body[data-yh-style='terminal'] [data-yh-part='composer-primary'] {

@@ -279,6 +279,19 @@ function writeDraft(shell: SessionInputShell, text: string): void {
 }
 
 describe('composer focus handoff', () => {
+  it('keeps the decorative prompt outside the editable draft and accessible name', () => {
+    const { view, textarea, shell } = bench()
+    const prompt = view.container.querySelector('[data-yh-terminal="prompt"]')
+    expect(prompt).not.toBeNull()
+    expect(prompt?.getAttribute('aria-hidden')).toBe('true')
+    expect(textarea.contains(prompt)).toBe(false)
+    expect(prompt?.parentElement).toBe(textarea.parentElement)
+    const name = textarea.getAttribute('aria-label')
+    writeDraft(shell, 'editable draft')
+    expect(textarea.textContent).toBe('editable draft')
+    expect(textarea.getAttribute('aria-label')).toBe(name)
+  })
+
   it('focus() returns the keyboard to the editor through Lexical, not a bare DOM focus', () => {
     const { shell, textarea } = bench()
     writeDraft(shell, 'draft text')

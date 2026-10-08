@@ -65,7 +65,7 @@ export function SettingsValueField(props: Omit<SettingsFieldProps, 'hint'> & {
     <div className={css.field}>
       <div className={css.head}>
         <div className={css.labelGroup}>
-          <label className={css.label} htmlFor={props.id}>{props.label}</label>
+          <label className={css.label} htmlFor={props.id} data-yh-terminal="metadata">{props.label}</label>
           {props.help !== undefined
             ? (
               <button type="button" className={css.helpButton}
@@ -78,11 +78,12 @@ export function SettingsValueField(props: Omit<SettingsFieldProps, 'hint'> & {
         </div>
         {props.overridden
           ? (
-            <span className={css.badges}>
+            <span className={css.badges} data-yh-terminal="metadata">
               <Tag tone="neutral">{props.overriddenLabel}</Tag>
               <button
                 type="button"
                 className={css.reset}
+                data-yh-terminal="control"
                 disabled={props.disabled}
                 onClick={props.onReset}
               >
@@ -95,6 +96,7 @@ export function SettingsValueField(props: Omit<SettingsFieldProps, 'hint'> & {
       <input
         id={props.id}
         className={css.input}
+        data-yh-terminal="field"
         type="text"
         {...props.numeric === true ? { inputMode: 'numeric' as const } : {}}
         {...props.invalid ? { 'aria-invalid': true } : {}}
@@ -131,14 +133,15 @@ export function SettingsSecretField(props: Pick<SettingsFieldProps, 'id' | 'labe
   return (
     <div className={css.field}>
       <div className={css.head}>
-        <label className={css.label} htmlFor={props.id}>{props.label}</label>
-        <span className={css.badges}>
+        <label className={css.label} htmlFor={props.id} data-yh-terminal="metadata">{props.label}</label>
+        <span className={css.badges} data-yh-terminal="metadata">
           <Tag tone={props.configured ? 'neutral' : 'quiet'}>{props.stateLabel}</Tag>
         </span>
       </div>
       <input
         id={props.id}
         className={css.input}
+        data-yh-terminal="field"
         type="password"
         autoComplete="new-password"
         value={props.text}

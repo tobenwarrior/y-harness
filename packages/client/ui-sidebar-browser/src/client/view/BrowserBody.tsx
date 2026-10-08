@@ -77,8 +77,8 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
   const submit = (event: FormEvent): void => { event.preventDefault(); loadUrl(tab.id, draft) }
 
   return (
-    <div className={css.root}>
-      <form className={css.toolbar} onSubmit={submit}>
+    <div className={css.root} data-yh-terminal="panel">
+      <form className={css.toolbar} data-yh-terminal="toolbar" onSubmit={submit}>
         <button type="button" className={css.tool} aria-label={t('back')} title={t('back')} disabled={!frame.canGoBack} onClick={() => { goBack(tab.id) }}><IconChevronLeftOutlineRegular /></button>
         <button type="button" className={css.tool} aria-label={t('forward')} title={t('forward')} disabled={!frame.canGoForward} onClick={() => { goForward(tab.id) }}><IconChevronRightOutlineRegular /></button>
         <Tooltip label={t('reload')} shortcutKeys={tab.refreshShortcut?.keys} side="bottom" delayMs={500}>
@@ -86,6 +86,7 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
         </Tooltip>
         <div className={css.addressBox}>
           <input
+            data-yh-terminal="field"
             className={[css.address, unknown ? css.addressUnknown : ''].join(' ')}
             value={draft}
             aria-label={t('address.placeholder')}
@@ -93,7 +94,7 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
             spellCheck={false}
             onChange={(event) => { setDraft(event.currentTarget.value) }}
           />
-          {unknown && <span className={css.addressChanged}>{t('address.changed')}</span>}
+          {unknown && <span className={css.addressChanged} data-yh-terminal="metadata">{t('address.changed')}</span>}
           <button type="submit" className={[css.tool, css.addressGo].join(' ')} aria-label={t('go')} title={t('go')}><IconLinkOutlineRegular /></button>
         </div>
         <button type="button" className={css.tool} aria-label={t('external')} title={t('external')} disabled={externalUrl === undefined}
@@ -116,9 +117,9 @@ export function BrowserBody(props: BrowserBodyProps): ReactNode {
       <div className={css.content} aria-busy={frame.loading}>
         <div id={viewportId} className={css.viewport} aria-label={t('type.label')} />
         {restoreTarget !== undefined && <section className={css.restore} aria-label={t('restore.previous')}>
-          <p className={css.restoreLabel}>{t('restore.previous')}</p>
+          <p className={css.restoreLabel} data-yh-terminal="metadata">{t('restore.previous')}</p>
           <p className={css.restoreTitle}>{restoreTarget.title}</p>
-          <p className={css.restoreUrl}>{restoreTarget.url}</p>
+          <p className={css.restoreUrl} data-yh-terminal="metadata">{restoreTarget.url}</p>
           <Button variant="primary" size="sm" disabled={mountEpoch === 0} onClick={() => { restore(tab.id) }}>
             {t('restore.action')}
           </Button>

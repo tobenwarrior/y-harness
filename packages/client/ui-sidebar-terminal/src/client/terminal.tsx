@@ -55,7 +55,7 @@ export function TerminalBody({ useTabInfo, useTerminal, useTheme, view, t }: Ter
   const readOnly = state.phase === 'connected' && state.info?.state === 'running' && !state.writable
   return (
     <section className={css.root} data-sidebar-terminal>
-      {(status !== undefined || retry || readOnly) && <div className={css.status} role="status">
+      {(status !== undefined || retry || readOnly) && <div className={css.status} data-yh-terminal="toolbar" role="status">
         {status}
         {readOnly && <>{t('readonly')} <Button variant="outline" size="sm" onClick={() => { model.connect() }}>{t('control')}</Button></>}
         {retry && (state.info === undefined

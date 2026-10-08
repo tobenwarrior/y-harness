@@ -52,17 +52,18 @@ export function SettingsForm(props: SettingsFormProps) {
   const discard = useRef(props.onDiscard)
   discard.current = props.onDiscard
   useEffect(() => () => { discard.current() }, [])
-  if (!state.available) return <p className={css.unavailable} role="status">{labels.unavailable}</p>
+  if (!state.available) return <p className={css.unavailable} role="status" data-yh-terminal="metadata">{labels.unavailable}</p>
   const blocked = !state.dirty || state.invalid || state.saving
   return (
     <div className={css.form}>
-      {!state.writable ? <p className={css.readOnly} role="status">{labels.readOnly}</p> : null}
+      {!state.writable ? <p className={css.readOnly} role="status" data-yh-terminal="metadata">{labels.readOnly}</p> : null}
       {props.children}
-      <div className={css.footer}>
-        {state.failed ? <p className={css.failed} role="status">{labels.saveFailed}</p> : null}
+      <div className={css.footer} data-yh-terminal="toolbar">
+        {state.failed ? <p className={css.failed} role="status" data-yh-terminal="metadata">{labels.saveFailed}</p> : null}
         <button
           type="button"
           className={css.save}
+          data-yh-terminal="control"
           disabled={blocked}
           onClick={props.onSave}
         >

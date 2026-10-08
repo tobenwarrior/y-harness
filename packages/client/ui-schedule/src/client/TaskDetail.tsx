@@ -692,8 +692,8 @@ export function TaskDetail({
   }
 
   return <>
-    <aside ref={panelRef} className={css.detail} id={id} tabIndex={-1} aria-label={t('detail.label')}>
-      <div className={css.detailTabsBar}>
+    <aside ref={panelRef} className={css.detail} id={id} tabIndex={-1} aria-label={t('detail.label')} data-yh-terminal="panel">
+      <div className={css.detailTabsBar} data-yh-terminal="toolbar">
         <div ref={detailTabsRef} className={css.detailTabs} role="tablist" aria-label={t('detail.tabs')}>
           {(['rule', 'records'] as const).map(value => (
             <button
@@ -824,7 +824,7 @@ export function TaskDetail({
               onChange={(event) => { editContent({ title: event.target.value }) }}
             />}
         </header>}
-        {tab === 'rule' && !deleted && <div className={css.nextRun}>
+        {tab === 'rule' && !deleted && <div className={css.nextRun} data-yh-terminal="metadata">
           {task.status === 'active'
             ? <p>
               {t('detail.nextRun')}{' '}
@@ -893,7 +893,7 @@ export function TaskDetail({
         {t(shownFailure === 'timing.invalidInterval' ? INTERVAL_ERROR_KEYS[intervalUnit] : shownFailure)}</p>}
       {/* The mock's staged-edit bar sits under the detail tab strip and
           appears only while the draft differs from the stored task. */}
-      {dirty && !deleted && task.status !== 'inactive' && <footer className={css.saveFooter}>
+      {dirty && !deleted && task.status !== 'inactive' && <footer className={css.saveFooter} data-yh-terminal="toolbar">
         <span className={css.saveNotice}>{t('rule.unsaved')}</span>
         <Button disabled={pending} onClick={cancelDraft}>{t('rule.cancel')}</Button>
         <Button variant="primary" disabled={pending || !dirty} onClick={() => { void saveDraft() }}>
@@ -1600,7 +1600,7 @@ function RuleCard({
   const clockLine = failure ?? clockHint
   return <section className={css.ruleCard} aria-label={t('rule.title')}>
     <h3>{t('rule.title')}</h3>
-    <div className={css.ruleRows}>
+    <div className={css.ruleRows} data-yh-terminal="panel">
       {/* Same Escape guard as the header menu: the page's own Escape handler
           must not close the whole task detail while this list is open. */}
       <span className={css.menuGuard} onKeyDown={(event) => {
@@ -1624,6 +1624,7 @@ function RuleCard({
             ref={repeatRef}
             type="button"
             className={css.ruleValue}
+            data-yh-terminal="control"
             disabled={disabled}
             aria-haspopup="menu"
             aria-expanded={repeatOpen}
@@ -1663,6 +1664,7 @@ function RuleCard({
             <input
               id={rowId('interval')}
               className={clsx(css.ruleInput, css.ruleControl, css.ruleIntervalInput)}
+              data-yh-terminal="field"
               type="number"
               // Both bounds are stated in the row's own unit, so the Host's
               // 60-second floor reads as 60 seconds, 1 minute, or 1 hour and
@@ -1726,6 +1728,7 @@ function RuleCard({
               id={rowId('date')}
               type="button"
               className={clsx(css.ruleInput, css.ruleControl, css.pickerTrigger)}
+              data-yh-terminal="control"
               disabled={disabled}
               aria-label={t('timing.date')}
               aria-haspopup="dialog"
@@ -1761,6 +1764,7 @@ function RuleCard({
               id={rowId('time')}
               type="button"
               className={clsx(css.ruleInput, css.ruleControl, css.pickerTrigger)}
+              data-yh-terminal="control"
               disabled={disabled}
               aria-label={t('timing.time')}
               aria-haspopup="dialog"
@@ -1810,6 +1814,7 @@ function RuleCard({
             listClassName={css.zoneMenu}
             header={<input
               className={css.zoneSearch}
+              data-yh-terminal="field"
               type="search"
               value={zoneQuery}
               placeholder={t('timing.zoneSearch')}
@@ -1827,6 +1832,7 @@ function RuleCard({
               ref={zoneRef}
               type="button"
               className={css.ruleValue}
+              data-yh-terminal="control"
               disabled={disabled}
               aria-haspopup="menu"
               aria-expanded={zoneOpen}
@@ -2036,6 +2042,7 @@ function CronRows({ task, disabled, expression, timeZone, hintId, onEditExpressi
           ref={freqRef}
           type="button"
           className={css.ruleValue}
+          data-yh-terminal="control"
           disabled={disabled}
           aria-haspopup="menu"
           aria-expanded={freqOpen}
@@ -2118,6 +2125,7 @@ function CronRows({ task, disabled, expression, timeZone, hintId, onEditExpressi
           id={rowId('time')}
           type="button"
           className={clsx(css.ruleInput, css.ruleControl, css.pickerTrigger)}
+          data-yh-terminal="control"
           disabled={disabled}
           aria-label={t('timing.time')}
           aria-haspopup="dialog"
@@ -2146,6 +2154,7 @@ function CronRows({ task, disabled, expression, timeZone, hintId, onEditExpressi
       <input
         id={rowId('expression')}
         className={clsx(css.ruleInput, css.ruleControl)}
+        data-yh-terminal="field"
         type="text"
         spellCheck={false}
         autoComplete="off"
@@ -2195,6 +2204,7 @@ function CronStepper({ id, min, max, value, disabled, increaseLabel, decreaseLab
     <input
       id={id}
       className={clsx(css.ruleInput, css.ruleControl, css.ruleIntervalInput)}
+      data-yh-terminal="field"
       type="number"
       min={min}
       max={max}

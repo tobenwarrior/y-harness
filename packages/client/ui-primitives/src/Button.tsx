@@ -28,7 +28,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   variant = 'ghost', size = 'md', icon, className, children, ...rest
 }, ref) {
   return (
-    <button ref={ref} type="button" className={clsx(css.button, css[variant], css[size], className)} {...rest}>
+    <button ref={ref} type="button" data-yh-terminal="control" className={clsx(css.button, css[variant], css[size], className)} {...rest}>
       {icon != null && <span className={css.icon}>{icon}</span>}
       {children}
     </button>

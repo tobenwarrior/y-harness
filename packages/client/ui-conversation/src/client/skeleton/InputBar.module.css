@@ -147,6 +147,10 @@
   position: relative;
 }
 
+.terminalPrompt {
+  display: none;
+}
+
 /* Machine pending dot (adjudicating / submitting). */
 .pending {
   width: 8px;

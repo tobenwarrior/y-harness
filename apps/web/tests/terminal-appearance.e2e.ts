@@ -20,15 +20,15 @@ const SAMPLE_TEXT = 'Readable conversation prose remains separate from source co
 const DRAFT = 'Unsubmitted appearance draft'
 
 /** Durable source output gives narrow layouts a long line without a model request or large file. */
-function codeFixture(): string {
+function codeFixture(sourceLine = LONG_LINE, title = SAMPLE_TITLE, prompt = 'Inspect the long source line.'): string {
   const session = Session.create(SessionId('appearance-code-source'))
   const callId = ToolCallId('appearance-read')
   const argumentsText = JSON.stringify({ file_path: 'appearance.ts' })
   session.append('turn/start', { turn: 1 })
   const user = session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: 'Inspect the long source line.' }], source: { kind: 'user' },
+    content: [{ type: 'text', text: prompt }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  session.append('session/title', { title: SAMPLE_TITLE, messageSeqs: [user.seq], source: { kind: 'fallback' } })
+  session.append('session/title', { title, messageSeqs: [user.seq], source: { kind: 'fallback' } })
   session.append('step/start', { turn: 1, step: 1 })
   session.append('assistant/message', {
     stream: [], turn: 1, step: 1,
@@ -40,9 +40,9 @@ function codeFixture(): string {
   const call = session.append('tool/call', { turn: 1, step: 1, callId, name: 'read', arguments: argumentsText })
   session.append('tool/result', {
     turn: 1, step: 1,
-    meta: { path: 'appearance.ts', offset: 1, lines: [{ number: 1, text: LONG_LINE }], totalLines: 1 },
+    meta: { path: 'appearance.ts', offset: 1, lines: [{ number: 1, text: sourceLine }], totalLines: 1 },
     message: createToolResultMessage({
-      callId, content: [{ type: 'text', text: `<path>appearance.ts</path>\n<type>file</type>\n<content>\n1: ${LONG_LINE}\n</content>` }],
+      callId, content: [{ type: 'text', text: `<path>appearance.ts</path>\n<type>file</type>\n<content>\n1: ${sourceLine}\n</content>` }],
       isError: false,
     }),
   }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
@@ -71,6 +71,7 @@ describe('web e2e: terminal appearance', () => {
     // The recording remains read-only; a second synthetic Session owns only long-line stress.
     await seedSession(scaffold, await readFile(RECORDED, 'utf8'), 'appearance-recorded')
     await seedSession(scaffold, codeFixture(), 'appearance-code')
+    await seedSession(scaffold, codeFixture("const appearance = { style: 'terminal', palette: 'dark', fontSize: 14 }", 'Terminal appearance', 'Inspect the appearance configuration.'), 'appearance-preview')
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
@@ -170,7 +171,19 @@ describe('web e2e: terminal appearance', () => {
           })
           expect(geometry).toMatchObject({ viewportFits: true, composerFits: true, proseIsSans: true, contentSize: '14px', codeScrollsInternally: true, codeActuallyScrolls: true })
           expect(geometry.sessionPromptVisible).toBe(style === 'terminal')
+          const composerPrompt = page.locator('[data-yh-terminal="prompt"]')
+          expect(await composerPrompt.getAttribute('aria-hidden')).toBe('true')
+          expect(await composerPrompt.evaluate(element => getComputedStyle(element).display !== 'none')).toBe(style === 'terminal')
           if (style === 'terminal') expect(geometry).toMatchObject({ headerIsMono: true, composerRadius: '7px' })
+          if (style === 'terminal') {
+            const operationalChrome = await page.evaluate(() =>
+              ['[data-turn-process]', '[data-process-activity]', '[data-code-block-banner]'].map((selector) => {
+                const element = document.querySelector(selector)
+                if (element === null) throw new Error(`Missing Terminal operational surface: ${selector}`)
+                return getComputedStyle(element).fontFamily.includes('JetBrains Mono')
+              }))
+            expect(operationalChrome).toEqual([true, true, true])
+          }
           await page.getByRole('button', { name: 'More actions', exact: true }).click()
           const menu = page.locator('[data-menu-material]').last()
           await menu.waitFor()
@@ -198,6 +211,33 @@ describe('web e2e: terminal appearance', () => {
     }
     await compareOrRefreshGolden(join(EXPECTED, 'geometry.expected.md'), JSON.stringify(observations, null, 2), webSnapshotMode())
     expect(tripwire.pageErrors).toEqual([])
+  })
+
+  it('keeps the narrow composer usable at both content-size limits', async () => {
+    await page.setViewportSize({ width: 720, height: 1000 })
+    for (const fontSize of [10, 22]) {
+      await scaffold.ctx.settings.mutate('ui-theme', [{ op: 'set', path: ['fontSize'], value: fontSize }])
+      await expect.poll(() => page.evaluate(() => document.body.style.getPropertyValue('--dsh-content-font-size'))).toBe(`${fontSize}px`)
+      const input = page.locator('[data-composer-input]')
+      await writeComposerDraft(page, input, DRAFT)
+      expect(await input.textContent()).toBe(DRAFT)
+      const geometry = await input.evaluate((element) => {
+        const card = element.closest('[data-composer-card]')
+        if (card === null) throw new Error('Composer card is missing')
+        const inputBounds = element.getBoundingClientRect()
+        const cardBounds = card.getBoundingClientRect()
+        const hit = document.elementFromPoint(inputBounds.left + 3, inputBounds.top + inputBounds.height / 2)
+        return {
+          pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
+          inputFits: inputBounds.left >= cardBounds.left && inputBounds.right <= cardBounds.right,
+          editorReceivesPointer: hit !== null && element.contains(hit),
+          editorReceivesFocus: element.contains(document.activeElement),
+        }
+      })
+      expect(geometry).toEqual({ pageFits: true, inputFits: true, editorReceivesPointer: true, editorReceivesFocus: true })
+    }
+    await scaffold.ctx.settings.mutate('ui-theme', [{ op: 'set', path: ['fontSize'], value: 14 }])
+    await expect.poll(() => page.evaluate(() => document.body.style.getPropertyValue('--dsh-content-font-size'))).toBe('14px')
   })
 
   it('persists style independently of color mode and font size across reload', async () => {
@@ -240,6 +280,51 @@ describe('web e2e: terminal appearance', () => {
     await expandTurnProcesses(page)
     expect(await page.locator('[data-tool="read"] [data-disclosure-row]').first()
       .evaluate(element => getComputedStyle(element).fontFamily)).toContain('JetBrains Mono')
+    expect(tripwire.pageErrors).toEqual([])
+  })
+
+  it('shows the same Terminal chrome on the conversation, plugin and automation pages', async () => {
+    await scaffold.ctx.settings.mutate('ui-theme', [
+      { op: 'set', path: ['style'], value: 'terminal' },
+      { op: 'set', path: ['preference'], value: 'dark' },
+      { op: 'set', path: ['fontSize'], value: 14 },
+    ])
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.locator('[data-row-key="session:appearance-preview"][role="treeitem"]').click()
+    await page.getByText(SAMPLE_TEXT, { exact: true }).waitFor()
+    await expandTurnProcesses(page)
+    await page.locator('[data-variant="read"] [data-expandable]').click()
+    await writeComposerDraft(page, page.locator('[data-composer-input]'), 'Describe the next change…')
+    const artifacts = join(REPO_ROOT, '.artifacts', 'terminal-appearance')
+    for (const palette of ['dark', 'light'] as const) {
+      const dialog = await appearanceDialog()
+      const button = dialog.getByRole('button', { name: palette === 'dark' ? 'Dark' : 'Light', exact: true })
+      if (await button.getAttribute('aria-pressed') !== 'true') await selectSetting(button, 'preference', palette)
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'hidden' })
+      await page.evaluate(async () => { await document.fonts.ready })
+      await page.screenshot({ path: join(artifacts, `terminal-${palette}-1440-preview.png`), fullPage: true })
+    }
+    await scaffold.ctx.settings.mutate('ui-theme', [{ op: 'set', path: ['preference'], value: 'dark' }])
+    for (const route of [
+      { name: 'Plugins', selector: '[data-plugin-panel]', file: 'terminal-plugins-dark.png' },
+      { name: 'Automation tasks', selector: '[data-testid="task-manager-page"]', file: 'terminal-automations-dark.png' },
+    ]) {
+      await page.getByRole('button', { name: route.name, exact: true }).click()
+      const panel = page.locator(route.selector)
+      await panel.waitFor()
+      expect(await panel.locator('[data-yh-terminal="toolbar"]').first()
+        .evaluate(element => getComputedStyle(element).fontFamily)).toContain('JetBrains Mono')
+      if (route.name === 'Plugins') {
+        const card = panel.locator('[data-plugin-package]').first()
+        await card.waitFor()
+        const restingFill = await card.evaluate(element => getComputedStyle(element).backgroundColor)
+        await card.hover()
+        await expect.poll(() => card.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(restingFill)
+        await page.getByRole('button', { name: route.name, exact: true }).hover()
+      }
+      await page.screenshot({ path: join(artifacts, route.file), fullPage: true })
+    }
     expect(tripwire.pageErrors).toEqual([])
   })
 
