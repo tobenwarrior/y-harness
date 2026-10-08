@@ -116,6 +116,10 @@
   margin: 0 6px 0 4px;
 }
 
+.terminalPrompt {
+  display: none;
+}
+
 .slot {
   flex: none;
   width: 16px;

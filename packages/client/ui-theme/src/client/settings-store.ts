@@ -4,7 +4,36 @@
  * row components read via props.useStore.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
-import { DEFAULT_FONT_SIZE, type ThemePreference } from '../theme-settings.ts'
+import { DEFAULT_FONT_SIZE, DEFAULT_STYLE, type ThemePreference, type ThemeStyle } from '../theme-settings.ts'
+
+/** Store state mirrored from the selected appearance style. */
+export interface StyleRowState {
+  /** Persisted style selection. */
+  style: ThemeStyle
+  /** Service revision; -1 until the first sync. */
+  revision: number
+}
+
+type StyleRowActions = {
+  sync: (draft: StyleRowState, style: ThemeStyle, revision: number) => void
+}
+
+/**
+ * Declares the appearance Style row state and write surface.
+ * @returns the store handle.
+ */
+export function createStyleRowStore(): EngineStoreHandle<StyleRowState, StyleRowActions> {
+  return defineStore({
+    init: (): StyleRowState => ({ style: DEFAULT_STYLE, revision: -1 }),
+    actions: {
+      sync: (draft, style: ThemeStyle, revision: number) => {
+        if (revision <= draft.revision) return
+        draft.style = style
+        draft.revision = revision
+      },
+    },
+  })
+}
 
 /** Store state mirrored from the theme snapshot. */
 export interface AppearanceRowState {

@@ -4,8 +4,8 @@
  * `prefers-color-scheme`, and publishes immutable snapshots; it never touches
  * the DOM — ui-layout's presenter consumes the resolved snapshot. The Host
  * settings scope loads and stores the preference in the user-settings
- * document. The plugin also registers the Appearance preference row into the
- * settings General section — the theme feature owns its own settings surface.
+ * document. The plugin also owns the Appearance section with independent
+ * style, color mode, and font size controls.
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
@@ -20,20 +20,24 @@ import type { AppearanceRowInjected } from './AppearanceRow.tsx'
 import { AppearanceRow } from './AppearanceRow.tsx'
 import type { FontSizeRowInjected } from './FontSizeRow.tsx'
 import { FontSizeRow } from './FontSizeRow.tsx'
-import { createAppearanceRowStore, createFontSizeRowStore } from './settings-store.ts'
+import { AppearanceSection } from './AppearanceSection.tsx'
+import { StyleRow, type StyleRowInjected } from './StyleRow.tsx'
+import { createAppearanceRowStore, createFontSizeRowStore, createStyleRowStore } from './settings-store.ts'
 import { installThemeStyles } from './styles.ts'
 import { en, zh, type ThemeKey } from './locales.ts'
 import {
-  DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, FONT_SIZE_FIELD, FONT_SIZE_MAX, FONT_SIZE_MIN,
-  isThemePreference, THEME_PREFERENCE_FIELD, THEME_SETTINGS_NAMESPACE,
-  type ThemePreference, type ThemeSettings,
+  DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, DEFAULT_STYLE, FONT_SIZE_FIELD, FONT_SIZE_MAX, FONT_SIZE_MIN,
+  isThemePreference, isThemeStyle, THEME_PREFERENCE_FIELD, THEME_SETTINGS_NAMESPACE, THEME_STYLE_FIELD,
+  type ThemePreference, type ThemeSettings, type ThemeStyle,
 } from '../theme-settings.ts'
 
 export type { AppearanceRowComponentProps, AppearanceRowInjected } from './AppearanceRow.tsx'
 export type { FontSizeRowComponentProps, FontSizeRowInjected } from './FontSizeRow.tsx'
-export type { AppearanceRowState, FontSizeRowState } from './settings-store.ts'
+export type { StyleRowComponentProps, StyleRowInjected } from './StyleRow.tsx'
+export type { AppearanceSectionComponentProps } from './AppearanceSection.tsx'
+export type { AppearanceRowState, FontSizeRowState, StyleRowState } from './settings-store.ts'
 export type { ThemeKey } from './locales.ts'
-export type { ThemePreference, ThemeSettings } from '../theme-settings.ts'
+export type { ThemePreference, ThemeSettings, ThemeStyle } from '../theme-settings.ts'
 
 /** Namespace owning this feature's settings-row copy. */
 export const SETTINGS_NS = 'settings.theme'
@@ -78,6 +82,8 @@ export interface ThemeDefinition {
 
 /** Immutable theme state published on every change. */
 export interface ThemeSnapshot {
+  /** Persisted appearance style, independent of color mode. */
+  style: ThemeStyle
   /** The persisted preference (may be `system`). */
   preference: ThemePreference
   /** Conversation content font size in px (integer within FONT_SIZE_MIN..FONT_SIZE_MAX). */
@@ -161,6 +167,7 @@ export class ThemeRuntime {
   private readonly host: ConfigForm<ThemeSettings>
   private themes: ThemeDefinition[] = [...BUILTIN_THEMES]
   private preference: ThemePreference
+  private style: ThemeStyle = bootstrapStyle()
   private fontSize: number = bootstrapFontSize()
   private revision = 0
   private snapshot: ThemeSnapshot
@@ -255,11 +262,24 @@ export class ThemeRuntime {
     this.publish()
   }
 
+  /**
+   * Change appearance without changing the color mode or content font size.
+   * @param style - Built-in appearance style; unknown runtime values throw.
+   */
+  setStyle(style: ThemeStyle): void {
+    if (!isThemeStyle(style)) throw new Error(`appearance style "${String(style)}" is not supported`)
+    if (this.style === style) return
+    this.style = style
+    void this.host.set(THEME_STYLE_FIELD, style)
+    this.publish()
+  }
+
   /** Adopt the scope's accepted durable preference without writing it back. */
   private adopt(): void {
     const section = this.host.getSnapshot().value
     if (section === undefined) return
-    if (this.preference === section.preference && this.fontSize === section.fontSize) return
+    if (this.preference === section.preference && this.fontSize === section.fontSize && this.style === section.style) return
+    this.style = section.style
     this.preference = section.preference
     this.fontSize = section.fontSize
     this.publish()
@@ -327,6 +347,7 @@ export class ThemeRuntime {
     /* v8 ignore next 2 -- needs a registry without light/dark, which register()/dispose() cannot produce */
     if (active === undefined) throw new Error(`theme registry lost "${resolvedId}"`)
     return Object.freeze({
+      style: this.style,
       preference: this.preference,
       fontSize: this.fontSize,
       active: this.composeActive(active),
@@ -376,6 +397,14 @@ function bootstrapFontSize(): number {
     : DEFAULT_FONT_SIZE
 }
 
+/** Adopt the Host's pre-plugin style so the first snapshot matches boot. */
+function bootstrapStyle(): ThemeStyle {
+  /* v8 ignore next -- documentless Client compositions have no bootstrap selector */
+  if (typeof document === 'undefined') return DEFAULT_STYLE
+  const style = document.body.dataset.yhStyle
+  return isThemeStyle(style) ? style : DEFAULT_STYLE
+}
+
 /**
  * Runtime shape check for one override layer (model-authored callers pass
  * untyped JS through the dynamic-package façade, so the static type cannot
@@ -422,8 +451,8 @@ export const inject = ['slots', 'locale', 'remote', 'configForms']
 
 /**
  * Client plugin body: provide the theme service and register the
- * feature-owned Appearance preference row into the General section's item
- * slot (a feature owns its settings surface).
+ * feature-owned Appearance section and its style, color mode, and font size
+ * rows (a feature owns its settings surface).
  * @param ctx - client cordis context.
  */
 export function apply(ctx: ClientContext): void {
@@ -434,11 +463,21 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => ctx.locale.register(SETTINGS_NS, { zh, en }), 'ui-theme: settings row dictionaries')
 
+  const t = ctx.locale.bind(SETTINGS_NS)
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'appearance', order: 1,
+    label: () => t('section.title'), locale: SETTINGS_NS,
+    children: { 'settings.appearance.item': { kind: 'list', scope: 'root' } },
+  }, AppearanceSection))
+
   const store = createAppearanceRowStore()
   let bound: BoundActions<typeof store> | undefined
   const fontSizeStore = createFontSizeRowStore()
   let fontSizeBound: BoundActions<typeof fontSizeStore> | undefined
+  const styleStore = createStyleRowStore()
+  let styleBound: BoundActions<typeof styleStore> | undefined
   const sync = (snapshot: ThemeSnapshot): void => {
+    styleBound?.sync(snapshot.style, snapshot.revision)
     bound?.sync(snapshot.preference, snapshot.revision)
     fontSizeBound?.sync(snapshot.fontSize, snapshot.revision)
   }
@@ -452,8 +491,8 @@ export function apply(ctx: ClientContext): void {
       setTheme: (id) => { theme.setTheme(id) },
     }
   }
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
+  ctx.slots.inject('settings.appearance.item', () => ctx.slots.register({
+    name: 'settings.appearance.item',
     id: 'appearance',
     order: 10,
     store,
@@ -468,12 +507,22 @@ export function apply(ctx: ClientContext): void {
       setFontSize: (px) => { theme.setFontSize(px) },
     }
   }
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
+  ctx.slots.inject('settings.appearance.item', () => ctx.slots.register({
+    name: 'settings.appearance.item',
     id: 'font-size',
     order: 11,
     store: fontSizeStore,
     locale: SETTINGS_NS,
     inject: fontSizeInjected,
   }, FontSizeRow))
+
+  const styleInjected = (actions: BoundActions<typeof styleStore>): StyleRowInjected => {
+    styleBound = actions
+    sync(theme.getTheme())
+    return { setStyle: (style) => { theme.setStyle(style) } }
+  }
+  ctx.slots.inject('settings.appearance.item', () => ctx.slots.register({
+    name: 'settings.appearance.item', id: 'style', order: 0,
+    store: styleStore, locale: SETTINGS_NS, inject: styleInjected,
+  }, StyleRow))
 }

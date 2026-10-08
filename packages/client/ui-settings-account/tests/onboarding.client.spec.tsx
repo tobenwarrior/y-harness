@@ -12,7 +12,7 @@ import { en } from '../src/client/locales.ts'
 afterEach(cleanup)
 
 const theme: ThemeSnapshot = {
-  preference: 'light', fontSize: 14,
+  style: 'default', preference: 'light', fontSize: 14,
   active: { id: 'light', colorScheme: 'light', tokens: {} }, themes: [], revision: 0,
 }
 

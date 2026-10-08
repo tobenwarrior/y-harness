@@ -53,6 +53,7 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
       <button
         type="button"
         className={clsx(css.panelRow, active && css.panelActive)}
+        data-yh-part="sidebar-nav-row"
         aria-label={label}
         aria-current={active ? 'page' : undefined}
         onClick={() => { selectPanel(id) }}
@@ -180,6 +181,7 @@ export function SidebarRoot({
   return (
     <div
       ref={column}
+      data-yh-part="sidebar"
       className={clsx(
         css.root, !wide && css.collapsed, !wide && everWide.current && css.railIn,
         collapsed && wide && css.fading, !pointerInside && css.quietBars,
@@ -231,6 +233,7 @@ export function SidebarRoot({
         <button
           type="button"
           className={css.newSession}
+          data-yh-part="new-session"
           aria-label={t('session.new.label')}
           aria-keyshortcuts={newShortcut?.aria}
           onClick={() => { startSession() }}
@@ -248,7 +251,7 @@ export function SidebarRoot({
       </Tooltip>
 
       {panels.length > 0 && (
-        <nav className={css.panelList} aria-label={t('panels.label')}>
+        <nav className={css.panelList} data-yh-part="sidebar-nav" aria-label={t('panels.label')}>
           {panels.map(({ id, label }) => (
             <PanelRow
               key={id}

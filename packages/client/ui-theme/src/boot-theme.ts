@@ -6,7 +6,7 @@
  */
 
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
-import { DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, type ThemePreference } from './theme-settings.ts'
+import { DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, DEFAULT_STYLE, type ThemePreference, type ThemeStyle } from './theme-settings.ts'
 
 const LIGHT_BACKGROUND = '#fff'
 const DARK_BACKGROUND = '#151515'
@@ -21,7 +21,7 @@ function bootThemeStyle(preference: ThemePreference): string {
 }
 
 /** Build the body script that installs the palette selector and content size. */
-function bootThemeBodyScript(preference: ThemePreference, fontSize: number): string {
+function bootThemeBodyScript(preference: ThemePreference, fontSize: number, style: ThemeStyle): string {
   return `(() => {
   const preference = ${JSON.stringify(preference)}
   const systemDark = preference === 'system'
@@ -29,6 +29,7 @@ function bootThemeBodyScript(preference: ThemePreference, fontSize: number): str
     && matchMedia('(prefers-color-scheme: dark)').matches
   const dark = preference === 'dark' || systemDark
   document.documentElement.dataset.dsThemeSource = preference
+  document.body.dataset.yhStyle = ${JSON.stringify(style)}
   document.body.toggleAttribute('data-ds-dark-theme', dark)
   document.body.style.setProperty('--dsh-content-font-size', ${JSON.stringify(`${fontSize}px`)})
 })()`
@@ -40,14 +41,16 @@ function bootThemeBodyScript(preference: ThemePreference, fontSize: number): str
  * size before the shell mount and module script.
  * @param preference - Current Host-backed built-in preference.
  * @param fontSize - Current Host-backed content font size in px.
+ * @param style - Current Host-backed appearance style.
  * @returns head and body script rows in execution order.
  */
 export function bootThemeInjections(
   preference: ThemePreference = DEFAULT_PREFERENCE,
   fontSize: number = DEFAULT_FONT_SIZE,
+  style: ThemeStyle = DEFAULT_STYLE,
 ): IndexInjection[] {
   return [
     { kind: 'style', text: bootThemeStyle(preference) },
-    { kind: 'script', placement: 'body', text: bootThemeBodyScript(preference, fontSize) },
+    { kind: 'script', placement: 'body', text: bootThemeBodyScript(preference, fontSize, style) },
   ]
 }

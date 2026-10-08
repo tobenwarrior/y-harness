@@ -7,6 +7,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
 >
   <div
     class="root collapsed railIn quietBars"
+    data-yh-part="sidebar"
     style=""
   >
     <div
@@ -37,6 +38,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
     <button
       aria-label="New session"
       class="newSession"
+      data-yh-part="new-session"
       type="button"
     >
       <span
@@ -97,6 +99,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
 >
   <div
     class="root quietBars"
+    data-yh-part="sidebar"
     style="width: 300px;"
   >
     <div
@@ -148,6 +151,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
     <button
       aria-label="New session"
       class="newSession"
+      data-yh-part="new-session"
       type="button"
     >
       <span
@@ -213,6 +217,7 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
 >
   <div
     class="root collapsed railIn quietBars"
+    data-yh-part="sidebar"
     style=""
   >
     <div
@@ -243,6 +248,7 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
     <button
       aria-label="New session"
       class="newSession"
+      data-yh-part="new-session"
       type="button"
     >
       <span
@@ -303,6 +309,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
 >
   <div
     class="root quietBars"
+    data-yh-part="sidebar"
     style="width: 300px;"
   >
     <div
@@ -354,6 +361,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
     <button
       aria-label="New session"
       class="newSession"
+      data-yh-part="new-session"
       type="button"
     >
       <span
@@ -419,6 +427,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
 >
   <div
     class="root quietBars"
+    data-yh-part="sidebar"
     style="width: 300px;"
   >
     <div
@@ -470,6 +479,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
     <button
       aria-label="新建会话"
       class="newSession"
+      data-yh-part="new-session"
       type="button"
     >
       <span

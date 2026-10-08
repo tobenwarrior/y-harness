@@ -1,5 +1,5 @@
 ---
-description: "dsh Web 客户端的主题与正文字号设置：--yh-* token 样式表、ThemeRuntime 状态、「通用」设置行与插件前引导。"
+description: "dsh Web 客户端的外观设置：默认或终端风格、浅色／深色／跟随系统的颜色模式、会话字号与 --yh-* token 样式表。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-client-ui-theme` 让 Web GUI 用户在设置中选择 `light`、`dark` 或 `system`，并把会话正文字号设为 10 至 22 px。回环客户端把两个值存入 `ui-theme` 设置命名空间，本地提供方默认将其持久化到 `$DSH_HOME/cordis.patch.yml`。插件通过 `prefers-color-scheme` 解析 `system` 并发布不可变的 `ThemeSnapshot`；ui-layout 把每份快照应用到文档。本包还提供 `--yh-*` token 样式表，并注入同步引导，使所选调色板与字号在外壳加载前生效。第三方主题可通过 `ctx.theme` 注册别名 token 覆盖。
+`dsh-client-ui-theme` 让 Web GUI 用户在「设置 → 外观」中选择默认或终端风格、浅色／深色／跟随系统的颜色模式，并把会话正文字号设为 10 至 22 px。这些选择在回环浏览器上会跨重启持久化。终端风格在整个应用中使用紧凑圆角与等宽标签，同时保留易读的会话文本。风格与颜色模式相互独立，两种风格都支持浅色、深色与跟随系统的偏好。未保存风格覆盖时，默认风格保留现有外观。
 
 ## 目录
 
@@ -25,19 +25,23 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-用户从设置（「通用」分区）的两行中切换配色方案与正文字号；在回环浏览器上，两个选择都会跨重启持久化。功能插件通过 `ctx.theme` 消费当前快照，并在 CSS 中读取 `--yh-*` token；它们不自行管理主题状态。
+用户在「设置 → 外观」中选择风格、颜色模式和字号大小。功能插件通过 `ctx.theme` 消费当前快照，并在 CSS 中读取 `--yh-*` token；它们不自行管理主题状态。
 
-### 外观与字号
+### 风格、颜色模式与字号
 
-插件在「通用」分区注册外观偏好方块与字号步进器。步进器接受 10 至 22 px 的整数，默认值为 14 px。它以相同增量调整会话标题与基础文本，包括用户气泡与 composer 草稿；流内行的标题、摘要与表格跟随比正文低一档的字号，小号文本和代码保持固定字号。每次通过的变更都经 Host settings API 写入。连续快速变更按操作顺序携带命名空间 revision 串行写入，最新写入被拒时重新加载持久值。非 loopback 页面把两个选择都保留在进程内。
+「外观」标签页提供默认与终端预览卡片、浅色／深色／跟随系统的颜色模式选项，以及字号步进器。`ui-theme.style` 设置存储 `default` 或 `terminal`，默认值为 `default`。独立的颜色偏好（`ui-theme.preference`）默认为 `system`，正文字号（`ui-theme.fontSize`）默认为 14 px。选择风格时会保留颜色偏好与正文字号。本地提供方默认将该命名空间持久化到 `$DSH_HOME/cordis.patch.yml`。
+
+终端风格应用于侧栏与导航、会话及停靠标签、工具行、composer、菜单和设置。紧凑圆角与更平整的边框沿用当前浅色或深色调色板。导航标签、命令、路径与工具元数据使用现有等宽字体栈；助手正文、用户消息与 composer 文本保留系统字体栈。该风格使用现有主题强调色。
+
+字号步进器接受 10 至 22 px 的整数。它以相同增量调整会话标题与基础文本，包括用户气泡与 composer 草稿；流内行的标题、摘要与表格跟随比正文低一档的字号，小号文本和代码保持固定字号。每次通过的变更都经 Host settings API 写入。连续快速变更按操作顺序携带命名空间 revision 串行写入，最新写入被拒时重新加载持久值。非 loopback 页面把三个选择都保留在进程内。
 
 ### 注册主题
 
 组合可以通过 `ctx.theme` 注册带别名 token 覆盖的第三方主题 id；覆盖层按注册顺序折入活动快照的 token 中。移除其中一个绝不会覆盖最后一个持久化的内置偏好。第三方主题 id 仍是进程内扩展，不会跨越内置 settings schema。
 
-### 插件前调色板
+### 插件前外观
 
-当主机组合包含 HTTP 服务器时，宿主侧会把已注册的 `ui-theme` 设置或 schema 默认值嵌入每份 index 响应。head CSS 会在任何脚本运行前选择文档画布的配色方案，其中 `system` 偏好使用 `prefers-color-scheme` 查询；随后，body 脚本会在加载页面和应用脚本之前设置 `body[data-ds-dark-theme]` 与 `--dsh-content-font-size`，因此首帧绘制就采用所选调色板与字号。
+当主机组合包含 HTTP 服务器时，宿主侧会把已注册的 `ui-theme` 设置或 schema 默认值嵌入每份 index 响应。head CSS 会在任何脚本运行前选择文档画布的配色方案，其中 `system` 偏好使用 `prefers-color-scheme` 查询；随后，body 脚本会在加载页面和应用脚本之前设置 `body[data-ds-dark-theme]`、`body[data-yh-style]` 与 `--dsh-content-font-size`。首帧绘制采用所选调色板与字号，所选风格在插件样式加载后生效。
 
 -----
 
@@ -49,13 +53,13 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-服务拥有主题与字号状态并发布快照。ui-layout 展示转换器应用这些快照，token 样式表则拥有颜色与会话文本尺度。
+服务拥有风格、主题与字号状态并发布快照。ui-layout 展示转换器应用这些快照，token 样式表则拥有颜色与会话文本尺度。
 
 ### 样式表
 
 `base.css` 持有共享圆角尺度与设置卡片材质别名。材质别名在 `body` 上随当前色板解析。组件圆角选择遵循 [Web 样式参考](../../../docs/web-styling.zh.md#corner-radii-and-settings-cards)。
 
-`src/styles/` 下有八张样式表，由 ui-theme 的动态客户端 entry 依次导入：`base.css`、`corner-shape.css`、`design-platform.css`、`focus.css`、`onboarding.css`、`scrollbar.css`、`gradient-shadow-text.css` 与 `shiki.css`。客户端 bundle 将其编译并注入为插件持有的全局样式，因此卸载与 HMR（热模块替换）会随 ui-theme 一同移除。`scrollbar.css` 消费 `--yh-alias-scrollbar-*` token，必须排在声明这些 token 的 `design-platform.css` 之后。状态标记使用各自的语义状态 token。`--yh-alias-bg-document-selection` 在两种主题中均使用 40% 不透明度的 blue-500，供保留文档原色的选区使用。`design-platform.css` 还负责代码差异底色的别名及其静态透明度色阶，以及文件对比所用的 `--yh-alias-file-diff-*` 代码区、行号区和标记配色；`shiki.css` 负责语法颜色。
+[`src/client/styles.ts`](src/client/styles.ts) 按顺序导入共享样式表，最后一张是 [`terminal.css`](src/styles/terminal.css)。终端规则仅在 `body[data-yh-style='terminal']` 下生效；默认风格保留现有样式表的显示效果。客户端 bundle 将这些样式编译并注入为插件持有的全局样式，因此卸载与 HMR（热模块替换）会随 ui-theme 一同移除。`scrollbar.css` 消费 `--yh-alias-scrollbar-*` token，必须排在声明这些 token 的 `design-platform.css` 之后。状态标记使用各自的语义状态 token。`--yh-alias-bg-document-selection` 在两种主题中均使用 40% 不透明度的 blue-500，供保留文档原色的选区使用。`design-platform.css` 还负责代码差异底色的别名及其静态透明度色阶，以及文件对比所用的 `--yh-alias-file-diff-*` 代码区、行号区和标记配色；`shiki.css` 负责语法颜色。
 
 [`focus.css`](src/styles/focus.css) 提供 `:focus-visible` 兜底：通过 `var(--yh-focus-ring-color, var(--yh-alias-state-business-primary))` 声明焦点环颜色，并通过 `--yh-focus-ring-width` 声明标准宽度，但不声明轮廓样式——因此禁用轮廓的控件仍然不绘制，而没有自有焦点环的控件保持标准几何，而不是落到 Chromium 的 `auto 1px`。主题将该蓝色解析为浅色模式的 `#4176E6` 和深色模式的 `#599DE7`。组件轮廓与焦点环阴影使用同一颜色表达式，包括后代和伪元素上的环。`--yh-focus-ring-width`（2px）是标准宽度；密集表格与工具栏可以保留 1px，offset 仍由组件决定。
 
@@ -87,7 +91,7 @@ kind: "package-reference"
 
 ### 偏好持久化
 
-在 loopback 浏览器上，服务先以 schema 默认值立即提供自身，随后加载 `ui-theme` 命名空间，并把每次通过的主题或字号变更经 Host settings API 写入。收到推送的设置变更时或重连后都会重新拉取该命名空间。非 loopback 页面不会创建该 Host-backed scope。该持久化边界由 [Host 支撑的偏好参考](../ui-settings/README.zh.md) 拥有。
+服务在加载 `ui-theme` 命名空间之前读取引导时的风格与字号。每次通过的风格、主题或字号变更都经 Host settings API 写入。收到推送的设置变更时或重连后都会重新拉取该命名空间。非 loopback 页面不会创建该 Host-backed scope。该持久化边界由 [Host 支撑的偏好参考](../ui-settings/README.zh.md) 拥有。
 
 </details>
 

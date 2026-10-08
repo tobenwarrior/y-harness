@@ -31,7 +31,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 /** One resolved theme snapshot per scheme; the slot's theme hook serves these in the application. */
 const themeOf = (colorScheme: 'light' | 'dark'): ThemeSnapshot => ({
-  preference: colorScheme, fontSize: 14,
+  style: 'default', preference: colorScheme, fontSize: 14,
   active: { id: colorScheme, colorScheme, tokens: {} }, themes: [], revision: 0,
 })
 

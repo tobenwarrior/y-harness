@@ -634,6 +634,9 @@ export function SessionNodeItem({
           drag.drop(rowHalf(e))
         }}
     >
+      {selected && !row.archived && (
+        <span className={css.terminalPrompt} data-yh-part="session-prompt" aria-hidden="true">{'>'}</span>
+      )}
       {/* Pending interaction and own or descendant activity outrank the
           finished-but-unviewed reminder, which returns after activity stops
           and is cleared by opening the session. Archived rows keep the slot

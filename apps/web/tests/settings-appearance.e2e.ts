@@ -61,9 +61,10 @@ it('shares settings card materials and control sizes in both palettes', async ()
   const dialog = page.getByRole('dialog', { name: '设置', exact: true })
 
   for (const [palette, label] of [['light', '浅色'], ['dark', '深色']] as const) {
-    await dialog.getByRole('button', { name: '通用设置', exact: true }).click()
+    await dialog.getByRole('button', { name: '外观', exact: true }).click()
     await dialog.getByRole('button', { name: label, exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(palette === 'dark')
+    await dialog.getByRole('button', { name: '通用设置', exact: true }).click()
     const selector = await appearance(dialog.getByRole('button', { name: '工作区内修改', exact: true }))
     expect(selector.radius).toBe('12px')
     expect((await appearance(dialog)).radius).toBe('28px')

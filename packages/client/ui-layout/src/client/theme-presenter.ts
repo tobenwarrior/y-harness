@@ -14,6 +14,9 @@ import type { ThemeSnapshot } from '@deepseek-ai/dsh-client-ui-theme/client'
 /** Body attribute selecting the dark base palette in the token stylesheets. */
 export const DARK_ATTRIBUTE = 'data-ds-dark-theme'
 
+/** Body attribute selecting appearance independently of the palette. */
+export const STYLE_ATTRIBUTE = 'data-yh-style'
+
 /**
  * Root attribute publishing the theme source (`light`, `dark`, or `system`)
  * for host shells that mirror it into the native theme (the Electron preload
@@ -56,6 +59,7 @@ export class ThemePresenter {
     document.documentElement.setAttribute(THEME_SOURCE_ATTRIBUTE,
       snapshot.preference === 'system' ? 'system' : scheme)
     const body = document.body
+    body.setAttribute(STYLE_ATTRIBUTE, snapshot.style)
     if (scheme === 'dark') body.setAttribute(DARK_ATTRIBUTE, '')
     else body.removeAttribute(DARK_ATTRIBUTE)
     body.style.setProperty(CONTENT_FONT_SIZE_VARIABLE, `${snapshot.fontSize}px`)
@@ -78,6 +82,7 @@ export class ThemePresenter {
     document.documentElement.removeAttribute(THEME_SOURCE_ATTRIBUTE)
     const body = document.body
     body.removeAttribute(DARK_ATTRIBUTE)
+    body.removeAttribute(STYLE_ATTRIBUTE)
     body.style.removeProperty(CONTENT_FONT_SIZE_VARIABLE)
     for (const name of this.appliedTokens) body.style.removeProperty(name)
     this.appliedTokens = []

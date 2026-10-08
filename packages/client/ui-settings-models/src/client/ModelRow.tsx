@@ -50,6 +50,7 @@ export function ModelRow(props: ModelRowProps): ReactNode {
           <input
             key={field}
             className={styles['input']}
+            data-yh-part="provider-model-label"
             type="text"
             value={typeof model[field] === 'string' ? model[field] : ''}
             placeholder={t(field === 'id' ? 'modelId' : 'modelName')}

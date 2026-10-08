@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ThemePreference, ThemeSnapshot } from '@deepseek-ai/dsh-client-ui-theme/client'
-import { DARK_ATTRIBUTE, THEME_SOURCE_ATTRIBUTE, ThemePresenter } from '@deepseek-ai/dsh-client-ui-layout/src/client/theme-presenter.ts'
+import { DARK_ATTRIBUTE, STYLE_ATTRIBUTE, THEME_SOURCE_ATTRIBUTE, ThemePresenter } from '@deepseek-ai/dsh-client-ui-layout/src/client/theme-presenter.ts'
 
 const LIGHT_THEME_COLOR = 'rgb(255, 255, 255)'
 const DARK_THEME_COLOR = 'rgb(21, 21, 23)'
@@ -15,7 +15,7 @@ function snapshot(
 ): ThemeSnapshot {
   // The presenter must key off colorScheme, not the id — keep them distinct.
   const active = { id: `${colorScheme}-test`, colorScheme, tokens }
-  return { preference, fontSize, active, themes: [active], revision: 1 }
+  return { style: 'default', preference, fontSize, active, themes: [active], revision: 1 }
 }
 
 function clearThemePresentation(): void {
@@ -31,6 +31,7 @@ beforeEach(() => {
   document.documentElement.style.removeProperty('color-scheme')
   document.documentElement.removeAttribute(THEME_SOURCE_ATTRIBUTE)
   document.body.removeAttribute(DARK_ATTRIBUTE)
+  document.body.removeAttribute(STYLE_ATTRIBUTE)
   document.body.removeAttribute('style')
   const style = document.createElement('style')
   style.dataset.themePresenterTest = ''
@@ -44,6 +45,20 @@ beforeEach(() => {
 afterEach(clearThemePresentation)
 
 describe('ThemePresenter', () => {
+  it('switches only the appearance selector while retaining palette and content size, and retracts it', () => {
+    const presenter = new ThemePresenter()
+    const dark = snapshot('dark', {}, 18)
+    presenter.apply({ ...dark, style: 'terminal' })
+    expect(document.body.getAttribute(STYLE_ATTRIBUTE)).toBe('terminal')
+    expect(document.body.hasAttribute(DARK_ATTRIBUTE)).toBe(true)
+    expect(document.body.style.getPropertyValue('--dsh-content-font-size')).toBe('18px')
+    presenter.apply(dark)
+    expect(document.body.getAttribute(STYLE_ATTRIBUTE)).toBe('default')
+    expect(document.body.hasAttribute(DARK_ATTRIBUTE)).toBe(true)
+    presenter.dispose()
+    expect(document.body.hasAttribute(STYLE_ATTRIBUTE)).toBe(false)
+  })
+
   it('light scheme sets root color-scheme and leaves the dark attribute absent', () => {
     const presenter = new ThemePresenter()
     presenter.apply(snapshot('light'))

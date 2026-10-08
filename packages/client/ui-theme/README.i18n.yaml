@@ -3,41 +3,41 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/ui-theme/README.md
 /:
-  en: 79ca6ac4b89abe7f
-  zh: f1f29cf7985b04a9
+  en: 45d7e9349c76ea0c
+  zh: cb84afe9df499887
 /deepseek-ai-dsh-client-ui-theme:
   en: 06c7d7624947a72a
   zh: ac4ca82984564825
 /deepseek-ai-dsh-client-ui-theme/summary:
-  en: b7d02ad59c89f72d
-  zh: bbbf0f23a42c7b73
+  en: 00bae2fb180c2772
+  zh: 0d0b4d7909acdc7d
 /deepseek-ai-dsh-client-ui-theme/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-client-ui-theme/use-this-package:
-  en: ac151a731a040cdc
-  zh: 2e536fcd2a50144a
-/deepseek-ai-dsh-client-ui-theme/use-this-package/appearance-and-font-size:
-  en: ec98904b19d1b12b
-  zh: 59d5823ddb168195
+  en: 025193c594b474dd
+  zh: 3cf8f82da155db6a
+/deepseek-ai-dsh-client-ui-theme/use-this-package/style-color-mode-and-font-size:
+  en: bd9eea4a57aafbf3
+  zh: 2ecebd7cd787e874
 /deepseek-ai-dsh-client-ui-theme/use-this-package/registering-a-theme:
   en: 2cd32ccaba33b3e9
   zh: 53ea78d19929ea02
-/deepseek-ai-dsh-client-ui-theme/use-this-package/pre-plugin-palette:
-  en: 54296471349d9f77
-  zh: 8ca162b7b57b822e
+/deepseek-ai-dsh-client-ui-theme/use-this-package/pre-plugin-appearance:
+  en: 3fa33bb0e7ab596d
+  zh: b0d04f0463a4eb45
 /deepseek-ai-dsh-client-ui-theme/understand-the-implementation:
-  en: 5d70ce05d2ae2132
-  zh: 21ff769959b2fd8b
+  en: 34115012b36daf53
+  zh: 9f064f34b4bbdc8a
 /deepseek-ai-dsh-client-ui-theme/understand-the-implementation/stylesheets:
-  en: e47372ea04d6546a
-  zh: b2798361c915c020
+  en: d09eb8f8a95b8eee
+  zh: f09b3097623bad30
 /deepseek-ai-dsh-client-ui-theme/understand-the-implementation/scrollbar-rebinding:
   en: bf76e7c34a331595
   zh: 5accd0260ef7c61e
 /deepseek-ai-dsh-client-ui-theme/understand-the-implementation/preference-persistence:
-  en: 818da56a938d5394
-  zh: e6fd46a9e964b0a4
+  en: d13f58350c8ca3fb
+  zh: 827250ba49c2a508
 /deepseek-ai-dsh-client-ui-theme/further-exploration:
   en: 10664fe91f2ca00b
   zh: 086f8dffdc223c22

@@ -10,19 +10,13 @@ import { AppearanceRow } from '../src/client/AppearanceRow.tsx'
 import type { AppearanceRowComponentProps } from '../src/client/AppearanceRow.tsx'
 import { createAppearanceRowStore } from '../src/client/settings-store.ts'
 import type { ThemePreference } from '../src/client/index.ts'
+import { en } from '../src/client/locales.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined, reload: () => {} })) as GlobalStandardProps['useResource']
 const usePanelInfo: GlobalStandardProps['usePanelInfo'] = selector => selector({ activePanelId: null })
 
 afterEach(cleanup)
-
-const COPY: Record<string, string> = {
-  'appearance.title': 'Appearance',
-  'appearance.light': 'Light',
-  'appearance.dark': 'Dark',
-  'appearance.system': 'System',
-}
 
 function emptySessions() {
   const store = createSnapshotStore<SessionListState>(
@@ -52,7 +46,7 @@ function mount(preference: ThemePreference = 'system') {
     useWorkspaces: emptyWorkspaces(),
     useStore: bindSnapshotSelector(store),
     actions: store.actions,
-    t: (key: string) => COPY[key] ?? key,
+    t: key => (en as Record<string, string>)[key] ?? key,
     setTheme,
   }
   render(<AppearanceRow {...props} />)
@@ -65,7 +59,7 @@ const pressed = (name: RegExp): string | null =>
 describe('AppearanceRow', () => {
   it('renders the title and three cubes with the preference cube selected', () => {
     mount('dark')
-    expect(screen.getByText('Appearance')).toBeDefined()
+    expect(screen.getByText('Color mode')).toBeDefined()
     expect(pressed(/Dark/)).toBe('true')
     expect(pressed(/Light/)).toBe('false')
     expect(pressed(/System/)).toBe('false')

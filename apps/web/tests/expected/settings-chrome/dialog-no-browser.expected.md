@@ -2,6 +2,7 @@
   - navigation:
     - text: Settings
     - button "General"
+    - button "Appearance"
     - button "Models"
     - button "Built-in plugins"
     - button "Agent presets"
@@ -11,14 +12,7 @@
   - button "Workspace Write"
   - text: Language
   - button "English"
-  - text: Appearance
-  - button "Light"
-  - button "Dark"
-  - button "System" [pressed]
-  - text: Font size Only affects conversation content 14
-  - button "Increase font size"
-  - button "Decrease font size"
-  - text: px Work details Choose how much detail to show for tool calls
+  - text: Work details Choose how much detail to show for tool calls
   - button "Detailed"
   - text: Show coding view Shows trajectory, code diffs, and all Agent presets
   - switch "Show coding view"

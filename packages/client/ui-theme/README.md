@@ -1,5 +1,5 @@
 ---
-description: "Theme and content-font-size settings for the dsh web client: --yh-* token stylesheets, ThemeRuntime state, General settings rows, and the pre-plugin bootstrap."
+description: "Appearance settings for the dsh web client: Default or Terminal style, Light/Dark/System color mode, conversation font size, and --yh-* token stylesheets."
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-ui-theme` lets Web GUI users choose `light`, `dark`, or `system` and set conversation content text from 10 to 22 px in Settings. A loopback client stores both values in the `ui-theme` settings namespace, which the local provider persists in `$DSH_HOME/cordis.patch.yml` by default. The plugin resolves `system` through `prefers-color-scheme` and publishes immutable `ThemeSnapshot`s; ui-layout applies each snapshot to the document. The package also ships the `--yh-*` token stylesheets and injects a synchronous bootstrap so the selected palette and font size apply before the shell loads. Third-party themes can register alias-token overrides through `ctx.theme`.
+`dsh-client-ui-theme` lets Web GUI users choose Default or Terminal style, Light/Dark/System color mode, and conversation text from 10 to 22 px in Settings → Appearance. These choices persist across restarts on a loopback browser. Terminal applies compact corners and monospace labels across the app while preserving readable conversation text. Style and color mode remain independent, so either style supports both palettes and the System preference. Default preserves the existing appearance when no style override is saved.
 
 ## Table of Contents
 
@@ -25,19 +25,23 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Users switch the color scheme and content font size from two rows in Settings (General section); both choices persist across restarts on a loopback browser. Feature plugins consume the current snapshot through `ctx.theme` and read the `--yh-*` tokens in CSS; they do not manage theme state themselves.
+Users choose Style, Color mode, and Font size in Settings → Appearance. Feature plugins consume the current snapshot through `ctx.theme` and read the `--yh-*` tokens in CSS; they do not manage theme state themselves.
 
-### Appearance and font size
+### Style, color mode, and font size
 
-The plugin registers Appearance preference cubes and a font-size stepper in the General section. The stepper accepts integer values from 10 to 22 px and defaults to 14 px. It changes conversation headings and base text by the same increment, including the user bubble and composer draft; flow-row titles, summaries, and tables follow one step under the body size, while small text and code keep fixed sizes. Each accepted change writes through the Host settings API. Rapid changes serialize in gesture order with namespace revisions, and a rejected latest write reloads the durable values. Non-loopback pages keep both choices process-local.
+The Appearance tab offers Default and Terminal preview cards, Light/Dark/System color-mode choices, and a font-size stepper. The `ui-theme.style` setting stores `default` or `terminal` and defaults to `default`. The independent color preference (`ui-theme.preference`) defaults to `system`, and content size (`ui-theme.fontSize`) defaults to 14 px. Selecting a style preserves the color preference and content font size. The local provider persists the namespace in `$DSH_HOME/cordis.patch.yml` by default.
+
+Terminal applies its treatment to the sidebar and navigation, conversation and dock tabs, tool rows, composer, menus, and settings. Compact corners and flatter borders share the current light or dark palette. Navigation labels, commands, paths, and tool metadata use the existing monospace font stack; assistant prose, user messages, and composer text keep the system font stack. The style uses existing theme accents.
+
+The stepper accepts integer values from 10 to 22 px. It changes conversation headings and base text by the same increment, including the user bubble and composer draft; flow-row titles, summaries, and tables follow one step under the body size, while small text and code keep fixed sizes. Each accepted change writes through the Host settings API. Rapid changes serialize in gesture order with namespace revisions, and a rejected latest write reloads the durable values. Non-loopback pages keep all three choices process-local.
 
 ### Registering a theme
 
 A composition can register a third-party theme id with alias-token overrides through `ctx.theme`; the override layer folds into the active snapshot's tokens in registration order. Removing one never overwrites the last durable built-in preference. Third-party theme ids remain an in-process extension and do not cross the built-in settings schema.
 
-### Pre-plugin palette
+### Pre-plugin appearance
 
-When the host composition includes an HTTP server, the host half embeds the registered `ui-theme` settings, or schema defaults, into each index response. Head CSS selects the document canvas color scheme before any script runs, including a `prefers-color-scheme` query for the `system` preference. A body script then sets `body[data-ds-dark-theme]` and `--dsh-content-font-size` before the loading page and application scripts, so the first paint uses the selected palette and text size.
+When the host composition includes an HTTP server, the host half embeds the registered `ui-theme` settings, or schema defaults, into each index response. Head CSS selects the document canvas color scheme before any script runs, including a `prefers-color-scheme` query for the `system` preference. A body script then sets `body[data-ds-dark-theme]`, `body[data-yh-style]`, and `--dsh-content-font-size` before the loading page and application scripts. The first paint uses the selected palette and text size, and the selected style applies when the plugin styles load.
 
 -----
 
@@ -49,13 +53,13 @@ Shared menus use `--yh-menu-surface-fill` and blur through `MenuSurface`; platfo
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns theme and font-size state and publishes snapshots. The ui-layout presenter applies those snapshots, and the token sheets own the color and conversation text scales.
+The service owns style, theme, and font-size state and publishes snapshots. The ui-layout presenter applies those snapshots, and the token sheets own the color and conversation text scales.
 
 ### Stylesheets
 
 `base.css` owns the shared radius scale and settings-card material aliases. The material aliases resolve on `body`, alongside the active palette. Follow [Web styling](../../../docs/web-styling.md#corner-radii-and-settings-cards) when choosing component radii.
 
-`src/styles/` holds eight sheets imported in order by ui-theme's dynamic client entry: `base.css`, `corner-shape.css`, `design-platform.css`, `focus.css`, `onboarding.css`, `scrollbar.css`, `gradient-shadow-text.css`, and `shiki.css`. The client bundle compiles and injects them as plugin-owned global styles, so unload and HMR remove them with ui-theme. `scrollbar.css` consumes the `--yh-alias-scrollbar-*` tokens and must follow `design-platform.css`, which declares them. Status marks use their own semantic state tokens. `--yh-alias-bg-document-selection` uses blue-500 at 40% opacity in both themes for selections over original document colors. `design-platform.css` also owns the code-diff fill aliases and their static alpha palette entries, plus the `--yh-alias-file-diff-*` code, gutter, and marker palette for file comparisons; `shiki.css` owns syntax colors.
+[`src/client/styles.ts`](src/client/styles.ts) imports the shared sheets in order, ending with [`terminal.css`](src/styles/terminal.css). Terminal rules apply only under `body[data-yh-style='terminal']`; Default keeps the existing sheets' presentation. The client bundle compiles and injects these plugin-owned global styles, so unload and HMR remove them with ui-theme. `scrollbar.css` consumes the `--yh-alias-scrollbar-*` tokens and must follow `design-platform.css`, which declares them. Status marks use their own semantic state tokens. `--yh-alias-bg-document-selection` uses blue-500 at 40% opacity in both themes for selections over original document colors. `design-platform.css` also owns the code-diff fill aliases and their static alpha palette entries, plus the `--yh-alias-file-diff-*` code, gutter, and marker palette for file comparisons; `shiki.css` owns syntax colors.
 
 [`focus.css`](src/styles/focus.css) provides a `:focus-visible` fallback that names the ring colour through `var(--yh-focus-ring-color, var(--yh-alias-state-business-primary))` and the standard width through `--yh-focus-ring-width`, never the outline style — so a control that disables its outline stays paintless, and one that declares no ring keeps the standard geometry instead of Chromium's `auto 1px`. The theme resolves this blue to `#4176E6` in light mode and `#599DE7` in dark mode. Component outlines and focus-ring shadows use the same colour expression, including rings on descendants and pseudo-elements. `--yh-focus-ring-width` (2px) is the standard width; dense tables and toolbars may keep 1px, and offsets remain component-owned.
 
@@ -87,7 +91,7 @@ The `--yh-alias-turn-trigger-*` tokens provide separate resting and hover backgr
 
 ### Preference persistence
 
-The service provides itself immediately with the schema defaults on a loopback browser, then loads the `ui-theme` namespace and writes each accepted theme or font-size change through the Host settings API. Pushed settings changes and reconnects refetch the namespace. Non-loopback pages do not create that Host-backed scope. The persistence boundary is owned by the [Host-backed preferences reference](../ui-settings/README.md).
+The service reads boot style and font size before loading the `ui-theme` namespace. It writes each accepted style, theme, or font-size change through the Host settings API. Pushed settings changes and reconnects refetch the namespace. Non-loopback pages do not create that Host-backed scope. The persistence boundary is owned by the [Host-backed preferences reference](../ui-settings/README.md).
 
 </details>
 

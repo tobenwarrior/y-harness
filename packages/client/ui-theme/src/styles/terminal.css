@@ -1,0 +1,188 @@
+/* Terminal is a presentation axis: the existing palette and reading typography
+   still resolve through the light/dark theme and content-size preferences. */
+body[data-yh-style='terminal'] {
+  --yh-terminal-control-radius: 5px;
+  --yh-terminal-composer-radius: 7px;
+  --yh-terminal-user-radius: 12px;
+  --yh-terminal-chrome-fill: var(--yh-specific-sidebar-fill);
+  --yh-terminal-surface-fill: var(--yh-alias-bg-layer-2);
+  --yh-terminal-raised-fill: var(--yh-alias-bg-module-platform);
+  --yh-terminal-accent: var(--yh-alias-brand-primary-new-colorprimary-new-color);
+  --yh-radius-sm: var(--yh-terminal-control-radius);
+  --yh-radius-md: var(--yh-terminal-control-radius);
+  --yh-radius-lg: var(--yh-terminal-composer-radius);
+  --yh-radius-xl: var(--yh-terminal-composer-radius);
+  --yh-radius-panel: var(--yh-terminal-composer-radius);
+  --yh-alias-settings-card-fill: var(--yh-terminal-raised-fill);
+  --yh-alias-settings-card-stroke: var(--yh-alias-border-l3);
+}
+
+/* The Default sample keeps its own geometry while the whole app is Terminal. */
+body[data-yh-style='terminal'] [data-yh-style-preview='default'] {
+  --yh-radius-sm: 8px;
+  --yh-radius-md: 12px;
+  --yh-radius-lg: 16px;
+  --yh-radius-xl: 20px;
+  --yh-radius-panel: 28px;
+}
+
+/* Flatten the native-vibrancy wash without changing column or window chrome. */
+body[data-yh-style='terminal'] [data-yh-part='frame'] > [data-yh-part='sidebar-column'],
+html[data-platform='darwin'] body[data-yh-style='terminal'] [data-yh-part='frame'] > [data-yh-part='sidebar-column'] {
+  background: var(--yh-terminal-chrome-fill);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='conversation-header'],
+body[data-yh-style='terminal'] [data-dockkit-strip] {
+  background: var(--yh-terminal-chrome-fill);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='sidebar-nav-row'],
+body[data-yh-style='terminal'] [data-yh-part='new-session'],
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='workspace:'],
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='session:'],
+body[data-yh-style='terminal'] [data-slot='sidebar.settings'] button,
+body[data-yh-style='terminal'] [data-yh-part='conversation-breadcrumbs'],
+body[data-yh-style='terminal'] [data-yh-part='conversation-breadcrumbs'] button,
+body[data-yh-style='terminal'] [data-conversation-tabs] > [role='tab'],
+body[data-yh-style='terminal'] [data-dockkit-tab],
+body[data-yh-style='terminal'] [data-yh-part='settings-nav'] button,
+body[data-yh-style='terminal'] [data-yh-part='provider-model-label'],
+body[data-yh-style='terminal'] [data-path-label],
+body[data-yh-style='terminal'] [data-tool] [data-disclosure-row],
+body[data-yh-style='terminal'] [data-sample='bash'],
+body[data-yh-style='terminal'] [data-chat-running],
+body[data-yh-style='terminal'] [data-composer-dock],
+body[data-yh-style='terminal'] [data-yh-part='composer-controls'] button,
+body[data-yh-style='terminal'] [data-menu-material] [role^='menuitem'],
+body[data-yh-style='terminal'] [data-menu-material] [role='option'],
+body[data-yh-style='terminal'] [data-menu-group-heading] {
+  font-family: var(--ds-font-family-code);
+}
+
+/* Navigation selection is flat; only the current Session carries a side rail. */
+body[data-yh-style='terminal'] [data-yh-part='sidebar-nav-row'],
+body[data-yh-style='terminal'] [data-yh-part='new-session'],
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='workspace:'],
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='session:'],
+body[data-yh-style='terminal'] [data-yh-part='settings-nav'] button,
+body[data-yh-style='terminal'] [data-yh-part='composer-controls'] button {
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+}
+
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='session:'][aria-selected='true'] {
+  background: var(--yh-terminal-raised-fill);
+  box-shadow: inset 2px 0 0 var(--yh-terminal-accent);
+}
+
+/* The prompt fits the existing 8px leading pad; its zero occupied width
+   retains the status cell and title alignment. */
+body[data-yh-style='terminal'] [data-yh-part='sidebar'] [data-row-key^='session:'][aria-selected='true'] [data-yh-part='session-prompt'] {
+  display: inline-flex;
+  flex: none;
+  width: 6px;
+  margin-inline-start: -6px;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--yh-terminal-accent);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='sidebar-nav-row'][aria-current='page'],
+body[data-yh-style='terminal'] [data-yh-part='settings-nav'] button[aria-current='true'] {
+  background: var(--yh-terminal-raised-fill);
+  color: var(--yh-alias-label-primary);
+}
+
+body[data-yh-style='terminal'] [data-dockkit-tab] {
+  border-radius: 0;
+  background: transparent;
+}
+
+body[data-yh-style='terminal'] [data-dockkit-tab][aria-selected='true'] {
+  background: var(--yh-terminal-surface-fill);
+  color: var(--yh-terminal-accent);
+  box-shadow: inset 0 -2px 0 var(--yh-terminal-accent);
+}
+
+body[data-yh-style='terminal'] [data-conversation-tabs] > [role='tab'][aria-selected='true'] {
+  color: var(--yh-terminal-accent);
+}
+
+body[data-yh-style='terminal'] [data-conversation-tabs] > [role='tab']::after {
+  border-radius: 0;
+}
+
+body[data-yh-style='terminal'] [data-tool] [data-disclosure-row],
+body[data-yh-style='terminal'] [data-sample='bash'] {
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+  background: var(--yh-terminal-surface-fill);
+  color: var(--yh-alias-label-secondary);
+  box-shadow: inset 0 0 0 0.5px var(--yh-alias-border-l3);
+}
+
+body[data-yh-style='terminal'] [data-tool] [data-disclosure-row]:hover,
+body[data-yh-style='terminal'] [data-tool] [data-disclosure-row][aria-expanded='true'],
+body[data-yh-style='terminal'] [data-sample='bash']:hover,
+body[data-yh-style='terminal'] [data-sample='bash'][aria-expanded='true'] {
+  background: var(--yh-terminal-raised-fill);
+  color: var(--yh-alias-label-primary);
+}
+
+body[data-yh-style='terminal'] [data-composer-card],
+body[data-yh-style='terminal'] [data-composer-card]::after {
+  border-radius: var(--yh-terminal-composer-radius);
+  corner-shape: round;
+}
+
+body[data-yh-style='terminal'] [data-composer-card] {
+  background: var(--yh-terminal-surface-fill);
+  box-shadow: 0 0 0 0.5px var(--yh-elevation-stroke-color);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='composer-primary'] {
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+  background: var(--yh-terminal-accent);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='composer-primary']:hover:not(:disabled) {
+  background: var(--yh-alias-button-info-hover);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='user-bubble'] {
+  border-radius: var(--yh-terminal-user-radius);
+  corner-shape: round;
+  font-family: var(--yh-font-family);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='assistant-prose'] {
+  font-family: var(--yh-font-family);
+}
+
+body[data-yh-style='terminal'] [data-shortcut-modal='settings'] {
+  background: var(--yh-alias-bg-base);
+  box-shadow: 0 0 0 0.5px var(--yh-alias-border-l3);
+  corner-shape: round;
+}
+
+body[data-yh-style='terminal'] [data-yh-part='settings-nav'] {
+  background: var(--yh-terminal-chrome-fill);
+}
+
+body[data-yh-style='terminal'] [data-yh-part='settings-content'] {
+  font-family: var(--yh-font-family);
+}
+
+/* Shared MenuSurface retains its isolated translucent material and blur. */
+body[data-yh-style='terminal'] [data-menu-material],
+body[data-yh-style='terminal'] [data-menu-backing] {
+  border-radius: var(--yh-terminal-control-radius);
+  corner-shape: round;
+}
+
+body[data-yh-style='terminal'] [data-menu-material] {
+  box-shadow: 0 0 0 0.5px var(--yh-alias-border-l3);
+}

@@ -83,6 +83,27 @@ function fireDrag(row: HTMLElement, kind: 'dragOver' | 'drop', clientY: number):
 }
 
 describe('workspace browser rows', () => {
+  it('keeps the selected Session prompt presentational and off unrelated rows', () => {
+    const node: SessionNode = {
+      id: sid('prompt'), title: 'Focused Session', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false, archived: false,
+    }
+    const onOpen = vi.fn()
+    const view = render(<SessionNodeItem node={node} currentId={node.id} now={0} onOpen={onOpen} t={tEn} />)
+    const row = screen.getByRole('treeitem', { name: /Focused Session/ })
+    const prompt = row.querySelector('[data-yh-part="session-prompt"]')
+    expect(prompt).not.toBeNull()
+    expect(prompt?.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByRole('treeitem', { name: />/ })).toBeNull()
+    fireEvent.click(row)
+    expect(onOpen).toHaveBeenCalledWith(node.id)
+
+    view.rerender(<SessionNodeItem node={node} currentId={undefined} now={0} onOpen={onOpen} t={tEn} />)
+    expect(screen.getByRole('treeitem').querySelector('[data-yh-part="session-prompt"]')).toBeNull()
+    view.rerender(<SessionNodeItem node={{ ...node, archived: true }} currentId={node.id} now={0} onOpen={onOpen} t={tEn} />)
+    expect(screen.getByRole('treeitem').querySelector('[data-yh-part="session-prompt"]')).toBeNull()
+  })
+
   it('keeps the leading status cell in the hierarchy-free flat list', () => {
     const idle: SessionNode = {
       id: sid('flat'), title: 'Flat Session', blank: false, running: false,

@@ -176,15 +176,15 @@ interface RuntimeSettlement {
 
 function observeRuntime(subject: ClientInspectorSource) {
   // This fixture owns the source whose executor and request map are being observed.
-  const executor = Reflect.get(subject, 'runtime')
-  const requests = Reflect.get(subject, 'runtimeRequests')
+  const executor: unknown = Reflect.get(subject, 'runtime')
+  const requests: unknown = Reflect.get(subject, 'runtimeRequests')
   if (!(executor instanceof ClientRuntimeExecutor) || !(requests instanceof Map)) {
     throw new Error('Inspector Client runtime observation fields are unavailable')
   }
   const lifetime = new AbortController()
   const admissions = new Map<string, PromiseWithResolvers<ClientRuntimeRequestFrame>>()
   const settlements = new Map<ClientRuntimeRequestId, PromiseWithResolvers<RuntimeSettlement>>()
-  const execute = executor.execute
+  const execute = executor.execute.bind(executor)
 
   function admissionFor(expression: string) {
     let ticket = admissions.get(expression)

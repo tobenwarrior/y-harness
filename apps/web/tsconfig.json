@@ -86,6 +86,7 @@
     "tests/session-log-upload.e2e.ts",
     "tests/caption-overlays.e2e.ts",
     "tests/settings-appearance.e2e.ts",
+    "tests/terminal-appearance.e2e.ts",
     "tests/menu-material.e2e.ts",
     "tests/desktop-locale.e2e.ts",
     "tests/settings-import.e2e.ts",

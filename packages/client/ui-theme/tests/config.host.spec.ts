@@ -23,16 +23,27 @@ function rowText(row: IndexInjection | undefined): string {
 }
 
 describe('ui-theme host', () => {
+  it('preserves the Default style for existing documents and validates style independently', async () => {
+    const configuration = await liveConfig(new Context(), { Config, apply })
+    await configuration.update({ preference: 'dark', fontSize: 18 })
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'default', preference: 'dark', fontSize: 18 })
+    await configuration.update({ style: 'terminal' })
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'terminal', preference: 'dark', fontSize: 18 })
+    await expect(configuration.update({ style: 'unknown' })).rejects.toThrow()
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'terminal', preference: 'dark', fontSize: 18 })
+    await configuration.fiber.dispose()
+  })
+
   it('registers, validates, and disposes the durable theme namespace with its fiber', async () => {
     const ctx = new Context()
     const configuration = await liveConfig(ctx, { Config, apply })
     const { fiber } = configuration
-    expect(plainConfig(configuration.fiber.config)).toEqual({ preference: DEFAULT_PREFERENCE, fontSize: 14 })
-    await configuration.update({ preference: 'dark', fontSize: 10 })
-    expect(plainConfig(configuration.fiber.config)).toEqual({ preference: 'dark', fontSize: 10 })
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'default', preference: DEFAULT_PREFERENCE, fontSize: 14 })
+    await configuration.update({ style: 'default', preference: 'dark', fontSize: 10 })
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'default', preference: 'dark', fontSize: 10 })
     await configuration.update({ fontSize: 22 })
-    expect(plainConfig(configuration.fiber.config)).toEqual({ preference: 'dark', fontSize: 22 })
-    await expect(configuration.update({ preference: 'sepia' })).rejects.toThrow()
+    expect(plainConfig(configuration.fiber.config)).toEqual({ style: 'default', preference: 'dark', fontSize: 22 })
+    await expect(configuration.update({ style: 'default', preference: 'sepia' })).rejects.toThrow()
     await expect(configuration.update({ fontSize: 9 })).rejects.toThrow()
     await expect(configuration.update({ fontSize: 23 })).rejects.toThrow()
     await fiber.dispose()
@@ -53,7 +64,7 @@ describe('ui-theme host', () => {
     expect(rowText(rows[0])).toContain('@media(prefers-color-scheme:dark)')
     expect(rowText(rows[1])).toContain('const preference = "system"')
     expect(rowText(rows[1])).toContain('"14px"')
-    await configuration.update({ preference: 'dark', fontSize: 22 })
+    await configuration.update({ style: 'default', preference: 'dark', fontSize: 22 })
     expect(rowText(collect(ctx)[0])).toContain('color-scheme:dark')
     expect(rowText(collect(ctx)[1])).toContain('const preference = "dark"')
     expect(rowText(collect(ctx)[1])).toContain('"22px"')

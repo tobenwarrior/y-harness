@@ -1,0 +1,11 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.section > :global([data-slot='settings.appearance.item']) > :last-child {
+  border-bottom: none;
+}

@@ -1,5 +1,5 @@
 /**
- * Appearance preference row registered into the General section item slot
+ * Color-mode preference row registered into the Appearance section item slot
  * (figma 501:30012 'Frame 2117131228'): title + three preference cubes.
  * Registered by this package — the theme feature owns its own settings
  * surface. Selection follows the persisted preference, never the resolved
@@ -24,7 +24,7 @@ export interface AppearanceRowInjected {
 
 /** Full component props: runtime share + store share + locale seat + injected face. */
 export type AppearanceRowComponentProps =
-  PropsRuntime<'settings.general.item'> & PropsStore<ReturnType<typeof createAppearanceRowStore>>
+  PropsRuntime<'settings.appearance.item'> & PropsStore<ReturnType<typeof createAppearanceRowStore>>
   & PropsLocale<'settings.theme'> & AppearanceRowInjected
 
 /** Cube order and icons (figma 501:30015-30017: Light, Dark, System). */
@@ -35,7 +35,7 @@ const CUBES: readonly { id: ThemePreference; labelKey: ThemeKey; Icon: typeof Ic
 ]
 
 /**
- * Render the Appearance row.
+ * Render the color-mode row.
  * @param props - composed slot props.
  * @returns the row element tree.
  */

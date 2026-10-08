@@ -465,7 +465,7 @@ describe('web e2e: plugin manager', () => {
     for (const [theme, label] of [['light', '浅色'], ['dark', '深色']] as const) {
       await openSettings(page, 'zh')
       const settings = page.getByRole('dialog', { name: '设置', exact: true })
-      await settings.getByRole('button', { name: '通用设置', exact: true }).click()
+      await settings.getByRole('button', { name: '外观', exact: true }).click()
       await settings.getByRole('button', { name: label, exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(theme === 'dark')
       const panel = await openPluginsPanel()
@@ -485,14 +485,14 @@ describe('web e2e: plugin manager', () => {
       expect(appearance).toEqual({
         width: 36,
         height: 20,
-        thumb: theme === 'dark' ? 'rgb(173, 178, 184)' : 'rgb(255, 255, 255)',
+        thumb: theme === 'dark' ? 'rgb(152, 152, 152)' : 'rgb(255, 255, 255)',
         opacity: '1',
       })
     }
     // Leave the shared page in the default theme for the tests after this one.
     await openSettings(page, 'zh')
     const settings = page.getByRole('dialog', { name: '设置', exact: true })
-    await settings.getByRole('button', { name: '通用设置', exact: true }).click()
+    await settings.getByRole('button', { name: '外观', exact: true }).click()
     await settings.getByRole('button', { name: '浅色', exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
     await closeSettings()

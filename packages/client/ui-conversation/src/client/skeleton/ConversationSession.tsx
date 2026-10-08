@@ -70,7 +70,7 @@ export function ConversationSessionHeader({
         {!hideChrome && (
           <>
             <div className={css.titleCluster}>
-              <nav className={css.crumbs} aria-label={t('session.hierarchy')}>
+              <nav className={css.crumbs} data-yh-part="conversation-breadcrumbs" aria-label={t('session.hierarchy')}>
                 {ancestry.map((summary, index) => {
                   const last = index === ancestry.length - 1
                   // The current crumb has no navigation, so it is plain text
