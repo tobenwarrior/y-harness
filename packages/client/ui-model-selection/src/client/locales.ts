@@ -14,6 +14,7 @@ import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'provider.account': 'DeepSeek 账号',
+  'provider.route': '{name} ({id})',
   'command.label': '模型',
   'command.description': '选择本会话使用的模型',
   'option.loadError': '目录加载失败：{message}',
@@ -24,8 +25,9 @@ export const zh = {
   'trigger.ariaEffort': '选择模型，当前 {model}，推理等级 {effort}',
   'trigger.ariaSpeed': '选择模型，当前 {model}，速度 {speed}',
   'trigger.ariaEffortSpeed': '选择模型，当前 {model}，推理等级 {effort}，速度 {speed}',
-  'menu.aria': '模型、推理等级与速度',
+  'menu.aria': '提供方、模型、推理等级与速度',
   'menu.model': '模型',
+  'menu.provider': '提供方',
   'menu.effort': '推理等级',
   'menu.speed': '速度',
   'effort.providerDefault': 'Default',
@@ -48,6 +50,7 @@ export type ModelKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'provider.account': 'DeepSeek Account',
+  'provider.route': '{name} ({id})',
   'command.label': 'Model',
   'command.description': 'Select the model for this conversation',
   'option.loadError': 'Catalog failed to load: {message}',
@@ -58,8 +61,9 @@ export const en = {
   'trigger.ariaEffort': 'Select model, current {model}, reasoning effort {effort}',
   'trigger.ariaSpeed': 'Select model, current {model}, speed {speed}',
   'trigger.ariaEffortSpeed': 'Select model, current {model}, reasoning effort {effort}, speed {speed}',
-  'menu.aria': 'Model, reasoning effort, and speed',
+  'menu.aria': 'Provider, model, reasoning effort, and speed',
   'menu.model': 'Model',
+  'menu.provider': 'Provider',
   'menu.effort': 'Effort',
   'menu.speed': 'Speed',
   'effort.providerDefault': 'Default',

@@ -474,9 +474,14 @@
   outline: none;
 }
 
-.cell:hover,
-.cell:focus-visible {
+.cell:hover:not(.providerCell),
+.cell:focus-visible:not(.providerCell) {
   background: var(--yh-alias-interactive-bg-hover);
+}
+
+.providerCell {
+  padding-right: 26px;
+  cursor: default;
 }
 
 .cellLabel {

@@ -1,7 +1,7 @@
 /**
  * ModelSelect: the composer's named model seat (`conversation.input.model`).
  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
- * the Model / Effort / Speed row triple (label + current value + a right
+ * an informational Provider row and Model / Effort / Speed rows (label + current value + a right
  * chevron), each drilling into its own list — the provider-grouped model list
  * over the shared directory, the effort levels, and the speed tiers when the
  * exact model advertises any. The trigger (313:14108's ToggleButton) shows
@@ -43,7 +43,7 @@ import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
 
-/** Which pane the dropdown shows: the three-row root or one drilled-in list. */
+/** Which pane the dropdown shows: the root menu or one drilled-in list. */
 type Pane = 'root' | 'model' | 'effort' | 'speed'
 
 /** One dynamic effort row; undefined means preserve the provider default. */
@@ -146,6 +146,16 @@ export function ModelSelect(
     ? -1
     : choices.findIndex(c => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)
   const currentChoice = choices[selectedIndex]
+  const providers = new Map([...state.failures, ...groups].map(provider => [
+    provider.id,
+    provider.id === 'deepseek-account' ? t('provider.account') : provider.name.trim() === '' ? provider.id : provider.name,
+  ]))
+  const providerId = state.current?.provider
+  const providerName = providerId === undefined ? undefined : providers.get(providerId) ?? providerId
+  const providerLabel = providerName !== undefined && [...providers].some(([id, name]) =>
+    id !== providerId && name.trim() === providerName.trim())
+    ? t('provider.route', { name: providerName, id: providerId ?? providerName })
+    : providerName
   const reasoning = currentChoice?.model.reasoning
   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
   const effortLabel = reasoning === undefined
@@ -489,7 +499,7 @@ export function ModelSelect(
   const modelLabel = waiting
     ? t('trigger.loading')
     : currentChoice?.model.name
-      ?? (state.current === null ? t('trigger.fallback') : `${state.current.provider}/${state.current.model}`)
+      ?? (state.current === null ? t('trigger.fallback') : state.current.model)
   const caption = [effortLabel, tierLabel].filter((part): part is string => part !== undefined).join(' · ')
   const triggerLabel = caption === '' ? modelLabel : `${modelLabel} · ${caption}`
   const triggerAria = waiting
@@ -579,6 +589,13 @@ export function ModelSelect(
         >
           {pane === 'root' && (
             <>
+              {providerLabel !== undefined && (
+                <div className={clsx(css.cell, css.providerCell)} role="group"
+                  aria-labelledby={`${id}-provider-label`} aria-describedby={`${id}-provider-value`}>
+                  <span id={`${id}-provider-label`} className={css.cellLabel}>{t('menu.provider')}</span>
+                  <span id={`${id}-provider-value`} className={css.cellValue} title={providerLabel}>{providerLabel}</span>
+                </div>
+              )}
               <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { drill('model') }}>
                 <span className={css.cellLabel}>{t('menu.model')}</span>
                 <span className={css.cellValue}>{modelLabel}</span>
