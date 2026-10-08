@@ -161,7 +161,7 @@ pnpm run dev:desktop
 
 开发 Harness 状态默认写入 `apps/desktop/.desktop-build/development/home`，一次性 npm 项目位于 `apps/desktop/.desktop-build/development/project`，Electron 浏览器数据则位于 `apps/desktop/.desktop-build/development/electron-user-data`。因此，会话、设置、凭据、包链接和浏览器数据都不会进入用户正常使用的 Harness home；显式 `DSH_HOME` 只会替换开发 Harness home。Renderer DevTools 默认自动打开，Main、Renderer 和 dsh Host 调试端口依次为 9229、9222 和 9230。`DSH_DESKTOP_MAIN_INSPECT_PORT`、`DSH_DESKTOP_RENDERER_DEBUG_PORT` 与 `DSH_DESKTOP_HOST_INSPECT_PORT` 可以替换这些端口，`DSH_DESKTOP_OPEN_DEVTOOLS=0` 则保持 Renderer 调试窗口关闭。
 
-在 macOS 上，生成的开发应用包会保存这些设置，用于 Launch Services 冷启动。直接启动应用包时，可通过相同环境变量覆盖调试端口与 DevTools 设置。直接启动时覆盖端口须使用 1 到 65535 的十进制数字；未设置或为空时使用保存的值。DevTools 变量未设置时使用保存的设置，空值则会保留。
+在 macOS 上，生成的开发应用包会保存这些设置，用于 Launch Services 冷启动。直接启动应用包时，可通过相同环境变量覆盖调试端口与 DevTools 设置。直接启动时覆盖端口须使用 1 到 65535 的十进制数字；未设置或为空时使用保存的值。DevTools 变量未设置时使用保存的设置，空值则会保留。该应用包还带有发布版应用图标，因此 Dock、应用切换器和 Finder 显示的是产品图标，而不是 Electron 的图标。
 
 macOS Applications 启动包装器可调用 [scripts/development_owner.py](scripts/development_owner.py) 中的 `find_development_owner`，传入 Electron 可执行文件、工作区应用目录和浏览器数据目录。检测要求完整的可执行文件路径和命令末尾的工作区应用路径匹配，不依赖调试端口，并排除 Electron 辅助进程和 Node Host 进程。传入预期 PID 时，检测仅针对该进程。由于 `ps` 输出不保留参数边界，检测会保守地拒绝应用路径后的额外位置参数。包装器继续管理自身的锁和 PID 聚焦逻辑。
 

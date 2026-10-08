@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readAppDisplayName } from '../../../scripts/app-branding.mjs'
+import { DEVELOPMENT_ICON_SOURCE, ICNS_BITMAPS, writeDevelopmentIcon } from './development-icon.ts'
+
+/** Icon resource of the copied bundle, replaced with the release artwork. */
+const ICON_FILE = 'electron.icns'
 
 /** Workspace locations and fallback debug settings captured for Launch Services cold starts. */
 export interface DevelopmentAppOptions {
@@ -22,17 +26,21 @@ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''"
 
 /**
  * Prepare and register a disposable .app without changing the installed Electron package.
+ * The copy carries the release application icon, so the Dock, the application switcher,
+ * and Finder show the product artwork instead of Electron's.
  * @param options - Current workspace, Electron binary, and private development locations.
  * @returns executable used by the supported desktop development launcher.
  */
-export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
+export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Promise<string> {
   const displayName = readAppDisplayName()
   const source = dirname(dirname(dirname(options.electron)))
   const bundle = join(options.directory, 'Y harness.app')
   const executable = join(bundle, 'Contents', 'MacOS', 'YHarness')
   const stamp = join(bundle, 'Contents', 'Resources', 'dsh-development.json')
   const launcher = developmentLauncher(options, bundle)
-  const identity = JSON.stringify({ ...options, displayName, launcher, plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8') })
+  const identity = JSON.stringify({ ...options, displayName, launcher,
+    plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8'),
+    icon: { artwork: createHash('sha256').update(readFileSync(DEVELOPMENT_ICON_SOURCE)).digest('hex'), bitmaps: ICNS_BITMAPS } })
   if (!existsSync(stamp) || readFileSync(stamp, 'utf8') !== identity) {
     rmSync(bundle, { recursive: true, force: true })
     execFileSync('/usr/bin/ditto', [source, bundle])
@@ -42,11 +50,13 @@ export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
       CFBundleName: 'Y harness',
       CFBundleDisplayName: displayName ?? 'Y harness',
       CFBundleExecutable: 'YHarness',
+      CFBundleIconFile: ICON_FILE,
       CFBundleURLTypes: [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
     }
     for (const [key, value] of Object.entries(values)) {
       execFileSync('/usr/bin/plutil', ['-replace', key, '-json', JSON.stringify(value), plist])
     }
+    await writeDevelopmentIcon(DEVELOPMENT_ICON_SOURCE, join(bundle, 'Contents', 'Resources', ICON_FILE))
     writeFileSync(executable, launcher, { mode: 0o755 })
     writeFileSync(stamp, identity, { mode: 0o600 })
     execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle], { stdio: 'pipe' })

@@ -28,7 +28,7 @@ import { createElectronBuilderConfig } from '../scripts/electron-builder-config.
 
 afterEach(() => { displayName.mockReturnValue(undefined) })
 
-it('refreshes only the development bundle display label when the configuration changes', () => {
+it('refreshes only the development bundle display label when the configuration changes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-display-name-'))
   onTestFinished(() => { rmSync(root, { recursive: true, force: true }) })
   const source = join(root, 'Electron.app', 'Contents')
@@ -40,27 +40,28 @@ it('refreshes only the development bundle display label when the configuration c
   const options = { electron, appRoot: '/workspace/y-harness', directory: join(root, 'development'),
     home: '/state/harness', userData: '/state/electron', mainPort: 9229, rendererPort: 9222,
     hostPort: 9230, openDevtools: '0' }
-  const executable = prepareDevelopmentApp(options)
+  const executable = await prepareDevelopmentApp(options)
   const bundle = join(options.directory, 'Y harness.app', 'Contents')
   const original = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
   const launcher = readFileSync(executable, 'utf8')
   expect(executable).toBe(join(bundle, 'MacOS', 'YHarness'))
   expect(original).toMatchObject({ CFBundleIdentifier: 'com.deepseek.harness.dev.5b4a44c1d7c6',
-    CFBundleName: 'Y harness', CFBundleDisplayName: 'Y harness',
+    CFBundleName: 'Y harness', CFBundleDisplayName: 'Y harness', CFBundleIconFile: 'electron.icns',
     CFBundleExecutable: 'YHarness', CFBundleURLTypes: [{ CFBundleURLName: 'Y harness',
       CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }] })
+  expect(readFileSync(join(bundle, 'Resources', 'electron.icns')).subarray(0, 4).toString('ascii')).toBe('icns')
   expect(launcher).toContain("export DSH_HOME='/state/harness'")
   expect(launcher).toContain("'--user-data-dir=/state/electron'")
 
   displayName.mockReturnValue('Atlas')
-  expect(prepareDevelopmentApp(options)).toBe(executable)
+  expect(await prepareDevelopmentApp(options)).toBe(executable)
   const branded = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
   expect(branded).toEqual({ ...original, CFBundleDisplayName: 'Atlas' })
   expect(readFileSync(executable, 'utf8')).toBe(launcher)
   expect(JSON.parse(readFileSync(join(bundle, 'Resources', 'dsh-development.json'), 'utf8')))
     .toMatchObject({ displayName: 'Atlas' })
   displayName.mockReturnValue(undefined)
-  expect(prepareDevelopmentApp(options)).toBe(executable)
+  expect(await prepareDevelopmentApp(options)).toBe(executable)
   expect(JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8'))).toEqual(original)
   expect(readFileSync(executable, 'utf8')).toBe(launcher)
 })
