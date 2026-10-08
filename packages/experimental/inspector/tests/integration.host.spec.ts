@@ -345,23 +345,47 @@ describe('experimental Inspector real Worker', () => {
   })
 
   it('cancels Client Runtime work when the Worker deadline expires', async () => {
-    inspector = await startInspector({ port: 0, captureFetch: false, clientRuntimeTimeoutMs: 20 })
-    client = await InspectorClientFixture.start(inspector.endpoint.client, { label: 'Timeout Client' })
+    // Real transport gets an operation budget; the router unit owns the exact 20ms clock assertion.
+    const timeoutMs = 1_000
+    inspector = await startInspector({ port: 0, captureFetch: false, clientRuntimeTimeoutMs: timeoutMs })
+    client = await InspectorClientFixture.start(inspector.endpoint.client, {
+      label: 'Timeout Client', observeRuntime: true,
+    })
     cdp = await TestCdpClient.connect(inspector.endpoint.webSocketDebuggerUrl)
     await cdp.call('Runtime.enable')
     const contextId = await clientContext(cdp)
 
-    const timedOut = await cdp.call('Runtime.evaluate', {
-      expression: 'new Promise(() => {})',
-      contextId,
-      awaitPromise: true,
+    const expression = 'new Promise(() => {})'
+    const pending = cdp.call('Runtime.evaluate', { expression, contextId, awaitPromise: true })
+    const deadlineSettled = vi.fn()
+    void pending.then(deadlineSettled, deadlineSettled)
+    const admitted = await client.waitForRuntimeAdmission(expression, timeoutMs)
+    expect(admitted.command).toMatchObject({ op: 'evaluate', expression, awaitPromise: true })
+
+    const timedOut = await pending
+    expect(timedOut.error?.message).toContain('timed out after 1000ms')
+    expect(await client.waitForRuntimeSettlement(admitted.requestId, timeoutMs)).toMatchObject({
+      abortedAtAdmission: false,
+      aborted: true,
+      pendingRequests: 0,
+      response: {
+        requestId: admitted.requestId,
+        sessionId: admitted.sessionId,
+        outcome: {
+          ok: false,
+          error: { code: 'timeout', message: 'Client Runtime request was canceled' },
+        },
+      },
     })
-    expect(timedOut.error?.message).toContain('timed out after 20ms')
-    expect((await cdp.call('Runtime.evaluate', {
-      expression: '42',
-      contextId,
-      returnByValue: true,
-    })).result?.result).toMatchObject({ type: 'number', value: 42 })
+
+    const [recoveredAdmission, recovered] = await Promise.all([
+      client.waitForRuntimeAdmission('42', timeoutMs),
+      cdp.call('Runtime.evaluate', { expression: '42', contextId, returnByValue: true }),
+    ])
+    expect(recoveredAdmission.sessionId).toBe(admitted.sessionId)
+    expect(recoveredAdmission.requestId).not.toBe(admitted.requestId)
+    expect(recovered.error).toBeUndefined()
+    expect(recovered.result?.result).toMatchObject({ type: 'number', value: 42 })
   })
 
   it('advertises only the default Host context and preserves its numeric and unique selectors', async () => {

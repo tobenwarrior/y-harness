@@ -4,9 +4,11 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { Context, type Fiber } from '@deepseek-ai/cordis'
 import WebSocket from 'ws'
 import { ClientInspectorSource } from '../../src/client/bridge/transport.ts'
+import { ClientRuntimeExecutor } from '../../src/client/cdp/runtime.ts'
 import { ClientSourceCatalog } from '../../src/client/cdp/sources.ts'
 import { publishCordisTree } from '../../src/client/inspection/cordis.ts'
-import { inspectorId } from '../../src/shared/bridge/ids.ts'
+import { inspectorId, type ClientRuntimeRequestId } from '../../src/shared/bridge/ids.ts'
+import type { ClientRuntimeRequestFrame, ClientRuntimeResponseFrame } from '../../src/shared/bridge/messages/runtime/index.ts'
 import type { InspectorClientBootstrap } from '../../src/shared/bridge/messages/control.ts'
 import type { InspectorJsonValue } from '../../src/shared/json.ts'
 import { createInspectorService } from '../../src/shared/service.ts'
@@ -14,6 +16,7 @@ import { createInspectorService } from '../../src/shared/service.ts'
 interface ClientFixtureInput {
   readonly bootstrap: InspectorClientBootstrap
   readonly label: string
+  readonly observeRuntime?: boolean
   readonly sourceCatalog?: {
     readonly sourceText: string
     readonly sourceMap: string
@@ -36,11 +39,16 @@ interface ClientFixtureRequest {
     | 'remove-fiber'
     | 'set-global'
     | 'set-ingest-paused'
+    | 'wait-runtime-admission'
+    | 'wait-runtime-settlement'
   readonly paused?: boolean
   readonly name?: string
   readonly value?: InspectorJsonValue
   readonly marker?: string
   readonly topic?: string
+  readonly expression?: string
+  readonly requestId?: string
+  readonly timeoutMs?: number
 }
 
 const port = parentPort
@@ -67,6 +75,7 @@ const sourceCatalog = input.sourceCatalog === undefined
     loadSourceMap: async () => input.sourceCatalog!.sourceMap,
   }])
 const source = new ClientInspectorSource(input.bootstrap, input.label, sourceCatalog)
+const runtimeProbe = input.observeRuntime ? observeRuntime(source) : undefined
 const disposeCordis = publishCordisTree(context, source, {
   maxNodes: input.bootstrap.maxCordisNodes,
   maxBytes: input.bootstrap.maxFrameBytes - 4_096,
@@ -115,6 +124,17 @@ async function dispatch(message: ClientFixtureRequest): Promise<unknown> {
       else socket.resume()
       return undefined
     }
+    case 'wait-runtime-admission':
+      if (runtimeProbe === undefined) throw new Error('Inspector Client runtime observation is disabled')
+      return await runtimeProbe.waitForAdmission(
+        requiredString(message.expression, 'expression'), requiredTimeout(message.timeoutMs),
+      )
+    case 'wait-runtime-settlement':
+      if (runtimeProbe === undefined) throw new Error('Inspector Client runtime observation is disabled')
+      return await runtimeProbe.waitForSettlement(
+        inspectorId<'ClientRuntimeRequestId'>(requiredString(message.requestId, 'requestId'), 'requestId'),
+        requiredTimeout(message.timeoutMs),
+      )
     case 'disconnect': {
       const socket = Reflect.get(source, 'socket') as WebSocket | undefined
       socket?.terminate()
@@ -132,6 +152,7 @@ async function dispatch(message: ClientFixtureRequest): Promise<unknown> {
       addedFiber = undefined
       return undefined
     case 'close':
+      runtimeProbe?.close()
       await addedFiber?.dispose()
       disposeCordis()
       source.close()
@@ -142,5 +163,105 @@ async function dispatch(message: ClientFixtureRequest): Promise<unknown> {
 
 function requiredString(value: string | undefined, field: string): string {
   if (value === undefined) throw new Error(`Inspector Client fixture ${field} is required`)
+  return value
+}
+
+interface RuntimeSettlement {
+  readonly abortedAtAdmission: boolean
+  readonly aborted: boolean
+  readonly pendingRequests: number
+  readonly response?: ClientRuntimeResponseFrame
+  readonly error?: string
+}
+
+function observeRuntime(subject: ClientInspectorSource) {
+  // This fixture owns the source whose executor and request map are being observed.
+  const executor = Reflect.get(subject, 'runtime')
+  const requests = Reflect.get(subject, 'runtimeRequests')
+  if (!(executor instanceof ClientRuntimeExecutor) || !(requests instanceof Map)) {
+    throw new Error('Inspector Client runtime observation fields are unavailable')
+  }
+  const lifetime = new AbortController()
+  const admissions = new Map<string, PromiseWithResolvers<ClientRuntimeRequestFrame>>()
+  const settlements = new Map<ClientRuntimeRequestId, PromiseWithResolvers<RuntimeSettlement>>()
+  const execute = executor.execute
+
+  function admissionFor(expression: string) {
+    let ticket = admissions.get(expression)
+    if (ticket === undefined) {
+      ticket = Promise.withResolvers<ClientRuntimeRequestFrame>()
+      admissions.set(expression, ticket)
+    }
+    return ticket
+  }
+
+  executor.execute = (frame, signal, deferObjectCommit) => {
+    const execution = execute.call(executor, frame, signal, deferObjectCommit)
+    const abortedAtAdmission = signal?.aborted === true
+    const settled = Promise.withResolvers<RuntimeSettlement>()
+    settlements.set(frame.requestId, settled)
+    if (frame.command.op === 'evaluate') admissionFor(frame.command.expression).resolve(frame)
+    void execution.then(
+      (response) => {
+        if (lifetime.signal.aborted) return
+        settled.resolve({ abortedAtAdmission, aborted: signal?.aborted === true, pendingRequests: requests.size, response })
+      },
+      (error: unknown) => {
+        if (lifetime.signal.aborted) return
+        settled.resolve({
+          abortedAtAdmission,
+          aborted: signal?.aborted === true,
+          pendingRequests: requests.size,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      },
+    )
+    return execution
+  }
+
+  return {
+    async waitForAdmission(expression: string, timeoutMs: number): Promise<ClientRuntimeRequestFrame> {
+      return await waitForProbe(
+        admissionFor(expression).promise, lifetime.signal, timeoutMs,
+        `Inspector Client Runtime evaluation ${JSON.stringify(expression)} was not admitted`,
+      )
+    },
+    async waitForSettlement(requestId: ClientRuntimeRequestId, timeoutMs: number): Promise<RuntimeSettlement> {
+      const settled = settlements.get(requestId)
+      if (settled === undefined) throw new Error(`Inspector Client Runtime request ${requestId} was not admitted`)
+      return await waitForProbe(
+        settled.promise, lifetime.signal, timeoutMs,
+        `Inspector Client Runtime request ${requestId} did not settle after cancellation`,
+      )
+    },
+    close() {
+      lifetime.abort()
+      executor.execute = execute
+      admissions.clear()
+      settlements.clear()
+    },
+  }
+}
+
+async function waitForProbe<T>(
+  observation: Promise<T>, signal: AbortSignal, timeoutMs: number, failure: string,
+): Promise<T> {
+  if (signal.aborted) throw new Error('Inspector Client runtime probe closed')
+  const limit = Promise.withResolvers<never>()
+  const onAbort = () => { limit.reject(new Error('Inspector Client runtime probe closed')) }
+  const timer = setTimeout(() => { limit.reject(new Error(`${failure} within ${String(timeoutMs)}ms`)) }, timeoutMs)
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([observation, limit.promise])
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
+function requiredTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('Inspector Client fixture timeoutMs must be a positive integer')
+  }
   return value
 }

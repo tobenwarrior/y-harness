@@ -12,8 +12,20 @@ import { AccountSection, type AccountSectionInjected, type AccountSnapshot } fro
 import type { BonusNotice } from '../src/client/bonus-notices.ts'
 import type { AccountMenuProps } from '../src/client/AccountMenu.tsx'
 import type {} from '../src/client/index.ts'
-import { en, zh, type AccountKey } from '../src/client/locales.ts'
+import type { AccountKey } from '../src/client/locales.ts'
 import css from '../src/client/AccountSection.module.css'
+
+// Source-mode snapshots use the configured product name while evaluating the dictionary.
+const { en, zh } = await vi.hoisted(async () => {
+  const displayName = process.env.DSH_CLIENT_DISPLAY_NAME
+  try {
+    process.env.DSH_CLIENT_DISPLAY_NAME = 'Y Harness'
+    return await import('../src/client/locales.ts')
+  } finally {
+    if (displayName === undefined) Reflect.deleteProperty(process.env, 'DSH_CLIENT_DISPLAY_NAME')
+    else process.env.DSH_CLIENT_DISPLAY_NAME = displayName
+  }
+})
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 

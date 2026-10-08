@@ -2,6 +2,8 @@
 
 import { Worker } from 'node:worker_threads'
 import type { InspectorClientBootstrap } from '../../src/shared/bridge/messages/control.ts'
+import type { ClientRuntimeRequestId } from '../../src/shared/bridge/ids.ts'
+import { parseClientRuntimeRequestFrame, type ClientRuntimeRequestFrame } from '../../src/shared/bridge/messages/runtime/index.ts'
 import type { CordisRuntimeTree } from '../../src/shared/cordis/model.ts'
 import type { InspectorJsonValue } from '../../src/shared/json.ts'
 
@@ -17,6 +19,7 @@ interface ClientFixtureSourceCatalog {
 export interface ClientFixtureOptions {
   readonly label?: string
   readonly sourceCatalog?: ClientFixtureSourceCatalog
+  readonly observeRuntime?: boolean
 }
 
 interface FixtureResponse {
@@ -59,6 +62,7 @@ export class InspectorClientFixture {
       workerData: {
         bootstrap,
         label: options.label ?? 'Test Client',
+        observeRuntime: options.observeRuntime ?? false,
         ...(options.sourceCatalog === undefined ? {} : { sourceCatalog: options.sourceCatalog }),
       },
     })
@@ -106,6 +110,18 @@ export class InspectorClientFixture {
     await this.request({ op: 'set-ingest-paused', paused })
   }
 
+  /** Wait for the real executor to enter the first evaluation of this expression. */
+  async waitForRuntimeAdmission(expression: string, timeoutMs: number): Promise<ClientRuntimeRequestFrame> {
+    const value = await this.request({ op: 'wait-runtime-admission', expression, timeoutMs })
+    if (!isRecord(value)) throw new Error('Inspector Client runtime admission is not an object')
+    return parseClientRuntimeRequestFrame(value)
+  }
+
+  /** Wait for the actual executor response and cancellation state for one admitted request. */
+  async waitForRuntimeSettlement(requestId: ClientRuntimeRequestId, timeoutMs: number): Promise<unknown> {
+    return await this.request({ op: 'wait-runtime-settlement', requestId, timeoutMs })
+  }
+
   /** Break the active ingest socket while preserving the Client source. */
   async disconnect(): Promise<void> {
     await this.request({ op: 'disconnect' })
@@ -132,6 +148,7 @@ export class InspectorClientFixture {
     await this.request({ op: 'close' })
     this.closed = true
     await this.worker.terminate()
+    this.fail(new Error('Inspector Client fixture closed'))
   }
 
   private async request(fields: Record<string, unknown>): Promise<unknown> {
