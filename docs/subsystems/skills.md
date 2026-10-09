@@ -238,7 +238,7 @@ The model-facing `skill({ name })` tool validates the kebab-case name, finds the
 
 In relevance mode, `search_skills({ query })` offers a bounded metadata refinement over the scoped registry, with no explicit-budget exception for model-generated searches. Exact model-invocable names remain loadable even when omitted from suggestions. User `/name` gestures retain their existing direct instruction injection, including user-only skills. Full instruction bodies are not truncated by these metadata limits.
 
-Shipped source enables relevance mode in the base CLI row and web `standard`, `ptc`, and `cordis` preset rows. Harness-loop spawn/fork and workflow children receive it when their composition mounts those rows; SDK children depend on their own named profile and patches. The native Codex backend may receive logged Harness guidance, but its native catalog and tools remain independently owned. External Claude Code/Codex and ACP children bypass this Harness catalog consumer, so their catalogs are not bounded by this selector. Existing user profiles may override shipped configuration.
+Shipped source enables relevance mode in the base CLI row and web Standard, PTC, and Cordis composition preset rows. Harness-loop spawn/fork and workflow children receive it when their composition mounts those rows; SDK children depend on their own named profile and patches. The native Codex backend may receive logged Harness guidance, but its native catalog and tools remain independently owned. External Claude Code/Codex and ACP children bypass this Harness catalog consumer, so their catalogs are not bounded by this selector. Existing user profiles may override shipped configuration.
 
 ## Learning observations and review
 

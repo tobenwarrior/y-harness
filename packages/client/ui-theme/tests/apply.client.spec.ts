@@ -92,7 +92,9 @@ function styleFaceOf(slots: SlotRegistry) {
   const entry = slots.entries(SLOT).find(e => e.component === StyleRow)!
   const handle = entry.store as ReturnType<typeof createStyleRowStore>
   const instance = handle.create()
-  const face = (entry.inject as unknown as (a: typeof instance.actions) => StyleRowInjected)(instance.actions)
+  if (entry.inject === undefined) throw new Error('Style row inject face is missing')
+  const injected: unknown = Reflect.apply(entry.inject, undefined, [instance.actions])
+  const face = injected as StyleRowInjected
   return { entry, instance, face }
 }
 

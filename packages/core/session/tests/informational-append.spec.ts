@@ -58,7 +58,8 @@ describe('informational Session append options', () => {
     const valid = session.append('user/message', message, { surfaceOp: 'append' })
     expect(valid.surfaceOp).toBe('append')
     expect(valid).not.toHaveProperty('ignorable')
-    expect(() => snapshotSessionEvent({ type: 'fixture/information', seq: valid.seq, time: 1, data: { nested: { count: 1 } }, ignorable: false } as unknown as SessionEvent)).toThrow(/ignorable/)
+    const snapshot = snapshotSessionEvent as (event: unknown) => SessionEvent
+    expect(() => snapshot({ type: 'fixture/information', seq: valid.seq, time: 1, data: { nested: { count: 1 } }, ignorable: false })).toThrow(/ignorable/)
   })
 
   it('keeps the informational options vocabulary separate from surface placement', () => {

@@ -766,7 +766,7 @@ export class Session {
       time: Date.now(),
       data: dataSnapshot,
       ...(metadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown; ignorable?: true }),
-    } as unknown as SessionEvent<T>)
+    } as SessionEvent<T>)
     validateSessionEventData(event, `session event "${type}" at seq ${event.seq}`)
     this.surfaceManager.validateNext(event as SessionEvent)
 

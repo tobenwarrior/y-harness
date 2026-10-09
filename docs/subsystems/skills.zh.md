@@ -238,7 +238,7 @@ interface Config {
 
 相关性模式的 `search_skills({ query })` 从作用域注册表进行有上限的元数据搜索；模型查询没有显式预算例外。省略的精确名称仍可按模型调用策略加载。用户 `/name` 保留原有指令注入路径，包括仅用户可调用的技能。完整正文不因元数据预算而被截断。
 
-随附源码在基础 CLI 行及 web `standard`、`ptc`、`cordis` preset 行启用相关性模式。Harness 循环的 spawn/fork 和工作流子任务在组合挂载这些行时获得该行为；SDK 子任务取决于自己的命名 profile 和 patch。原生 Codex 后端可接收已记录的 Harness 指引，但原生技能目录及工具仍独立管理。外部 Claude Code/Codex 与 ACP 子任务绕过此消费方，因此其目录不受此选择器限制。现有用户 profile 可以覆盖随附配置。
+随附源码在基础 CLI 行及 web Standard、PTC 和 Cordis 组合 preset 行启用相关性模式。Harness 循环的 spawn/fork 和工作流子任务在组合挂载这些行时获得该行为；SDK 子任务取决于自己的命名 profile 和 patch。原生 Codex 后端可接收已记录的 Harness 指引，但原生技能目录及工具仍独立管理。外部 Claude Code/Codex 与 ACP 子任务绕过此消费方，因此其目录不受此选择器限制。现有用户 profile 可以覆盖随附配置。
 
 ## 学习观察与审核
 

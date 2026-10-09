@@ -1,6 +1,5 @@
 /** Incremental task observations and bounded API suggestions; never applies source changes. */
 import type { Context } from '@deepseek-ai/cordis'
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmCallConfig, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { } from '@deepseek-ai/dsh-workspace'
@@ -250,6 +249,8 @@ async function generateDrafts(
     if (prepared.config.reasoningEffort !== route.reasoningEffort || prepared.config.serviceTier !== route.serviceTier) {
       throw new Error('skill-learning: captured effort or processing tier changed during preparation')
     }
+    const { BlockAssembler, createUserMessage } = await import('@deepseek-ai/dsh-llm')
+    deadline.signal.throwIfAborted()
     const options: GenerateOptions = {
       ...prepared.config,
       system,
