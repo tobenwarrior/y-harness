@@ -29,6 +29,10 @@ Use `@deepseek-ai/dsh-llm` to stream model calls through configured provider ada
 
 Any composition that calls a model provider — an agent loop, a session-title generator, a compaction summarizer — streams its requests through this service. Mount it together with at least one provider adapter; the service itself has no configuration and no provider wire code.
 
+`listProviders()` returns cached adapter declarations, including optional `auxiliaryGeneration: api | native`. Reading this capability never discovers models or starts a native process. Response-only skill learning uses `prepareCall(config, signal, 'api')`: the core requires a cached API declaration before adapter-owned resolution, and the final dispatch checks the captured registration again. Missing or native declarations make learning unavailable.
+
+Skill learning captures the task request header's provider, model, reasoning effort and processing tier, including absent controls. Selected evidence must retain matching captured routes; missing historical routes or conflicting controls make generation unavailable. It rejects preparation that introduces defaults or changes those controls, while setting an explicit bounded background output cap. After the exact auxiliary input is logged and flushed, it dispatches through the prepared handle with `purpose: skill-learning`, retaining that adapter registration across log flushing and HMR. Auxiliary records do not enter the foreground conversation.
+
 ### When to choose it
 
 Choose this package whenever a plugin or composition needs to call a model: it is the only supported path into provider adapters, and it keeps one vocabulary across the loop, the session log, and every consumer. Do not reach for it when you need provider-specific wire behavior (that belongs in an adapter such as `dsh-llm-deepseek` or `dsh-llm-pi-ai`) or retry execution (that belongs in `dsh-llm-retry`).
@@ -159,6 +163,7 @@ These limits define where this service stops and other packages or future work b
 - **Variants normally require a producer** — `prefill`, per-tool `strict`, block `cache` hints, and the `agent` message-source variant have no producer ([Agent Note](../../../.agents/notes/archived/simplification/2026-07-04-prune-producerless-vocabulary-variants.md)).
 - **`BlockAssembler` handles core block kinds only** — a plugin-added block type whose stream is never closed by `block-end` makes `blocks()` throw.
 - **`GenerateOptions.sessionId` is a locally-declared brand** — importing dsh-session's `SessionId` would create a dependency cycle.
+- **Background route capture does not prove endpoint continuity** — a task request header records route controls without an adapter generation identifier. The prepared learning call binds its own dispatch registration; it cannot establish that an earlier task used the same endpoint generation. Native response-only skill learning is unavailable.
 - **Tool updates require session history** — `GenerateOptions.tools` contains active definitions. `toolHistory` supplies the initial declarations and historically resolved additions from `Session.toolHistory()`. At adapter dispatch, `projectToolUpdates` constructs deferred declarations and retains removed definitions for `in-history`; `addition-only` omits removed definitions and removal messages. Unsupported routes receive active tools without developer messages or `deferLoading`. Missing history or a request prefix omitting recorded updates falls back to current declarations without developer messages. Explicitly deferred baseline tools remain deferred until their first retained addition block; declaring a deferred tool does not activate it.
 
 <a id="dev-note"></a>

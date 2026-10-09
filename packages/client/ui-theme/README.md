@@ -67,6 +67,8 @@ In pointer modality, `html[data-input-modality='pointer'] body :focus-visible:no
 
 Menu icons use `--yh-alias-menu-icon`: neutral-bluish 800 in light mode and `label-primary-dimmed` in dark mode.
 
+`--yh-alias-graph-*` keeps relationship canvases charcoal in either color mode, with readable primary and muted labels and visible edges. The graph accent uses the existing blue palette in Default and Terminal’s accent in Terminal; theme inspection exposes these roles for overrides.
+
 `base.css` suppresses only the outline of focused elements marked `data-dsh-automatic-focus` by the [primitive focus helper](../ui-primitives/README.md); ordinary keyboard focus styling, borders, shadows, and error states remain intact.
 
 System toasts use `--yh-alias-toast-bg` and `--yh-alias-toast-label` for a shared background and text color across callers. Document previews pair `--yh-alias-bg-document-preview` with `--yh-alias-label-document-preview` so the backdrop and status text follow the same theme. Tooltip keycaps use `--yh-alias-tooltip-key-bg`, a lighter fill derived from the tooltip background in each palette. Switch thumbs read `--yh-alias-switch-thumb`: white in light mode and neutral-bluish 400 in dark mode, so an off switch stays lighter than its track without the glare of pure white.

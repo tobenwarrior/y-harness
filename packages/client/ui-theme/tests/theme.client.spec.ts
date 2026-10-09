@@ -223,6 +223,17 @@ describe('ThemeRuntime', () => {
     expect(theme.exportInspectTokens()[0]!.description).not.toBe('caller mutation')
   })
 
+  it('describes graph roles for theme overrides and inspection', () => {
+    const { theme } = make()
+    const tokens = theme.exportInspectTokens()
+    for (const role of ['bg', 'ink', 'muted', 'edge', 'accent']) {
+      const name = `--yh-alias-graph-${role}`
+      expect(tokens.find(token => token.name === name)).toMatchObject({
+        name, cssVariable: name, valueType: 'CSS color', requiresLightAndDark: true,
+      })
+    }
+  })
+
   it('rejects every malformed token override value with a teaching error', () => {
     const { theme } = make()
     const override = (value: unknown): void => {

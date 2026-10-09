@@ -1520,10 +1520,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'a detached config only when a default must be materialized.',
       },
       {
-        signature: 'async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>',
+        signature: 'async prepareCall(config: LlmCallConfig, signal?: AbortSignal, requiredAuxiliaryGeneration?: \'api\'): Promise<PreparedLlmCall>',
         description: 'Resolve one call under its current adapter registration. The returned one-shot handle keeps that registration across header logging and dispatch, so HMR cannot combine one adapter\'s capability result with another adapter.',
-        parameters: [{ name: 'config', description: 'provider/model route and optional request controls.' }, { name: 'signal', description: 'optional cancellation for adapter-owned capability lookup.' }],
-        returns: 'a prepared config and its registration-bound stream entry point.',
+        parameters: [{ name: 'config', description: 'provider/model route and optional request controls.' }, { name: 'signal', description: 'optional cancellation for adapter-owned capability lookup.' }, { name: 'requiredAuxiliaryGeneration', description: 'require a response-only API registration before any adapter-owned resolution.' }],
+        returns: 'a prepared config and its registration-bound stream entry point; unsupported auxiliary modes reject before adapter work.',
       },
       {
         signature: 'stream(options: GenerateOptions): AsyncIterable<StreamChunk>',
@@ -2736,6 +2736,174 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'skillLibrary',
+    summary: 'Owns the `skillLibrary` Remote namespace and local native-provider registrations.',
+    description: 'Owns the `skillLibrary` Remote namespace and local native-provider registrations.',
+    methods: [
+      {
+        signature: 'registerNativeProvider(provider: NativeSkillLibraryProvider): () => void',
+        description: 'Register metadata from an already-connected native route.',
+        parameters: [{ name: 'provider', description: 'process-free discovery adapter.' }],
+        returns: 'provider disposer.',
+      },
+      {
+        signature: '@Remote(\'list\') list(request: SkillLibraryListRequest): Promise<SkillLibraryList>',
+        description: 'Read inventory summaries.',
+        parameters: [{ name: 'request', description: 'optional project selector.' }],
+        returns: 'metadata, scopes and provider coverage.',
+      },
+      {
+        signature: '@Remote(\'detail\') detail(request: SkillLibraryIdRequest): Promise<SkillLibraryDetail>',
+        description: 'Load one selected instruction body.',
+        parameters: [{ name: 'request', description: 'stable library identity.' }],
+        returns: 'detail and revision history.',
+      },
+      {
+        signature: '@Remote(\'setPinned\') setPinned(request: SkillLibraryPinRequest): Promise<SkillLibraryItemValue>',
+        description: 'Protect a skill from maintenance.',
+        parameters: [{ name: 'request', description: 'identity and pin value.' }],
+        returns: 'updated item.',
+      },
+      {
+        signature: '@Remote(\'adopt\') adopt(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>',
+        description: 'Adopt a current local version without automatic cleanup.',
+        parameters: [{ name: 'request', description: 'identity and expected hash.' }],
+        returns: 'updated item.',
+      },
+      {
+        signature: '@Remote(\'setAutomaticCleanup\') setAutomaticCleanup(request: SkillLibraryAutomaticRequest): Promise<SkillLibraryItemValue>',
+        description: 'Explicitly opt one managed version into conservative cleanup.',
+        parameters: [{ name: 'request', description: 'unchanged managed file and opt-in.' }],
+        returns: 'updated item.',
+      },
+      {
+        signature: '@Remote(\'archive\') archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>',
+        description: 'Archive a whole selected bundle reversibly.',
+        parameters: [{ name: 'request', description: 'identity and expected hash.' }],
+        returns: 'archived item.',
+      },
+      {
+        signature: '@Remote(\'restore\') restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>',
+        description: 'Restore a selected archive into a vacant original location.',
+        parameters: [{ name: 'request', description: 'archived identity.' }],
+        returns: 'restored item.',
+      },
+      {
+        signature: '@Remote(\'previewCleanup\') previewCleanup(request: SkillLibraryCleanupRequest): Promise<SkillCleanupProposal>',
+        description: 'Preview conservative managed-file compression.',
+        parameters: [{ name: 'request', description: 'selected ids or all eligible entries.' }],
+        returns: 'source diffs and skipped reasons.',
+      },
+      {
+        signature: '@Remote(\'applyCleanup\') applyCleanup(request: SkillLibraryApplyRequest): Promise<SkillLibraryApplyValue>',
+        description: 'Apply an unchanged cleanup preview.',
+        parameters: [{ name: 'request', description: 'live preview identity.' }],
+        returns: 'changed library identities.',
+      },
+      {
+        signature: '@Remote(\'rollback\') rollback(request: SkillLibraryRollbackRequest): Promise<SkillLibraryItemValue>',
+        description: 'Restore previous instructions as a new revision.',
+        parameters: [{ name: 'request', description: 'expected current hash and previous version.' }],
+        returns: 'updated item.',
+      },
+      {
+        signature: '@Remote(\'retrieve\') retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]>',
+        description: 'Select metadata before progressively loading bodies.',
+        parameters: [{ name: 'request', description: 'current project and routing query.' }],
+        returns: 'bounded ranked metadata.',
+      },
+      {
+        signature: 'recordLoad(request: { readonly id: SkillLibraryId readonly contentHash?: string readonly loadedAt?: string readonly sessionId?: string }): Promise<void>',
+        description: 'Record verified explicit instruction delivery.',
+        parameters: [{ name: 'request', description: 'exact library/version identity and observation.' }],
+        returns: 'persistence completion.',
+      },
+      {
+        signature: 'registerLearningGenerator(provider: SkillLearningGenerator): () => void',
+        description: 'Register a bounded suggestion provider.',
+        parameters: [{ name: 'provider', description: 'bounded suggestion capability.' }],
+        returns: 'registration disposer.',
+      },
+      {
+        signature: 'registerLearningValidator(provider: SkillLearningValidator): () => void',
+        description: 'Register a separate independent validation provider.',
+        parameters: [{ name: 'provider', description: 'separately trusted independent check capability.' }],
+        returns: 'registration disposer.',
+      },
+      {
+        signature: 'recordLearningEvidence(observation: SkillLearningObservation): Promise<SkillLearningEvidence>',
+        description: 'Capture immutable task observations without inferring success.',
+        parameters: [{ name: 'observation', description: 'immutable host-captured task events; completed turns alone are unverified.' }],
+        returns: 'retained evidence.',
+      },
+      {
+        signature: 'setLearningAvailability(projectId: string, value: Omit<SkillLearningAvailability, \'projectId\'>): void',
+        description: 'Publish observed project route availability.',
+        parameters: [{ name: 'projectId', description: 'selected registered project.' }, { name: 'value', description: 'observed route support.' }],
+      },
+      {
+        signature: '@Remote(\'learningStatus\') learningStatus(request: SkillLearningListRequest): SkillLearningStatus',
+        description: 'Read provider availability and semantic consent.',
+        parameters: [{ name: 'request', description: 'current project.' }],
+        returns: 'provider availability and separately approved policies.',
+      },
+      {
+        signature: '@Remote(\'listLearningEvidence\') listLearningEvidence(request: SkillLearningListRequest): readonly SkillLearningEvidence[]',
+        description: 'Read captured task observations.',
+        parameters: [{ name: 'request', description: 'project filter.' }],
+        returns: 'immutable observations available for review requests.',
+      },
+      {
+        signature: '@Remote(\'proposeLearning\') proposeLearning(request: SkillLearningProposeRequest): Promise<SkillLearningProposal>',
+        description: 'Generate a durable uncertain suggestion.',
+        parameters: [{ name: 'request', description: 'substantial task observations and selected local targets.' }],
+        returns: 'durable uncertain proposal.',
+      },
+      {
+        signature: '@Remote(\'listProposals\') listProposals(request: SkillLearningListRequest): readonly SkillLearningProposalSummary[]',
+        description: 'Read metadata-only proposal summaries.',
+        parameters: [{ name: 'request', description: 'project filter.' }],
+        returns: 'body-free proposal summaries.',
+      },
+      {
+        signature: '@Remote(\'detailProposal\') detailProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>',
+        description: 'Load a complete retained proposal.',
+        parameters: [{ name: 'request', description: 'proposal identity.' }],
+        returns: 'full source diff and retained evidence.',
+      },
+      {
+        signature: '@Remote(\'validateProposal\') validateProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>',
+        description: 'Check the proposal through an independent provider.',
+        parameters: [{ name: 'request', description: 'selected proposal.' }],
+        returns: 'separate independent validation findings.',
+      },
+      {
+        signature: '@Remote(\'applyProposal\') applyProposal(request: SkillLearningApplyRequest): Promise<SkillLearningProposal>',
+        description: 'Apply an admitted proposal with reversible source history.',
+        parameters: [{ name: 'request', description: 'reviewed or separately authorized proposal.' }],
+        returns: 'durable application outcome.',
+      },
+      {
+        signature: '@Remote(\'rejectProposal\') rejectProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>',
+        description: 'Retain a rejected suggestion in history.',
+        parameters: [{ name: 'request', description: 'selected suggestion.' }],
+        returns: 'retained rejected history.',
+      },
+      {
+        signature: '@Remote(\'approveLearningPolicy\') approveLearningPolicy(request: SkillLearningPolicyRequest): Promise<SkillLearningPolicy>',
+        description: 'Approve a semantic policy without enabling any file.',
+        parameters: [{ name: 'request', description: 'explicit independent validator and allowed operations.' }],
+        returns: 'policy without enabling any file.',
+      },
+      {
+        signature: '@Remote(\'setAutomaticLearning\') setAutomaticLearning(request: SkillLearningAutomaticRequest): Promise<SkillLearningOptIn>',
+        description: 'Enable or revoke separate semantic consent.',
+        parameters: [{ name: 'request', description: 'per-file consent for separate semantic policy.' }],
+        returns: 'enabled or revoked consent.',
+      },
+    ],
+  },
+  {
     key: 'skills',
     summary: 'Layered registry of skill providers, the host+per-scope shape the tools registry established.',
     description: 'Layered registry of skill providers, the host+per-scope shape the tools registry established. A registration files into the layer of its calling context\'s scope (scopeOf): host rows and repository plugins land in the global layer, while a plugin mounted by an agent preset\'s standing composition lands in that preset\'s layer. A read merges the global layer with the viewing scope\'s chain — the nearest layer\'s entry wins a duplicate name outright, and the rank order decides duplicates only within one layer. It exposes sorted invocation-neutral summaries and loads full skill bodies on demand.',
@@ -2763,6 +2931,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Observe the current invocation-neutral catalog and whether discovery completed within a stable revision. Incomplete observations are never cached, allowing consumers to retain last-good state and retry on their next request boundary.',
         parameters: [{ name: 'options', description: 'view options; `scope` selects the viewing agent\'s layers, `cwd` selects project roots, and `signal` cancels discovery.' }],
         returns: 'sorted summaries plus discovery-completeness state.',
+      },
+      {
+        signature: 'async retrieve(options: SkillViewOptions & SkillCatalogSelectionOptions): Promise<SkillCatalogSelection<SkillSummary> & { readonly complete: boolean; readonly mode: \'relevance\' }>',
+        description: 'Retrieve a bounded relevance projection of the scoped metadata winners. Explicit names remain loadable through `get()` regardless of suggestion budgets.',
+        parameters: [{ name: 'options', description: 'scoped lookup, bounded query and metadata selection policy.' }],
+        returns: 'selected original summaries, completeness, and shortlist accounting.',
       },
       {
         signature: 'async get(name: string, options: SkillViewOptions = {}): Promise<SkillDefinition | undefined>',
@@ -5180,7 +5354,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DeepSeekLlmApiExtensionRequest',
-    declaration: 'export interface DeepSeekLlmApiExtensionRequest {\n    readonly body: Readonly<Record<string, DeepSeekLlmApiJson>>;\n    readonly sessionId?: string;\n    readonly purpose?: \'compaction\' | \'session-title\';\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface DeepSeekLlmApiExtensionRequest {\n    readonly body: Readonly<Record<string, DeepSeekLlmApiJson>>;\n    readonly sessionId?: string;\n    readonly purpose?: \'compaction\' | \'session-title\' | \'skill-learning\';\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'DeepSeekLlmApiJson',
@@ -5424,7 +5598,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\' | \'skill-learning\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -5808,7 +5982,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmProviderInfo',
-    declaration: 'export interface LlmProviderInfo {\n    id: string;\n    name: string;\n}',
+    declaration: 'export interface LlmProviderInfo {\n    id: string;\n    name: string;\n    auxiliaryGeneration?: \'api\' | \'native\';\n}',
   },
   {
     name: 'LlmReasoningEffortInfo',
@@ -5820,7 +5994,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmRuntime',
-    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions) /* …truncated — full shape in source */',
+    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal, requiredAuxiliaryGeneration?: \'api\'): Promise<PreparedLlmCall>; /* …truncated — full shape in source */',
   },
   {
     name: 'LlmServiceTierInfo',
@@ -6063,6 +6237,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface NativeFileApplication {\n    readonly id: string;\n    readonly name: string;\n    readonly default: boolean;\n    readonly icon: string | null;\n}',
   },
   {
+    name: 'NativeSkillLibraryEntry',
+    declaration: 'export interface NativeSkillLibraryEntry {\n    readonly path: string;\n    readonly name: string;\n    readonly description: string;\n    readonly source: string;\n    readonly projectIds: readonly string[];\n    readonly enabled: boolean;\n    readonly userInvocable?: boolean;\n    readonly references?: readonly SkillLibraryReference[];\n}',
+  },
+  {
+    name: 'NativeSkillLibraryObservation',
+    declaration: 'export interface NativeSkillLibraryObservation {\n    readonly entries: readonly NativeSkillLibraryEntry[];\n    readonly status: SkillLibraryProviderStatus;\n}',
+  },
+  {
+    name: 'NativeSkillLibraryProvider',
+    declaration: 'export interface NativeSkillLibraryProvider {\n    readonly name: string;\n    list(projects: readonly SkillLibraryProject[], request?: {\n        readonly forceReload?: boolean;\n    }): Promise<NativeSkillLibraryObservation>;\n    detail?(path: string): Promise<string>;\n}',
+  },
+  {
     name: 'NotFutureError',
     declaration: 'export interface NotFutureError {\n    readonly code: \'not_future\';\n    readonly message: string;\n}',
   },
@@ -6248,7 +6434,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PreparedLlmCall',
-    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly inputModalities?: readonly ModelModality[];\n    readonly systemPromptUpdate?: SystemPromptUpdate;\n    readonly toolUpdate?: ToolUpdate;\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
+    declaration: 'export interface PreparedLlmCall {\n    readonly config: LlmCallConfig;\n    readonly retryPolicy: ResolvedRetryPolicy;\n    readonly context?: LlmModelContext;\n    readonly inputModalities?: readonly ModelModality[];\n    readonly systemPromptUpdate?: SystemPromptUpdate;\n    readonly toolUpdate?: ToolUpdate;\n    readonly adapterDefaults: LlmCallConfigAdapterDefaults;\n    readonly auxiliaryGeneration?: LlmProviderInfo[\'auxiliaryGeneration\'];\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
   {
     name: 'PreparedReferencedMessage',
@@ -6704,7 +6890,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Session',
-    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T>\n    ] : [\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
+    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T> & {\n            ignorable?: never;\n        }\n    ] : [\n        opts?: SessionInformationalOptions\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
   },
   {
     name: 'SessionAccess',
@@ -6925,6 +7111,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionId',
     declaration: 'export type SessionId = Branded<\'SessionId\'>;',
+  },
+  {
+    name: 'SessionInformationalOptions',
+    declaration: 'export interface SessionInformationalOptions {\n    readonly ignorable?: true;\n    readonly surfaceOp?: never;\n    readonly sourceEventSeqs?: never;\n}',
   },
   {
     name: 'SessionInspection',
@@ -7347,8 +7537,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillCandidate extends SkillSummary {\n    readonly rank: number;\n    readonly locator: unknown;\n    readonly metadata?: Readonly<Record<string, unknown>>;\n}',
   },
   {
+    name: 'SkillCatalogSelection',
+    declaration: 'export interface SkillCatalogSelection<T> {\n    readonly skills: readonly T[];\n    readonly metadataBytes: number;\n    readonly omittedCount: number;\n    readonly explicitOverflow: boolean;\n}',
+  },
+  {
+    name: 'SkillCatalogSelectionOptions',
+    declaration: 'export interface SkillCatalogSelectionOptions {\n    readonly query: string;\n    readonly limit: number;\n    readonly maxBytes: number;\n    readonly requestedNames?: readonly string[];\n    readonly preserveNamedSkills?: boolean;\n    readonly descriptionMaxLength?: number;\n}',
+  },
+  {
     name: 'SkillCatalogSnapshot',
     declaration: 'export interface SkillCatalogSnapshot {\n    readonly skills: SkillSummary[];\n    readonly complete: boolean;\n}',
+  },
+  {
+    name: 'SkillCleanupChange',
+    declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n}',
+  },
+  {
+    name: 'SkillCleanupProposal',
+    declaration: 'export interface SkillCleanupProposal {\n    readonly id: SkillCleanupProposalId;\n    readonly changes: readonly SkillCleanupChange[];\n    readonly skipped: readonly {\n        readonly id: SkillLibraryId;\n        readonly reason: string;\n    }[];\n    readonly createdAt: string;\n}',
+  },
+  {
+    name: 'SkillCleanupProposalId',
+    declaration: 'export type SkillCleanupProposalId = Branded<\'SkillCleanupProposalId\'>;',
   },
   {
     name: 'SkillDefinition',
@@ -7361,6 +7571,202 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SkillInvocationPolicy',
     declaration: 'export interface SkillInvocationPolicy {\n    readonly modelInvocable: boolean;\n    readonly userInvocable: boolean;\n}',
+  },
+  {
+    name: 'SkillLearningApplyRequest',
+    declaration: 'export interface SkillLearningApplyRequest extends SkillLearningProposalRequest {\n    readonly mode: \'reviewed\' | \'automatic\';\n}',
+  },
+  {
+    name: 'SkillLearningAutomaticRequest',
+    declaration: 'export interface SkillLearningAutomaticRequest {\n    readonly id: SkillLibraryId;\n    readonly expectedHash: string;\n    readonly policyId: SkillLearningPolicyId;\n    readonly enabled: boolean;\n}',
+  },
+  {
+    name: 'SkillLearningAvailability',
+    declaration: 'export interface SkillLearningAvailability {\n    readonly projectId: string;\n    readonly state: \'available\' | \'unavailable\';\n    readonly reason: string;\n}',
+  },
+  {
+    name: 'SkillLearningChange',
+    declaration: 'export interface SkillLearningChange {\n    readonly kind: SkillLearningChangeKind;\n    readonly id?: SkillLibraryId | undefined;\n    readonly name: string;\n    readonly description: string;\n    readonly path: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly resourceHash: string;\n    readonly resources: readonly SkillLearningResource[];\n    readonly constraints: readonly string[];\n    readonly references: readonly string[];\n    readonly survivorId?: SkillLibraryId | undefined;\n    readonly survivorHash?: string | undefined;\n    readonly survivorResourceHash?: string | undefined;\n    readonly survivorContent?: string | undefined;\n    readonly survivorResources?: readonly SkillLearningResource[] | undefined;\n    readonly survivorReferences?: readonly string[] | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningChangeKind',
+    declaration: 'export type SkillLearningChangeKind = \'create\' | \'update\' | \'compress\' | \'archive\';',
+  },
+  {
+    name: 'SkillLearningCheck',
+    declaration: 'export interface SkillLearningCheck {\n    readonly kind: \'test\' | \'constraint\' | \'resource\' | \'user-confirmation\';\n    readonly result: \'passed\' | \'failed\' | \'unknown\';\n    readonly eventRef: string;\n    readonly summary: string;\n    readonly issuer?: string | undefined;\n    readonly scope?: \'task-verification\' | undefined;\n    readonly inputHash?: string | undefined;\n    readonly outputHash?: string | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningDraft',
+    declaration: 'export interface SkillLearningDraft {\n    readonly kind: SkillLearningChangeKind;\n    readonly id?: SkillLibraryId | undefined;\n    readonly name: string;\n    readonly description: string;\n    readonly content: string;\n    readonly survivorId?: SkillLibraryId | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningEvidence',
+    declaration: 'export interface SkillLearningEvidence extends SkillLearningObservation {\n    readonly id: SkillLearningEvidenceId;\n    readonly createdAt: string;\n}',
+  },
+  {
+    name: 'SkillLearningEvidenceId',
+    declaration: 'export type SkillLearningEvidenceId = Branded<\'SkillLearningEvidenceId\'>;',
+  },
+  {
+    name: 'SkillLearningGenerateInput',
+    declaration: 'export interface SkillLearningGenerateInput {\n    readonly projectId: string;\n    readonly operation: SkillLearningProposal[\'operation\'];\n    readonly evidence: readonly SkillLearningEvidence[];\n    readonly catalog: readonly SkillLibraryItem[];\n    readonly sources: readonly SkillLearningSource[];\n    readonly bodyBudgetBytes: number;\n}',
+  },
+  {
+    name: 'SkillLearningGenerator',
+    declaration: 'export interface SkillLearningGenerator {\n    readonly id: string;\n    generate(input: SkillLearningGenerateInput, signal: AbortSignal): Promise<{\n        readonly drafts: readonly SkillLearningDraft[];\n        readonly uncertainty: readonly string[];\n    }>;\n}',
+  },
+  {
+    name: 'SkillLearningListRequest',
+    declaration: 'export interface SkillLearningListRequest {\n    readonly projectId?: string;\n}',
+  },
+  {
+    name: 'SkillLearningObservation',
+    declaration: 'export interface SkillLearningObservation {\n    readonly projectId: string;\n    readonly sessionId: string;\n    readonly task: string;\n    readonly completed: boolean;\n    readonly substantial: boolean;\n    readonly eventRefs: readonly string[];\n    readonly observations: readonly string[];\n    readonly checks: readonly SkillLearningCheck[];\n}',
+  },
+  {
+    name: 'SkillLearningOptIn',
+    declaration: 'export interface SkillLearningOptIn {\n    readonly id: SkillLibraryId;\n    readonly contentHash: string;\n    readonly policyId: SkillLearningPolicyId;\n    readonly enabled: boolean;\n}',
+  },
+  {
+    name: 'SkillLearningPolicy',
+    declaration: 'export interface SkillLearningPolicy {\n    readonly id: SkillLearningPolicyId;\n    readonly approvedAt: string;\n    readonly validatorId: string;\n    readonly operations: readonly (\'update\' | \'compress\' | \'archive\')[];\n}',
+  },
+  {
+    name: 'SkillLearningPolicyId',
+    declaration: 'export type SkillLearningPolicyId = Branded<\'SkillLearningPolicyId\'>;',
+  },
+  {
+    name: 'SkillLearningPolicyRequest',
+    declaration: 'export interface SkillLearningPolicyRequest {\n    readonly validatorId: string;\n    readonly operations: readonly (\'update\' | \'compress\' | \'archive\')[];\n}',
+  },
+  {
+    name: 'SkillLearningProposal',
+    declaration: 'export interface SkillLearningProposal {\n    readonly id: SkillLearningProposalId;\n    readonly projectId: string;\n    readonly operation: \'learn\' | \'compress\' | \'deduplicate\';\n    readonly state: \'review\' | \'validated\' | \'applying\' | \'applied\' | \'blocked\' | \'rejected\';\n    readonly createdAt: string;\n    readonly generator: string;\n    readonly digest: string;\n    readonly changes: readonly SkillLearningChange[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly evidence: readonly SkillLearningEvidence[];\n    readonly uncertainty: readonly string[];\n    readonly findings: readonly string[];\n    readonly validation?: SkillLearningValidation | undefined;\n    readonly appliedIds: readonly SkillLibraryId[];\n}',
+  },
+  {
+    name: 'SkillLearningProposalId',
+    declaration: 'export type SkillLearningProposalId = Branded<\'SkillLearningProposalId\'>;',
+  },
+  {
+    name: 'SkillLearningProposalRequest',
+    declaration: 'export interface SkillLearningProposalRequest {\n    readonly proposalId: SkillLearningProposalId;\n}',
+  },
+  {
+    name: 'SkillLearningProposalSummary',
+    declaration: 'export interface SkillLearningProposalSummary {\n    readonly id: SkillLearningProposalId;\n    readonly projectId: string;\n    readonly operation: SkillLearningProposal[\'operation\'];\n    readonly state: SkillLearningProposal[\'state\'];\n    readonly createdAt: string;\n    readonly generator: string;\n    readonly changeCount: number;\n    readonly uncertainty: readonly string[];\n    readonly findings: readonly string[];\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n}',
+  },
+  {
+    name: 'SkillLearningProposeRequest',
+    declaration: 'export interface SkillLearningProposeRequest {\n    readonly projectId: string;\n    readonly operation: SkillLearningProposal[\'operation\'];\n    readonly targetIds?: readonly SkillLibraryId[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n}',
+  },
+  {
+    name: 'SkillLearningResource',
+    declaration: 'export interface SkillLearningResource {\n    readonly path: string;\n    readonly hash: string;\n    readonly bytes: number;\n}',
+  },
+  {
+    name: 'SkillLearningSource',
+    declaration: 'export interface SkillLearningSource {\n    readonly item: SkillLibraryItem;\n    readonly content: string;\n    readonly resourceHash: string;\n    readonly resources: readonly SkillLearningResource[];\n    readonly constraints: readonly string[];\n    readonly references: readonly string[];\n}',
+  },
+  {
+    name: 'SkillLearningStatus',
+    declaration: 'export interface SkillLearningStatus {\n    readonly availability: readonly SkillLearningAvailability[];\n    readonly generators: readonly string[];\n    readonly validators: readonly {\n        readonly id: string;\n        readonly trusted: boolean;\n    }[];\n    readonly policies: readonly SkillLearningPolicy[];\n    readonly optIns: readonly SkillLearningOptIn[];\n    readonly evidence: readonly SkillLearningEvidence[];\n}',
+  },
+  {
+    name: 'SkillLearningValidation',
+    declaration: 'export interface SkillLearningValidation {\n    readonly validatorId: string;\n    readonly checkedAt: string;\n    readonly digest: string;\n    readonly trusted: boolean;\n    readonly independent: boolean;\n    readonly constraintsPreserved: boolean;\n    readonly resourcesPreserved: boolean;\n    readonly referenceImpactChecked: boolean;\n    readonly survivorEquivalent: boolean;\n    readonly findings: readonly string[];\n    readonly receipt?: SkillLearningValidationReceipt | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningValidationReceipt',
+    declaration: 'export interface SkillLearningValidationReceipt {\n    readonly scope: \'full-proposal\';\n    readonly digest: string;\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly eventRefs: readonly string[];\n    readonly sourceHashes: readonly string[];\n    readonly resourceHashes: readonly string[];\n}',
+  },
+  {
+    name: 'SkillLearningValidationResult',
+    declaration: 'export interface SkillLearningValidationResult {\n    readonly constraintsPreserved: boolean;\n    readonly resourcesPreserved: boolean;\n    readonly referenceImpactChecked: boolean;\n    readonly survivorEquivalent: boolean;\n    readonly findings: readonly string[];\n    readonly receipt?: SkillLearningValidationReceipt | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningValidator',
+    declaration: 'export interface SkillLearningValidator {\n    readonly id: string;\n    readonly trusted: boolean;\n    validate(proposal: SkillLearningProposal, signal: AbortSignal): Promise<SkillLearningValidationResult>;\n}',
+  },
+  {
+    name: 'SkillLibraryApplyRequest',
+    declaration: 'export interface SkillLibraryApplyRequest {\n    readonly proposalId: SkillCleanupProposalId;\n}',
+  },
+  {
+    name: 'SkillLibraryApplyValue',
+    declaration: 'export interface SkillLibraryApplyValue {\n    readonly revised: readonly SkillLibraryId[];\n}',
+  },
+  {
+    name: 'SkillLibraryAutomaticRequest',
+    declaration: 'export interface SkillLibraryAutomaticRequest extends SkillLibraryHashRequest {\n    readonly enabled: boolean;\n}',
+  },
+  {
+    name: 'SkillLibraryCleanupRequest',
+    declaration: 'export interface SkillLibraryCleanupRequest {\n    readonly ids?: readonly SkillLibraryId[];\n}',
+  },
+  {
+    name: 'SkillLibraryDetail',
+    declaration: 'export interface SkillLibraryDetail {\n    readonly item: SkillLibraryItem;\n    readonly content: string;\n    readonly revisions: readonly SkillLibraryRevision[];\n}',
+  },
+  {
+    name: 'SkillLibraryHashRequest',
+    declaration: 'export interface SkillLibraryHashRequest extends SkillLibraryIdRequest {\n    readonly expectedHash: string;\n}',
+  },
+  {
+    name: 'SkillLibraryId',
+    declaration: 'export type SkillLibraryId = Branded<\'SkillLibraryId\'>;',
+  },
+  {
+    name: 'SkillLibraryIdRequest',
+    declaration: 'export interface SkillLibraryIdRequest {\n    readonly id: SkillLibraryId;\n}',
+  },
+  {
+    name: 'SkillLibraryItem',
+    declaration: 'export interface SkillLibraryItem {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly description: string;\n    readonly provider: string;\n    readonly source: string;\n    readonly path: string;\n    readonly scope: \'project\' | \'shared\';\n    readonly projectIds: readonly string[];\n    readonly ownership: \'protected\' | \'y-managed\' | \'vendor\';\n    readonly status: \'active\' | \'disabled\' | \'archived\';\n    readonly shadowed: boolean;\n    readonly pinned: boolean;\n    readonly automaticCleanup: boolean;\n    readonly invocation: {\n        readonly modelInvocable: boolean;\n        readonly userInvocable: boolean;\n    };\n    readonly contentHash: string;\n    readonly bodyBytes: number;\n    readonly usage: SkillLibraryUsage;\n    readonly references: readonly SkillLibraryReference[];\n    readonly capabilities: {\n        readonly adopt: boolean;\n        readonly archive: boolean;\n        readonly restore: boolean;\n        readonly cleanup: boolean;\n        readonly native: boolean;\n    };\n}',
+  },
+  {
+    name: 'SkillLibraryItemValue',
+    declaration: 'export interface SkillLibraryItemValue {\n    readonly item: SkillLibraryItem;\n}',
+  },
+  {
+    name: 'SkillLibraryList',
+    declaration: 'export interface SkillLibraryList {\n    readonly items: readonly SkillLibraryItem[];\n    readonly projects: readonly SkillLibraryProject[];\n    readonly providers: readonly SkillLibraryProviderStatus[];\n    readonly bodyBudgetBytes: number;\n}',
+  },
+  {
+    name: 'SkillLibraryListRequest',
+    declaration: 'export interface SkillLibraryListRequest {\n    readonly projectId?: string;\n    readonly forceReload?: boolean;\n}',
+  },
+  {
+    name: 'SkillLibraryPinRequest',
+    declaration: 'export interface SkillLibraryPinRequest extends SkillLibraryIdRequest {\n    readonly pinned: boolean;\n}',
+  },
+  {
+    name: 'SkillLibraryProject',
+    declaration: 'export interface SkillLibraryProject {\n    readonly id: string;\n    readonly title: string;\n    readonly path: string;\n}',
+  },
+  {
+    name: 'SkillLibraryProviderStatus',
+    declaration: 'export interface SkillLibraryProviderStatus {\n    readonly provider: string;\n    readonly state: \'connected\' | \'disconnected\' | \'unsupported\' | \'unavailable\';\n    readonly message?: string;\n}',
+  },
+  {
+    name: 'SkillLibraryReference',
+    declaration: 'export interface SkillLibraryReference {\n    readonly target: string;\n    readonly kind: \'skill\' | \'file\' | \'url\';\n    readonly resolvedId?: SkillLibraryId | undefined;\n}',
+  },
+  {
+    name: 'SkillLibraryRetrieveRequest',
+    declaration: 'export interface SkillLibraryRetrieveRequest {\n    readonly projectId?: string;\n    readonly query: string;\n    readonly explicitIds?: readonly SkillLibraryId[];\n    readonly limit?: number;\n}',
+  },
+  {
+    name: 'SkillLibraryRevision',
+    declaration: 'export interface SkillLibraryRevision {\n    readonly id: SkillRevisionId;\n    readonly createdAt: string;\n    readonly reason: \'cleanup\' | \'rollback\' | \'learning\';\n    readonly beforeHash: string;\n    readonly afterHash: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n}',
+  },
+  {
+    name: 'SkillLibraryRollbackRequest',
+    declaration: 'export interface SkillLibraryRollbackRequest extends SkillLibraryHashRequest {\n    readonly revisionId: SkillRevisionId;\n}',
+  },
+  {
+    name: 'SkillLibraryUsage',
+    declaration: 'export interface SkillLibraryUsage {\n    readonly coverage: \'unknown\' | \'recorded-loads\';\n    readonly loadCount: number;\n    readonly lastLoadedAt?: string | undefined;\n}',
   },
   {
     name: 'SkillListRequest',
@@ -7393,6 +7799,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SkillResourceBase',
     declaration: 'export type SkillResourceBase = {\n    readonly kind: \'directory\';\n    readonly path: string;\n} | {\n    readonly kind: \'url\';\n    readonly url: string;\n} | {\n    readonly kind: \'opaque\';\n    readonly description: string;\n};',
+  },
+  {
+    name: 'SkillRevisionId',
+    declaration: 'export type SkillRevisionId = Branded<\'SkillRevisionId\'>;',
   },
   {
     name: 'SkillSource',

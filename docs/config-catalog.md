@@ -664,11 +664,16 @@ export interface Config {
 ```ts config-catalog
 /** Runtime preferences projected to the browser. */
 export interface Config {
+  /** Browser appearance style, independent of color mode. */
+  style: Volatile<ThemeStyle>
   /** Browser palette preference. */
   preference: Volatile<ThemePreference>
   /** Browser font size in pixels. */
   fontSize: Volatile<number>
 }
+
+/** Appearance style persisted by the product Style row. */
+export type ThemeStyle = typeof THEME_STYLES[number]
 
 /** Theme preference persisted by the product Appearance row. */
 export type ThemePreference = typeof THEME_PREFERENCES[number]
@@ -2851,7 +2856,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-skill`
 
-- `source`: [`packages/skill/skill/src/index.ts:278`](../packages/skill/skill/src/index.ts)
+- `source`: [`packages/skill/skill/src/index.ts:282`](../packages/skill/skill/src/index.ts)
 
 ```ts config-catalog
 /** Skill registry configuration. */
@@ -2900,6 +2905,47 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-filesystem -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-skill-library -->
+<a id="deepseek-aidsh-skill-library"></a>
+
+## `@deepseek-ai/dsh-skill-library`
+
+- `inject`: `typert` · `workspaceRegistry` · `storageDomain`
+- `source`: [`packages/skill/skill-library/src/index.ts:57`](../packages/skill/skill-library/src/index.ts)
+
+```ts config-catalog
+/** Filesystem discovery and bounded local maintenance policy. */
+export interface Config {
+  /** Skill home override, identical to the filesystem provider's setting. */
+  dshHome?: string
+  /** Shared agent skill home override. */
+  agentsHome?: string
+  /** Explicit additional roots, matching the configured filesystem skill source. */
+  customSkillDirs?: string[]
+  /** Bundled vendor skill root, always protected from source management. */
+  bundledSkillDir?: string
+  /** Maximum instruction-body bytes before a reviewed rewrite is required. */
+  bodyBudgetBytes?: number
+  /** Upper bound on metadata candidates returned by focused retrieval. */
+  retrievalLimit?: number
+  /** Maximum retained cleanup previews; old previews expire rather than apply silently. */
+  proposalLimit?: number
+  /** Poll interval for conservative cleanup of individually opted-in managed skills; zero disables polling. */
+  automaticMaintenanceIntervalMs?: number
+  /** Complete framed input/output limit for semantic suggestion providers. */
+  learningMaxInputBytes?: number
+  /** Maximum selected source bodies for one proposal. */
+  learningMaxSources?: number
+  /** Maximum recorded observations used in one proposal. */
+  learningMaxEvidence?: number
+  /** Maximum resource files independently hashed in one selected bundle. */
+  learningMaxResourceFiles?: number
+  /** Maximum bytes hashed for one selected bundle's resources. */
+  learningMaxResourceBytes?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-library -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-skill-office -->
 <a id="deepseek-aidsh-skill-office"></a>
@@ -3795,13 +3841,21 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-skill`
 
 - `inject`: `agents` · `tools` · `skills`
-- `source`: [`packages/skill/tool-skill/src/index.ts:61`](../packages/skill/tool-skill/src/index.ts)
+- `source`: [`packages/skill/tool-skill/src/index.ts:73`](../packages/skill/tool-skill/src/index.ts)
 
 ```ts config-catalog
 /** Model-facing skill catalog configuration. */
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /** Complete compatibility catalog, or a bounded task-relevant shortlist. */
+  catalogMode?: 'all' | 'relevant'
+  /** Maximum ordinary suggestions; explicit requests are preserved. */
+  catalogLimit?: number
+  /** Maximum escaped UTF-8 entry bytes; explicit requests may exceed this bound. */
+  catalogMaxBytes?: number
+  /** Maximum task-query characters used for metadata selection. */
+  catalogQueryMaxChars?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-skill -->
@@ -4401,6 +4455,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-client-ui-sidebar-right` | — | [`packages/client/ui-sidebar-right/src/index.ts`](../packages/client/ui-sidebar-right/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-sidebar-terminal` | — | [`packages/client/ui-sidebar-terminal/src/index.ts`](../packages/client/ui-sidebar-terminal/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-skill` | — | [`packages/client/ui-skill/src/index.ts`](../packages/client/ui-skill/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-skill-library` | — | [`packages/client/ui-skill-library/src/index.ts`](../packages/client/ui-skill-library/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-subagent` | — | [`packages/client/ui-subagent/src/index.ts`](../packages/client/ui-subagent/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-tool` | — | [`packages/client/ui-tool/src/index.ts`](../packages/client/ui-tool/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-trajectory` | — | [`packages/client/ui-trajectory/src/index.ts`](../packages/client/ui-trajectory/src/index.ts) |

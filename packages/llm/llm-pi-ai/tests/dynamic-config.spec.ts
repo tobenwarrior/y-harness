@@ -93,7 +93,7 @@ describe('request-level dynamic profiles', () => {
     const failure = 'llm-pi-ai: provider "openrouter" model "111" needs an api; '
       + 'the installed catalog does not describe it, so set the route\'s api to the wire protocol its endpoint speaks'
 
-    expect(ctx.llm.listProviders()).toEqual([{ id: 'openrouter', name: 'openrouter' }])
+    expect(ctx.llm.listProviders()).toEqual([{ id: 'openrouter', name: 'openrouter', auxiliaryGeneration: 'api' }])
     expect(ctx.llm.listConfigurableProviders()).toContainEqual({
       provider: 'openrouter', displayName: 'openrouter', settingsNs: 'llm-pi-ai',
       settingsPath: ['providers', 'openrouter'], declared: false, error: failure,
@@ -117,7 +117,7 @@ describe('request-level dynamic profiles', () => {
     })
     await configurations.get(ctx)!.update({ providers: { openrouter: { api: 'openai-completions' } } })
     expect(diagnostics).toEqual([undefined])
-    expect(ctx.llm.listProviders()[0]).toEqual({ id: 'openrouter', name: 'openrouter' })
+    expect(ctx.llm.listProviders()[0]).toEqual({ id: 'openrouter', name: 'openrouter', auxiliaryGeneration: 'api' })
     const repaired = await assemble(ctx, { provider: 'openrouter', model: '111', messages: [] })
     expect(repaired.message.content).toEqual([{ type: 'text', text: 'hello' }])
     expect(server.requests).toHaveLength(2)
@@ -138,7 +138,7 @@ describe('request-level dynamic profiles', () => {
     await expect(ctx.llm.resolveModelInfo('anthropic', 'removed-model')).rejects.toThrow('modelOverrides names "removed-model"')
     await expect(ctx.llm.resolveModelInfo('retired-route', 'anything')).rejects.toThrow('resolves no models')
     await configurations.get(ctx)!.replace({ providers: { anthropic: {} } })
-    expect(ctx.llm.listProviders()).toEqual([{ id: 'anthropic', name: 'anthropic' }])
+    expect(ctx.llm.listProviders()).toEqual([{ id: 'anthropic', name: 'anthropic', auxiliaryGeneration: 'api' }])
     expect(ctx.llm.listConfigurableProviders().find(entry => entry.provider === 'retired-route')).toBeUndefined()
     expect(ctx.llm.listConfigurableProviders().find(entry => entry.provider === 'anthropic')?.error).toBeUndefined()
   })

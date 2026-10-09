@@ -204,13 +204,13 @@ describe('PiAiAdapter provider routing', () => {
       baseURL: 'https://acme.test/v1',
       models: [{ id: 'acme-large' }],
     } })
-    expect(adapter.providerInfo('acme-gateway')).toEqual({ id: 'acme-gateway', name: 'Acme Gateway' })
+    expect(adapter.providerInfo('acme-gateway')).toEqual({ id: 'acme-gateway', name: 'Acme Gateway', auxiliaryGeneration: 'api' })
 
     // The registry and the profiles can disagree for a moment: a refused
     // registration swap leaves the previous routes serving while resolution
     // has already moved on, so a selector may ask about a route the current
     // profiles no longer describe. It gets the key rather than nothing.
-    expect(adapter.providerInfo('departed')).toEqual({ id: 'departed', name: 'departed' })
+    expect(adapter.providerInfo('departed')).toEqual({ id: 'departed', name: 'departed', auxiliaryGeneration: 'api' })
   })
 
   it('reports unsupported stop sequences rather than silently ignoring them', async () => {
@@ -467,8 +467,8 @@ describe('provider profile lifecycle', () => {
       },
     })
     expect(ctx.llm.listProviders()).toEqual([
-      { id: 'openai', name: 'openai' },
-      { id: 'anthropic', name: 'anthropic' },
+      { id: 'openai', name: 'openai', auxiliaryGeneration: 'api' },
+      { id: 'anthropic', name: 'anthropic', auxiliaryGeneration: 'api' },
     ])
     expect(ctx.llm.providerRetryPolicy('openai')).toEqual({
       mode: 'always',

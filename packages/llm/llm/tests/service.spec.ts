@@ -1153,6 +1153,20 @@ describe('LlmRuntime', () => {
     expect(resolutions).toBe(2)
   })
 
+  it.each(['native', undefined] as const)('rejects response-only preparation before unsupported adapter work (%s)', async (auxiliaryGeneration) => {
+    const ctx = new Context(); await ctx.plugin(LlmRuntime)
+    let preparations = 0
+    const adapter = new class extends ScriptedAdapter {
+      override providerInfo(provider: string) {
+        return { id: provider, name: provider, ...(auxiliaryGeneration === undefined ? {} : { auxiliaryGeneration }) }
+      }
+      override prepareCall(provider: string, model: string) { preparations++; return super.prepareCall(provider, model) }
+    }(SCRIPT)
+    ctx.llm.registerAdapter(['route'], adapter)
+    await expect(ctx.llm.prepareCall({ provider: 'route', model: 'model' }, undefined, 'api')).rejects.toMatchObject({ code: 'UNSUPPORTED_AUXILIARY_GENERATION' })
+    expect(preparations).toBe(0)
+  })
+
   it('binds adapter-owned capabilities and dispatch to one prepared generation', async () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)

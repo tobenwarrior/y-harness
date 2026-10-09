@@ -15,8 +15,8 @@ import type { Scoped } from '@deepseek-ai/dsh-scope'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, SessionLogOffset, SessionSeq } from './types.ts'
 import type { TypertLookup } from '@deepseek-ai/dsh-typert-protocol'
-import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SessionSeedEventState, SurfaceIntent, SurfaceEventType } from './types.ts'
-import { SurfaceManager, validateSessionEventData, validateSurfaceMetadata } from './surface.ts'
+import type { CreateSessionOptions, EpochHeader, PrepareSessionOptions, RequestContext, SessionEvent, SessionEventMap, SessionEventType, SessionHeader, SessionId, SessionInformationalOptions, SessionSeedEventState, SurfaceIntent, SurfaceEventType } from './types.ts'
+import { SurfaceManager, isSurfaceEligibleType, validateSessionEventData, validateSurfaceMetadata } from './surface.ts'
 import type { SessionSurface, SessionMessageProjection } from './surface.ts'
 import { foldRequestHeader } from './request-header.ts'
 import { ToolHistoryProjection } from './tool-history.ts'
@@ -165,6 +165,8 @@ function snapshotSessionHeader(id: SessionId, source?: SessionHeader): SessionHe
  * @throws when event-local surface metadata, request-header fields, or message invariants are invalid; history relations are not checked.
  */
 export function adoptSessionEvent<T extends SessionEvent>(event: T): T {
+  const ignorable: unknown = event.ignorable
+  if (ignorable !== undefined && ignorable !== true) throw new Error('session event has an invalid ignorable marker; only true is accepted')
   validateSessionEventData(event, `session event at seq ${event.seq}`)
   validateSurfaceMetadata(event)
   assertMessageEventShape(
@@ -694,9 +696,13 @@ export class Session {
    *   {@link SurfaceEventType} events (every message-producing event must
    *   declare how it joins the surface, the sole source of derived model
    *   history) and
-   *   rejected by the compiler for non-surface types like `turn/start` or
-   *   `assistant/attempt`. Assistant messages embed their exact provider
-   *   stream and cannot cite top-level source events.
+   *   forbidden for non-surface types like `turn/start` or `assistant/attempt`.
+   *   Log-only events may instead carry `{ ignorable: true }`, only when the
+   *   writer knows the record is purely informational and cannot affect
+   *   reconstruction. An absent marker means required; boundary event
+   *   requiredness is not automatically changed. Surface append options cannot
+   *   carry `ignorable`. Assistant messages embed their exact provider stream
+   *   and cannot cite top-level source events.
    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
    *   `data` that entered the log, so reading `event.data` back sees the logged
    *   value, never the caller's still-mutable input.
@@ -718,19 +724,36 @@ export class Session {
   append<T extends SessionEventType>(
     type: T,
     data: SessionEventMap[T],
-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
+    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T> & { ignorable?: never }] : [opts?: SessionInformationalOptions]
   ): SessionEvent<T> {
-    const surfaceOpts: SurfaceIntent | undefined = opts[0]
-    const surfaceMetadata = {
-      ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
-      ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
+    const rawOpts: unknown = opts[0]
+    let metadata: unknown
+    if (isSurfaceEligibleType(type)) {
+      if (rawOpts !== undefined && (rawOpts === null || typeof rawOpts !== 'object' || Array.isArray(rawOpts))) {
+        throw new Error(`session event "${type}" carries invalid surface metadata`)
+      }
+      const surfaceOpts = rawOpts as SurfaceIntent | undefined
+      if (surfaceOpts !== undefined && 'ignorable' in surfaceOpts) throw new Error(`surface event "${type}" cannot carry ignorable append metadata`)
+      metadata = {
+        ...surfaceOpts?.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: surfaceOpts.sourceEventSeqs },
+        ...surfaceOpts?.surfaceOp === undefined ? {} : { surfaceOp: surfaceOpts.surfaceOp },
+      }
+    } else {
+      const snapshot = rawOpts === undefined ? {} : snapshotJsonValue(rawOpts)
+      if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot)) throw new Error(`session event "${type}" carries invalid informational metadata`)
+      for (const key of Object.keys(snapshot)) {
+        if (key === 'surfaceOp' || key === 'sourceEventSeqs') throw new Error(`session event "${type}" is not surface-eligible and cannot carry ${key}`)
+        if (key !== 'ignorable') throw new Error(`session event "${type}" carries invalid informational metadata`)
+      }
+      if ('ignorable' in snapshot && snapshot.ignorable !== true) throw new Error(`session event "${type}" carries an invalid ignorable marker; only true is accepted`)
+      metadata = snapshot
     }
     const dataSnapshot = snapshotJsonValue(data)
     if (dataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable data`)
     }
-    const surfaceMetadataSnapshot = snapshotJsonValue(surfaceMetadata)
-    if (surfaceMetadataSnapshot === undefined) {
+    const metadataSnapshot = snapshotJsonValue(metadata)
+    if (metadataSnapshot === undefined) {
       throw new Error(`session event "${type}" carries non-JSON-serializable surface metadata`)
     }
     const entry = attachments.get(this)
@@ -742,7 +765,7 @@ export class Session {
       seq: SessionSeq(this.log.length),
       time: Date.now(),
       data: dataSnapshot,
-      ...(surfaceMetadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown }),
+      ...(metadataSnapshot as { surfaceOp?: unknown; sourceEventSeqs?: unknown; ignorable?: true }),
     } as unknown as SessionEvent<T>)
     validateSessionEventData(event, `session event "${type}" at seq ${event.seq}`)
     this.surfaceManager.validateNext(event as SessionEvent)

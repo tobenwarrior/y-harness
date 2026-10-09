@@ -478,6 +478,17 @@ export type SurfaceIntent<T extends SurfaceEventType = SurfaceEventType> = {
 })
 
 /**
+ * Optional append metadata for a log-only record. Writers mark `true` only
+ * when omitting this record cannot affect reconstruction or interpretation.
+ * An absent marker remains required; no event type is automatically reclassified.
+ */
+export interface SessionInformationalOptions {
+  readonly ignorable?: true
+  readonly surfaceOp?: never
+  readonly sourceEventSeqs?: never
+}
+
+/**
  * One immutable entry in the session log.
  *
  * A proper discriminated union over `type` (not independent `type`/`data`

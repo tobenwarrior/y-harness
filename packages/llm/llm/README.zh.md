@@ -29,6 +29,10 @@ kind: "package-reference"
 
 任何调用模型提供方的组合——agent loop（智能体循环）、会话标题生成器、压缩（compaction）摘要器——都会通过本服务流式发起请求。与至少一个提供方适配器一起挂载它；服务本身没有任何配置，也不包含提供方协议代码。
 
+`listProviders()` 返回缓存的适配器声明，包括可选的 `auxiliaryGeneration: api | native`。读取此能力不会发现模型或启动原生进程。仅生成响应的技能学习使用 `prepareCall(config, signal, 'api')`：核心在适配器自身解析之前要求缓存的 API 声明，并在最终分发时再次检查已捕获的注册。缺少声明或声明为原生时，学习不可用。
+
+技能学习捕获任务请求头中的提供方、模型、推理强度与处理层级，包括未设置的控制项。选定证据必须保留匹配的捕获路由；历史路由缺失或控制项冲突时，生成不可用。如果准备过程引入默认值或改变这些控制项，学习会拒绝请求；后台输出上限则显式设定并受预算限制。精确的辅助输入被记录并刷新后，通过带有 `purpose: skill-learning` 的已准备句柄分发，在日志刷新与 HMR 期间保留同一适配器注册。辅助记录不进入前台对话。
+
 ### 何时选择
 
 当插件或组合需要调用模型时选择本包：它是进入提供方适配器的唯一受支持路径，并在 loop、会话日志与每个消费方之间保持同一套词汇。当需要提供方特定的协议行为（那属于 `dsh-llm-deepseek` 或 `dsh-llm-pi-ai` 之类的适配器）或重试执行（那属于 `dsh-llm-retry`）时，不要选择它。
@@ -159,6 +163,7 @@ for await (const chunk of ctx.llm.stream({
 - **变体通常要求实际产生方**——`prefill`、逐工具 `strict`、内容块 `cache` 提示和 `agent` 消息来源变体都没有产生方（见 [Agent Note](../../../.agents/notes/archived/simplification/2026-07-04-prune-producerless-vocabulary-variants.md)）。
 - **`BlockAssembler` 只处理核心块类型**——插件添加块类型的流若从未由 `block-end` 关闭，`blocks()` 会抛出异常。
 - **`GenerateOptions.sessionId` 是本地声明的品牌类型**——导入 dsh-session 的 `SessionId` 会产生依赖循环。
+- **后台路由捕获不证明端点连续性** — 任务请求头记录路由控制项，但没有适配器代次标识。已准备的学习调用绑定其自身的分发注册，无法证明此前任务使用相同的端点代次。原生的仅响应技能学习不可用。
 - **工具更新需要会话历史** — `GenerateOptions.tools` 包含当前有效定义。`toolHistory` 提供 `Session.toolHistory()` 派生的初始声明及已解析历史定义的添加记录。适配器分发时，`projectToolUpdates` 构造延迟声明，并在 `in-history` 模式保留已移除定义；`addition-only` 省略已移除定义和移除消息。不支持更新的路由接收有效工具，不携带 developer 消息或 `deferLoading`。缺少历史或请求前缀遗漏已记录更新时，回退为当前声明且不发送 developer 消息。 显式延迟加载的初始工具在首个保留的添加块出现前保持延迟状态；声明延迟加载工具不会使其激活。
 
 <a id="dev-note"></a>

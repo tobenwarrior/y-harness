@@ -6,6 +6,8 @@ The [skill capability family](../../packages/skill) includes the Service Definit
 
 Source: [`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts), [`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts), [`packages/skill/skill-badge/src/index.ts`](../../packages/skill/skill-badge/src/index.ts), [`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts), [`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts), and [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts).
 
+`ctx.skillLibrary` provides the human [Skills library](../../packages/skill/skill-library) with project and shared inventory, protected adoption, recorded load observations, explicit references, and reversible maintenance. The [browser panel](../../packages/client/ui-skill-library) loads instruction bodies only for selected details. Native metadata and currently mounted registry views are included; inactive presets remain outside inventory. Its bounded retrieval API does not replace model-owned catalogs.
+
 ## Provider registry
 
 `ctx.skills` combines local, embedded, remote, or other providers. Registration is synchronous; remote initialization and discovery belong in awaited `list()`. Provider objects, options, and candidates are borrowed readonly, while semantic fields are validated.
@@ -214,7 +216,7 @@ interface SkillViewOptions extends SkillLookupOptions {
 }
 ```
 
-The registry owns only its discovery-cache bound. The local provider owns filesystem roots (`dshHome`, `agentsHome`, `customSkillDirs`, and optional `bundledSkillDir`/`DSH_BUNDLED_SKILL_DIR`) plus watcher enablement, polling, stability, symlink, and project-capacity controls. The consumer owns its catalog description bound. Exact defaults and validation are in the generated [config catalog](../config-catalog.md).
+The registry owns its discovery-cache bound and exposes metadata selection through `retrieve()`. The local provider owns filesystem roots (`dshHome`, `agentsHome`, `customSkillDirs`, and optional `bundledSkillDir`/`DSH_BUNDLED_SKILL_DIR`) plus watcher controls. The consumer owns projection mode, suggestion count, rendered metadata bytes, query length and description bounds. Exact defaults and validation are in the generated [config catalog](../config-catalog.md).
 
 ```ts type-equiv
 /** Skill registry configuration. */
@@ -226,11 +228,25 @@ interface Config {
 
 ## Session catalog and tool contract
 
-`dsh-tool-skill` injects the initial durable user-role `<system-reminder>` at the first `agent/pre-step` of a live session that observes a non-empty complete view. The catalog contains sorted skill `name` and normalized, XML-escaped `description` only; it omits bodies, paths, sources, providers, and routing hints. Discovery forwards the step's abort signal through `SkillLookupOptions`. `catalogDescriptionMaxLength` is the consumer config for the description bound, with default `500` and integer minimum `3`.
+`ctx.skills.retrieve({ cwd, scope, signal, query, limit, maxBytes, requestedNames?, descriptionMaxLength? })` selects metadata from the same authoritative scoped winners as `snapshot()`. Its exported pure helper, [`selectSkillCatalog`](../../packages/skill/skill/src/catalog-selection.ts), lexically ranks names, descriptions and `whenToUse`, returns original model-invocable summaries, and never calls a provider's body loader. The result includes discovery `complete`, `mode: 'relevance'`, `metadataBytes`, `omittedCount`, and `explicitOverflow`. Exact requested names can exceed ordinary count and byte limits; `preserveNamedSkills: true` additionally recognizes names in trusted query text. Model searches leave that option off. `list()` and `get()` remain unaffected.
 
-Before each later model step, the consumer applies exact tool visibility and digests the exact rendered entries between the `<available_skills>` tags from a complete snapshot. It derives the comparison baseline from the same entries in the newest recognizable visible catalog message sourced by the plugin. A changed digest appends a durable full replacement through `agent.inject()`; deleting every skill appends an explicit empty replacement. Incomplete snapshots preserve the last-good model view. If compaction hides every historical catalog message, the next complete snapshot re-establishes the current catalog; an empty view with no prior catalog emits nothing. These catalog messages are session history, not World State.
+`dsh-tool-skill` supports compatibility `catalogMode: all` (default) and `catalogMode: relevant`. Both forward the current cwd, scope and abort signal, and render only names and normalized, XML-escaped descriptions. Relevance mode defaults to eight ordinary candidates, 6000 UTF-8 entry-line bytes, a 4096-character newest task-query suffix, and 500 characters per description. Fixed guidance and search result wrappers are additional. It reads current claimed `source.kind: user` text, falling back to the latest visible user task on tool continuations; injected rules, recall, model prose and tool output cannot supply the query. Exact names are separately extracted from the authoritative task text so an early explicit reference survives query truncation. No management-library scan or body loading occurs per model step.
+
+The consumer appends generated catalog messages through the admitted `agent/pre-step` decision. Complete catalogs replace earlier availability lists in `all` mode; relevance shortlists replace suggestions and explicitly say additional skills may exist. Empty relevance results do not revoke other exact names. Logged relevance sources record task message IDs, metadata byte count, omitted count and explicit-budget exceptions. The digest includes rendered entries, projection mode, and exact loader/search visibility. Incomplete snapshots preserve the last-good view. Catalog changes retain historical messages until ordinary compaction; suggestion bounds are not a cap on the whole prompt or on loaded bodies.
 
 The model-facing `skill({ name })` tool validates the kebab-case name, finds the summary in the invocation-neutral catalog, rejects it before loading unless `isModelInvocable` permits access, then rereads the complete definition for the calling agent cwd and rechecks the policy before returning content. It reports an unresolved skill as unknown or no longer available and returns a tool result containing `<skill_content name="...">`, `<skill_resources>`, and `<skill_instructions>`. `resourceBase` resolves explicitly referenced scripts, references, and assets only as needed; the loaded result does not enumerate a skill directory. Body-only edits therefore change later tool calls without producing catalog messages or rewriting earlier tool results.
+
+In relevance mode, `search_skills({ query })` offers a bounded metadata refinement over the scoped registry, with no explicit-budget exception for model-generated searches. Exact model-invocable names remain loadable even when omitted from suggestions. User `/name` gestures retain their existing direct instruction injection, including user-only skills. Full instruction bodies are not truncated by these metadata limits.
+
+Shipped source enables relevance mode in the base CLI row and web `standard`, `ptc`, and `cordis` preset rows. Harness-loop spawn/fork and workflow children receive it when their composition mounts those rows; SDK children depend on their own named profile and patches. The native Codex backend may receive logged Harness guidance, but its native catalog and tools remain independently owned. External Claude Code/Codex and ACP children bypass this Harness catalog consumer, so their catalogs are not bounded by this selector. Existing user profiles may override shipped configuration.
+
+## Learning observations and review
+
+The [Host library](../../packages/skill/skill-library/README.md) keeps observations and semantic proposals separate from skill files. Its [runtime collector](../../packages/skill/skill-library/src/learning-runtime.ts) records live root Session work after durability, requiring at least two concrete Harness tool calls and one paired result without a reported error. It skips inherited, seeded, delegated, trivial, interrupted and failed tasks. Bounded task text and assistant completion claims remain unverified; raw tool arguments and output are not retained, and the collector supplies no verification checks.
+
+Suggestion generation uses the task's captured route only when cached provider metadata explicitly declares `auxiliaryGeneration: api`. Native or undeclared routes remain unavailable, and manual generation requires a live root evidence Session. The Host selects relevant managed sources before loading complete bodies, rejects oversized or credential-shaped inputs, and checks existing metadata before creating a project skill. Generators return uncertain suggestions without paths, permission authority or verification authority; [learning types](../../packages/skill/skill-library/src/learning-types.ts) define the evidence, full diffs and independent receipts.
+
+Review retains source and survivor instructions, resource hashes, constraints, resolved reference targets and uncertainty. Archive preserves skill-reference identities and external targets; equivalent bundle resources may relocate. Application rechecks current sources and protections within the source writer, retains rollback history, and reconciles interrupted applications before continuing. Creates always require review. Automatic update, compression or archive additionally requires an approved policy, current per-file consent and an independent trusted receipt bound to the full proposal with passed source checks. No trusted semantic validator ships by default; completion, a tool result or a model claim alone cannot authorize automatic changes.
 
 ## Browser Session catalog
 
@@ -262,6 +278,205 @@ Host service backing `ctx.remote.skills` without activating a cold Agent.
 ```
 
 Source: [`packages/api/session-controller/src/skill-catalog.ts`](../../packages/api/session-controller/src/skill-catalog.ts)
+
+<a id="ctxskilllibrary--skilllibrarycontroller"></a>
+
+### `ctx.skillLibrary` — `SkillLibraryController`
+
+Owns the `skillLibrary` Remote namespace and local native-provider registrations.
+
+```ts cordis-catalog
+/**
+ * Register metadata from an already-connected native route.
+ * @param provider - process-free discovery adapter.
+ * @returns provider disposer.
+ */
+registerNativeProvider(provider: NativeSkillLibraryProvider): () => void
+
+/**
+ * Read inventory summaries.
+ * @param request - optional project selector.
+ * @returns metadata, scopes and provider coverage.
+ */
+@Remote('list') list(request: SkillLibraryListRequest): Promise<SkillLibraryList>
+
+/**
+ * Load one selected instruction body.
+ * @param request - stable library identity.
+ * @returns detail and revision history.
+ */
+@Remote('detail') detail(request: SkillLibraryIdRequest): Promise<SkillLibraryDetail>
+
+/**
+ * Protect a skill from maintenance.
+ * @param request - identity and pin value.
+ * @returns updated item.
+ */
+@Remote('setPinned') setPinned(request: SkillLibraryPinRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Adopt a current local version without automatic cleanup.
+ * @param request - identity and expected hash.
+ * @returns updated item.
+ */
+@Remote('adopt') adopt(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Explicitly opt one managed version into conservative cleanup.
+ * @param request - unchanged managed file and opt-in.
+ * @returns updated item.
+ */
+@Remote('setAutomaticCleanup') setAutomaticCleanup(request: SkillLibraryAutomaticRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Archive a whole selected bundle reversibly.
+ * @param request - identity and expected hash.
+ * @returns archived item.
+ */
+@Remote('archive') archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Restore a selected archive into a vacant original location.
+ * @param request - archived identity.
+ * @returns restored item.
+ */
+@Remote('restore') restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Preview conservative managed-file compression.
+ * @param request - selected ids or all eligible entries.
+ * @returns source diffs and skipped reasons.
+ */
+@Remote('previewCleanup') previewCleanup(request: SkillLibraryCleanupRequest): Promise<SkillCleanupProposal>
+
+/**
+ * Apply an unchanged cleanup preview.
+ * @param request - live preview identity.
+ * @returns changed library identities.
+ */
+@Remote('applyCleanup') applyCleanup(request: SkillLibraryApplyRequest): Promise<SkillLibraryApplyValue>
+
+/**
+ * Restore previous instructions as a new revision.
+ * @param request - expected current hash and previous version.
+ * @returns updated item.
+ */
+@Remote('rollback') rollback(request: SkillLibraryRollbackRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Select metadata before progressively loading bodies.
+ * @param request - current project and routing query.
+ * @returns bounded ranked metadata.
+ */
+@Remote('retrieve') retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]>
+
+/**
+ * Record verified explicit instruction delivery.
+ * @param request - exact library/version identity and observation.
+ * @returns persistence completion.
+ */
+recordLoad(request: { readonly id: SkillLibraryId readonly contentHash?: string readonly loadedAt?: string readonly sessionId?: string }): Promise<void>
+
+/**
+ * Register a bounded suggestion provider.
+ * @param provider - bounded suggestion capability.
+ * @returns registration disposer.
+ */
+registerLearningGenerator(provider: SkillLearningGenerator): () => void
+
+/**
+ * Register a separate independent validation provider.
+ * @param provider - separately trusted independent check capability.
+ * @returns registration disposer.
+ */
+registerLearningValidator(provider: SkillLearningValidator): () => void
+
+/**
+ * Capture immutable task observations without inferring success.
+ * @param observation - immutable host-captured task events; completed turns alone are unverified.
+ * @returns retained evidence.
+ */
+recordLearningEvidence(observation: SkillLearningObservation): Promise<SkillLearningEvidence>
+
+/**
+ * Publish observed project route availability.
+ * @param projectId - selected registered project.
+ * @param value - observed route support.
+ */
+setLearningAvailability(projectId: string, value: Omit<SkillLearningAvailability, 'projectId'>): void
+
+/**
+ * Read provider availability and semantic consent.
+ * @param request - current project.
+ * @returns provider availability and separately approved policies.
+ */
+@Remote('learningStatus') learningStatus(request: SkillLearningListRequest): SkillLearningStatus
+
+/**
+ * Read captured task observations.
+ * @param request - project filter.
+ * @returns immutable observations available for review requests.
+ */
+@Remote('listLearningEvidence') listLearningEvidence(request: SkillLearningListRequest): readonly SkillLearningEvidence[]
+
+/**
+ * Generate a durable uncertain suggestion.
+ * @param request - substantial task observations and selected local targets.
+ * @returns durable uncertain proposal.
+ */
+@Remote('proposeLearning') proposeLearning(request: SkillLearningProposeRequest): Promise<SkillLearningProposal>
+
+/**
+ * Read metadata-only proposal summaries.
+ * @param request - project filter.
+ * @returns body-free proposal summaries.
+ */
+@Remote('listProposals') listProposals(request: SkillLearningListRequest): readonly SkillLearningProposalSummary[]
+
+/**
+ * Load a complete retained proposal.
+ * @param request - proposal identity.
+ * @returns full source diff and retained evidence.
+ */
+@Remote('detailProposal') detailProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Check the proposal through an independent provider.
+ * @param request - selected proposal.
+ * @returns separate independent validation findings.
+ */
+@Remote('validateProposal') validateProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Apply an admitted proposal with reversible source history.
+ * @param request - reviewed or separately authorized proposal.
+ * @returns durable application outcome.
+ */
+@Remote('applyProposal') applyProposal(request: SkillLearningApplyRequest): Promise<SkillLearningProposal>
+
+/**
+ * Retain a rejected suggestion in history.
+ * @param request - selected suggestion.
+ * @returns retained rejected history.
+ */
+@Remote('rejectProposal') rejectProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Approve a semantic policy without enabling any file.
+ * @param request - explicit independent validator and allowed operations.
+ * @returns policy without enabling any file.
+ */
+@Remote('approveLearningPolicy') approveLearningPolicy(request: SkillLearningPolicyRequest): Promise<SkillLearningPolicy>
+
+/**
+ * Enable or revoke separate semantic consent.
+ * @param request - per-file consent for separate semantic policy.
+ * @returns enabled or revoked consent.
+ */
+@Remote('setAutomaticLearning') setAutomaticLearning(request: SkillLearningAutomaticRequest): Promise<SkillLearningOptIn>
+```
+
+Source: [`packages/skill/skill-library/src/index.ts`](../../packages/skill/skill-library/src/index.ts)
 
 <a id="ctxskills--skillregistry"></a>
 
@@ -312,6 +527,14 @@ async list(options: SkillViewOptions = {}): Promise<SkillSummary[]>
  * @returns sorted summaries plus discovery-completeness state.
  */
 async snapshot(options: SkillViewOptions = {}): Promise<SkillCatalogSnapshot>
+
+/**
+ * Retrieve a bounded relevance projection of the scoped metadata winners.
+ * Explicit names remain loadable through `get()` regardless of suggestion budgets.
+ * @param options - scoped lookup, bounded query and metadata selection policy.
+ * @returns selected original summaries, completeness, and shortlist accounting.
+ */
+async retrieve(options: SkillViewOptions & SkillCatalogSelectionOptions): Promise<SkillCatalogSelection<SkillSummary> & { readonly complete: boolean; readonly mode: 'relevance' }>
 
 /**
  * Load and validate the winning candidate, passing its opaque discovery locator back to the

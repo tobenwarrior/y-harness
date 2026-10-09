@@ -42,7 +42,7 @@ kind: "package-library"
 |---|---|
 | `Button` | 可点击操作；`variant` 选择 `primary`、`ghost`、`outline` 或 `toolbar`。ref 指向原生按钮，供焦点控制与浮层锚定使用。 |
 | `Switch` | 36×20 的双态开关。关闭态滑块读取 `--yh-alias-switch-thumb`，在两种主题下均保持亮色；开启态滑块与品牌色轨道形成对比。禁用控件使用半透明样式。`label` 必填，控件不可能在没有名称的情况下发布。 |
-| `SegmentedControl` | 两段或更多等宽分段加一个滑动指示块的 tablist，用于在几种模式间切换一张卡片或面板；选中项由调用方持有，`label` 为列表命名。`id` 派生每个 tab 的 id（`<id>-<value>`）及其控制的面板 id（`<id>-<value>-panel`），面板由调用方渲染并用 `aria-labelledby` 指回 tab；分段可 `disabled` 并带 `title`，控件级 `disabled` 在当前面板有进行中的操作时锁住全部分段。 |
+| `SegmentedControl` | 两项或更多等宽选项的 tablist，用于在几种模式间切换一张卡片或面板；默认 `appearance="segments"` 使用滑动指示块，`appearance="tabs"` 使用下划线；选中项由调用方持有，`label` 为列表命名。`id` 派生每个 tab 的 id（`<id>-<value>`）及其控制的面板 id（`<id>-<value>-panel`），面板由调用方渲染并用 `aria-labelledby` 指回 tab；分段可 `disabled` 并带 `title`，控件级 `disabled` 在当前面板有进行中的操作时锁住全部分段。 |
 | `Checkbox` | 带标签的原生复选框，支持受控状态、键盘交互和禁用样式；调用方提供本地化的 `label` 文本。 |
 | `Input` | 单行文本输入，用于搜索框与行内表单。ref 指向原生输入框，供焦点控制使用，并在卸载时清空。 |
 | `InlineEditor` | 自动聚焦的多行行内编辑器，用于排队消息、goal 等短草稿。它随文本和宽度增高，最多六行，之后滚动；Enter 保存，Shift+Enter 换行，输入法组合中的 Enter 不生效，Escape 取消。调用方提供本地化 `label`，并在 elevated 表面上重绑滚动条。 |
@@ -78,7 +78,7 @@ kind: "package-library"
 有四组容易混淆：
 
 - **`Tag` 与 `Pill`。** 11px 胶囊尺寸的只读徽章用 `Tag`；胶囊可选中（`active` 与 `onClick`，视图切换与筛选器就是这样用的），或者必须落在 24px 文本行上时用 `Pill`——`TerminalBlock` 把退出状态渲染成静态 `Pill` 正是后一种情况。这里尺寸和是否可交互同样是判据，两者不可互换。
-- **`Pill` 与 `SegmentedControl`。** 一排 `Pill` 是一组彼此独立的 chip——每个各自开关，可以同时激活多个。`SegmentedControl` 是在几种互斥模式中选一，画成带一个指示块的 tablist，并自带 tab 键盘模式（方向键在分段间移动，只有选中项在 Tab 序列里）；模型设置页的新增卡片就用它切换两张表单。
+- **`Pill` 与 `SegmentedControl`。** 一排 `Pill` 是一组彼此独立的 chip——每个各自开关，可以同时激活多个。`SegmentedControl` 是在几种互斥模式中选一，画成带滑动指示块或下划线的 tablist，并自带 tab 键盘模式（方向键在分段间移动，只有选中项在 Tab 序列里）；模型设置页的新增卡片就用它切换两张表单。
 - **`DisclosureRow` 与卡片。** 该行以固定 24px 把标题与内容左右排列。把名称叠在描述之上的卡片是另一种布局，属于功能包——`ui-settings-plugins` 的 `PluginCard` 是先例，并记录了原因。
 - **`FoldToggle` 与对外导出面。** 它是包内组件，未导出；输出卡片用它做头尾折叠。
 

@@ -268,7 +268,7 @@ export class PiAiAdapter extends LlmAdapter {
     // The configured name, not the route key: `displayName` exists so a
     // deployment can label a route, and a label only the configuration surface
     // reads would leave every selector showing the raw key.
-    return { id: provider, name: this.current().profiles.get(provider)?.displayName ?? provider }
+    return { id: provider, name: this.current().profiles.get(provider)?.displayName ?? provider, auxiliaryGeneration: 'api' }
   }
 
   override providerRetryPolicy(provider: string): ResolvedRetryPolicy | undefined {

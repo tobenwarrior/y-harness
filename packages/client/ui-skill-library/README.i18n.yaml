@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/client/ui-skill-library/README.md
+/:
+  en: ce26b09677f51dfa
+  zh: cf40451f390ba144
+/deepseek-ai-dsh-client-ui-skill-library:
+  en: b16483d32a7b5f8e
+  zh: 3172ed44d21a6bba
+/deepseek-ai-dsh-client-ui-skill-library/summary:
+  en: 39557c44a04aff15
+  zh: 72aa71d2d7491ed1
+/deepseek-ai-dsh-client-ui-skill-library/table-of-contents:
+  en: 122f0d41696980b1
+  zh: 5423073f383f055d
+/deepseek-ai-dsh-client-ui-skill-library/use-this-package:
+  en: d743e4da21c4e070
+  zh: ebdebdc4b0be136a
+/deepseek-ai-dsh-client-ui-skill-library/use-this-package/review-semantic-proposals:
+  en: 85c4e9b41066f2cc
+  zh: fbe6097618f4a9a4
+/deepseek-ai-dsh-client-ui-skill-library/use-this-package/learning-scope:
+  en: 6d824df1d1eb3056
+  zh: 54bd53a040a75f0b
+/deepseek-ai-dsh-client-ui-skill-library/understand-the-implementation:
+  en: 485b1f37f857d6ba
+  zh: db9c5111a154ab93
+/deepseek-ai-dsh-client-ui-skill-library/model-experience:
+  en: 215e7ba838619b7b
+  zh: 215e7ba838619b7b
+/deepseek-ai-dsh-client-ui-skill-library/model-experience/library-review-and-maintenance:
+  en: ddcf8ef057e87aaa
+  zh: 0c78f764d60b962e
+/deepseek-ai-dsh-client-ui-skill-library/model-experience/library-review-and-maintenance/what-the-model-sees:
+  en: dbfbcd3dc03d046c
+  zh: 8c50e50e2cc89716
+/deepseek-ai-dsh-client-ui-skill-library/model-experience/library-review-and-maintenance/token-effect:
+  en: 3fa9f371325e1571
+  zh: 782f11d46cddd589
+/deepseek-ai-dsh-client-ui-skill-library/model-experience/library-review-and-maintenance/kv-cache-effect:
+  en: 8996ee22efc41f92
+  zh: 3046d66ae96b2a91
+/deepseek-ai-dsh-client-ui-skill-library/known-limitations-and-deferred-work:
+  en: ea9826fefd2acc2c
+  zh: 5adf5f27ef73f5f1
+/deepseek-ai-dsh-client-ui-skill-library/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

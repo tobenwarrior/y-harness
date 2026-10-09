@@ -181,6 +181,8 @@ export interface PreparedLlmCall {
   readonly toolUpdate?: ToolUpdate
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
+  /** Auxiliary execution mode captured from this exact registration; absence grants no background generation. */
+  readonly auxiliaryGeneration?: LlmProviderInfo['auxiliaryGeneration']
   /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
@@ -434,12 +436,21 @@ export class LlmRuntime extends TypertRemoteService {
       if (typeof info.id !== 'string' || info.id !== provider || typeof info.name !== 'string' || info.name.length === 0) {
         throw new LlmError(`adapter metadata for provider "${provider}" must preserve its id and have a non-empty name`, 'INVALID_ADAPTER')
       }
+      const auxiliaryGeneration: unknown = info.auxiliaryGeneration
+      if (auxiliaryGeneration !== undefined && auxiliaryGeneration !== 'api' && auxiliaryGeneration !== 'native') {
+        throw new LlmError(
+          `adapter metadata for provider "${provider}" has an invalid auxiliary generation declaration`, 'INVALID_ADAPTER',
+        )
+      }
       unique.add(provider)
       const retryPolicy = adapter.providerRetryPolicy(provider)
         ?? resolveRetryPolicy(undefined, `llm: provider "${provider}" retryPolicy`)
       registrations.push({
         adapter,
-        provider: { id: info.id, name: info.name },
+        provider: {
+          id: info.id, name: info.name,
+          ...(info.auxiliaryGeneration === undefined ? {} : { auxiliaryGeneration: info.auxiliaryGeneration }),
+        },
         retryPolicy,
       })
     }
@@ -1005,10 +1016,12 @@ export class LlmRuntime extends TypertRemoteService {
    * so HMR cannot combine one adapter's capability result with another adapter.
    * @param config - provider/model route and optional request controls.
    * @param signal - optional cancellation for adapter-owned capability lookup.
-   * @returns a prepared config and its registration-bound stream entry point.
+   * @param requiredAuxiliaryGeneration - require a response-only API registration before any adapter-owned resolution.
+   * @returns a prepared config and its registration-bound stream entry point; unsupported auxiliary modes reject before adapter work.
    */
-  async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall> {
+  async prepareCall(config: LlmCallConfig, signal?: AbortSignal, requiredAuxiliaryGeneration?: 'api'): Promise<PreparedLlmCall> {
     const registration = this.registration(config.provider)
+    if (requiredAuxiliaryGeneration === 'api') this.requireApiGeneration(registration)
     const adapterCall = await registration.adapter.prepareCall(config.provider, config.model, signal)
     const modelInfo = this.normalizeModelInfo(registration, config.model, adapterCall.model)
     const resolved = this.resolveCallWithInfo(config, modelInfo)
@@ -1032,6 +1045,7 @@ export class LlmRuntime extends TypertRemoteService {
       config: resolvedConfig,
       retryPolicy: registration.retryPolicy,
       adapterDefaults,
+      ...registration.provider.auxiliaryGeneration === undefined ? {} : { auxiliaryGeneration: registration.provider.auxiliaryGeneration },
       ...context === undefined ? {} : { context },
       ...modelInfo.inputModalities === undefined
         ? {}
@@ -1057,6 +1071,12 @@ export class LlmRuntime extends TypertRemoteService {
         })
       },
     })
+  }
+
+  private requireApiGeneration(registration: AdapterRegistration): void {
+    if (registration.provider.auxiliaryGeneration !== 'api') {
+      throw new LlmError('auxiliary skill generation requires a response-only API adapter', 'UNSUPPORTED_AUXILIARY_GENERATION')
+    }
   }
 
   private registration(provider: string): AdapterRegistration {
@@ -1114,6 +1134,7 @@ export class LlmRuntime extends TypertRemoteService {
     let iterator: AsyncIterator<StreamChunk>
     try {
       const registration = prepared?.registration ?? this.registration(options.provider)
+      if (options.purpose === 'skill-learning') this.requireApiGeneration(registration)
       const adapter = registration.adapter
       let modelInfo: LlmResolvedModelInfo
       let resolvedConfig: LlmCallConfig

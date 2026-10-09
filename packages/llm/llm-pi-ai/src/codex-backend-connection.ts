@@ -12,6 +12,8 @@ import type { CodexPreferences } from './codex-backend.ts'
 import { startCodexProcess } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
+import type {} from '@deepseek-ai/dsh-skill-library'
+import { createCodexSkillLibraryProvider } from './codex-skill-library.ts'
 
 declare module '@deepseek-ai/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
 /** Independent optional model family. */
@@ -23,6 +25,9 @@ export class CodexBackendConnection extends TypertRemoteService {
   constructor(ctx: Context) {
     super(ctx, 'codexBackendConnection', { namespace: 'codexBackend' })
     ctx.effect(() => () => { this.disposed = true; this.runtime?.close() })
+    ctx.inject(['skillLibrary'], (child) => {
+      child.effect(() => child.skillLibrary.registerNativeProvider(createCodexSkillLibraryProvider(() => this.runtime)))
+    })
     // Restore only our display preferences and route. No subprocess or native auth read.
     void this.getRuntime().catch(() => {})
   }

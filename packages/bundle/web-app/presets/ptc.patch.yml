@@ -39,6 +39,11 @@
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+            config:
+              catalogMode: relevant
+              catalogLimit: 8
+              catalogMaxBytes: 6000
+              catalogQueryMaxChars: 4096
           - id: command-goal
             name: '@deepseek-ai/dsh-command-goal'
           - id: tool-goal

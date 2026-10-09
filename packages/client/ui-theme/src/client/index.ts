@@ -142,6 +142,26 @@ const BUILTIN_INSPECT_TOKENS: readonly ThemeTokenInspection[] = Object.freeze([
   { name: '--yh-alias-border-l1', description: 'Primary subtle border.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-border-l1' },
   { name: '--yh-alias-border-l2', description: 'Secondary stronger border.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-border-l2' },
   { name: '--yh-alias-brand-primary', description: 'Primary brand accent.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-brand-primary' },
+  {
+    name: '--yh-alias-graph-bg', description: 'Relationship graph canvas background.',
+    valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-graph-bg',
+  },
+  {
+    name: '--yh-alias-graph-ink', description: 'Primary graph labels and nodes.',
+    valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-graph-ink',
+  },
+  {
+    name: '--yh-alias-graph-muted', description: 'Secondary graph labels.',
+    valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-graph-muted',
+  },
+  {
+    name: '--yh-alias-graph-edge', description: 'Relationship graph edges.',
+    valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-graph-edge',
+  },
+  {
+    name: '--yh-alias-graph-accent', description: 'Graph selection and focus accent.',
+    valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-graph-accent',
+  },
   { name: '--yh-alias-label-primary', description: 'Primary text color.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-label-primary' },
   { name: '--yh-alias-label-secondary', description: 'Secondary text color.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-label-secondary' },
   { name: '--yh-alias-state-error-primary', description: 'Primary error state color.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--yh-alias-state-error-primary' },

@@ -1,11 +1,14 @@
 /** Optional native Codex loop. This route does not dispatch Harness tools. */
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
+import { isAbsolute, normalize } from 'node:path'
 import { LlmAdapter, ReasoningEffortId, ServiceTierId, offloadedImageText } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
 import type { CodexTurnAccess } from './codex-backend-access.ts'
+import type { NativeSkillLibraryObservation, SkillLibraryProject } from '@deepseek-ai/dsh-skill-library/types'
+import { parseCodexSkills } from './codex-skill-library.ts'
 
 type Obj = Record<string, unknown>
 function obj(value: unknown): Obj { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {} }
@@ -155,6 +158,36 @@ export class CodexBackendRuntime {
    * @returns a detached copy of the stored model views.
    */
   models(): CodexBackendModelView[] { return structuredClone(this.options.preferences.models) }
+  /**
+   * Observe native skills through an existing connected peer; discovery never launches Codex.
+   * @param projects - registered project directories; an empty list scans nothing.
+   * @param forceReload - whether the native server bypasses its skill metadata cache.
+   * @returns metadata and connection support, with implicit usage left unknown.
+   */
+  async listSkills(projects: readonly SkillLibraryProject[], forceReload = false): Promise<NativeSkillLibraryObservation> {
+    const peer = this.peer
+    const disconnected: NativeSkillLibraryObservation = { entries: [], status: {
+      provider: 'codex-backend', state: 'disconnected', message: 'Native skill inventory requires an already connected Codex backend. Usage is unknown.',
+    } }
+    if (this.disposed || peer === undefined || !this.connected) return disconnected
+    if (projects.length === 0) return { entries: [], status: { provider: 'codex-backend', state: 'connected' } }
+    try {
+      if (projects.some(project => !isAbsolute(project.path))) throw new Error('Native skill discovery requires absolute project paths.')
+      const cwds = [...new Set(projects.map(project => normalize(project.path)))]
+      const result = await peer.request('skills/list', { cwds, forceReload })
+      if (!this.skillLibraryPeerCurrent(peer)) return disconnected
+      return parseCodexSkills(result, projects)
+    } catch (error) {
+      if (!this.skillLibraryPeerCurrent(peer)) return disconnected
+      const unsupported = obj(error).code === -32601
+      return { entries: [], status: { provider: 'codex-backend', state: unsupported ? 'unsupported' : 'unavailable',
+        message: unsupported ? 'This Codex runtime does not expose skill inventory. Usage is unknown.' : 'Native skill inventory is unavailable. Usage is unknown.' } }
+    }
+  }
+  private skillLibraryPeerCurrent(peer: CodexPeer): boolean {
+    return peer === this.peer && this.connected && !this.disposed
+  }
+
   private async ensure(): Promise<CodexPeer> {
     if (this.disposed) throw new Error('Codex backend is closed.')
     if (this.peer !== undefined) return this.peer
@@ -447,7 +480,7 @@ export class CodexBackendRuntime {
 /** Native Codex model routing while Codex, rather than Harness, owns tools. */
 export class CodexBackendAdapter extends LlmAdapter {
   constructor(private readonly runtime: CodexBackendRuntime) { super() }
-  override providerInfo(provider: string): { id: string; name: string } { return { id: provider, name: 'Codex (native backend)' } }
+  override providerInfo(provider: string): { id: string; name: string; auxiliaryGeneration: 'native' } { return { id: provider, name: 'Codex (native backend)', auxiliaryGeneration: 'native' } }
   override listModels(provider: string): Promise<LlmModelInfo[]> {
     const models: LlmModelInfo[] = this.runtime.view().enabled
       ? this.runtime.models().map(model => ({

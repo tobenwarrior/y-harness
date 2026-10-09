@@ -48,11 +48,14 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 ### What the registry gives you
 
 - **One merged catalog.** A consumer asks for the current catalog of a workspace and receives every winning skill summary from every provider, sorted by name — no provider-specific ordering or deduplication to do.
+- **Metadata retrieval.** `ctx.skills.retrieve({ cwd, scope, query, limit, maxBytes })` selects task-relevant model-invocable winners from the same snapshot without loading bodies. It returns `skills`, `complete`, `metadataBytes`, `omittedCount`, `explicitOverflow`, and `mode: 'relevance'`; `list()` and `get()` retain their full-catalog and exact-load contracts.
 - **On-demand loading.** Asking for one skill by name returns the full instruction body from whichever provider owns the winning candidate; the registry re-validates the loaded definition and rejects a stale selection whose name changed between discovery and load.
 - **Embedded skills.** Plugins register an in-memory skill with `ctx.skills.register(...)`; the registry fills in a default invocation policy and the `runtime` provider label. Same-name runtime registrations in one layer are first-wins with a warning.
 - **Provider registration.** A provider contributes its catalog with `ctx.skills.registerProvider(...)`; registration is synchronous, and the returned disposer removes the provider. `runtime` is a reserved provider name.
 
 An invocation policy on every skill decides which surfaces may advertise and load it: `modelInvocable` for model-facing tools and catalogs, `userInvocable` for human-facing commands. The registry keeps all four combinations, so one discovery result can serve both surfaces without conflating their catalogs.
+
+The exported pure `selectSkillCatalog(summaries, options)` applies the same selector to already-discovered metadata and returns the original item objects. Options require `query`, positive integer `limit` and `maxBytes`; optional `descriptionMaxLength` defaults to 500. `requestedNames` preserves explicit model-invocable names even when ordinary suggestion bounds are exceeded. `preserveNamedSkills: true` also matches exact names in a trusted query; leave it off for model-generated metadata searches. Bytes count escaped rendered entry lines and separators, not fixed guidance or result wrappers. Ranking uses name, description and `whenToUse` words; it does not promise semantic matching. Explicit user-only skills remain available through their separate user-invocation path.
 
 | Policy | Model | User |
 |---|---|---|
@@ -88,6 +91,7 @@ The registry is host+per-scope layered, the shape the tools registry established
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry, `SkillRegistry` service, candidate and definition validation, shared model-facing rendering |
+| [`src/catalog-selection.ts`](src/catalog-selection.ts) | Pure bounded metadata ranking and explicit-name preservation |
 
 ### Catalog collection
 

@@ -471,6 +471,11 @@ interface LlmProviderInfo {
   id: string
   /** Human-readable provider name for selectors and diagnostics. */
   name: string
+  /**
+   * Cached execution declaration: `api` permits response-only requests without native tools or interactive auth;
+   * `native` and absence forbid background generation.
+   */
+  auxiliaryGeneration?: 'api' | 'native'
 }
 ```
 
@@ -651,7 +656,7 @@ interface GenerateOptions {
    * map the purpose to model-hidden transport metadata or purpose-specific
    * generation policy. Ordinary conversation requests leave it unset.
    */
-  purpose?: 'compaction' | 'session-title'
+  purpose?: 'compaction' | 'session-title' | 'skill-learning'
 }
 ```
 
@@ -816,6 +821,8 @@ interface PreparedLlmCall {
   readonly toolUpdate?: ToolUpdate
   /** Config fields materialized by the captured adapter rather than proposed by the caller. */
   readonly adapterDefaults: LlmCallConfigAdapterDefaults
+  /** Auxiliary execution mode captured from this exact registration; absence grants no background generation. */
+  readonly auxiliaryGeneration?: LlmProviderInfo['auxiliaryGeneration']
   /**
    * Dispatch this call once through the registration captured during
    * preparation. The request's call-config fields must match {@link config};
@@ -1135,9 +1142,10 @@ async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<Ll
  * so HMR cannot combine one adapter's capability result with another adapter.
  * @param config - provider/model route and optional request controls.
  * @param signal - optional cancellation for adapter-owned capability lookup.
- * @returns a prepared config and its registration-bound stream entry point.
+ * @param requiredAuxiliaryGeneration - require a response-only API registration before any adapter-owned resolution.
+ * @returns a prepared config and its registration-bound stream entry point; unsupported auxiliary modes reject before adapter work.
  */
-async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>
+async prepareCall(config: LlmCallConfig, signal?: AbortSignal, requiredAuxiliaryGeneration?: 'api'): Promise<PreparedLlmCall>
 
 /**
  * Stream one model call as raw chunks (token-level deltas). Replay state is

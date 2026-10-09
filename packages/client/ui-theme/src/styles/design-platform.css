@@ -163,6 +163,11 @@ body[data-ds-dark-theme] {
 }
 
 body {
+  --yh-alias-graph-bg: var(--yh-static-neutral-850);
+  --yh-alias-graph-ink: var(--yh-static-neutral-100);
+  --yh-alias-graph-muted: var(--yh-static-neutral-400);
+  --yh-alias-graph-edge: var(--yh-static-neutral-500);
+  --yh-alias-graph-accent: var(--yh-static-blue-450);
   --yh-alias-bg-base: var(--yh-static-neutral-bluish-00);
   --yh-alias-bg-document-preview: var(--yh-static-neutral-bluish-100);
   --yh-alias-bg-document-selection: color-mix(in srgb, var(--yh-static-blue-500) 40%, transparent);

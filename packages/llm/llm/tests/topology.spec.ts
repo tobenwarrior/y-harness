@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, LlmConfigurableProvider, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmConfigurableProvider, LlmProviderInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 
 class NoopAdapter extends LlmAdapter {
 
@@ -25,6 +25,45 @@ function entry(overrides: Partial<LlmConfigurableProvider> = {}): LlmConfigurabl
     ...overrides,
   }
 }
+
+describe('cached auxiliary generation capability', () => {
+  it('retains declared route capabilities without model discovery or name inference', async () => {
+    const ctx = await setup()
+    class DeclaredAdapter extends NoopAdapter {
+      override providerInfo(id: string): LlmProviderInfo {
+        return { id, name: 'Custom gateway', auxiliaryGeneration: id === 'custom-alias' ? 'native' : 'api' }
+      }
+      override listModels = vi.fn(() => Promise.reject(new Error('must not discover models')))
+    }
+    const adapter = new DeclaredAdapter()
+    ctx.llm.registerAdapter(['custom-alias', 'api-route'], adapter)
+    ctx.llm.registerAdapter(['unknown'], new NoopAdapter())
+    expect(ctx.llm.listProviders()).toEqual([
+      { id: 'custom-alias', name: 'Custom gateway', auxiliaryGeneration: 'native' },
+      { id: 'api-route', name: 'Custom gateway', auxiliaryGeneration: 'api' },
+      { id: 'unknown', name: 'unknown' },
+    ])
+    expect(adapter.listModels).not.toHaveBeenCalled()
+    const listed = ctx.llm.listProviders()
+    listed[0]!.auxiliaryGeneration = 'api'
+    expect(ctx.llm.listProviders()[0]!.auxiliaryGeneration).toBe('native')
+  })
+
+  it('rejects an invalid declaration atomically and preserves the old registration', async () => {
+    const ctx = await setup()
+    class MutableAdapter extends NoopAdapter {
+      invalid = false
+      override providerInfo(id: string): LlmProviderInfo {
+        return { id, name: id, auxiliaryGeneration: this.invalid ? 'claimed' as never : 'api' }
+      }
+    }
+    const adapter = new MutableAdapter()
+    const registration = ctx.llm.registerAdapter(['existing'], adapter)
+    adapter.invalid = true
+    expect(() => { registration.replace(['new']) }).toThrow(/invalid auxiliary generation/)
+    expect(ctx.llm.listProviders()).toEqual([{ id: 'existing', name: 'existing', auxiliaryGeneration: 'api' }])
+  })
+})
 
 describe('llm/adapters-updated', () => {
   it('fires at both adapter registration commit points with the registry already readable', async () => {

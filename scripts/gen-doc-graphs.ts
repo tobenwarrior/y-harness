@@ -588,6 +588,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Merges provider skill catalogs; tool-skill renders the session-prefix catalog and loads complete skill bodies.',
   },
   {
+    key: 'skillLibrary',
+    pkg: 'skill-library',
+    title: 'Scoped skill library and reviewed learning',
+    mode: 'service',
+    consumers: ['client-ui-skill-library', 'web-app', 'sdk-app'],
+    note: 'Serves project and shared inventory, explicit references, durable evidence and reviewed reversible managed changes.',
+  },
+  {
     key: 'agents',
     pkg: 'agent',
     title: 'Agent service',

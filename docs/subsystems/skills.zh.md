@@ -6,6 +6,8 @@
 
 源码：[`packages/skill/skill/src/index.ts`](../../packages/skill/skill/src/index.ts)、[`packages/skill/skill-filesystem/src/index.ts`](../../packages/skill/skill-filesystem/src/index.ts)、[`packages/skill/skill-badge/src/index.ts`](../../packages/skill/skill-badge/src/index.ts)、[`packages/skill/skill-office/src/index.ts`](../../packages/skill/skill-office/src/index.ts)、[`packages/sandbox/sandbox-windows-acl/src/acl-skill.ts`](../../packages/sandbox/sandbox-windows-acl/src/acl-skill.ts) 与 [`packages/skill/tool-skill/src/index.ts`](../../packages/skill/tool-skill/src/index.ts)。
 
+`ctx.skillLibrary` 为用户提供[技能库](../../packages/skill/skill-library)，包括项目与共享技能清单、受保护的接管流程、已记录的加载次数、明确引用和可撤销维护。[浏览器面板](../../packages/client/ui-skill-library)仅为选中的详情加载指令正文。清单包含原生元信息与当前已挂载的注册表视图；未启用的预设不在清单范围内。有界检索 API 不会替换模型自身的目录。
+
 ## 提供方注册表
 
 `ctx.skills` 组合本地、内嵌、远程或其他提供方。注册是同步的；远程初始化与发现属于 `list()` 的 await 阶段。提供方对象、选项与候选项以只读方式借用，语义字段会被校验。
@@ -214,7 +216,7 @@ interface SkillViewOptions extends SkillLookupOptions {
 }
 ```
 
-注册表只拥有其发现缓存上限。本地提供方拥有文件系统根目录（`dshHome`、`agentsHome`、`customSkillDirs`，以及可选的 `bundledSkillDir`/`DSH_BUNDLED_SKILL_DIR`），以及 watcher 启用、轮询、稳定性、符号链接和项目容量控制。消费方拥有其目录描述上限。确切的默认值和校验规则见自动生成的[插件配置目录](../config-catalog.zh.md)。
+注册表拥有发现缓存上限，并通过 `retrieve()` 提供元数据选择。本地提供方拥有文件系统根目录（`dshHome`、`agentsHome`、`customSkillDirs`，以及可选的 `bundledSkillDir`/`DSH_BUNDLED_SKILL_DIR`）和 watcher 控制。消费方拥有投影模式、建议数量、渲染元数据字节、查询长度及描述上限。确切的默认值和校验规则见自动生成的[插件配置目录](../config-catalog.zh.md)。
 
 ```ts type-equiv
 /** Skill registry configuration. */
@@ -226,11 +228,25 @@ interface Config {
 
 ## 会话目录与工具约定
 
-`dsh-tool-skill` 在存活会话中第一个观察到非空完整视图的 `agent/pre-step` 注入初始的持久 user-role `<system-reminder>`。目录只包含已排序的 skill `name` 和规范化、经 XML 转义的 `description`；不包含正文、路径、来源、提供方或路由提示。发现通过 `SkillLookupOptions` 转发该步骤的 abort signal。`catalogDescriptionMaxLength` 是消费方用于 description 上限的配置，默认值为 `500`，整数最小值为 `3`。
+`ctx.skills.retrieve({ cwd, scope, signal, query, limit, maxBytes, requestedNames?, descriptionMaxLength? })` 从与 `snapshot()` 相同的权威作用域获胜条目选择元数据。导出的纯函数 [`selectSkillCatalog`](../../packages/skill/skill/src/catalog-selection.ts) 按名称、描述和 `whenToUse` 词汇排序，返回原始的模型可调用摘要，不调用提供方正文加载器。结果包括发现 `complete`、`mode: 'relevance'`、`metadataBytes`、`omittedCount` 和 `explicitOverflow`。精确请求名称可超过普通数量及字节上限；`preserveNamedSkills: true` 还会识别可信查询中的名称。模型搜索关闭此选项。`list()` 与 `get()` 不受影响。
 
-在后续每个模型步骤之前，消费方都会应用精确的工具可见性，并对完整快照中 `<available_skills>` 标签之间精确渲染的条目计算 digest。它以该插件所发布、最新一条可识别且仍可见的目录消息中的相同条目作为比较基线。digest 发生变化时，会通过 `agent.inject()` 追加一条持久的完整目录替换；删除所有 skill 时会追加一条显式的空替换。不完整快照会保留上一份可用模型视图。如果压缩（compaction）隐藏了所有历史目录消息，下一份完整快照会重新建立当前目录；如果视图为空且从未发布目录，则不发送任何内容。这些目录消息属于会话历史，而非 World State。
+`dsh-tool-skill` 支持兼容默认值 `catalogMode: all` 和 `catalogMode: relevant`。两种模式都转发当前 cwd、scope 和取消信号，只渲染名称及规范化、经 XML 转义的描述。相关性模式默认最多八个普通建议、6000 UTF-8 条目行字节、最新任务查询后缀的 4096 个字符，以及每条描述 500 个字符。固定指引和搜索结果包装另计。当前已认领的 `source.kind: user` 文字提供查询，工具续步使用最新可见用户任务；注入规则、回忆、模型文字和工具输出不能提供查询。精确名称从权威任务全文单独提取，避免较早的显式名称因查询截断而丢失。每次模型步骤不扫描管理库，也不加载正文。
+
+消费方通过获准的 `agent/pre-step` 决策追加目录消息。`all` 模式完整目录替换较早可用列表；相关性模式短名单替换建议，并明确还可能存在其他技能。空短名单不会撤销其他精确名称。来源记录任务消息 ID、元数据字节数、省略数量及显式预算例外。digest 包括渲染条目、投影模式及加载/搜索工具的精确可见性。不完整快照保留最后可用视图。目录变化仍保留历史直到普通压缩；建议上限不是完整提示词或已加载正文的上限。
 
 面向模型的 `skill({ name })` 工具校验 kebab-case 名称，在与调用策略无关的目录中查找摘要，并在加载前通过 `isModelInvocable` 拒绝无权访问的 skill；随后它根据调用方 agent 的 cwd 重新读取完整定义，并在返回内容前再次检查策略。该工具将无法解析的 skill 报告为未知或已不可用，并返回包含 `<skill_content name="...">`、`<skill_resources>` 和 `<skill_instructions>` 的工具结果。`resourceBase` 仅按需解析显式引用的脚本、参考资料和资产；加载结果不枚举 skill 目录。因此，仅修改正文会改变后续工具调用，而不会生成目录消息或改写先前工具结果。
+
+相关性模式的 `search_skills({ query })` 从作用域注册表进行有上限的元数据搜索；模型查询没有显式预算例外。省略的精确名称仍可按模型调用策略加载。用户 `/name` 保留原有指令注入路径，包括仅用户可调用的技能。完整正文不因元数据预算而被截断。
+
+随附源码在基础 CLI 行及 web `standard`、`ptc`、`cordis` preset 行启用相关性模式。Harness 循环的 spawn/fork 和工作流子任务在组合挂载这些行时获得该行为；SDK 子任务取决于自己的命名 profile 和 patch。原生 Codex 后端可接收已记录的 Harness 指引，但原生技能目录及工具仍独立管理。外部 Claude Code/Codex 与 ACP 子任务绕过此消费方，因此其目录不受此选择器限制。现有用户 profile 可以覆盖随附配置。
+
+## 学习观察与审核
+
+[Host 技能库](../../packages/skill/skill-library/README.zh.md) 将观察记录和语义提案与技能文件分开保存。[运行时采集器](../../packages/skill/skill-library/src/learning-runtime.ts) 在持久化后记录活动根 Session 的工作，要求至少两次具体的 Harness 工具调用，以及一个未报告错误的配对结果。它跳过继承、种子、委派、琐碎、中断及失败任务。有上限的任务文字与助手完成声明仍未经验证；不保留原始工具参数或输出，采集器不提供验证检查。
+
+仅当缓存的提供方元数据明确声明 `auxiliaryGeneration: api` 时，建议生成才使用任务捕获的路由。原生或未声明的路由保持不可用，手动生成需要活动的根证据 Session。Host 在加载完整正文前选择相关的受管理来源，拒绝过大或疑似凭据的输入，并在创建项目技能前检查已有元数据。生成器只能返回不确定的建议，不能指定路径、权限或验证依据；[学习类型](../../packages/skill/skill-library/src/learning-types.ts) 定义证据、完整差异及独立回执。
+
+审核保留来源与保留技能的指令、资源哈希、约束、已解析的引用目标和不确定性。归档保留技能引用身份及外部目标；等价包内资源可以迁移。应用会在来源写入队列内复查当前来源与保护状态，保留回滚历史，并在继续前核对中断应用。创建始终需要审核。自动更新、压缩或归档还需要已批准的策略、每个文件的当前授权，以及绑定完整提案并具有已通过来源检查的独立可信回执。默认不附带可信语义验证器；仅凭完成状态、工具结果或模型声明不能授权自动更改。
 
 ## 浏览器 Session 目录
 
@@ -262,6 +278,205 @@ Host service backing `ctx.remote.skills` without activating a cold Agent.
 ```
 
 Source: [`packages/api/session-controller/src/skill-catalog.ts`](../../packages/api/session-controller/src/skill-catalog.ts)
+
+<a id="ctxskilllibrary--skilllibrarycontroller"></a>
+
+### `ctx.skillLibrary` — `SkillLibraryController`
+
+Owns the `skillLibrary` Remote namespace and local native-provider registrations.
+
+```ts cordis-catalog
+/**
+ * Register metadata from an already-connected native route.
+ * @param provider - process-free discovery adapter.
+ * @returns provider disposer.
+ */
+registerNativeProvider(provider: NativeSkillLibraryProvider): () => void
+
+/**
+ * Read inventory summaries.
+ * @param request - optional project selector.
+ * @returns metadata, scopes and provider coverage.
+ */
+@Remote('list') list(request: SkillLibraryListRequest): Promise<SkillLibraryList>
+
+/**
+ * Load one selected instruction body.
+ * @param request - stable library identity.
+ * @returns detail and revision history.
+ */
+@Remote('detail') detail(request: SkillLibraryIdRequest): Promise<SkillLibraryDetail>
+
+/**
+ * Protect a skill from maintenance.
+ * @param request - identity and pin value.
+ * @returns updated item.
+ */
+@Remote('setPinned') setPinned(request: SkillLibraryPinRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Adopt a current local version without automatic cleanup.
+ * @param request - identity and expected hash.
+ * @returns updated item.
+ */
+@Remote('adopt') adopt(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Explicitly opt one managed version into conservative cleanup.
+ * @param request - unchanged managed file and opt-in.
+ * @returns updated item.
+ */
+@Remote('setAutomaticCleanup') setAutomaticCleanup(request: SkillLibraryAutomaticRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Archive a whole selected bundle reversibly.
+ * @param request - identity and expected hash.
+ * @returns archived item.
+ */
+@Remote('archive') archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Restore a selected archive into a vacant original location.
+ * @param request - archived identity.
+ * @returns restored item.
+ */
+@Remote('restore') restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Preview conservative managed-file compression.
+ * @param request - selected ids or all eligible entries.
+ * @returns source diffs and skipped reasons.
+ */
+@Remote('previewCleanup') previewCleanup(request: SkillLibraryCleanupRequest): Promise<SkillCleanupProposal>
+
+/**
+ * Apply an unchanged cleanup preview.
+ * @param request - live preview identity.
+ * @returns changed library identities.
+ */
+@Remote('applyCleanup') applyCleanup(request: SkillLibraryApplyRequest): Promise<SkillLibraryApplyValue>
+
+/**
+ * Restore previous instructions as a new revision.
+ * @param request - expected current hash and previous version.
+ * @returns updated item.
+ */
+@Remote('rollback') rollback(request: SkillLibraryRollbackRequest): Promise<SkillLibraryItemValue>
+
+/**
+ * Select metadata before progressively loading bodies.
+ * @param request - current project and routing query.
+ * @returns bounded ranked metadata.
+ */
+@Remote('retrieve') retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]>
+
+/**
+ * Record verified explicit instruction delivery.
+ * @param request - exact library/version identity and observation.
+ * @returns persistence completion.
+ */
+recordLoad(request: { readonly id: SkillLibraryId readonly contentHash?: string readonly loadedAt?: string readonly sessionId?: string }): Promise<void>
+
+/**
+ * Register a bounded suggestion provider.
+ * @param provider - bounded suggestion capability.
+ * @returns registration disposer.
+ */
+registerLearningGenerator(provider: SkillLearningGenerator): () => void
+
+/**
+ * Register a separate independent validation provider.
+ * @param provider - separately trusted independent check capability.
+ * @returns registration disposer.
+ */
+registerLearningValidator(provider: SkillLearningValidator): () => void
+
+/**
+ * Capture immutable task observations without inferring success.
+ * @param observation - immutable host-captured task events; completed turns alone are unverified.
+ * @returns retained evidence.
+ */
+recordLearningEvidence(observation: SkillLearningObservation): Promise<SkillLearningEvidence>
+
+/**
+ * Publish observed project route availability.
+ * @param projectId - selected registered project.
+ * @param value - observed route support.
+ */
+setLearningAvailability(projectId: string, value: Omit<SkillLearningAvailability, 'projectId'>): void
+
+/**
+ * Read provider availability and semantic consent.
+ * @param request - current project.
+ * @returns provider availability and separately approved policies.
+ */
+@Remote('learningStatus') learningStatus(request: SkillLearningListRequest): SkillLearningStatus
+
+/**
+ * Read captured task observations.
+ * @param request - project filter.
+ * @returns immutable observations available for review requests.
+ */
+@Remote('listLearningEvidence') listLearningEvidence(request: SkillLearningListRequest): readonly SkillLearningEvidence[]
+
+/**
+ * Generate a durable uncertain suggestion.
+ * @param request - substantial task observations and selected local targets.
+ * @returns durable uncertain proposal.
+ */
+@Remote('proposeLearning') proposeLearning(request: SkillLearningProposeRequest): Promise<SkillLearningProposal>
+
+/**
+ * Read metadata-only proposal summaries.
+ * @param request - project filter.
+ * @returns body-free proposal summaries.
+ */
+@Remote('listProposals') listProposals(request: SkillLearningListRequest): readonly SkillLearningProposalSummary[]
+
+/**
+ * Load a complete retained proposal.
+ * @param request - proposal identity.
+ * @returns full source diff and retained evidence.
+ */
+@Remote('detailProposal') detailProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Check the proposal through an independent provider.
+ * @param request - selected proposal.
+ * @returns separate independent validation findings.
+ */
+@Remote('validateProposal') validateProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Apply an admitted proposal with reversible source history.
+ * @param request - reviewed or separately authorized proposal.
+ * @returns durable application outcome.
+ */
+@Remote('applyProposal') applyProposal(request: SkillLearningApplyRequest): Promise<SkillLearningProposal>
+
+/**
+ * Retain a rejected suggestion in history.
+ * @param request - selected suggestion.
+ * @returns retained rejected history.
+ */
+@Remote('rejectProposal') rejectProposal(request: SkillLearningProposalRequest): Promise<SkillLearningProposal>
+
+/**
+ * Approve a semantic policy without enabling any file.
+ * @param request - explicit independent validator and allowed operations.
+ * @returns policy without enabling any file.
+ */
+@Remote('approveLearningPolicy') approveLearningPolicy(request: SkillLearningPolicyRequest): Promise<SkillLearningPolicy>
+
+/**
+ * Enable or revoke separate semantic consent.
+ * @param request - per-file consent for separate semantic policy.
+ * @returns enabled or revoked consent.
+ */
+@Remote('setAutomaticLearning') setAutomaticLearning(request: SkillLearningAutomaticRequest): Promise<SkillLearningOptIn>
+```
+
+Source: [`packages/skill/skill-library/src/index.ts`](../../packages/skill/skill-library/src/index.ts)
 
 <a id="ctxskills--skillregistry"></a>
 
@@ -312,6 +527,14 @@ async list(options: SkillViewOptions = {}): Promise<SkillSummary[]>
  * @returns sorted summaries plus discovery-completeness state.
  */
 async snapshot(options: SkillViewOptions = {}): Promise<SkillCatalogSnapshot>
+
+/**
+ * Retrieve a bounded relevance projection of the scoped metadata winners.
+ * Explicit names remain loadable through `get()` regardless of suggestion budgets.
+ * @param options - scoped lookup, bounded query and metadata selection policy.
+ * @returns selected original summaries, completeness, and shortlist accounting.
+ */
+async retrieve(options: SkillViewOptions & SkillCatalogSelectionOptions): Promise<SkillCatalogSelection<SkillSummary> & { readonly complete: boolean; readonly mode: 'relevance' }>
 
 /**
  * Load and validate the winning candidate, passing its opaque discovery locator back to the

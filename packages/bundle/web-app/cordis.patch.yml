@@ -91,6 +91,9 @@
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
 
+    - id: skill-library
+      name: '@deepseek-ai/dsh-skill-library'
+
     - id: session-reference
       name: '@deepseek-ai/dsh-session-reference'
 
@@ -312,6 +315,9 @@
     # Without a profile-backed Host it reports itself unavailable.
     - id: ui-plugin-manager
       name: '@deepseek-ai/dsh-client-ui-plugin-manager'
+
+    - id: ui-skill-library
+      name: '@deepseek-ai/dsh-client-ui-skill-library'
 
     # Read-only Plugin list tab in the Settings Plugins section; the built-in
     # bundles the sidebar page leaves out are inspected here.

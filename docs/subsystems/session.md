@@ -339,6 +339,21 @@ type SurfaceOp =
 
 ### `SurfaceIntent` — the parameter to `session.append()`
 
+Non-surface appends may instead use `SessionInformationalOptions` with `{ ignorable: true }`. The append boundary snapshots and freezes this marker; omission remains required. Writers must use it only when loss cannot affect reconstruction or interpretation. Boundary events are not automatically reclassified. Surface append options reject the informational marker, and log-only options forbid `surfaceOp` and `sourceEventSeqs`.
+
+```ts type-equiv
+/**
+ * Optional append metadata for a log-only record. Writers mark `true` only
+ * when omitting this record cannot affect reconstruction or interpretation.
+ * An absent marker remains required; no event type is automatically reclassified.
+ */
+interface SessionInformationalOptions {
+  readonly ignorable?: true
+  readonly surfaceOp?: never
+  readonly sourceEventSeqs?: never
+}
+```
+
 ```ts type-equiv
 /**
  * Surface placement and cited source-event seqs for {@link Session.append}. Required on
@@ -587,9 +602,13 @@ declare class Session {
    *   {@link SurfaceEventType} events (every message-producing event must
    *   declare how it joins the surface, the sole source of derived model
    *   history) and
-   *   rejected by the compiler for non-surface types like `turn/start` or
-   *   `assistant/attempt`. Assistant messages embed their exact provider
-   *   stream and cannot cite top-level source events.
+   *   forbidden for non-surface types like `turn/start` or `assistant/attempt`.
+   *   Log-only events may instead carry `{ ignorable: true }`, only when the
+   *   writer knows the record is purely informational and cannot affect
+   *   reconstruction. An absent marker means required; boundary event
+   *   requiredness is not automatically changed. Surface append options cannot
+   *   carry `ignorable`. Assistant messages embed their exact provider stream
+   *   and cannot cite top-level source events.
    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
    *   `data` that entered the log, so reading `event.data` back sees the logged
    *   value, never the caller's still-mutable input.
@@ -611,7 +630,7 @@ declare class Session {
   append<T extends SessionEventType>(
     type: T,
     data: SessionEventMap[T],
-    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T>] : []
+    ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent<T> & { ignorable?: never }] : [opts?: SessionInformationalOptions]
     ): SessionEvent<T>;
   /**
    * The {@link EpochHeader} in force after the log's last header event — the

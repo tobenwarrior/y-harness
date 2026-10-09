@@ -17,6 +17,10 @@ import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from '@deepseek-ai/
 import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
+import { selectSkillCatalog, type SkillCatalogSelection, type SkillCatalogSelectionOptions } from './catalog-selection.ts'
+
+export { selectSkillCatalog } from './catalog-selection.ts'
+export type { SkillCatalogSelection, SkillCatalogSelectionOptions } from './catalog-selection.ts'
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const DEFAULT_COLLECT_CACHE_ENTRIES = 128
@@ -486,6 +490,19 @@ export class SkillRegistry extends Service {
         .sort(compareSkillSummary),
       complete: collected.cacheable,
     }
+  }
+
+  /**
+   * Retrieve a bounded relevance projection of the scoped metadata winners.
+   * Explicit names remain loadable through `get()` regardless of suggestion budgets.
+   * @param options - scoped lookup, bounded query and metadata selection policy.
+   * @returns selected original summaries, completeness, and shortlist accounting.
+   */
+  async retrieve(options: SkillViewOptions & SkillCatalogSelectionOptions): Promise<SkillCatalogSelection<SkillSummary> & { readonly complete: boolean; readonly mode: 'relevance' }> {
+    // Selection text stays local; providers only receive their existing lookup context.
+    const snapshot = await this.snapshot({ cwd: options.cwd, scope: options.scope, signal: options.signal })
+    options.signal?.throwIfAborted()
+    return { ...selectSkillCatalog(snapshot.skills, options), complete: snapshot.complete, mode: 'relevance' }
   }
 
   /**

@@ -8,6 +8,7 @@ body[data-yh-style='terminal'] {
   --yh-terminal-surface-fill: var(--yh-alias-bg-layer-2);
   --yh-terminal-raised-fill: var(--yh-alias-bg-module-platform);
   --yh-terminal-accent: var(--yh-alias-brand-primary-new-colorprimary-new-color);
+  --yh-alias-graph-accent: var(--yh-terminal-accent);
   --yh-radius-sm: var(--yh-terminal-control-radius);
   --yh-radius-md: var(--yh-terminal-control-radius);
   --yh-radius-lg: var(--yh-terminal-composer-radius);

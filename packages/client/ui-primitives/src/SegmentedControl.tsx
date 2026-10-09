@@ -1,5 +1,5 @@
 // SegmentedControl: a tablist of two or more equal-width segments with one
-// sliding indicator, for switching a card or panel between a few modes. The
+// sliding indicator or an underlined tabs appearance, for switching a card or panel between modes. The
 // owner holds the selection; `label` is required so the tablist never ships
 // without an accessible name, and every segment label is owner-localized.
 // Each tab is `<id>-<value>` and controls the panel `<id>-<value>-panel`, the
@@ -64,11 +64,12 @@ function walk<Value extends string>(
  * @param props.label - localized accessible name of the tablist.
  * @param props.disabled - lock every segment, typically while the shown panel
  * has a write or a fetch in flight that switching would orphan.
+ * @param props.appearance - visual treatment: `segments` (default) uses a sliding indicator, `tabs` uses an underline.
  * @param props.className - extra class for layout placement.
  * @returns the tablist element.
  */
 export function SegmentedControl<Value extends string>({
-  id, value, options, onChange, label, disabled = false, className,
+  id, value, options, onChange, label, disabled = false, appearance = 'segments', className,
 }: {
   id: string
   value: Value
@@ -76,6 +77,7 @@ export function SegmentedControl<Value extends string>({
   onChange: (next: Value) => void
   label: string
   disabled?: boolean
+  appearance?: 'segments' | 'tabs'
   // `| undefined` so a caller can forward an optional class straight through
   // under exactOptionalPropertyTypes (a CSS-module lookup is string|undefined).
   className?: string | undefined
@@ -110,10 +112,10 @@ export function SegmentedControl<Value extends string>({
       ref={list}
       role="tablist"
       aria-label={label}
-      className={clsx(css.control, className)}
+      className={clsx(css.control, appearance === 'tabs' && css.tabs, className)}
       style={indicator}
     >
-      <span aria-hidden="true" className={css.indicator} />
+      {appearance === 'segments' && <span aria-hidden="true" className={css.indicator} />}
       {options.map((option) => {
         const active = option.value === value
         return (

@@ -25,6 +25,9 @@ export const name = 'tool-skill'
 export const inject = ['agents', 'tools', 'skills']
 
 const DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH = 500
+const DEFAULT_CATALOG_LIMIT = 8
+const DEFAULT_CATALOG_MAX_BYTES = 6000
+const DEFAULT_CATALOG_QUERY_MAX_CHARS = 4096
 /**
  * Durable provider and item records for one published session skill catalog. The catalog is a
  * `catalog`-form context, so it records the entries it published beside the
@@ -38,6 +41,15 @@ export interface SkillCatalogSource {
   readonly update?: true
   /** Exactly the entries this message published, in catalog order. */
   readonly entries: readonly { readonly name: string; readonly description: string }[]
+  /** Relevance projection; absent means the compatibility complete catalog. */
+  readonly mode?: 'relevance'
+  /** Logged task messages that supplied the bounded metadata query. */
+  readonly queryMessageIds?: readonly string[]
+  readonly metadataBytes?: number
+  readonly omittedCount?: number
+  readonly explicitOverflow?: boolean
+  readonly loaderVisible?: boolean
+  readonly searchVisible?: boolean
 }
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -48,7 +60,7 @@ declare module '@deepseek-ai/dsh-llm' {
 
 /** Durable entry list mirroring the rendered catalog lines, for non-model consumers. */
 function catalogSourceEntries(
-  skills: SkillSummary[],
+  skills: readonly SkillSummary[],
   descriptionMaxLength: number,
 ): SkillCatalogSource['entries'] {
   return skills.map(skill => ({
@@ -61,11 +73,23 @@ function catalogSourceEntries(
 export interface Config {
   /** Maximum normalized description length rendered in the session catalog; minimum 3. */
   catalogDescriptionMaxLength?: number
+  /** Complete compatibility catalog, or a bounded task-relevant shortlist. */
+  catalogMode?: 'all' | 'relevant'
+  /** Maximum ordinary suggestions; explicit requests are preserved. */
+  catalogLimit?: number
+  /** Maximum escaped UTF-8 entry bytes; explicit requests may exceed this bound. */
+  catalogMaxBytes?: number
+  /** Maximum task-query characters used for metadata selection. */
+  catalogQueryMaxChars?: number
 }
 
 /** Validate and default the model-facing skill catalog configuration. */
 export const Config: z<Config> = z.object({
   catalogDescriptionMaxLength: z.number().default(DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH),
+  catalogMode: z.union(['all', 'relevant'] as const).default('all'),
+  catalogLimit: z.number().default(DEFAULT_CATALOG_LIMIT),
+  catalogMaxBytes: z.number().default(DEFAULT_CATALOG_MAX_BYTES),
+  catalogQueryMaxChars: z.number().default(DEFAULT_CATALOG_QUERY_MAX_CHARS),
 })
 
 /**
@@ -76,13 +100,22 @@ export const Config: z<Config> = z.object({
  */
 export function apply(ctx: Context, config: Config = {}): void {
   const catalogDescriptionMaxLength = config.catalogDescriptionMaxLength ?? DEFAULT_CATALOG_DESCRIPTION_MAX_LENGTH
+  const catalogMode = config.catalogMode ?? 'all'
+  const catalogLimit = config.catalogLimit ?? DEFAULT_CATALOG_LIMIT
+  const catalogMaxBytes = config.catalogMaxBytes ?? DEFAULT_CATALOG_MAX_BYTES
+  const catalogQueryMaxChars = config.catalogQueryMaxChars ?? DEFAULT_CATALOG_QUERY_MAX_CHARS
   assertPositiveInteger('catalogDescriptionMaxLength', catalogDescriptionMaxLength, 3)
+  assertPositiveInteger('catalogLimit', catalogLimit)
+  assertPositiveInteger('catalogMaxBytes', catalogMaxBytes)
+  assertPositiveInteger('catalogQueryMaxChars', catalogQueryMaxChars)
+  const declaredMode: unknown = catalogMode
+  if (declaredMode !== 'all' && declaredMode !== 'relevant') throw new Error('tool-skill: catalogMode must be all or relevant')
 
   const skillTool = defineTool({
     name: 'skill',
     description: 'Load the full instructions for a skill. Call it before acting on a task that names or clearly matches a skill in the session skill catalog.',
     parameters: {
-      name: { type: 'string', required: true, description: 'The exact skill name from the available skills list.' },
+      name: { type: 'string', required: true, description: 'The exact skill name from the catalog, a metadata search, or the user request. A shortlist may omit available names.' },
     },
     output: {
       schema: {
@@ -159,6 +192,36 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   })
   ctx.tools.register(skillTool)
+  const searchTool = catalogMode === 'relevant' ? defineTool({
+    name: 'search_skills',
+    description: 'Find task-relevant skill names and descriptions when the session shortlist misses a match. Searches metadata only; load full instructions with the skill tool.',
+    parameters: { query: { type: 'string', required: true, description: 'A focused description of the task or the skill name to find.' } },
+    output: {
+      schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          entries: { type: 'array', required: true, items: { type: 'object', additionalProperties: false, properties: {
+            name: { type: 'string', required: true }, description: { type: 'string', required: true },
+          } } },
+          complete: { type: 'boolean', required: true },
+          metadataBytes: { type: 'integer', required: true },
+          omittedCount: { type: 'integer', required: true },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    async execute(args, exec) {
+      if (ctx.tools.get(skillTool.name, exec.agent) !== skillTool) throw new Error('Harness skill loader is unavailable in this scope')
+      const selection = await ctx.skills.retrieve({
+        cwd: exec.agent?.session.header.cwd, signal: exec.signal, scope: exec.agent,
+        query: args.query.slice(-catalogQueryMaxChars), limit: catalogLimit, maxBytes: catalogMaxBytes,
+        descriptionMaxLength: catalogDescriptionMaxLength,
+      })
+      return { entries: [...catalogSourceEntries(selection.skills, catalogDescriptionMaxLength)], complete: selection.complete,
+        metadataBytes: selection.metadataBytes, omittedCount: selection.omittedCount }
+    },
+  }) : undefined
+  if (searchTool !== undefined) ctx.tools.register(searchTool)
 
   // User-explicit skill invocation: a claimed user message whose first line
   // starts with `/<name>` naming a user-invocable skill is a deterministic
@@ -211,21 +274,31 @@ export function apply(ctx: Context, config: Config = {}): void {
   // scope, so a plugin mounted inside an agent preset registers for that agent
   // alone and an unscoped lookup correctly finds nothing.
   ctx.on('agent/pre-step', async (
-    { agent, signal },
+    { agent, messages, signal },
     next,
   ): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
     signal.throwIfAborted()
     const toolVisible = ctx.tools.get(skillTool.name, agent) === skillTool
-    const snapshot = toolVisible
-      ? await ctx.skills.snapshot({ cwd: agent.session.header.cwd, signal, scope: agent })
-      : { skills: [], complete: true }
+    const task = catalogMode === 'relevant' ? taskQuery(agent, messages, catalogQueryMaxChars) : undefined
+    const lookup = { cwd: agent.session.header.cwd, signal, scope: agent }
+    const snapshot = !toolVisible ? { skills: [], complete: true }
+      : task === undefined ? await ctx.skills.snapshot(lookup)
+        : await ctx.skills.retrieve({ ...lookup, query: task.query, limit: catalogLimit, maxBytes: catalogMaxBytes,
+          descriptionMaxLength: catalogDescriptionMaxLength, requestedNames: task.requestedNames })
     signal.throwIfAborted()
     if (!snapshot.complete) return decision
     const skills = snapshot.skills.filter(isModelInvocable)
     const entries = catalogSourceEntries(skills, catalogDescriptionMaxLength)
-    const digest = digestCatalogEntries(entries)
+    const relevance: Omit<SkillCatalogSource, 'kind' | 'form' | 'entries' | 'update'> | undefined = task === undefined ? undefined : {
+      mode: 'relevance', queryMessageIds: task.messageIds, loaderVisible: toolVisible,
+      searchVisible: searchTool !== undefined && ctx.tools.get(searchTool.name, agent) === searchTool,
+      metadataBytes: 'metadataBytes' in snapshot ? snapshot.metadataBytes : 0,
+      omittedCount: 'omittedCount' in snapshot ? snapshot.omittedCount : 0,
+      explicitOverflow: 'explicitOverflow' in snapshot ? snapshot.explicitOverflow : false,
+    }
+    const digest = digestCatalogEntries(entries, relevance)
     const history = catalogHistory(agent)
     const existing = catalogMessage(decision.messages)
     if (history.visibleDigest === digest) {
@@ -233,21 +306,74 @@ export function apply(ctx: Context, config: Config = {}): void {
         ? decision
         : { ...decision, messages: decision.messages.filter(message => message.id !== existing.message.id) }
     }
-    if (existing !== undefined && digestCatalogEntries(existing.entries) === digest) return decision
-    if (!history.published && skills.length === 0) {
+    if (existing !== undefined
+      && digestCatalogEntries(existing.entries, existing.message.source as SkillCatalogSource) === digest) return decision
+    if (!history.published && skills.length === 0 && (task === undefined || !toolVisible)) {
       return existing === undefined
         ? decision
         : { ...decision, messages: decision.messages.filter(message => message.id !== existing.message.id) }
     }
-    const catalog = history.published
-      ? renderCatalogUpdate(entries)
-      : renderCatalogMessage(entries)
+    const catalog = relevance !== undefined ? renderRelevantCatalog(entries, relevance, history.published)
+      : history.published
+        ? renderCatalogUpdate(entries)
+        : renderCatalogMessage(entries)
     return {
       ...decision,
       messages: existing === undefined
         ? [...decision.messages, catalog]
         : decision.messages.map(message => message.id === existing.message.id ? catalog : message),
     }
+  })
+}
+
+function taskQuery(agent: Agent, claimed: readonly UserMessage[], maximum: number): {
+  query: string
+  messageIds: readonly string[]
+  requestedNames: readonly string[]
+} {
+  const direct = claimed.filter(message => message.source.kind === 'user')
+  // Tool continuations retain the last visible task. Injected rules, recall, tool
+  // output and assistant prose never supply a query or an explicit name request.
+  const messages = direct.length > 0 ? direct : agent.session.deriveMessages().filter(message => message.role === 'user' && message.source.kind === 'user').slice(-1)
+  let query = ''
+  const messageIds: string[] = []
+  const requestedNames = new Set<string>()
+  // Explicit names are separate from the relevance-query budget: an early
+  // user request must not disappear just because a long task's suffix is used.
+  for (const message of messages) for (const block of message.content) {
+    if (block.type !== 'text') continue
+    for (const match of block.text.toLowerCase().matchAll(/(^|[\s"'`(])(?:\/|\$)?([a-z0-9]+(?:-[a-z0-9]+)*)(?=$|[\s"'`.,!?;:)])/g)) {
+      const name = match[2]
+      if (name !== undefined) requestedNames.add(name)
+    }
+  }
+  for (const message of [...messages].reverse()) {
+    const value = message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+    if (value.length === 0) continue
+    const separator = query.length === 0 ? '' : '\n'
+    const remaining = maximum - query.length - separator.length
+    if (remaining <= 0) break
+    query = value.slice(-remaining) + separator + query
+    messageIds.unshift(message.id)
+  }
+  return { query, messageIds, requestedNames: [...requestedNames] }
+}
+
+function renderRelevantCatalog(entries: SkillCatalogSource['entries'], relevance: Omit<SkillCatalogSource, 'kind' | 'form' | 'entries' | 'update'>, update: boolean): UserMessage {
+  return createUserMessage({
+    source: { kind: 'skill-catalog', form: 'catalog', entries, ...relevance, ...update ? { update: true as const } : {} },
+    content: [{ type: 'text', text: [
+      '<system-reminder>',
+      'This task-relevant skill shortlist contains metadata only. It replaces earlier suggestions; additional skills may exist.',
+      '<available_skills>', ...renderCatalogEntries(entries), '</available_skills>',
+      ...entries.length === 0 ? ['No task-relevant summary matched this query. This does not mean that no skills exist.'] : [],
+      relevance.loaderVisible === true
+        ? 'Where the Harness `skill` tool is available, load full instructions for an applicable skill before acting. An exact user-requested name may be loaded even when omitted from this shortlist.'
+        : 'The Harness skill loader is unavailable in this scope.',
+      ...relevance.searchVisible === true ? ['Where the Harness `search_skills` tool is available, use a focused metadata query to discover omitted matches.'] : [],
+      'A user-explicit <skill_content> block is already loaded; follow it without loading the same skill again. Native runtimes own their tools and skill catalogs.',
+      '</system-reminder>',
+    ].join('\n') }],
   })
 }
 
@@ -325,12 +451,12 @@ function renderCatalogEntries(entries: SkillCatalogSource['entries']): string[] 
  * The entries are what changes; the surrounding `<system-reminder>` framing is
  * written for the model and must not decide whether a republish is needed.
  */
-function digestCatalogEntries(entries: SkillCatalogSource['entries']): string {
+function digestCatalogEntries(entries: SkillCatalogSource['entries'], state?: Pick<SkillCatalogSource, 'mode' | 'loaderVisible' | 'searchVisible'>): string {
   // JSON per entry rather than a separator character: every separator is itself
   // a legal description character, so only quoting makes the boundary exact.
   const canonical = entries.map(entry => JSON.stringify([entry.name, entry.description])).join('\n')
   return createHash('sha256')
-    .update(canonical)
+    .update(state?.mode === 'relevance' ? `${JSON.stringify(['relevance', state.loaderVisible, state.searchVisible])}\n${canonical}` : canonical)
     .digest('hex')
 }
 
@@ -370,7 +496,7 @@ function catalogHistory(agent: Agent): { visibleDigest?: string; published: bool
     if (event.type !== 'user/message' || event.data.source.kind !== 'skill-catalog') continue
     const entries = readCatalogEntries(event.data.source)
     if (entries === undefined) continue
-    const digest = digestCatalogEntries(entries)
+    const digest = digestCatalogEntries(entries, event.data.source)
     published = true
     if (visible.has(event.seq)) return { visibleDigest: digest, published }
   }
@@ -379,11 +505,11 @@ function catalogHistory(agent: Agent): { visibleDigest?: string; published: bool
 
 function catalogMessage(
   messages: readonly UserMessage[],
-): { message: UserMessage; entries: SkillCatalogSource['entries'] } | undefined {
+): { message: UserMessage; entries: SkillCatalogSource['entries']; mode?: 'relevance' } | undefined {
   for (const message of messages) {
     if (message.source.kind !== 'skill-catalog') continue
     const entries = readCatalogEntries(message.source)
-    if (entries !== undefined) return { message, entries }
+    if (entries !== undefined) return { message, entries, ...message.source.mode === 'relevance' ? { mode: 'relevance' as const } : {} }
   }
   return undefined
 }

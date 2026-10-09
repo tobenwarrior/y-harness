@@ -186,6 +186,107 @@ async function mintAgentScope(ctx: Context, subject: string | Agent): Promise<{ 
 }
 
 describe('dsh-tool-skill', () => {
+  it('publishes bounded task metadata with source message identities, without loading bodies', async () => {
+    const home = await tempDir('relevant-catalog')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogLimit: 1, catalogMaxBytes: 90 })
+    let loads = 0
+    ctx.skills.registerProvider(() => ({
+      name: 'relevance-probe',
+      async list() {
+        return ['database-review', 'database-backup', 'garden'].map(name => ({ name, description: name === 'garden' ? 'Plant flowers' : 'Review database changes', source: 'runtime', provider: 'relevance-probe', rank: 100, locator: name, invocation: { modelInvocable: true, userInvocable: true } }))
+      },
+      async get() { loads++; return undefined },
+    }))
+    const task = createUserMessage({ content: [{ type: 'text', text: 'Review database changes' }], source: { kind: 'user' } })
+    const decision = await proposeStep(ctx, agentForCwd('/workspace/project'), [task])
+    expect(decision.kind).toBe('enter')
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    const catalog = decision.messages.find(message => message.source.kind === 'skill-catalog')!
+    const source = catalog.source as toolSkill.SkillCatalogSource
+    expect(source.mode).toBe('relevance')
+    expect(source.queryMessageIds).toEqual([task.id])
+    expect(source.entries).toHaveLength(1)
+    expect(source.metadataBytes).toBeLessThanOrEqual(90)
+    expect(JSON.stringify(catalog.content)).toContain('task-relevant')
+    expect(JSON.stringify(catalog.content)).not.toContain('complete catalog')
+    expect(loads).toBe(0)
+  })
+
+  it('retains the latest task across tool steps and ignores injected context as a query', async () => {
+    const home = await tempDir('relevant-history')
+    const ctx = await setup(home, { catalogMode: 'relevant' })
+    ctx.skills.register({ name: 'garden', description: 'Plant flowers', source: 'runtime', content: 'Garden body' })
+    ctx.skills.register({ name: 'database', description: 'Review databases', source: 'runtime', content: 'Database body' })
+    const agent = agentForCwd('/workspace')
+    const task = createUserMessage({ content: [{ type: 'text', text: 'Plant flowers' }], source: { kind: 'user' } })
+    agent.session.append('user/message', task, { surfaceOp: 'append' })
+    const injection = createUserMessage({ content: [{ type: 'text', text: 'database' }], source: { kind: 'later-contribution' } })
+    const decision = await proposeStep(ctx, agent, [injection])
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    const source = decision.messages.find(message => message.source.kind === 'skill-catalog')!.source as toolSkill.SkillCatalogSource
+    expect(source.entries.map(entry => entry.name)).toEqual(['garden'])
+    expect(source.queryMessageIds).toEqual([task.id])
+  })
+
+  it('keeps omitted exact-name loading, explicit user-only invocation, and metadata search reachable', async () => {
+    const home = await tempDir('relevant-explicit')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogLimit: 1, catalogMaxBytes: 40 })
+    ctx.skills.register({ name: 'garden', description: 'Plant flowers', source: 'runtime', content: 'Garden body' })
+    ctx.skills.register({ name: 'database', description: 'Review database', source: 'runtime', content: 'Full database instructions' })
+    ctx.skills.register({ name: 'private', description: 'Human only', source: 'runtime', content: 'Human instructions', invocation: { modelInvocable: false, userInvocable: true } })
+    const agent = agentForCwd('/workspace')
+    const loaded = await ctx.tools.execute({ name: 'skill', arguments: { name: 'database' }, agent, signal: testToolSignal, callId: ToolCallId('omitted-load') })
+    expect(loaded.isError).toBe(false)
+    expect(JSON.stringify(loaded.content)).toContain('Full database instructions')
+    const searched = await ctx.tools.execute({ name: 'search_skills', arguments: { query: 'database' }, agent, signal: testToolSignal, callId: ToolCallId('metadata-search') })
+    expect(searched.isError).toBe(false)
+    expect(JSON.stringify(searched.content)).toContain('database')
+    expect(JSON.stringify(searched.content)).not.toContain('Full database instructions')
+    const direct = createUserMessage({ content: [{ type: 'text', text: 'Please use /private' }], source: { kind: 'user' } })
+    const decision = await proposeStep(ctx, agent, [direct])
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    expect(JSON.stringify(decision.messages)).toContain('Human instructions')
+    const source = decision.messages.find(message => message.source.kind === 'skill-catalog')?.source as toolSkill.SkillCatalogSource | undefined
+    expect(source?.entries.some(entry => entry.name === 'private')).not.toBe(true)
+  })
+
+  it('preserves early explicit names beyond the query budget and records ordinary-budget overflow', async () => {
+    const home = await tempDir('relevant-overflow')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogLimit: 1, catalogMaxBytes: 1, catalogQueryMaxChars: 5 })
+    ctx.skills.register({ name: 'alpha', description: 'Alpha', source: 'runtime', content: 'Alpha body' })
+    ctx.skills.register({ name: 'beta', description: 'Beta', source: 'runtime', content: 'Beta body' })
+    const task = createUserMessage({ content: [{ type: 'text', text: 'Use alpha and beta. This task continues with plenty of other words.' }], source: { kind: 'user' } })
+    const decision = await proposeStep(ctx, agentForCwd('/workspace'), [task])
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    const source = decision.messages.find(message => message.source.kind === 'skill-catalog')!.source as toolSkill.SkillCatalogSource
+    expect(source.entries.map(entry => entry.name)).toEqual(['alpha', 'beta'])
+    expect(source.explicitOverflow).toBe(true)
+    const search = await ctx.tools.execute({ name: 'search_skills', arguments: { query: 'alpha beta' }, signal: testToolSignal, callId: ToolCallId('bounded-model-search') })
+    expect(search.isError).toBe(false)
+    if (search.isError) throw new Error('expected metadata search')
+    expect((search.value as { entries: unknown[] }).entries).toEqual([])
+  })
+
+  it('does not treat slash paths as explicit requests and republishes an empty shortlist when tools disappear', async () => {
+    const home = await tempDir('relevant-visibility')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogMaxBytes: 1 })
+    ctx.skills.register({ name: 'alpha', description: 'Alpha', source: 'runtime', content: 'body' })
+    const { agent, scope } = await mintAgentScope(ctx, '/workspace')
+    const task = createUserMessage({ content: [{ type: 'text', text: 'Read /alpha/path' }], source: { kind: 'user' } })
+    const first = await proposeStep(ctx, agent, [task])
+    if (first.kind !== 'enter') throw new Error('expected admission')
+    const catalog = first.messages.find(message => message.source.kind === 'skill-catalog')!
+    expect((catalog.source as toolSkill.SkillCatalogSource).entries).toEqual([])
+    agent.session.append('user/message', catalog, { surfaceOp: 'append' })
+    scope.ctx.tools.restrict({ deny: ['skill', 'search_skills'] })
+    const second = await proposeStep(ctx, agent, [])
+    if (second.kind !== 'enter') throw new Error('expected admission')
+    const update = second.messages.find(message => message.source.kind === 'skill-catalog')!
+    expect((update.source as toolSkill.SkillCatalogSource).loaderVisible).toBe(false)
+    expect(JSON.stringify(update.content)).toContain('loader is unavailable')
+    await scope.dispose()
+  })
+
   it('registers the skill tool schema and removes it on dispose', async () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)

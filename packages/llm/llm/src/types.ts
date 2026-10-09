@@ -225,6 +225,11 @@ export interface LlmProviderInfo {
   id: string
   /** Human-readable provider name for selectors and diagnostics. */
   name: string
+  /**
+   * Cached execution declaration: `api` permits response-only requests without native tools or interactive auth;
+   * `native` and absence forbid background generation.
+   */
+  auxiliaryGeneration?: 'api' | 'native'
 }
 
 /** Merge-extensible provider model modality vocabulary. */
@@ -582,5 +587,5 @@ export interface GenerateOptions {
    * map the purpose to model-hidden transport metadata or purpose-specific
    * generation policy. Ordinary conversation requests leave it unset.
    */
-  purpose?: 'compaction' | 'session-title'
+  purpose?: 'compaction' | 'session-title' | 'skill-learning'
 }

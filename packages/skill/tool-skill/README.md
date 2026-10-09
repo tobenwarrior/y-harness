@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents can discover and load skills during a session. Before the first request, when model-invocable skills exist and the `skill` tool is visible, they receive a durable catalog of available skill names and capped descriptions, and can use the `skill` tool to load full instructions. Users can invoke a user-invocable skill with `/name`, which injects the same instructions into that step. Catalog changes append a complete replacement, including an empty catalog that retires old names; configure `catalogDescriptionMaxLength` to limit each description.
+Agents can discover and load skills during a session. `catalogMode: relevant` supplies a bounded task shortlist and a `search_skills` metadata tool; the compatibility default `all` supplies the complete catalog. Both use the current scoped registry winners and load instructions only through the `skill` tool or an explicit user `/name` request. Generated summaries remain durable session messages.
 
 ## Table of Contents
 
@@ -33,21 +33,31 @@ Use it when agents should discover and load skills during a session. Skip it whe
 
 ### Mount and configure
 
-Load the plugin together with the skill registry and at least one provider. The only configuration caps the normalized description length rendered in the catalog.
+Load the plugin together with the skill registry and at least one provider. Select relevance mode to limit suggestions while keeping exact-name loading and explicit user invocation reachable.
 
 ```yaml
 - name: '@deepseek-ai/dsh-skill'
 - name: '@deepseek-ai/dsh-skill-filesystem'
 - name: '@deepseek-ai/dsh-tool-skill'
+  config:
+    catalogMode: relevant
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
 | `catalogDescriptionMaxLength` | `500` | Maximum normalized description length rendered in the session catalog; minimum 3 |
+| `catalogMode` | `all` | `all` publishes the complete catalog; `relevant` publishes a task shortlist and enables metadata search |
+| `catalogLimit` | `8` | Maximum ordinary suggestions in relevance mode |
+| `catalogMaxBytes` | `6000` | Maximum UTF-8 bytes of escaped entry lines; fixed guidance and search result wrappers are additional |
+| `catalogQueryMaxChars` | `4096` | Maximum characters of the newest task text used for relevance ranking |
+
+Relevance mode ranks names, descriptions and `whenToUse` metadata without loading instruction bodies. Current claimed `source.kind: user` text supplies the query; a tool continuation uses the latest visible user task. Injected rules, recall and tool/model output cannot supply the query. The query retains a bounded newest suffix, while exact skill-name references are extracted separately from that task text so an early explicit request remains reachable. Explicit names can exceed ordinary count and metadata budgets, recorded as `explicitOverflow` in the catalog source. Model-supplied `search_skills` queries do not receive that exception.
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-skill) is the exhaustive source for every accepted field.
 
 ### What the model gets
+
+The complete-catalog behavior below describes compatibility `all` mode. In relevance mode, the list explicitly identifies itself as task suggestions, explains that additional skills may exist, and points to bounded `search_skills` metadata discovery where that Harness tool is available. The `skill` loader still accepts an available exact name omitted from the shortlist. An empty shortlist means no suggestion matched, not that every skill is unavailable. Both modes preserve explicit user loading.
 
 - **A session catalog.** When model-invocable skills exist and the `skill` tool is visible, the agent receives a durable user-role message before its first request, listing each skill's name and a capped description; the message tells the model to load a skill with the tool before acting on it, and never to infer instructions from the summary alone.
 - **A loader tool.** The model calls `skill` with the exact skill name and receives the full instruction body plus resource guidance in a canonical `<skill_content>` block; the result is retained as ordinary tool history.
@@ -80,6 +90,10 @@ The package is built on two ideas. First, the catalog is a durable projection, d
 
 ### Catalog lifecycle
 
+In relevance mode, selection happens over the same authoritative scoped snapshot, before rendering, without calling the management library's filesystem scan. The digest includes entries, projection mode and loader/search visibility. Logged sources record query message IDs, rendered metadata bytes, omitted count and explicit-budget exceptions without duplicating task text. Each changed shortlist replaces earlier suggestions in the model guidance; omitted names remain loadable. Incomplete snapshots retain the last-good view in both modes.
+
+The following complete-replacement lifecycle describes `all` mode.
+
 At each eligible `agent/pre-step`, the plugin snapshots the calling session's skill catalog, applies exact `skill` tool visibility, filters to model-invocable skills, and compares a digest of the entries against the newest visible `skill-catalog` message in the session log. When the digest changed, it hands the `enter` decision a durable user-role message containing the complete replacement catalog; an empty replacement explicitly retires earlier names. An incomplete provider snapshot emits nothing and preserves the last-good view for the next pre-step. The visibility check compares against the exact tool definition this plugin registered, so a scoped same-name shadow removes both the schema and its guidance; the plugin works mounted globally or inside one agent's composition.
 
 ### Invocation boundary
@@ -109,7 +123,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-If model-invocable skills exist and this exact `skill` tool is visible, the agent receives the catalog template below as a durable user-role message before the first request, with one data-dependent entry per sorted skill. Later membership, description, or visibility changes append a complete replacement using the same `<available_skills>` envelope; deleting every skill appends an empty envelope with an explicit instruction not to use older names. The template's closing sentence is the rule against double-loading: the user-explicit gesture boundary (the pre-step listener below) injects the same `renderSkillContent` output (shared from `@deepseek-ai/dsh-skill`) inline, and the catalog tells the model to follow that block instead of re-loading the skill through the tool; the replacement-catalog template carries the same anti-double-loading rule in both arms, including the emptied catalog.
+The template below describes `all` mode. Relevance mode renders task suggestions and uses route-neutral guidance: native runtimes own their own tools and skill catalogs. Ordinary entry lines are bounded by candidate count and metadata bytes; fixed guidance is additional and explicit task names can exceed those bounds. Shortlist changes append retained history, so these limits do not cap the entire conversation. Full instruction bodies are never silently truncated. If model-invocable skills exist and this exact `skill` tool is visible, the agent receives the catalog template below as a durable user-role message before the first request, with one data-dependent entry per sorted skill. Later membership, description, or visibility changes append a complete replacement using the same `<available_skills>` envelope; deleting every skill appends an empty envelope with an explicit instruction not to use older names. The template's closing sentence is the rule against double-loading: the user-explicit gesture boundary (the pre-step listener below) injects the same `renderSkillContent` output (shared from `@deepseek-ai/dsh-skill`) inline, and the catalog tells the model to follow that block instead of re-loading the skill through the tool; the replacement-catalog template carries the same anti-double-loading rule in both arms, including the emptied catalog.
 
 ##### Skill catalog template
 
@@ -239,11 +253,13 @@ Append-only; the injection lands after the reusable request prefix inside the st
 
 These limits define when the catalog or the loader is a poor fit. They are current package constraints, not a task backlog.
 
-- **The catalog omits `whenToUse`, source, and provider metadata** — routing is based only on name and a capped description; `whenToUse` remains provider metadata and is not rendered by the loaded wrapper either.
+- **The catalog omits `whenToUse`, source, and provider metadata** — relevance ranking uses `whenToUse`, but rendered suggestions contain only names and capped descriptions.
 - **Loaded instruction bodies have no size cap** — a provider can return a skill large enough to consume substantial next-step context; only catalog descriptions are truncated.
 - **Resources are guidance, not attachments** — the tool reports a base directory/URL/opaque hint but neither enumerates nor fetches referenced files for the model.
 - **Loading is one-shot text** — there is no partial, streaming, or cached-content handle when a remote provider is slow or a skill body is large.
-- **Catalog replacement is whole-list** — one changed name or description appends every visible summary; this keeps stale-name retirement explicit but costs tokens proportional to the catalog.
+- **Catalog changes retain history** — complete catalogs or bounded shortlists append after earlier messages until ordinary compaction removes them.
+- **Relevance is lexical metadata matching** — descriptions need useful routing words; search allows a focused retry, but no embedding model or semantic relevance guarantee is provided.
+- **Native-owned catalogs remain outside this limit** — external Claude/Codex children and the native Codex backend manage their own skill discovery. Harness-loop children receive this behavior only when their composition mounts this plugin in relevance mode.
 - **Bodies are not versioned** — body-only edits do not change the catalog digest or notify the model; a later tool call reads the current provider content while earlier tool results remain historical facts.
 
 <a id="dev-note"></a>

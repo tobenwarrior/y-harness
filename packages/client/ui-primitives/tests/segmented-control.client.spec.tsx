@@ -18,6 +18,7 @@ function mount(value: Mode, extra: {
   options?: typeof OPTIONS
   className?: string
   disabled?: boolean
+  appearance?: 'segments' | 'tabs'
 } = {}) {
   const onChange = vi.fn<(next: Mode) => void>()
   const view = render(
@@ -29,6 +30,7 @@ function mount(value: Mode, extra: {
       onChange={onChange}
       {...extra.className === undefined ? {} : { className: extra.className }}
       {...extra.disabled === undefined ? {} : { disabled: extra.disabled }}
+      {...extra.appearance === undefined ? {} : { appearance: extra.appearance }}
     />,
   )
   return { view, onChange }
@@ -176,5 +178,51 @@ describe('SegmentedControl', () => {
     )
     fireEvent.click(tab('Custom'))
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('SegmentedControl appearance', () => {
+  it('keeps the default segmented appearance and offers tabs with the same named panel links', () => {
+    const { view, onChange } = mount('catalog')
+    const defaultClasses = screen.getByRole('tablist').className
+    view.rerender(
+      <SegmentedControl id="add" label="Add mode" value="catalog" options={OPTIONS} onChange={onChange} appearance="segments" />,
+    )
+    expect(screen.getByRole('tablist').className).toBe(defaultClasses)
+    expect(screen.getByRole('tablist').querySelector('[aria-hidden="true"]')).not.toBeNull()
+    view.rerender(
+      <SegmentedControl id="add" label="Add mode" value="catalog" options={OPTIONS} onChange={onChange} appearance="tabs" />,
+    )
+    const list = screen.getByRole('tablist', { name: 'Add mode' })
+    expect(list.className).not.toBe(defaultClasses)
+    expect(list.querySelector('[aria-hidden="true"]')).toBeNull()
+    expect(tab('Catalog').getAttribute('aria-controls')).toBe('add-catalog-panel')
+    expect(tab('Catalog').getAttribute('aria-selected')).toBe('true')
+    expect(tab('Catalog').tabIndex).toBe(0)
+  })
+
+  it('retains keyboard focus, disabled-option skipping, and same-value silence in tabs appearance', () => {
+    const options = [OPTIONS[0]!, { value: 'custom' as const, label: 'Custom', disabled: true }, OPTIONS[2]!]
+    const { view, onChange } = mount('catalog', { appearance: 'tabs', options })
+    const catalog = tab('Catalog')
+    catalog.focus()
+    fireEvent.click(catalog)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(catalog, { key: 'ArrowRight' })
+    expect(onChange).toHaveBeenLastCalledWith('import')
+    view.rerender(
+      <SegmentedControl id="add" label="Add mode" value="import" options={options} onChange={onChange} appearance="tabs" />,
+    )
+    const imported = tab('Import')
+    expect(document.activeElement).toBe(imported)
+    expect(imported.tabIndex).toBe(0)
+    expect(catalog.tabIndex).toBe(-1)
+    onChange.mockClear()
+    fireEvent.keyDown(imported, { key: 'End' })
+    fireEvent.click(tab('Custom'))
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.keyDown(imported, { key: 'Home' })
+    expect(onChange).toHaveBeenLastCalledWith('catalog')
   })
 })

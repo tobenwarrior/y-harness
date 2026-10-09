@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-09-skill-learning.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-09-skill-learning.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-09-skill-learning:
+  en: 46c74d1b5c382317
+  zh: 8b7707e59d0d53e3
+/2026-10-09-skill-learning/summary:
+  en: 40bc99029eaca692
+  zh: 47858b3723b1f84b
+/2026-10-09-skill-learning/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-09-skill-learning/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-09-skill-learning/compatibility:
+  en: a6e918653f4ea141
+  zh: 69c602f556c90ff1
+/2026-10-09-skill-learning/verification:
+  en: 13c217c5fe3c31e6
+  zh: 954adf4cb2006333
+/2026-10-09-skill-learning/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

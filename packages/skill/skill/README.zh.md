@@ -48,11 +48,14 @@ kind: "package-reference"
 ### 注册表提供什么
 
 - **合并后的单一目录。** 消费方查询工作区的当前目录，即可收到来自所有提供方的全部胜出 skill 摘要，并按名称排序——无需自行做提供方特有的排序或去重。
+- **元数据检索。** `ctx.skills.retrieve({ cwd, scope, query, limit, maxBytes })` 从同一快照选择任务相关且模型可调用的获胜条目，不加载正文。返回 `skills`、`complete`、`metadataBytes`、`omittedCount`、`explicitOverflow` 和 `mode: 'relevance'`；`list()` 与 `get()` 保留完整目录及精确加载约定。
 - **按需加载。** 按名称查询某个 skill，会从拥有胜出候选项的提供方返回完整指令正文；注册表会重新验证加载的定义，并拒绝在发现与加载之间名称发生变化的陈旧选择。
 - **嵌入式 skill。** 插件可用 `ctx.skills.register(...)` 注册内存中的 skill；注册表会补入默认调用策略与 `runtime` 提供方标签。同层同名运行时注册采用先到先得，并记录警告。
 - **提供方注册。** 提供方用 `ctx.skills.registerProvider(...)` 贡献目录；注册是同步的，返回的 disposer（资源释放）会移除该提供方。`runtime` 是保留的提供方名称。
 
 每个 skill 上的调用策略决定哪些接口可以展示并加载它：`modelInvocable` 用于面向模型的工具与目录，`userInvocable` 用于面向用户的命令。注册表保留全部四种组合，因此一次发现结果可以同时服务两个接口，而不会混淆各自的目录。
+
+导出的纯函数 `selectSkillCatalog(summaries, options)` 对已发现的元数据应用同一选择器，返回原始条目对象。选项要求 `query`、正整数 `limit` 和 `maxBytes`；可选 `descriptionMaxLength` 默认 500。`requestedNames` 保留显式请求且模型可调用的名称，即使超出普通建议预算。`preserveNamedSkills: true` 还会匹配可信查询中的精确名称；模型生成的搜索应关闭该选项。字节数只计转义后的渲染条目行和分隔符，不计固定指引或结果包装。排序使用名称、描述及 `whenToUse` 中的词汇，不保证语义匹配。仅用户可调用的技能仍通过独立的用户调用路径加载。
 
 | 策略 | 模型 | 用户 |
 |---|---|---|
@@ -88,6 +91,7 @@ Skill 摘要保留胜出提供方可选的指令文件 `path`，供提供文件�
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口、`SkillRegistry` 服务、候选项与定义验证、共享的面向模型渲染 |
+| [`src/catalog-selection.ts`](src/catalog-selection.ts) | 有上限的纯元数据排序与显式名称保留 |
 
 ### 目录收集
 

@@ -67,6 +67,8 @@ kind: "package-reference"
 
 菜单图标使用 `--yh-alias-menu-icon`：浅色模式为 neutral-bluish 800，深色模式为 `label-primary-dimmed`。
 
+`--yh-alias-graph-*` 使关系图画布在两种颜色模式下均保持炭黑色，并配以清晰的主要与次要标签及可见的连线。图的强调色在默认风格中使用现有蓝色调色板，在终端风格中使用终端强调色；主题检查会公开这些角色供覆盖使用。
+
 `base.css` 仅抑制[基础控件焦点工具](../ui-primitives/README.zh.md)通过 `data-dsh-automatic-focus` 标记的聚焦元素外轮廓线；正常键盘焦点样式、边框、阴影及错误状态保持不变。
 
 系统提示使用 `--yh-alias-toast-bg` 和 `--yh-alias-toast-label`，在各调用方之间统一背景与文字颜色。文档预览配对使用 `--yh-alias-bg-document-preview` 与 `--yh-alias-label-document-preview`，使底色与状态文字遵循相同主题。Tooltip 键帽使用 `--yh-alias-tooltip-key-bg`，由各主题的 tooltip 背景派生稍浅的填充。开关滑块读取 `--yh-alias-switch-thumb`：浅色模式为纯白，深色模式为 neutral-bluish 400，使关闭态滑块比轨道更亮，同时避免纯白在暗色下过亮。

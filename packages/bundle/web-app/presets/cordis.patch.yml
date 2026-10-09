@@ -163,6 +163,11 @@
                 - !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('@deepseek-ai/dsh-agent-preset/package.json')), 'skills')
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+            config:
+              catalogMode: relevant
+              catalogLimit: 8
+              catalogMaxBytes: 6000
+              catalogQueryMaxChars: 4096
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
           - id: tool-plugin-manager

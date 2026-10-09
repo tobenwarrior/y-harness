@@ -2,10 +2,22 @@
 import { spawn } from 'node:child_process'
 import { dirname, isAbsolute, join } from 'node:path'
 import { Transform } from 'node:stream'
-import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
+import { JsonRpcLineTransport, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
 import type { CodexPeer } from './codex-backend.ts'
 /** Absolute deployment-owned paths one Codex child is launched with. */
 export interface CodexProcessOptions { binary: string; home: string; shellHome: string; cwd: string; nodePath: string }
+/**
+ * Preserve unsupported-method information without exposing native diagnostics or error data.
+ * @param method - native operation that failed.
+ * @param error - transport rejection, deliberately not rendered.
+ * @returns a display-safe failure with only the method-not-found protocol code retained.
+ */
+export function codexRequestFailure(method: string, error: unknown): Error {
+  const message = `Codex ${method} did not complete. Try refreshing the backend.`
+  return error instanceof JsonRpcResponseError && error.code === -32601
+    ? new JsonRpcResponseError(-32601, message)
+    : new Error(message)
+}
 /**
  * Native app-server config is explicit; no inherited secrets or global home.
  * @param options - validated launch paths whose shell home the child inherits.
@@ -66,7 +78,7 @@ export function startCodexProcess(
   return { request: async (method, params) => {
     if (closed) throw new Error('Codex backend is closed.')
     try { return await transport.request(method, params, AbortSignal.timeout(25_000)) }
-    catch { if (method === 'initialize') close(); throw new Error(`Codex ${method} did not complete. Try refreshing the backend.`) }
+    catch (error) { if (method === 'initialize') close(); throw codexRequestFailure(method, error) }
   }, notify: (method) => { transport.notify(method) },
   subscribe: (callback) => { listeners.add(callback); return () => { listeners.delete(callback) } }, close }
 }

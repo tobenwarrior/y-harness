@@ -488,8 +488,9 @@ const TOOL_PACKAGES: ToolPackage[] = [
         dshHome: resolve(root, '.tmp/tool-catalog/.dsh'),
         agentsHome: resolve(root, '.tmp/tool-catalog/.agents'),
       })
-      await ctx.plugin(ToolSkill)
+      await ctx.plugin(ToolSkill, { catalogMode: 'relevant' })
     },
+    note: 'The skill tool is available in all and relevant catalog modes. Shipped base CLI and web presets use relevant mode, which also exposes search_skills for bounded metadata refinement.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-session-query',

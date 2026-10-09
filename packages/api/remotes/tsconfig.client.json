@@ -112,6 +112,9 @@
     },
     {
       "path": "../../llm/llm-pi-ai"
+    },
+    {
+      "path": "../../skill/skill-library"
     }
   ]
 }

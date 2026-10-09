@@ -1,6 +1,17 @@
 import { once } from 'node:events'
 import { expect, it } from 'vitest'
-import { boundedCodexInput, codexProcessArguments } from '../src/codex-backend-process.ts'
+import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
+import { boundedCodexInput, codexProcessArguments, codexRequestFailure } from '../src/codex-backend-process.ts'
+it('preserves method-not-found support information without native diagnostic text or data', () => {
+  const missing = codexRequestFailure('skills/list', new JsonRpcResponseError(-32601, 'sensitive diagnostic', { secret: 'hidden' }))
+  expect(missing).toBeInstanceOf(JsonRpcResponseError)
+  expect((missing as JsonRpcResponseError).code).toBe(-32601)
+  expect((missing as JsonRpcResponseError).data).toBeUndefined()
+  expect(missing.message).not.toContain('sensitive')
+  const other = codexRequestFailure('skills/list', new JsonRpcResponseError(-32000, 'sensitive diagnostic', { secret: 'hidden' }))
+  expect(other).not.toBeInstanceOf(JsonRpcResponseError)
+  expect(other.message).not.toContain('sensitive')
+})
 it('closes before a native JSON line exceeds the buffer limit', async () => {
   const input = boundedCodexInput(4); input.on('error', () => {}); const error = once(input, 'error'); input.write(Buffer.from('12345')); expect(((await error)[0] as Error).message).toContain('size limit')
 })

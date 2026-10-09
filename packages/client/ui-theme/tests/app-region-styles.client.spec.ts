@@ -113,6 +113,11 @@ const CHROME_ROWS: readonly ChromeRow[] = [
     markup: 'client/ui-settings-account/src/client/PlatformOverlay.tsx',
     height: ['height', '48px'],
   },
+  {
+    file: 'client/ui-skill-library/src/client/SkillLibraryPage.module.css',
+    selector: '.header',
+    markup: 'client/ui-skill-library/src/client/SkillLibraryPage.tsx',
+  },
 ]
 
 /**

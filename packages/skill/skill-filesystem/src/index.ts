@@ -119,6 +119,7 @@ interface ParsedSkill extends SkillText {
 interface LocalLocator {
   path: string
   directory: string
+  bundlePath: string
 }
 
 interface ResolvedWatchConfig {
@@ -726,9 +727,9 @@ async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Pr
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (root.skipSystem && entry.name === '.system') continue
     const locator = entry.type === 'directory'
-      ? { path: join(entry.path, 'SKILL.md'), directory: entry.path }
+      ? { path: join(entry.path, 'SKILL.md'), directory: entry.path, bundlePath: entry.path }
       : entry.type === 'file' && entry.name.endsWith('.md')
-        ? { path: entry.path, directory: root.path }
+        ? { path: entry.path, directory: root.path, bundlePath: entry.path }
         : undefined
     if (locator === undefined) continue
     const parsed = await parseSkillFile(locator.path, ctx, undefined, root.trustedHost === true)
