@@ -125,7 +125,7 @@ describe('native Nous Loader composition', () => {
 
     expect(await ctx.nousConnection.getState()).toEqual({ configured: true, connected: false, busy: false })
     expect(ctx.authorization.describe(recordKeyFor('nous'))?.methods.map(method => method.id)).toEqual(['oauth'])
-    expect(ctx.llm.listProviders()).toEqual([{ id: 'nous', name: 'nous' }])
+    expect(ctx.llm.listProviders()).toEqual([{ id: 'nous', name: 'nous', auxiliaryGeneration: 'api' }])
     const result = await inference(ctx)
     expect(result.finish.kind).toBe('error')
     expect(result.finish.kind === 'error' ? result.finish.failure.message : undefined).toContain('public Nous client ID')
