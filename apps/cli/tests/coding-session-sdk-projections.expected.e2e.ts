@@ -12,6 +12,7 @@ import {
   latestPersistedSessionPaths,
   normalizeSessionFormatMetadata,
   normalizeSessionLog,
+  normalizeSessionSnapshot,
   normalizeStdout,
   scrubModelRequestBulk,
   writerSnapshotName,
@@ -232,6 +233,8 @@ describe('coding Session SDK projections', () => {
         const persisted = records(rawLog)
         expect(persisted[0]?.id).toBe(sessionId)
         const durableEvents = persisted.slice(1)
+        expect(durableEvents.map(event => event.seq)).toEqual(durableEvents.map((_event, index) => index))
+        expect(durableEvents.every(event => typeof event.time === 'number' && Number.isFinite(event.time))).toBe(true)
         const metadata = first.events.filter(event => isMetadata(event.type))
         expect(metadata.map(event => ({ type: event.type, data: event.data }))).toEqual([
           ...nativeItems.map(data => ({ type: 'skill/native-item', data })),
@@ -286,7 +289,7 @@ describe('coding Session SDK projections', () => {
         }
         const ctx: NormalizeContext = { cwd: root, sessionIds: [sessionId] }
         const files: Record<string, string> = {
-          [writerSnapshotName(0)]: scrubModelRequestBulk(normalizeSessionLog(rawLog, ctx)),
+          [writerSnapshotName(0)]: scrubModelRequestBulk(normalizeSessionSnapshot(rawLog, ctx)),
           'events.expected.jsonl': normalizeEvents(events, ctx),
           'notifications.expected.jsonl': normalizeNotifications(notifications, ctx),
           'model-visible.expected.jsonl': normalizeStdout(jsonl(modelRequests), ctx),
