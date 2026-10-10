@@ -20,11 +20,13 @@ function snapshot(messages: ClaudeSequentialHistoryMessage[]): CodingSessionSnap
       role: message.type, text: JSON.stringify(message.message), digest: codingSessionDigest(message) })) }
 }
 function receipt(): ClaudeSequentialTurnReceipt {
+  const responseFields = { diagnostics: null }
+  const usageFields = { fallback_credit: null, output_tokens_details: null }
   return { nativeTurnId: '22222222-2222-4222-8222-222222222222', userMessage: { role: 'user', content: 'Continue the original task' },
     assistants: [{ id: '33333333-3333-4333-8333-333333333333', message: {
-      id: 'msg_fixture', type: 'message', role: 'assistant', model: 'fixture-native-model', content: [{ type: 'text', text: 'Native answer', citations: null }],
+      ...responseFields, id: 'msg_fixture', type: 'message', role: 'assistant', model: 'fixture-native-model', content: [{ type: 'text', text: 'Native answer', citations: null }],
       container: null, context_management: null, stop_details: null, stop_reason: 'end_turn', stop_sequence: null,
-      usage: { input_tokens: 1, output_tokens: 1, cache_creation: null, cache_creation_input_tokens: null,
+      usage: { ...usageFields, input_tokens: 1, output_tokens: 1, cache_creation: null, cache_creation_input_tokens: null,
         cache_read_input_tokens: null, inference_geo: null, iterations: null, server_tool_use: null, service_tier: null, speed: null },
     } }], processExited: true, streamsDrained: true, noObservedPersistenceErrors: true }
 }

@@ -49,6 +49,8 @@ function withStartupDeclaration(selection: ClaudeSequentialSelection, declaratio
 type Script = (input: SDKUserMessage, options: Options) => AsyncGenerator<SDKMessage>
 async function* normalFrames(input: SDKUserMessage, options: Options): AsyncGenerator<SDKMessage> {
   const session_id = options.resume!; const send = input.uuid!
+  const usageFields = { fallback_credit: { status: { type: 'not_applied', reason: 'not_enabled' } },
+    output_tokens_details: { thinking_tokens: 0 } } as const
   yield { type: 'system', subtype: 'init', uuid: frameIds.init, session_id, cwd: options.cwd!,
     apiKeySource: 'none', claude_code_version: '2.1.263', permissionMode: 'default', tools: [], agents: [], mcp_servers: [],
     model: 'fixture-native-model', slash_commands: [], output_style: 'default', skills: [], plugins: [], fast_mode_state: 'off' }
@@ -61,7 +63,7 @@ async function* normalFrames(input: SDKUserMessage, options: Options): AsyncGene
   yield { type: 'result', subtype: 'success', uuid: frameIds.result, session_id, user_message_uuid: send,
     is_error: false, result: 'Completed native answer.', duration_ms: 1, duration_api_ms: 1, num_turns: 1,
     stop_reason: 'end_turn', total_cost_usd: 0, modelUsage: {}, permission_denials: [],
-    usage: { cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
+    usage: { ...usageFields, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 },
       cache_creation_input_tokens: 0, cache_read_input_tokens: 0, inference_geo: 'fixture', input_tokens: 1,
       iterations: [], output_tokens: 1, server_tool_use: { web_fetch_requests: 0, web_search_requests: 0 },
       service_tier: 'standard', speed: 'standard' } }
