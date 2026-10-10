@@ -11,6 +11,15 @@ import type {
   SkillLearningPolicy,
   SkillLearningPolicyId,
   SkillLearningOptIn,
+  SkillNativeConnectionId,
+  SkillCodexSessionId,
+  SkillCodexTurnId,
+  SkillCodexItemId,
+  SkillClaudeSessionId,
+  SkillClaudeSendId,
+  SkillClaudeMessageId,
+  SkillClaudeToolUseId,
+  SkillSequentialTaskId,
 } from './types.ts'
 
 const skillId = z.string().transform(value => brandString<SkillLibraryId>(value))
@@ -27,6 +36,42 @@ const check = z.object({
   inputHash: z.string().min(1).optional(),
   outputHash: z.string().min(1).optional(),
 })
+const nativeId = z.string().min(1).max(256)
+const nativeAction = z.object({
+  kind: z.enum(['read', 'command', 'file-change', 'web', 'mcp']),
+  name: z.string().min(1).max(128),
+  outcome: z.enum(['reported-success', 'reported-error', 'unknown']),
+  startedEventRef: z.string().min(1),
+  settledEventRef: z.string().min(1),
+  skillReadPath: z.string().min(1).max(1024).optional(),
+  procedure: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('read'), path: z.string().min(1).max(256) }).strict(),
+    z.object({ kind: z.literal('check'), command: z.string().min(1).max(256) }).strict(),
+    z.object({ kind: z.literal('patch'), changes: z.array(z.object({ operation: z.enum(['add', 'delete', 'update']),
+      path: z.string().min(1).max(256), movePath: z.string().min(1).max(256).optional() }).strict()).min(1) }).strict(),
+  ]).optional(),
+  sourceMessageId: nativeId.transform(value => brandString<SkillClaudeMessageId>(value)).optional(),
+  resultMessageId: nativeId.transform(value => brandString<SkillClaudeMessageId>(value)).optional(),
+})
+const nativeEvidence = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('codex'),
+    connectionId: nativeId.transform(value => brandString<SkillNativeConnectionId>(value)),
+    sessionId: nativeId.transform(value => brandString<SkillCodexSessionId>(value)),
+    turnId: nativeId.transform(value => brandString<SkillCodexTurnId>(value)),
+    actions: z.array(nativeAction.extend({ itemId: nativeId.transform(value => brandString<SkillCodexItemId>(value)) })).min(1),
+  }).strict(),
+  z.object({
+    provider: z.literal('claude-code'),
+    connectionId: nativeId.transform(value => brandString<SkillNativeConnectionId>(value)),
+    sessionId: nativeId.transform(value => brandString<SkillClaudeSessionId>(value)),
+    sendId: nativeId.transform(value => brandString<SkillClaudeSendId>(value)),
+    actions: z.array(nativeAction.extend({ itemId: nativeId.transform(value => brandString<SkillClaudeToolUseId>(value)),
+      sourceMessageId: nativeId.transform(value => brandString<SkillClaudeMessageId>(value)),
+      resultMessageId: nativeId.transform(value => brandString<SkillClaudeMessageId>(value)),
+    })).min(1),
+  }).strict(),
+])
 /** Immutable evidence parser used before persistence. */
 export const learningEvidenceSchema = z.object({
   id: evidenceId,
@@ -39,6 +84,13 @@ export const learningEvidenceSchema = z.object({
   eventRefs: z.array(z.string().min(1)).min(1),
   observations: z.array(z.string().min(1)),
   checks: z.array(check),
+  native: nativeEvidence.optional(),
+  sequentialTask: z.object({
+    taskId: z.uuid().transform(value => brandString<SkillSequentialTaskId>(value)),
+    source: z.object({ provider: z.enum(['codex', 'claude']), profileId: nativeId, nativeSessionId: nativeId,
+      toolMode: z.enum(['conversation', 'project-files', 'project-tools']) }).strict(),
+    nativeTurnId: nativeId,
+  }).strict().optional(),
 })
 /** Parsed generator output cannot carry verification, destination paths or source hashes. */
 export const learningDraftSchema = z.object({
@@ -49,12 +101,12 @@ export const learningDraftSchema = z.object({
     description: z.string().min(1),
     content: z.string(),
     survivorId: skillId.optional(),
-  }).strict()).min(1),
+  }).strict()),
   uncertainty: z.array(z.string()),
 }).strict()
 const resource = z.object({ path: z.string(), hash: z.string(), bytes: z.number().int().nonnegative() })
 const receipt = z.object({
-  scope: z.literal('full-proposal'),
+  scope: z.enum(['full-proposal', 'instruction-redundancy-v1', 'native-observation-v1']),
   digest: z.string(),
   evidenceIds: z.array(evidenceId),
   eventRefs: z.array(z.string()),
@@ -111,15 +163,22 @@ const proposal = z.object({
   uncertainty: z.array(z.string()),
   findings: z.array(z.string()),
   validation: validation.optional(),
+  applicationMode: z.enum(['automatic', 'reviewed']).optional(),
   appliedIds: z.array(skillId),
 })
 const policy = z.object({
   id: policyId,
   approvedAt: z.string(),
   validatorId: z.string(),
-  operations: z.array(z.enum(['update', 'compress', 'archive'])),
+  operations: z.array(z.enum(['create', 'update', 'compress', 'archive'])),
+  projectId: z.string().min(1).optional(),
+  generatorId: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
 })
-const optIn = z.object({ id: skillId, contentHash: z.string(), policyId, enabled: z.boolean() })
+const optIn = z.object({
+  id: skillId, contentHash: z.string(), policyId, enabled: z.boolean(),
+  lastMaintenanceAt: z.iso.datetime().optional(), lastMaintenanceSurvivorId: skillId.optional(),
+})
 /** Durable proposals retain their complete source diffs and task observations. */
 export const skillLearningDomain = defineDomain({
   name: 'skill_learning',

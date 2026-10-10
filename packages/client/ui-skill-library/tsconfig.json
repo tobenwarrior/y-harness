@@ -13,6 +13,7 @@
     { "path": "../ui-primitives" },
     { "path": "../ui-renderer" },
     { "path": "../ui-sidebar" },
+    { "path": "../ui-settings-models" },
     { "path": "../ui-slots" }
   ]
 }

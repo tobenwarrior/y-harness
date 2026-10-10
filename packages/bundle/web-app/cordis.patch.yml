@@ -94,6 +94,9 @@
     - id: skill-library
       name: '@deepseek-ai/dsh-skill-library'
 
+    - id: coding-sessions
+      name: '@deepseek-ai/dsh-coding-session'
+
     - id: session-reference
       name: '@deepseek-ai/dsh-session-reference'
 
@@ -318,6 +321,9 @@
 
     - id: ui-skill-library
       name: '@deepseek-ai/dsh-client-ui-skill-library'
+
+    - id: ui-settings-coding-sessions
+      name: '@deepseek-ai/dsh-client-ui-settings-coding-sessions'
 
     # Read-only Plugin list tab in the Settings Plugins section; the built-in
     # bundles the sidebar page leaves out are inspected here.

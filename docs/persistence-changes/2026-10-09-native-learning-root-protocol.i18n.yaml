@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-09-native-learning-root-protocol.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-09-native-learning-root-protocol.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-09-native-learning-root-protocol:
+  en: 8d3337d90cab45ae
+  zh: a5122e74c88e0e33
+/2026-10-09-native-learning-root-protocol/summary:
+  en: 57a79a3927bd1b01
+  zh: d9f5f99fcad21f19
+/2026-10-09-native-learning-root-protocol/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-09-native-learning-root-protocol/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-09-native-learning-root-protocol/compatibility:
+  en: 1094db6da30eaff2
+  zh: 340fb4d9824b86d8
+/2026-10-09-native-learning-root-protocol/verification:
+  en: 7283f6da3d3cf14a
+  zh: 7f77831c439045c4
+/2026-10-09-native-learning-root-protocol/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

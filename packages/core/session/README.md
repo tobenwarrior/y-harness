@@ -63,6 +63,8 @@ Append, seed/restore, and event adoption/snapshot reject any `header.system` and
 
 `session.seq` reads the current log length without materializing an array, and `session.eventAt(seq)` reads one accepted, deeply frozen event by sequence number. `session.snapshotEvents(fromSeq?, toSeqExclusive?)` materializes a frozen, stable snapshot of a half-open range; a complete current snapshot is cached until the next append. `eventAt()`, `snapshotEvents()`, and `ownEvents()` are deprecated: existing logic may remain unmigrated for now, but new production calls are prohibited. Repository test files may use these three readers under their scoped lint allowance ([policy](../../../.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.md)). Callers that only need a length use `seq`.
 
+`session.lifecycleMarker` exposes only the immutable `session/end-seed` envelope created by that constructor, or `undefined` when no new marker was needed. Detached durable transactions retain it with the event envelopes returned by `append()` to prepare an exact write-ahead batch. It does not read or copy historical events and does not expose a seed marker as newly appended.
+
 Session log positions use two numeric types. `SessionSeq` identifies an existing event or inclusive event watermark; `SessionLogOffset` identifies a gap, prefix length, or read boundary and may equal the event count. `SessionSeqCursor` adds the `-1` “no event yet” value, while `OptionalSessionSeq` uses `null` when absence is data. The constructors validate non-negative safe integers, and the brands disappear at runtime, so durable JSON and wire values remain ordinary numbers.
 
 ### Fork a session

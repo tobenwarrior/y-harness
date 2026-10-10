@@ -115,6 +115,9 @@
     },
     {
       "path": "../../skill/skill-library"
+    },
+    {
+      "path": "../../session/coding-session"
     }
   ]
 }

@@ -6,7 +6,7 @@ import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepse
 import SessionStore, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, TurnEndReason } from '@deepseek-ai/dsh-session'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
+import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { installSkillLearningRuntime } from '../src/learning-runtime.ts'
 import type { SkillLearningRuntimeController, SkillLearningRuntimeOptions } from '../src/learning-runtime.ts'
@@ -62,7 +62,7 @@ async function fixture(options: SkillLearningRuntimeOptions = {}, mode: 'api' | 
         evidence: evidence.filter(row => request.evidenceIds.includes(row.id)),
         catalog: sources.map(source => source.item), sources, bodyBudgetBytes: 2000,
       }
-      const generator = [...generators.values()][0]!
+      const generator = request.generatorId === undefined ? [...generators.values()][0]! : generators.get(request.generatorId)!
       generated.push(await generator.generate(input, new AbortController().signal)); order.push('proposal')
     },
   }
@@ -89,6 +89,86 @@ function turn(session: Session, reason: TurnEndReason = { kind: 'completed' }, c
 }
 
 describe('proposal-only skill learning runtime', () => {
+  it.each(['paired', 'mismatched', 'conflicting', 'wrong-kind'] as const)(
+    'handles additive native patch metadata conservatively (%s)', async (control) => {
+      const f = await fixture({}, 'native')
+      f.session.append('turn/start', { turn: 1 })
+      f.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+        content: [{ type: 'text', text: 'Inspect the current project changes.' }] }), { surfaceOp: 'append' })
+      f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'scripted', model: 'model' } } })
+      for (const [index, path] of ['src/a.ts', 'src/b.ts'].entries()) {
+        const patchProcedure = { kind: 'patch' as const, changes: [{ operation: 'update' as const, path }] }
+        const identity = { provider: 'codex' as const, connectionId: brandString<SkillNativeConnectionId>('profile'),
+          sessionId: brandString<SkillCodexSessionId>('native-thread'), turnId: brandString<SkillCodexTurnId>('native-turn'),
+          itemId: brandString<SkillCodexItemId>(`patch-${index}`), name: 'native-file-change', patchProcedure,
+          kind: control === 'wrong-kind' ? 'read' as const : 'file-change' as const,
+          ...control === 'conflicting' ? { procedure: { kind: 'read' as const, path } } : {} }
+        f.session.append('skill/native-item', { ...identity, phase: 'started' }, { ignorable: true })
+        f.session.append('skill/native-item', { ...identity, phase: 'settled', outcome: 'reported-success',
+          ...control === 'mismatched'
+            ? { patchProcedure: { kind: 'patch', changes: [{ operation: 'update', path: 'src/other.ts' }] } } : {},
+        }, { ignorable: true })
+      }
+      f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await f.dispose()
+      expect(f.adapter.calls).toEqual([])
+      if (control !== 'paired') {
+        expect(f.evidence).toEqual([]); expect(f.proposals).toEqual([])
+        return
+      }
+      expect(f.evidence).toHaveLength(1)
+      expect(f.evidence[0]?.native?.actions.map(action => action.procedure)).toEqual([
+        { kind: 'patch', changes: [{ operation: 'update', path: 'src/a.ts' }] },
+        { kind: 'patch', changes: [{ operation: 'update', path: 'src/b.ts' }] },
+      ])
+      expect(f.evidence[0]?.checks).toEqual([])
+      expect(f.generated[0]?.drafts[0]?.content).toContain('update `src/a.ts`')
+      expect(f.order.indexOf('flush')).toBeLessThan(f.order.indexOf('evidence'))
+    },
+  )
+  it('records paired native item identities after durability and uses bounded observation generation', async () => {
+    const f = await fixture({}, 'native')
+    f.session.append('turn/start', { turn: 1 })
+    f.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Inspect the code and run its checks.' }] }), { surfaceOp: 'append' })
+    f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'scripted', model: 'model' } } })
+    for (const [id, kind] of [['read', 'read'], ['check', 'command']] as const) {
+      const procedure = kind === 'read' ? { kind: 'read' as const, path: 'src/source.ts' } : { kind: 'check' as const, command: 'pnpm run test' }
+      const identity = { provider: 'codex' as const, connectionId: brandString<SkillNativeConnectionId>('profile-a'), sessionId: brandString<SkillCodexSessionId>('native-thread'), turnId: brandString<SkillCodexTurnId>('native-turn'), itemId: brandString<SkillCodexItemId>(id), kind, name: kind, procedure }
+      f.session.append('skill/native-item', { ...identity, phase: 'started' }, { ignorable: true })
+      f.session.append('skill/native-item', { ...identity, phase: 'settled', outcome: 'reported-success' }, { ignorable: true })
+    }
+    f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await f.dispose()
+    expect(f.evidence).toHaveLength(1)
+    expect(f.evidence[0]?.native).toMatchObject({ provider: 'codex', connectionId: brandString<SkillNativeConnectionId>('profile-a'), sessionId: brandString<SkillCodexSessionId>('native-thread'), turnId: brandString<SkillCodexTurnId>('native-turn'), actions: [{ itemId: brandString<SkillCodexItemId>('read'), kind: 'read' }, { itemId: 'check', kind: 'command' }] })
+    expect(f.evidence[0]?.checks).toEqual([])
+    expect(f.generated).toHaveLength(1)
+    expect(f.generated[0]?.drafts[0]?.content).toContain('1. Read `src/source.ts`')
+    expect(f.generated[0]?.drafts[0]?.content).toContain('2. Run `pnpm run test`')
+    expect(f.adapter.calls).toEqual([])
+    expect(f.order.indexOf('flush')).toBeLessThan(f.order.indexOf('evidence'))
+  })
+  it.each(['unknown-procedure', 'mismatch', 'interrupted', 'orphan', 'overflow', 'silent'] as const)('keeps native %s controls conservative', async (control) => {
+    const f = await fixture({}, 'native')
+    f.session.append('turn/start', { turn: 1 })
+    f.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Inspect the code and run checks.' }] }), { surfaceOp: 'append' })
+    f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'scripted', model: 'model' } } })
+    for (const itemId of control === 'silent' ? [] : ['one', 'two']) {
+      const identity = { provider: 'codex' as const, connectionId: brandString<SkillNativeConnectionId>('profile'), sessionId: brandString<SkillCodexSessionId>('native-thread'), turnId: brandString<SkillCodexTurnId>('native-turn'), itemId: brandString<SkillCodexItemId>(itemId), kind: 'command' as const, name: 'native-command',
+        ...control === 'unknown-procedure' ? {} : { procedure: { kind: 'check' as const, command: 'pnpm run test' } } }
+      if (control !== 'orphan') f.session.append('skill/native-item', { ...identity, phase: 'started' }, { ignorable: true })
+      f.session.append('skill/native-item', { ...identity, phase: 'settled', outcome: 'reported-success',
+        ...control === 'mismatch' ? { procedure: { kind: 'check', command: 'pnpm run lint' } } : {} }, { ignorable: true })
+      // A duplicate settlement cannot create another action or procedure.
+      f.session.append('skill/native-item', { ...identity, phase: 'settled', outcome: 'reported-success' }, { ignorable: true })
+      if (control === 'overflow') f.session.append('skill/native-item', { ...identity, phase: 'invalidated' }, { ignorable: true })
+    }
+    f.session.append('turn/end', { turn: 1, reason: control === 'interrupted' ? { kind: 'aborted', reason: { kind: 'user' } } : { kind: 'completed' } })
+    await f.dispose()
+    expect(f.generated).toEqual([]); expect(f.adapter.calls).toEqual([])
+    expect(f.evidence).toHaveLength(control === 'unknown-procedure' ? 1 : 0)
+    if (control === 'unknown-procedure') expect(f.availability.get('p')).toMatchObject({ state: 'unavailable' })
+  })
   it('flushes a substantial human task before evidence and one uncertain proposal, then drains registration', async () => {
     const f = await fixture(); const end = turn(f.session)
     f.ctx.emit('session/event', f.session, end)
@@ -208,7 +288,7 @@ describe('proposal-only skill learning runtime', () => {
     const f = await fixture(); turn(f.session)
     await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
     f.session.append('request/header', { reason: 'change', header: { config: { provider: 'scripted', model: 'model', reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTierId('priority') } } })
-    const generator = [...f.generators.values()][0]!
+    const generator = f.generators.get('harness-api')!
     await generator.generate({ projectId: 'p', operation: 'learn', evidence: [f.evidence[0]!], catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)
     await f.dispose()
     expect(f.adapter.calls).toHaveLength(2)
@@ -218,7 +298,7 @@ describe('proposal-only skill learning runtime', () => {
   it('rejects unknown evidence without borrowing the latest project route', async () => {
     const f = await fixture(); turn(f.session)
     await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
-    const generator = [...f.generators.values()][0]!
+    const generator = f.generators.get('harness-api')!
     const unknown = { ...f.evidence[0]!, id: brandString<SkillLearningEvidenceId>('unknown') }
     await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: [unknown], catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)).rejects.toThrow()
     await f.dispose(); expect(f.adapter.calls).toHaveLength(1)
@@ -230,7 +310,7 @@ describe('proposal-only skill learning runtime', () => {
     await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
     turn(f.session, { kind: 'completed' }, 2, true, false, '', { reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTierId('priority') })
     await vi.waitFor(() => { expect(f.generated).toHaveLength(2) })
-    const generator = [...f.generators.values()][0]!
+    const generator = f.generators.get('harness-api')!
     await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: f.evidence, catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)).rejects.toThrow()
     await f.dispose(); expect(f.adapter.calls).toHaveLength(2)
   })
@@ -253,13 +333,24 @@ describe('proposal-only skill learning runtime', () => {
   })
 
   it('times out an API stream that ignores cancellation and drains without a proposal', async () => {
-    const f = await fixture({ timeoutMs: 5 }); f.adapter.stream = async function* () { await new Promise<void>(() => {}); yield { type: 'finish', reason: { kind: 'stop' } } }; turn(f.session); await f.dispose()
+    const release = Promise.withResolvers<undefined>()
+    const f = await fixture({ timeoutMs: 5 }); f.adapter.stream = async function* () { await release.promise; yield { type: 'finish', reason: { kind: 'stop' } } }; turn(f.session)
+    let disposed = false; const disposal = f.dispose().then(() => { disposed = true })
+    await vi.waitFor(() => { expect(f.availability.get('p')).toMatchObject({ state: 'unavailable' }) })
+    expect(disposed).toBe(false)
+    release.resolve(undefined); await disposal
     expect(f.generated).toEqual([]); expect(f.availability.get('p')).toMatchObject({ state: 'unavailable' })
     expect(f.session.snapshotEvents().some(event => event.type === 'skill/learning-response' && event.data.state === 'unavailable')).toBe(true)
   })
 
-  it('bounds a durability participant that never settles before retaining evidence', async () => {
-    const f = await fixture({ timeoutMs: 5 }); f.ctx.on('session/flush', () => new Promise<void>(() => {})); turn(f.session); await f.dispose()
+  it('holds disposal and admission until a timed-out durability participant settles', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const f = await fixture({ timeoutMs: 5, maxPendingTasks: 1 }); f.ctx.on('session/flush', () => release.promise); turn(f.session)
+    await vi.waitFor(() => { expect(f.availability.get('p')).toMatchObject({ state: 'unavailable' }) })
+    turn(f.session); await Promise.resolve(); expect(f.flush).toHaveBeenCalledTimes(1)
+    let disposed = false; const disposal = f.dispose().then(() => { disposed = true })
+    await Promise.resolve(); expect(disposed).toBe(false)
+    release.resolve(undefined); await disposal
     expect(f.evidence).toEqual([]); expect(f.adapter.calls).toEqual([])
   })
 

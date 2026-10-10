@@ -73,6 +73,12 @@
     },
     {
       "path": "../../skill/skill-library"
+    },
+    {
+      "path": "../../session/coding-session"
+    },
+    {
+      "path": "../../subprocess/subprocess"
     }
   ]
 }

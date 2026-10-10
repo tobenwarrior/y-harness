@@ -182,11 +182,13 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(48)
     await page.getByRole('button', { name: 'Inspect release-checklist', exact: true }).click()
     const detail = page.getByRole('complementary', { name: 'Details', exact: true })
-    await expect.poll(() => detail.locator('pre').textContent()).toBe(originalBody)
+    await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
     expect(await detail.getByText('Protected', { exact: true }).count()).toBe(1)
     expect(await detail.getByText('Usage unknown', { exact: true }).count()).toBe(1)
     expect(await detail.getByText('This source has no reliable usage record. Its usage is unknown.', { exact: true }).count()).toBe(1)
-    expect(await detail.getByRole('button', { name: 'Clean up this skill', exact: true }).count()).toBe(0)
+    expect(await detail.getByRole('button', { name: 'Review whitespace cleanup for this skill', exact: true }).count()).toBe(0)
+    expect(await detail.getByRole('button', { name: 'Clean up this skill', exact: true }).isEnabled()).toBe(false)
+    expect(await detail.getByRole('button', { name: 'Force cleanup', exact: true }).isEnabled()).toBe(false)
 
     await mkdir(SHOTS, { recursive: true })
     const libraryShot = join(SHOTS, 'skills-library.png')
@@ -198,8 +200,8 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await page.emulateMedia({ colorScheme: 'dark' })
     await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
 
-    await page.getByRole('button', { name: 'Clean up now', exact: true }).click()
-    const preview = page.getByRole('dialog', { name: 'Review cleanup', exact: true })
+    await page.getByRole('button', { name: 'Review whitespace cleanup', exact: true }).click()
+    const preview = page.getByRole('dialog', { name: 'Review whitespace cleanup', exact: true })
     await preview.getByText('No cleanup edits to apply.', { exact: true }).waitFor()
     expect(await preview.getByRole('button', { name: 'Apply changes', exact: true }).isEnabled()).toBe(false)
     await preview.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -210,10 +212,10 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await adoption.getByRole('button', { name: 'Manage with Y', exact: true }).click()
     await adoption.waitFor({ state: 'hidden' })
     await detail.getByText('Y managed', { exact: true }).waitFor()
-    expect(await detail.getByRole('switch', { name: 'Automatic cleanup', exact: true }).isChecked()).toBe(false)
+    expect(await detail.getByRole('switch', { name: 'Automatic whitespace cleanup', exact: true }).isChecked()).toBe(false)
     expect(await readFile(releasePath, 'utf8')).toBe(original)
 
-    await detail.getByRole('button', { name: 'Clean up this skill', exact: true }).click()
+    await detail.getByRole('button', { name: 'Review whitespace cleanup for this skill', exact: true }).click()
     await preview.getByRole('heading', { name: 'release-checklist', exact: true }).waitFor()
     await expect.poll(() => preview.textContent()).toContain('1 changes ·')
     expect(await preview.textContent()).toContain('Keep required approvals.')
@@ -223,24 +225,24 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await expect.poll(() => readFile(releasePath, 'utf8')).toBe(compact)
     await detail.getByRole('button', { name: 'Restore content from before this revision', exact: true }).click()
     await expect.poll(() => readFile(releasePath, 'utf8')).toBe(original)
-    await expect.poll(() => detail.locator('pre').textContent()).toBe(originalBody)
+    await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
 
     await detail.getByRole('button', { name: 'Pin', exact: true }).click()
     await detail.getByRole('button', { name: 'Unpin', exact: true }).waitFor()
     await expect.poll(async () => {
-      const cleanup = detail.getByRole('button', { name: 'Clean up this skill', exact: true })
+      const cleanup = detail.getByRole('button', { name: 'Review whitespace cleanup for this skill', exact: true })
       return await cleanup.count() === 0 || !await cleanup.isEnabled()
     }).toBe(true)
-    await page.getByRole('button', { name: 'Clean up now', exact: true }).click()
+    await page.getByRole('button', { name: 'Review whitespace cleanup', exact: true }).click()
     await preview.getByText('No cleanup edits to apply.', { exact: true }).waitFor()
     await preview.getByRole('button', { name: 'Cancel', exact: true }).click()
     expect(await readFile(releasePath, 'utf8')).toBe(original)
     await detail.getByRole('button', { name: 'Unpin', exact: true }).click()
     await detail.getByRole('button', { name: 'Pin', exact: true }).waitFor()
 
-    await detail.getByRole('button', { name: 'Archive', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Archive skill', exact: true })
-      .getByRole('button', { name: 'Archive', exact: true }).click()
+    await detail.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Delete skill', exact: true })
+      .getByRole('button', { name: 'Delete', exact: true }).click()
     await expect.poll(() => existsSync(releaseDir)).toBe(false)
     await detail.getByText('Archived', { exact: true }).waitFor()
     await detail.getByRole('button', { name: 'Restore', exact: true }).click()
@@ -338,7 +340,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await chooseProject(page, 'All projects')
     await graph.getByRole('button', { name: 'Open skill planning-checklist', exact: true }).waitFor()
     await graph.getByRole('button', { name: 'Open skill release-checklist', exact: true }).locator('circle').click()
-    await expect.poll(() => detail.locator('pre').textContent()).toBe(originalBody)
+    await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
     const graphShot = join(SHOTS, 'skills-graph.png')
     await page.screenshot({ path: graphShot, animations: 'disabled' })
     console.log(`Skills graph screenshot: ${graphShot}`)
@@ -347,7 +349,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     expect(await graph.getByRole('button').count()).toBe(54)
     await page.screenshot({ path: join(SHOTS, 'skills-graph-expanded.png'), animations: 'disabled' })
     await page.getByRole('button', { name: 'Show inspector', exact: true }).click()
-    await expect.poll(() => detail.locator('pre').textContent()).toBe(originalBody)
+    await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
     await detail.getByRole('button', { name: 'Hide inspector', exact: true }).click()
     await detail.waitFor({ state: 'hidden' })
     await graph.getByRole('button', { name: 'Open skill release-checklist', exact: true }).locator('circle').click()
@@ -373,8 +375,8 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await settings.waitFor({ state: 'hidden' })
 
-    // The only generator here is deterministic. It observes isolated fixture
-    // evidence and supplies uncertain bodies; the browser owns review approval.
+    // This fixture generator is deterministic. It observes isolated evidence
+    // and supplies uncertain bodies; the browser owns review approval.
     const library = scaffold.ctx.skillLibrary
     library.registerLearningGenerator({ id: 'browser-fixture-generator', generate: async input => ({
       drafts: input.operation === 'compress'
@@ -397,7 +399,8 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await page.getByRole('button', { name: `Inspect suggestion ${createdProposal.id}`, exact: true }).click()
     const review = page.getByRole('complementary', { name: 'Review', exact: true })
     await review.getByText('No source checks recorded. Task completion does not establish verification.', { exact: true }).waitFor()
-    expect(await review.getByRole('button', { name: 'Validate independently', exact: true }).isEnabled()).toBe(false)
+    expect(await review.getByRole('button', { name: 'Validate independently', exact: true }).isEnabled()).toBe(true)
+    expect(createdProposal.state).toBe('review')
     const createdPath = join(projectRoot, '.dsh', 'skills', 'interface-triage', 'SKILL.md')
     expect(existsSync(createdPath)).toBe(false)
     const learningShot = join(SHOTS, 'skills-learning-review.png')

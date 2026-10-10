@@ -38,6 +38,18 @@ describe('application entrypoints', () => {
     ])
   })
 
+  it('classifies only the exact private Claude metadata worker executable', () => {
+    const root = fixture()
+    write(root, 'packages/session/coding-session/src/claude-source-worker.ts', '#!/usr/bin/env node\n')
+
+    expect(applicationEntrypointViolations(root)).toEqual([])
+
+    write(root, 'packages/session/coding-session/src/claude-source-launcher.ts', '#!/usr/bin/env node\n')
+    expect(applicationEntrypointViolations(root)).toEqual([
+      'packages/session/coding-session/src/claude-source-launcher.ts: executable source has no application/build/test classification',
+    ])
+  })
+
   it('rejects an unclassified executable source', () => {
     const root = fixture()
     write(root, 'packages/example/app/src/bin.ts', '#!/usr/bin/env node\n')

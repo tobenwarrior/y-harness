@@ -10,6 +10,7 @@ import type {
   SDKResultMessage,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk'
+import { assistantBody } from './sdk-message-fixture.ts'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import * as yaml from 'js-yaml'
@@ -441,6 +442,10 @@ describe('task admission and package contracts', () => {
     })).rejects.toThrow(
       `disposeGraceMs must be no greater than ${MAX_TIMER_DELAY_MS}`,
     )
+    for (const toolObservationMaxItems of [0, 257, 1.5, Number.NaN]) {
+      await expect(ctx.plugin(claudeCode, { toolObservationMaxItems }))
+        .rejects.toThrow('tool observation bound must be an integer from 1 to 256')
+    }
     await ctx.fiber.dispose()
   })
 
@@ -1038,6 +1043,72 @@ describe('query options and result mapping', () => {
 })
 
 describe('run publication, cancellation, and settlement', () => {
+  it('suppresses child observations when cancellation wins at SDK iterator completion', async () => {
+    const parentAbort = new AbortController()
+    const fixture = fakeRun()
+    async function* stream(): AsyncGenerator<SDKMessage, void> {
+      yield {
+        type: 'assistant', uuid: '00000000-0000-4000-8000-000000000010', session_id: 'native-child', parent_tool_use_id: null,
+        message: assistantBody([{ type: 'tool_use', id: 'native-read', name: 'Read', input: {} }]),
+      }
+      yield {
+        type: 'user', session_id: 'native-child', parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'native-read', is_error: false }] },
+      }
+      yield success()
+      parentAbort.abort(new Error('cancel before iterator completion'))
+    }
+    queryMock.mockImplementation(({ options }) => {
+      options.spawnClaudeCodeProcess!(sdkSpawnOptions())
+      return Object.assign(stream(), { close: () => {} }) as Query
+    })
+    const observed: unknown[] = []
+    const run = await startClaudeCodeRun(request(undefined, parentAbort.signal), {
+      ...fixture.spec,
+      toolObservations: { maxItems: 8, sink: (items) => { observed.push(...items) } },
+    })
+    await expect(run.result).resolves.toMatchObject({ stopReason: 'aborted' })
+    expect(observed).toEqual([])
+    await run.dispose()
+  })
+
+  it('publishes frozen child tool diagnostics to the exact initiating parent without session logging', async () => {
+    const nativeMessageId = '00000000-0000-4000-8000-000000000010'
+    const fixture = fakeRun([
+      {
+        type: 'assistant', uuid: nativeMessageId, session_id: 'native-child', parent_tool_use_id: null,
+        message: assistantBody([{ type: 'tool_use', id: 'native-read', name: 'Read', input: { file_path: 'SECRET' } }]),
+      },
+      {
+        type: 'user', session_id: 'native-child', parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'native-read', is_error: false, content: 'SECRET' }] },
+      },
+      success(),
+    ])
+    const ctx = new Context()
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(LocalSubprocessRuntime)
+    vi.spyOn(ctx.subprocess, 'spawn').mockImplementation(fixture.spec.spawn)
+    await ctx.plugin(claudeCode, {})
+    const observations: unknown[] = []
+    const parents: unknown[] = []
+    ctx.on('claude-code/tool-observations', () => { throw new Error('broken observer') })
+    ctx.on('claude-code/tool-observations', (items, parent) => {
+      observations.push(...items); parents.push(parent)
+      expect(Object.isFrozen(items)).toBe(true)
+      expect(Object.isFrozen(items[0])).toBe(true)
+    })
+    const run = await ctx.subagents.start('claude-code', request())
+    await expect(run.result).resolves.toMatchObject({ stopReason: 'completed' })
+    expect(observations).toEqual([{
+      provider: 'claude-code', sessionId: 'native-child', sourceMessageId: nativeMessageId,
+      itemId: 'native-read', kind: 'read', name: 'Read', outcome: 'reported-success',
+    }])
+    expect(parents).toEqual([fakeParent.session])
+    await run.dispose(); await ctx.fiber.dispose()
+  })
+
   it('publishes only after Query and managed child exist, then disposes once', async () => {
     const fixture = fakeRun([success('exact answer')])
     const run = await startClaudeCodeRun(

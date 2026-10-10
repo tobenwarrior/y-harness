@@ -112,13 +112,13 @@ export class JsonRpcLineTransport implements JsonRpcTransportPeer {
   /**
    * Send a request and await its response.
    * @param method - the JSON-RPC method name.
-   * @param params - the request parameters object.
+   * @param params - the request parameters object, or undefined for a native unit-params method.
    * @param signal - optional abandonment signal: aborting removes the pending
    * entry (no state is retained for a response that may never come) and
    * rejects with the signal's reason.
    * @returns the result; rejects per {@link JsonRpcTransportPeer.request}.
    */
-  request(method: string, params: object, signal?: AbortSignal): Promise<unknown> {
+  request(method: string, params: object | undefined, signal?: AbortSignal): Promise<unknown> {
     const id = `req_${randomUUID().replaceAll('-', '')}`
     const message = { jsonrpc: '2.0', id, method, params }
     return new Promise((resolve, reject) => {

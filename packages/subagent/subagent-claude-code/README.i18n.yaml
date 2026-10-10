@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/subagent/subagent-claude-code/README.md
 /:
-  en: 098697371ce8b694
-  zh: 1cf5aee9be614a5d
+  en: 05c83b0c6d9cad03
+  zh: 9e2c60537c8c1360
 /deepseek-ai-dsh-subagent-claude-code:
   en: 58cca9655f3f81ea
   zh: 0a33d9a4ed461350
 /deepseek-ai-dsh-subagent-claude-code/summary:
-  en: 498d97a8dd913e53
-  zh: d76f0cd25940c540
+  en: 038edc380b09aef6
+  zh: 04f69fc3a864f590
 /deepseek-ai-dsh-subagent-claude-code/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -21,8 +21,14 @@
   en: 10c373b4768ba361
   zh: a5de572bafb2f886
 /deepseek-ai-dsh-subagent-claude-code/use-this-package/configuration:
-  en: 6c61e906830ab904
-  zh: 8464a1514cdc5a30
+  en: 2e221594540bdd8e
+  zh: 2f9398bebb03d482
+/deepseek-ai-dsh-subagent-claude-code/use-this-package/normal-root-turns:
+  en: 65bb442fea274347
+  zh: d228487962d46d37
+/deepseek-ai-dsh-subagent-claude-code/use-this-package/sequential-original-session-conversation:
+  en: 60a8fe2882371336
+  zh: 36679ae1815507a3
 /deepseek-ai-dsh-subagent-claude-code/use-this-package/exposing-the-tool:
   en: b433b186c4e62396
   zh: 6cbb85855238272c
@@ -36,11 +42,11 @@
   en: a04818121f31d222
   zh: 2ed476ab086c1686
 /deepseek-ai-dsh-subagent-claude-code/understand-the-implementation/design-concept:
-  en: c01f4a013f7f1a2f
-  zh: 92221e45d438334d
+  en: 2223a426ca8dfb04
+  zh: 80bc29afad6674b8
 /deepseek-ai-dsh-subagent-claude-code/understand-the-implementation/source-map:
-  en: 86286514b713e50c
-  zh: 5e29ecd8d15c0c50
+  en: b053423b93351f3c
+  zh: b47f1d50d6f261a8
 /deepseek-ai-dsh-subagent-claude-code/understand-the-implementation/run-flow:
   en: 4dd16da30209644e
   zh: 0679197e8b6d0a67
@@ -74,9 +80,33 @@
 /deepseek-ai-dsh-subagent-claude-code/model-experience/parent-scheduling-and-results-indirectly/kv-cache-effect:
   en: fdbb7dcbf8b37f2b
   zh: c7bcbf1e91ffe1d4
+/deepseek-ai-dsh-subagent-claude-code/model-experience/normal-root-request:
+  en: 00665534da6252c3
+  zh: ebb387d1d815cc62
+/deepseek-ai-dsh-subagent-claude-code/model-experience/normal-root-request/what-the-model-sees:
+  en: 5256f39aa52efbf2
+  zh: 5c23b6f43dc3709c
+/deepseek-ai-dsh-subagent-claude-code/model-experience/normal-root-request/token-effect:
+  en: a6c44f17f44903e8
+  zh: 61aef933ba56772f
+/deepseek-ai-dsh-subagent-claude-code/model-experience/normal-root-request/kv-cache-effect:
+  en: 46c0341531eeae79
+  zh: ab89ee85235d1191
+/deepseek-ai-dsh-subagent-claude-code/model-experience/sequential-native-conversation:
+  en: 3026522e602cd1de
+  zh: 1ae56de465791fe7
+/deepseek-ai-dsh-subagent-claude-code/model-experience/sequential-native-conversation/what-the-model-sees:
+  en: dcfda0ad5af55762
+  zh: 248f268b1419fb72
+/deepseek-ai-dsh-subagent-claude-code/model-experience/sequential-native-conversation/token-effect:
+  en: dcc1cd6073ea1815
+  zh: 8a6c8007452071da
+/deepseek-ai-dsh-subagent-claude-code/model-experience/sequential-native-conversation/kv-cache-effect:
+  en: a1e0c2f6c6161daf
+  zh: 487fcf5ddd590dea
 /deepseek-ai-dsh-subagent-claude-code/known-limitations-and-deferred-work:
-  en: 9fbe41d8185bc0bf
-  zh: 67435a4e57191729
+  en: 4a37a86ddd1269cf
+  zh: 0788653f27499557
 /deepseek-ai-dsh-subagent-claude-code/known-limitations-and-deferred-work/dev-note:
   en: 185beb4ff55f0946
   zh: 068ca7c57137eb33

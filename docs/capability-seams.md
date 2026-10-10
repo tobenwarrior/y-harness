@@ -176,6 +176,9 @@ flowchart LR
   pkg_client_ui_skill_library["client-ui-skill-library"]
   pkg_web_app["web-app"]
   pkg_sdk_app["sdk-app"]
+  pkg_coding_session["coding-session"]
+  svc_codingSessions["ctx.codingSessions<br/>Native coding session sources and read-only mirrors"]
+  pkg_client_ui_settings_coding_sessions["client-ui-settings-coding-sessions"]
   svc_agents["ctx.agents<br/>Agent service"]
   pkg_acp["acp"]
   svc_agentDefaultModel["ctx.agentDefaultModel<br/>Default Agent model selection"]
@@ -310,6 +313,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_client_product_analytics --> svc_productAnalytics
   pkg_client_ui_plugin_manager --> svc_pluginRegistryProbe
+  pkg_coding_session --> svc_codingSessions
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -456,6 +460,9 @@ flowchart LR
   svc_browserUse --> pkg_experimental_browser_use_stagehand_native
   svc_clientModules --> pkg_client_hmr
   svc_codexBackendConnection --> pkg_client_ui_settings_models
+  svc_codingSessions --> pkg_client_ui_settings_coding_sessions
+  svc_codingSessions --> pkg_sdk_app
+  svc_codingSessions --> pkg_web_app
   svc_compaction --> pkg_compaction_basic
   svc_computerUse --> pkg_experimental_computer_use_cua_driver_mcp
   svc_computerUse --> pkg_experimental_computer_use_cua_driver_native
@@ -650,6 +657,7 @@ flowchart LR
 | `ctx.sessionProjectionCache` | `core` | [`session-projection-cache`](../packages/session/session-projection-cache) | - | [`api-session-controller`](../packages/api/session-controller), [`session-query`](../packages/session-query/session-query), [`session-reference`](../packages/context/session-reference) | - | Durably checkpoints projection unit states per session (throttled + turn/end/detach mandatory points), serves cached projection views, and accelerates prepared-Session projection hydration. |
 | `ctx.skills` | `seam` | [`skill`](../packages/skill/skill) | [`sandbox-windows-acl`](../packages/sandbox/sandbox-windows-acl), [`skill-badge`](../packages/skill/skill-badge), [`skill-filesystem`](../packages/skill/skill-filesystem), [`skill-office`](../packages/skill/skill-office) | [`tool-skill`](../packages/skill/tool-skill) | - | Merges provider skill catalogs; tool-skill renders the session-prefix catalog and loads complete skill bodies. |
 | `ctx.skillLibrary` | `service` | [`skill-library`](../packages/skill/skill-library) | - | [`client-ui-skill-library`](../packages/client/ui-skill-library), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | Serves project and shared inventory, explicit references, durable evidence and reviewed reversible managed changes. |
+| `ctx.codingSessions` | `service` | [`coding-session`](../packages/session/coding-session) | - | [`client-ui-settings-coding-sessions`](../packages/client/ui-settings-coding-sessions), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | Registers original native provider profiles, reads bounded native histories, and retains independent read-only mirrors; continuation requires an enforceable exclusive provider adapter. |
 | `ctx.agents` | `core` | [`agent`](../packages/core/agent) | - | [`agent-loop`](../packages/core/agent-loop), [`acp`](../packages/acp/acp), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) | - | Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation. |
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`api-session-controller`](../packages/api/session-controller), [`headless`](../packages/bundle/headless) | - | Reads the default ModelSelection from volatile Config and saves selections through the profile editor. |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`base`](../packages/bundle/base), [`sdk-minimal`](../packages/bundle/sdk-minimal) | - | The one concrete loop plugin; extension packages depend on dsh-agent events and services, not on this package. |

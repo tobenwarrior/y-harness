@@ -5,8 +5,8 @@
 .header h1 { font-size: 13px; line-height: 20px; font-weight: 500; margin: 0; }
 .header p { margin: 0; font-size: 13px; line-height: 20px; color: var(--yh-alias-label-secondary); }
 .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--yh-alias-label-secondary); }
-.headerActions { display: flex; align-items: center; gap: 8px; }
-.toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 0.5px solid var(--yh-alias-border-l2); }
+.headerActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 0.5px solid var(--yh-alias-border-l2); }
 .search { flex: 1; min-width: 120px; }
 .summary { display: flex; align-items: center; gap: 14px; padding: 4px 14px; font-size: 11px; line-height: 18px; color: var(--yh-alias-label-secondary); border-top: 0.5px solid var(--yh-alias-border-l2); background: var(--yh-alias-bg-layer-1); }
 .budget { margin-left: auto; }

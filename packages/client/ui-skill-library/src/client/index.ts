@@ -5,6 +5,9 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
+import { DecisionController } from './decision-controller.ts'
+import { DecisionSettings, DecisionToast } from './DecisionSettings.tsx'
 import { SkillLibraryController } from './controller.ts'
 import { SkillLibraryPage } from './SkillLibraryPage.tsx'
 import { SkillLibraryToast } from './SkillLibraryToast.tsx'
@@ -35,6 +38,22 @@ export function apply(ctx: Context): void {
   ctx.effect(() => ctx.on('connection/reset', () => {
     if (controller.source.getSnapshot().status !== 'idle') { void controller.refresh(); void controller.refreshLearning() }
   }), 'ui-skill-library: reconnect')
+  const decision = new DecisionController(ctx.remote.skillLibrary)
+  const decisionFace = decision.face()
+  ctx.effect(() => () => { decision.dispose() }, 'ui-skill-library: Decision controller')
+  ctx.effect(() => {
+    const refresh = () => { if (decision.source.getSnapshot().phase !== 'idle') void decision.refresh() }
+    const dispose = ctx.remote.$on('llm/adapters-updated', refresh)
+    const reset = ctx.on('connection/reset', refresh)
+    return () => { dispose(); reset() }
+  }, 'ui-skill-library: Decision metadata invalidation')
+  ctx.slots.inject('settings.models.footer', () => ctx.slots.register({
+    name: 'settings.models.footer', id: 'skill-decision', locale: 'skillLibrary', inject: () => decisionFace,
+  }, DecisionSettings))
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay', id: 'skill-decision.notice', locale: 'skillLibrary',
+    inject: () => ({ hooks: decisionFace.hooks, dismissDecisionNotice: decisionFace.dismissDecisionNotice }),
+  }, DecisionToast))
   const face = controller.face()
   ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main', key: panelId, locale: 'skillLibrary', store: createNavigationStore(), inject: () => face,

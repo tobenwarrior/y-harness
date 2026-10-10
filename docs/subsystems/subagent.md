@@ -463,6 +463,27 @@ The spawn and fork backends create an ordinary one-shot agent through `parent.ct
 
 `SubagentCatalogEntry` describes a direct child with complete or unknown-mode discovery information; `SubagentCatalogState` is the host-only projection state. `listChildren()` owns a live-preferred parent observation without opening child logs. Browser consumers read `subagentCatalog` through the shared Session projection store and combine membership with Session-list activity. `SubagentCatalogRow` belongs to recursive catalog listing. [The parent-catalog decision](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.md) owns the persistent facts and read semantics.
 
+<a id="optional-claude-root-route"></a>
+
+## Optional Claude root route
+
+The [Claude Code package](../../packages/subagent/subagent-claude-code/README.md) also provides the `llm-claude-code-native` root LLM adapter. Its explicit `rootRoute.connectionId` and `rootRoute.model` register provider `claude-code-native` for the configured model. An absent `rootRoute` leaves the root adapter disabled; mounting the configured adapter starts no SDK process until an admitted live root send. The route requires the exact registered project and Session and uses the Host sandbox and approval services. Session, item, pending-frame, input/output, total protocol, turn-time and shutdown bounds are deployment configuration.
+
+`claude-code/root-protocol` is an ignorable log-only record of exact bounded owned public SDK requests and frames, which can contain tool arguments and results. It supplies no model conversation projection or promise to restore hidden native context. The separate [`skill/native-item` evidence](skills.md#native-learning-evidence-types) retains sanitized identities and procedural facts for learning. Both use the actual Claude SDK Session ID and explicit client send UUID; a send UUID does not invent a native turn identity.
+
+```ts type-equiv
+/** Exact bounded owned request or public SDK frame; never a model conversation projection. */
+type ClaudeRootProtocolRecord = {
+  readonly provider: 'claude-code'
+  readonly connectionId: SkillNativeConnectionId
+  readonly sessionId: SkillClaudeSessionId
+  readonly sendId: SkillClaudeSendId
+  /** Actual launched native profile paths; no account or external-session identity is inferred. */
+  readonly profile: { readonly home: string; readonly configDirectory: string }
+  readonly message: JsonValue
+} & ({ readonly phase: 'request'; readonly system: string } | { readonly phase: 'frame' })
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -673,6 +694,30 @@ async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [SessionId](core.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
+<a id="claude-code-events"></a>
+
+### `claude-code/*` events
+
+<a id="claude-codetool-observations--emit"></a>
+
+#### `claude-code/tool-observations` — emit
+
+Observe-only direct native child receipts, separate from parent task evidence.
+
+```ts cordis-catalog
+/**
+ * Observe-only direct native child receipts, separate from parent task evidence.
+ * @mode emit
+ * @param observations - frozen source-labelled metadata, without bodies or native turn claims.
+ * @param parent - exact Session that initiated this one-shot child query.
+ */
+'claude-code/tool-observations': (observations: readonly ClaudeCodeToolObservation[], parent: Session) => void
+```
+
+Types: [Session](session.md)
+
+Source: [`packages/subagent/subagent-claude-code/src/index.ts`](../../packages/subagent/subagent-claude-code/src/index.ts)
 
 <a id="subagent-events"></a>
 

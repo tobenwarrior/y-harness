@@ -178,6 +178,9 @@ flowchart LR
   pkg_client_ui_skill_library["client-ui-skill-library"]
   pkg_web_app["web-app"]
   pkg_sdk_app["sdk-app"]
+  pkg_coding_session["coding-session"]
+  svc_codingSessions["ctx.codingSessions<br/>Native coding session sources and read-only mirrors"]
+  pkg_client_ui_settings_coding_sessions["client-ui-settings-coding-sessions"]
   svc_agents["ctx.agents<br/>Agent service"]
   pkg_acp["acp"]
   svc_agentDefaultModel["ctx.agentDefaultModel<br/>Default Agent model selection"]
@@ -312,6 +315,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_client_product_analytics --> svc_productAnalytics
   pkg_client_ui_plugin_manager --> svc_pluginRegistryProbe
+  pkg_coding_session --> svc_codingSessions
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -458,6 +462,9 @@ flowchart LR
   svc_browserUse --> pkg_experimental_browser_use_stagehand_native
   svc_clientModules --> pkg_client_hmr
   svc_codexBackendConnection --> pkg_client_ui_settings_models
+  svc_codingSessions --> pkg_client_ui_settings_coding_sessions
+  svc_codingSessions --> pkg_sdk_app
+  svc_codingSessions --> pkg_web_app
   svc_compaction --> pkg_compaction_basic
   svc_computerUse --> pkg_experimental_computer_use_cua_driver_mcp
   svc_computerUse --> pkg_experimental_computer_use_cua_driver_native
@@ -652,6 +659,7 @@ flowchart LR
 | `ctx.sessionProjectionCache` | `core` | [`session-projection-cache`](../packages/session/session-projection-cache) | - | [`api-session-controller`](../packages/api/session-controller), [`session-query`](../packages/session-query/session-query), [`session-reference`](../packages/context/session-reference) | - | 按会话持久保存投影单元状态的检查点（节流检查点，以及轮次／结束／分离时的必选检查点），提供缓存投影视图，并加速 prepared Session 的投影恢复。 |
 | `ctx.skills` | `seam` | [`skill`](../packages/skill/skill) | [`sandbox-windows-acl`](../packages/sandbox/sandbox-windows-acl), [`skill-badge`](../packages/skill/skill-badge), [`skill-filesystem`](../packages/skill/skill-filesystem), [`skill-office`](../packages/skill/skill-office) | [`tool-skill`](../packages/skill/tool-skill) | - | 合并提供方的 skill（技能）目录；tool-skill 渲染会话前缀目录，并加载完整的 skill 正文。 |
 | `ctx.skillLibrary` | `service` | [`skill-library`](../packages/skill/skill-library) | - | [`client-ui-skill-library`](../packages/client/ui-skill-library), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | 提供项目与共享技能清单、明确引用关系、持久化工作证据，以及经过评审且可撤销的受管理技能变更。 |
+| `ctx.codingSessions` | `service` | [`coding-session`](../packages/session/coding-session) | - | [`client-ui-settings-coding-sessions`](../packages/client/ui-settings-coding-sessions), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | 注册原始原生提供方配置，读取有界原生历史，并保留独立只读镜像；续写需要可强制执行排他权的提供方适配器。 |
 | `ctx.agents` | `core` | [`agent`](../packages/core/agent) | - | [`agent-loop`](../packages/core/agent-loop), [`acp`](../packages/acp/acp), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) | - | 拥有实时 Agent 句柄、创建／恢复工厂 seam，以及进程本地的发起方传播。 |
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`api-session-controller`](../packages/api/session-controller), [`headless`](../packages/bundle/headless) | - | Reads the default ModelSelection from volatile Config and saves selections through the profile editor. |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`base`](../packages/bundle/base), [`sdk-minimal`](../packages/bundle/sdk-minimal) | - | 唯一的具体循环插件；扩展包依赖 dsh-agent 的事件和服务，而不依赖此包。 |

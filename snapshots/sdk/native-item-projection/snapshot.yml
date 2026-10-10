@@ -1,0 +1,10 @@
+version: 1
+scenario: native-item-projection
+profile: sdk
+composition: sdk-upload
+recording: authored
+environment:
+  DSH_SNAPSHOT_FEEDBACK: '0'
+header:
+  class: native-item-projection
+  pin: true

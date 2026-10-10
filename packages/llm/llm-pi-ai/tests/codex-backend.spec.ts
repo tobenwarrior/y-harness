@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { parseCodexModels, declineCodexRequest, projectCodexHistory, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
 import { ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
+import type { SkillLearningNativeItem } from '@deepseek-ai/dsh-skill-library/types'
+import { codexNativeItem } from '../src/codex-native-evidence.ts'
 
 const catalog = { data: [{ id: 'sol-id', model: 'gpt-6.1-sol', displayName: 'Sol', description: 'Native', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'max', description: 'Max' }, { reasoningEffort: 'ultra', description: 'Delegation' }], defaultReasoningEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }] }, { id: 'hidden', model: 'hidden', hidden: true }] }
-function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined) {
+function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined, observeNativeItem?: (options: import('@deepseek-ai/dsh-llm').GenerateOptions, item: SkillLearningNativeItem) => void, nativeEvidenceMaxItems?: number, observationScope: { cwd?: string; projectRoot?: string | null } = {}) {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
   const request = vi.fn(async (method: string, _params: object): Promise<unknown> => {
     if (method === 'initialize') return { userAgent: 'codex' }
@@ -22,13 +24,150 @@ function fixture(models: unknown = catalog, resolveAttachments?: () => Attachmen
     close: vi.fn(),
   }
   const runtime = new CodexBackendRuntime({ connect: async () => peer,
-    resolveAccess: () => ({ cwd: '/session/project', sandbox: 'workspace-write', writableRoots: ['/session/project', '/tmp'], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true }, request: declineCodexRequest }), persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
-    ...resolveAttachments === undefined ? {} : { resolveAttachments } })
+    resolveAccess: () => ({ cwd: observationScope.cwd ?? '/session/project', sandbox: 'workspace-write', writableRoots: ['/session/project', '/tmp'], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true }, request: declineCodexRequest }), persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
+    ...resolveAttachments === undefined ? {} : { resolveAttachments },
+    resolveObservationProjectRoot: () => observationScope.projectRoot === null ? undefined : observationScope.projectRoot ?? '/session/project',
+    connectionId: 'fixture-profile', ...observeNativeItem === undefined ? {} : { observeNativeItem },
+    ...nativeEvidenceMaxItems === undefined ? {} : { nativeEvidenceMaxItems } })
   return { runtime, request, peer,
     emit: (method: string, params: Record<string, unknown>) => { for (const cb of listeners) cb(method, params) },
   }
 }
 describe('Codex native backend', () => {
+  it('excludes native user-shell and background interaction sources from learning', () => {
+    for (const source of ['userShell', 'unifiedExecStartup', 'unifiedExecInteraction', 'unrecognized']) {
+      expect(codexNativeItem('profile', 'thread', 'turn', 'started', { id: 'item', type: 'commandExecution', source })).toBeUndefined()
+    }
+    expect(codexNativeItem('profile', 'thread', 'turn', 'started', { id: 'item', type: 'commandExecution', source: 'agent' })).toMatchObject({ kind: 'command' })
+  })
+  it('retains only concrete allowlisted project procedure facts', () => {
+    const parse = (command: string, path?: string, cwd = '/project') => codexNativeItem('profile', 'thread', 'turn', 'started', {
+      id: 'item', type: 'commandExecution', source: 'agent', command, cwd,
+      commandActions: path === undefined ? [] : [{ type: 'read', path }],
+    }, '/project')
+    expect(parse('cat src/source.ts', '/project/src/source.ts')?.procedure).toEqual({ kind: 'read', path: 'src/source.ts' })
+    expect(parse('pnpm  run test')?.procedure).toEqual({ kind: 'check', command: 'pnpm run test' })
+    for (const [command, path] of [['cat .env', '/project/.env'], ['cat src/secrets.ts', '/project/src/secrets.ts'], ['cat ../other.ts', '/other.ts'], ['cat src/source.ts; printenv', '/project/src/source.ts'], ['cat src/source.ts', '/project/src/other.ts'], ['pnpm run deploy', undefined], ['TOKEN=private pnpm run test', undefined], ['pnpm run test --token private', undefined]]) {
+      expect(parse(command!, path)?.procedure).toBeUndefined()
+    }
+    expect(parse('pnpm run test', undefined, '/elsewhere')?.procedure).toBeUndefined()
+    expect(codexNativeItem('profile', 'thread', 'turn', 'started', { id: 'unknown-source', type: 'commandExecution', command: 'pnpm run test', cwd: '/project' }, '/project')?.procedure).toBeUndefined()
+  })
+  it('recognizes only the pinned simple POSIX shell wrapper grammar', () => {
+    const parse = (command: string) => codexNativeItem('profile', 'thread', 'turn', 'started', {
+      id: 'wrapped', type: 'commandExecution', source: 'agent', command, cwd: '/project',
+      commandActions: command.includes('cat ') ? [{ type: 'read', command: 'cat src/source.ts', name: 'source.ts', path: '/project/src/source.ts' }] : [{ type: 'unknown', command: 'pnpm run test' }],
+    }, '/project')
+    // 0.160 Shell::derive_exec_args + CommandExecutionPresentation::from_raw/shlex1.3 try_join.
+    for (const shell of ['/bin/zsh', '/bin/bash', '/bin/sh']) {
+      for (const flag of ['-lc', '-c']) {
+        expect(parse(`${shell} ${flag} 'cat src/source.ts'`)?.procedure).toEqual({ kind: 'read', path: 'src/source.ts' })
+        expect(parse(`${shell} ${flag} 'pnpm run test'`)?.procedure).toEqual({ kind: 'check', command: 'pnpm run test' })
+      }
+    }
+    for (const command of ["/bin/zsh -lc 'cat $TOKEN'", "/bin/zsh -lc 'cat src/source.ts; printenv'", "/bin/zsh -lc 'TOKEN=x pnpm run test'", "/bin/zsh -lc 'cat $(printenv)'", "/bin/zsh -lc 'pnpm run test' extra", "/bin/zsh -lc \"cat 'src/source.ts'\"", "/bin/zsh -ilc 'pnpm run test'", "/custom/zsh -lc 'pnpm run test'"]) {
+      expect(parse(command)?.procedure).toBeUndefined()
+    }
+  })
+  it('requires the observed command cwd to equal an actual registered project root', async () => {
+    for (const scope of [
+      { cwd: '/session/project', projectRoot: '/session/project', expected: true },
+      { cwd: '/session/project/subdir', projectRoot: '/session/project', expected: false },
+      { cwd: '/session/project', projectRoot: null, expected: false },
+    ]) {
+      const observed: SkillLearningNativeItem[] = []
+      const f = fixture(catalog, undefined, (_options, item) => { observed.push(item) }, undefined, scope)
+      await f.runtime.refresh(); await f.runtime.configure(true)
+      const original = f.request.getMockImplementation()!
+      f.request.mockImplementation(async (method, params) => {
+        if (method !== 'turn/start') return original(method, params)
+        queueMicrotask(() => {
+          const item = { id: 'check', type: 'commandExecution', source: 'agent', command: "/bin/zsh -lc 'pnpm run test'", cwd: scope.cwd, status: 'completed', exitCode: 0 }
+          f.emit('item/started', { threadId: 'thread1', turnId: 'turn1', item })
+          f.emit('item/completed', { threadId: 'thread1', turnId: 'turn1', item })
+          f.emit('turn/completed', { threadId: 'thread1', turn: { id: 'turn1', status: 'completed' } })
+        })
+        return { turn: { id: 'turn1' } }
+      })
+      try {
+        for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
+        expect(observed).toHaveLength(2)
+        expect(observed.every(item => item.procedure !== undefined)).toBe(scope.expected)
+      } finally { f.runtime.close() }
+    }
+  })
+  it('invalidates bounded native observation without disrupting the native answer', async () => {
+    const observed: SkillLearningNativeItem[] = []
+    const f = fixture(catalog, undefined, (_options, item) => { observed.push(item) }, 1)
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => {
+      if (method !== 'turn/start') return original(method, params)
+      queueMicrotask(() => {
+        for (const itemId of ['one', 'two', 'three']) {
+          const item = { id: itemId, type: 'fileChange', status: 'completed' }
+          f.emit('item/started', { threadId: 'thread1', turnId: 'turn1', item })
+          f.emit('item/completed', { threadId: 'thread1', turnId: 'turn1', item })
+        }
+        f.emit('turn/completed', { threadId: 'thread1', turn: { id: 'turn1', status: 'completed' } })
+      })
+      return { turn: { id: 'turn1' } }
+    })
+    const chunks = []
+    for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) chunks.push(chunk)
+    expect(observed.map(item => item.phase)).toEqual(['started', 'settled', 'invalidated'])
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    f.runtime.close()
+  })
+  it('invalidates changed start and settle metadata and ignores other native threads', async () => {
+    const observed: SkillLearningNativeItem[] = []
+    const f = fixture(catalog, undefined, (_options, item) => { observed.push(item) })
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => {
+      if (method !== 'turn/start') return original(method, params)
+      queueMicrotask(() => {
+        const identity = { threadId: 'thread1', turnId: 'turn1' }
+        const item = { id: 'read', type: 'commandExecution', source: 'agent', cwd: '/session/project', command: 'cat src/one.ts', commandActions: [{ type: 'read', path: '/session/project/src/one.ts' }] }
+        f.emit('item/started', { ...identity, threadId: 'background-thread', item })
+        f.emit('item/started', { ...identity, item })
+        f.emit('item/completed', { ...identity, item: { ...item, command: 'cat src/two.ts', commandActions: [{ type: 'read', path: '/session/project/src/two.ts' }], status: 'completed', exitCode: 0 } })
+        f.emit('turn/completed', { ...identity, turn: { id: 'turn1', status: 'completed' } })
+      })
+      return { turn: { id: 'turn1' } }
+    })
+    for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
+    expect(observed.map(item => item.phase)).toEqual(['started', 'invalidated'])
+    f.runtime.close()
+  })
+  it('publishes only matching live native tool metadata without commands or result bodies', async () => {
+    const observed: SkillLearningNativeItem[] = []
+    const f = fixture(catalog, undefined, (_options, item) => { observed.push(item) })
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => {
+      if (method !== 'turn/start') return original(method, params)
+      queueMicrotask(() => {
+        const identity = { threadId: 'thread1', turnId: 'turn1' }
+        const read = { id: 'read', type: 'commandExecution', command: 'cat /project/SKILL.md; api_key=private', commandActions: [{ type: 'read', path: '/project/.dsh/skills/inspect/SKILL.md' }] }
+        f.emit('item/started', { ...identity, item: read })
+        f.emit('item/completed', { ...identity, item: { ...read, status: 'completed', exitCode: 0, aggregatedOutput: 'must not retain stdout' } })
+        f.emit('item/started', { ...identity, turnId: 'old-turn', item: { id: 'old', type: 'fileChange' } })
+        f.emit('item/completed', { ...identity, item: { id: 'orphan', type: 'fileChange', status: 'completed' } })
+        f.emit('item/started', { ...identity, item: { id: 'change', type: 'fileChange', changes: [{ diff: '+private contents' }] } })
+        f.emit('item/completed', { ...identity, item: { id: 'change', type: 'fileChange', status: 'completed' } })
+        f.emit('item/completed', { ...identity, item: { id: 'change', type: 'fileChange', status: 'completed' } })
+        f.emit('turn/completed', { ...identity, turn: { id: 'turn1', status: 'completed' } })
+      })
+      return { turn: { id: 'turn1' } }
+    })
+    for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* consume the native turn */ }
+    expect(observed).toHaveLength(4)
+    expect(observed[0]).toMatchObject({ provider: 'codex', connectionId: 'fixture-profile', sessionId: 'thread1', turnId: 'turn1', itemId: 'read', kind: 'read', phase: 'started' })
+    expect(observed[1]).toMatchObject({ outcome: 'reported-success', skillReadPath: '/project/.dsh/skills/inspect/SKILL.md' })
+    expect(JSON.stringify(observed)).not.toMatch(/api_key|stdout|private contents|old|orphan/)
+    f.runtime.close()
+  })
   it('preserves real model IDs, Ultra and native Fast; filters hidden entries', () => {
     expect(parseCodexModels(catalog)).toEqual([{ id: 'gpt-6.1-sol', name: 'Sol', description: 'Native', efforts: [{ id: 'max', description: 'Max' }, { id: 'ultra', description: 'Delegation' }], defaultEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }], inputModalities: ['text', 'image'] }])
   })

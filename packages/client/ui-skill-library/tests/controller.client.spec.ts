@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList, SkillCleanupProposalId } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList, SkillCleanupProposalId, SkillRevisionId } from '@deepseek-ai/dsh-skill-library/types'
 import { SkillLibraryController, type SkillLibraryApi } from '../src/client/controller.ts'
 import { learningProposal, learningStatus, evidence } from './learning-fixtures.ts'
 
@@ -17,6 +17,8 @@ const api = (overrides: Partial<SkillLibraryApi> = {}): SkillLibraryApi => ({
   previewCleanup: async () => ({ ok: true, value: { id: 'preview' as SkillCleanupProposalId, changes: [], skipped: [], createdAt: '2026-10-09T00:00:00Z' } }),
   applyCleanup: async () => ({ ok: true, value: { revised: [] } }),
   rollback: async () => ({ ok: true, value: { item } }),
+  cleanupSemantic: async () => ({ ok: true, value: [] }),
+  revokeLearningPolicy: async request => ({ ok: true, value: { id: request.policyId, approvedAt: '2026-10-09T00:00:00Z', validatorId: 'validator', operations: ['compress'], enabled: false } }),
   listProposals: async () => ({ ok: true, value: [{ ...learningProposal, changeCount: 1, beforeBytes: 18, afterBytes: 49 }] }),
   detailProposal: async () => ({ ok: true, value: learningProposal }),
   proposeLearning: async () => ({ ok: true, value: learningProposal }),
@@ -36,6 +38,55 @@ const api = (overrides: Partial<SkillLibraryApi> = {}): SkillLibraryApi => ({
 })
 
 describe('skill library controller', () => {
+  it('revokes the selected learning policy through the host and refreshes consent controls', async () => {
+    const revokeLearningPolicy = vi.fn<SkillLibraryApi['revokeLearningPolicy']>(async request => ({ ok: true, value: {
+      id: request.policyId, approvedAt: '2026-10-09T00:00:00Z', validatorId: 'validator', operations: ['compress'], enabled: false,
+    } }))
+    const controller = new SkillLibraryController(api({ revokeLearningPolicy }))
+    const policyId = 'policy' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningPolicyId
+    await controller.revokePolicy(policyId)
+    expect(revokeLearningPolicy).toHaveBeenCalledWith({ policyId })
+    expect(controller.source.getSnapshot().learning.providers).toEqual(learningStatus)
+    expect(controller.source.getSnapshot().notice?.kind).toBe('changed')
+    controller.dispose()
+  })
+
+  it('runs semantic cleanup through the host and refreshes retained history', async () => {
+    let applied = false
+    const revised = { ...item, contentHash: 'reduced-hash', bodyBytes: 48 }
+    const revision = { id: 'revision:cleanup' as SkillRevisionId, createdAt: '2026-10-09T01:00:00Z', reason: 'learning' as const,
+      beforeHash: 'hash', afterHash: 'reduced-hash', beforeBytes: 99, afterBytes: 48 }
+    const cleanupSemantic = vi.fn<SkillLibraryApi['cleanupSemantic']>(async () => {
+      applied = true
+      return { ok: true, value: [{ ...learningProposal, state: 'applied' }] }
+    })
+    const controller = new SkillLibraryController(api({ cleanupSemantic,
+      list: async () => ({ ok: true, value: { ...inventory, items: [applied ? revised : item] } }),
+      detail: async () => ({ ok: true, value: { item: applied ? revised : item,
+        content: applied ? 'Keep the focused check.' : 'Keep the focused check.\nKeep the focused check.', revisions: applied ? [revision] : [] } }),
+    }))
+    await controller.loadDetail(id)
+    const request = { projectId: 'project', ids: [id], force: true }
+    await controller.cleanupSemantic(request)
+    expect(cleanupSemantic).toHaveBeenCalledWith(request)
+    expect(controller.source.getSnapshot().inventory?.items[0]?.contentHash).toBe('reduced-hash')
+    expect(controller.source.getSnapshot().detail?.content).toBe('Keep the focused check.')
+    expect(controller.source.getSnapshot().detail?.revisions).toEqual([revision])
+    expect(controller.source.getSnapshot().notice?.kind).toBe('semanticCleanupFinished')
+    expect(controller.source.getSnapshot().busy).toBe(false)
+    controller.dispose()
+  })
+
+  it('retains skill inventory and reports a failed semantic cleanup', async () => {
+    const controller = new SkillLibraryController(api({ cleanupSemantic: async () => { throw new Error('Source changed') } }))
+    await controller.refresh()
+    await controller.cleanupSemantic({ projectId: 'project', ids: [id], force: false })
+    expect(controller.source.getSnapshot().inventory).toEqual(inventory)
+    expect(controller.source.getSnapshot().notice?.kind).toBe('actionError')
+    expect(controller.source.getSnapshot().busy).toBe(false)
+    controller.dispose()
+  })
+
   it('loads review metadata without eager proposal bodies and never applies generated suggestions', async () => {
     const detailProposal = vi.fn<SkillLibraryApi['detailProposal']>(async () => ({ ok: true, value: learningProposal }))
     const applyProposal = vi.fn<SkillLibraryApi['applyProposal']>(async () => ({ ok: true, value: learningProposal }))

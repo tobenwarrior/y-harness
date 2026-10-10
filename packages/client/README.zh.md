@@ -75,6 +75,7 @@ kind: "package-group"
 | [`ui-settings/`](ui-settings/README.zh.md) | 承载设置界面及其扩展区域 | — |
 | [`ui-settings-general/`](ui-settings-general/README.zh.md) | 提供常规设置分区 | — |
 | [`ui-settings-models/`](ui-settings-models/README.zh.md) | 提供模型提供方配置与 DeepSeek 引导 | — |
+| [`ui-settings-coding-sessions/`](ui-settings-coding-sessions/README.zh.md) | 浏览显式配置的原生来源并导入或刷新编码会话镜像 | — |
 | [`ui-settings-shell/`](ui-settings-shell/README.zh.md) | 在插件页提供终端设置页 | — |
 | [`ui-settings-agent-loop/`](ui-settings-agent-loop/README.zh.md) | 在插件页提供 Agent 循环设置页 | — |
 | [`ui-settings-session-log/`](ui-settings-session-log/README.zh.md) | 在通用设置中控制随 API 上传会话日志 | — |

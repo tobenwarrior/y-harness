@@ -47,6 +47,24 @@ Deployments that supply the explicit `DSH_CODEX_BINARY`, `DSH_CODEX_NODE`, `DSH_
 
 When the skill library is mounted, its Codex inventory reads metadata only from an already connected native peer, scoped to registered project directories. Library discovery does not start Codex, request sign-in, read instruction bodies, or scan the native launch directory when no project is registered. Native entries remain protected and read-only; disabled entries stay visible. Disconnected, unsupported, incomplete, and failed inventories are distinguished. Native implicit skill usage remains unknown. Existing Harness skill instructions enter native requests through the logged message path; this inventory does not add native skill-input items or infer usage from assistant text.
 
+When the coding-session service is mounted, the already connected native peer registers source-labelled history discovery and import under its configured native-home identity. The reader uses supported original-thread APIs without launching another process or changing model/auth settings. Retained mirrors remain readable when the connection is unavailable. The [coding-session package](../../session/coding-session/README.md) owns pagination, reconciliation, limits, and the separate continuation modes.
+
+To read a separately selected original CLI profile without enabling a model, mount `@deepseek-ai/dsh-llm-pi-ai/coding-session-source` beside `codingSessions` and a local `subprocess` provider. Its `sources` defaults to an empty list. Each entry requires an `id`, `label`, absolute original `home`, selected official package `packageManifest`, its `binary` Node wrapper, exact `binarySha256`, pinned `version: '0.160.0'`, and explicit `nodePath`, `shellHome`, and `cwd`; `graceMs` defaults to 2000. No home is inferred or scanned. `cwd` selects the launch directory, while discovery remains scoped to the selected native home. Package metadata is bounded to 64 KiB and the wrapper to 1 MiB during verification.
+
+Mounting verifies the selected package and wrapper but starts no process. Explicit discovery or import opens a private managed stdio app-server with child-only `CODEX_HOME` and shell environment, verifies its returned native home and version, and exposes only supported thread-history reads. Full UTF-8 request/reply frames are bounded, native approval requests are refused, and each read awaits process-range quiescence before completing. Parent environment, native authentication, and model controls are not modified. Native supported reads can initialize or migrate their own index. These sources remain readers unless sequential handoff is explicitly enabled. Native-enforced exclusive continuation remains a separate unavailable capability.
+
+### Sequential original-ID Codex handoff
+
+An original-profile source registers a sequential writer only with both `enableSequentialProjectFiles: true` and `knownNoManagedFeatureOverrides: true`. Both fields default to false; an omitted, false or unestablished declaration leaves the source reader-only. The `codingSessions` service's `enableSequentialHandoff` setting also defaults to false and must be enabled. The user must first close the original session's other writers and keep the selected native profile unchanged until release. Claim binds the reviewed source, history revision and project to one selected live idle same-project Y root Session. It does not acquire a global external-writer lock, and the mirror is never injected as replacement native context.
+
+`knownNoManagedFeatureOverrides` is a trusted deployment declaration that native feature requirements for the selected account, profile and machine are absent or all false and stay unchanged. It is separate from observed native requirements and the closed-writer acknowledgement. Public `configRequirements/read` runs after initialization; it cannot certify that Plugin warm startup did not already occur under forced-true requirements. Observed `requirements.featureRequirements` must be absent, null or all false; any true value, including aliases, refuses before thread operations and is rechecked during the handoff. The declaration remains an operational assumption, not a certificate, managed-policy bypass or global exclusion.
+
+This mode permits native file operations under that root's captured file sandbox and writable roots. The pinned runtime bounds patch paths and move targets. Native shell, JavaScript/code-mode execution and multi-agent work are disabled; remembered command-policy approvals can otherwise bypass a file sandbox. Command, file-change, escalation and additive permission requests are declined. Only native questions correlated to the exact original turn reach the selected Y root. Every dispatched turn requests Standard with `serviceTierForTurn: 'default'`; the adapter supplies no new model or effort override. Native resume/configuration determines effective selection, so omission is not a guarantee that all prior model controls remain unchanged.
+
+Each sequential stdio process uses a fresh UUID initialize client name and must confirm `remoteControl/status/read` reports `status: 'disabled'` before thread operations. Preflight disables the observed native MCP servers, Apps and plugins through supported configuration, and rechecks effective configuration before resume and each turn. The pinned native API provides no atomic configuration pin: an unrelated external edit can evade those observations or start a server before detection. This mode therefore relies on the user's unchanged-profile acknowledgement. Neither general project execution nor a tool-free native conversation mode is established by these controls.
+
+Continue preserves the original native ID and rechecks the captured Agent, project, sandbox and retained history. Cold resume can update the native timestamp while retaining the exact title, project, saved turn IDs/statuses/order and projected public events. The held owner maps only its captured resume timestamp delta to the reviewed cursor; later timestamp or history changes and observed native process or persistence failures are refused before admission. After an owned completed turn and cold release, mirrors retain the actual native cursor. Ordinary discovery/read cursors and Host freshness checks retain their timestamp checks. Release waits for the owned process and streams to drain, rejects observed persistence or forced-exit failures, then cold-reads the original source to confirm its complete retained prefix and every dispatched completed turn. These observations establish saved public turns, not a universal recorder or private-context certificate. Unresolved ownership remains blocked after restart; do not resume externally until release succeeds. Code rollback cannot undo appended native turns. The [coding-session service](../../session/coding-session/README.md) owns the durable ownership controls and refusal states.
+
 ### Configure provider routes
 
 Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential reference resolved per request through the harness credential seam, so no secret enters the configuration file; a reference that resolves to nothing fails the request with `MISSING_CREDENTIAL`. Omitting it leaves the route configured-but-keyless, which for an installed catalog route defers to pi-ai's provider-native ambient discovery.
@@ -102,7 +120,7 @@ Each profile may set a `retryPolicy`; omission uses normal mode with five retrie
 | `maxRequestImageBytes` | `20 MiB` | Aggregate base64 image-payload bound; a request whose retained images exceed it fails with `IMAGE_OFFLOAD_REQUIRED` |
 | `retryPolicy` | normal, 5 retries | Provider-owned retry policy executed by `dsh-llm-retry` |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) describes every accepted configuration field of the package-root LLM adapter and its JSDoc. The `coding-session-source` subpath uses the explicit source configuration described above.
 
 ### Sign in to a provider
 
@@ -186,7 +204,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [LLM streaming subsystem](../../../docs/subsystems/llm-streaming.md) — the `StreamChunk` protocol and adapter contract.
 - [llm-retry](../llm-retry/README.md) — the retry executor that applies each profile's `retryPolicy`.
 - [Twin LLM adapters](../../../.agents/notes/implemented/architecture/2026-06-13-twin-llm-adapters.md) — why the DeepSeek route ships two structurally different adapters.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) — every package-root LLM adapter config field and its source declaration.
 
 -----
 
@@ -220,6 +238,20 @@ Generated content affects later inputs only after the loop records it. pi-ai fol
 #### KV Cache effect
 
 Recorded response content appends to the next request and does not invalidate its earlier reusable prefix. Unrecorded transport metadata and usage accounting do not affect cache identity.
+
+### Sequential original native conversation
+
+#### What the model sees
+
+Codex resumes its retained original native context and receives the explicit human continuation. The mirror is not replacement model input. Native file operations use the selected Y root's captured file sandbox under the acknowledged stable-profile precondition; shell, code-mode and broader project execution are disabled.
+
+#### Token effect
+
+Native continuation consumes Codex model tokens; metadata discovery and mirror refresh do not. Sequential Settings turns use the selected root as authority outside AgentLoop and do not contribute normal-task evidence to automatic native learning.
+
+#### KV Cache effect
+
+Codex owns resume context and cache behavior under native compaction and retention. Original-ID persistence does not promise transfer of every historical token, private runtime state or live cache.
 
 ## Known Limitations and Deferred Work
 

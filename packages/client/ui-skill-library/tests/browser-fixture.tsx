@@ -62,7 +62,7 @@ function FixtureBody({ review = false }: { readonly review?: boolean }): ReactNo
   return <SkillLibraryPage t={t} useLibrary={useLibrary} useStore={useStore} actions={navigation.actions}
     ensure={noop} refresh={noop} dismissNotice={noop} act={noop} preview={noop} closePreview={noop} applyPreview={noop} rollback={noop}
     refreshLearning={noop} loadReview={noop} proposeLearning={noop} validateReview={noop} approveReview={noop} rejectReview={noop}
-    approvePolicy={noop} setLearningAutomatic={noop}
+    approvePolicy={noop} revokePolicy={noop} setLearningAutomatic={noop} cleanupSemantic={noop}
     loadDetail={(id) => { const item = skills.find(skill => skill.id === id); if (item !== undefined) data.set({ ...data.getSnapshot(), detailId: id, detailStatus: 'ready', detail: { item, content, revisions: [] } }) }} />
 }
 

@@ -1,4 +1,4 @@
-/** Incremental task observations and bounded API suggestions; never applies source changes. */
+/** Live task observations, bounded API suggestions and host-controlled native learning. */
 import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, LlmCallConfig, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
@@ -6,6 +6,7 @@ import type { } from '@deepseek-ai/dsh-workspace'
 import type { } from '@deepseek-ai/dsh-tools/types'
 import { z } from 'zod'
 import { brandString } from '@deepseek-ai/dsh-brand'
+import { nativeObservationGenerator, nativeObservationValidator, nativeObservationInstructions } from './native-observation.ts'
 import type { SkillLibraryId } from './types.ts'
 import type {
   SkillLearningDraft,
@@ -14,6 +15,10 @@ import type {
   SkillLearningGenerator,
   SkillLearningObservation,
   SkillLearningProposeRequest,
+  SkillLearningNativeAction,
+  SkillLearningNativeItem,
+  SkillLearningNativeIdentity,
+  SkillLearningValidator,
 } from './learning-types.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -57,10 +62,14 @@ declare module '@deepseek-ai/dsh-session/types' {
 export interface SkillLearningRuntimeController {
   /** @param provider - uncertain draft generator. @returns registration disposer. */
   registerLearningGenerator(provider: SkillLearningGenerator): () => void
+  /** @param provider - independent exact-text check. @returns registration disposer. */
+  registerLearningValidator?(provider: SkillLearningValidator): () => void
   /** @param observation - durable neutral facts. @returns immutable recorded evidence. */
   recordLearningEvidence(observation: SkillLearningObservation): Promise<SkillLearningEvidence>
   /** @param request - recorded task identity. @returns a review proposal only. */
   proposeLearning(request: SkillLearningProposeRequest): Promise<unknown>
+  /** @param evidence - durable live observations. @returns policy-controlled application or no automatic operation. */
+  autoLearnEvidence?(evidence: SkillLearningEvidence): Promise<unknown>
   /** @param projectId - current project. @param value - actual route availability. */
   setLearningAvailability(projectId: string, value: {
     readonly state: 'available' | 'unavailable'
@@ -104,6 +113,9 @@ interface Task {
   readonly results: Set<string>
   readonly transports: Set<string>
   readonly observations: string[]
+  readonly nativeStarts: Map<string, { item: SkillLearningNativeItem; ref: string }>
+  readonly nativeActions: Map<string, SkillLearningNativeAction>
+  native?: SkillLearningNativeIdentity
   prompt: string
   claim: string
   resultWithoutError: boolean
@@ -159,6 +171,10 @@ function apiRoute(ctx: Context, route: Route | undefined): boolean {
   if (route === undefined) return false
   const metadata = ctx.get('llm')?.listProviders().find(provider => provider.id === route.provider)
   return metadata?.auxiliaryGeneration === 'api'
+}
+
+function hasPatchKind(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'patch'
 }
 
 function framedInput(input: SkillLearningGenerateInput, bounds: Bounds): string {
@@ -225,7 +241,8 @@ async function generateDrafts(
   route: Route,
   input: SkillLearningGenerateInput,
   bounds: Bounds,
-  signal: AbortSignal): ReturnType<SkillLearningGenerator['generate']> {
+  signal: AbortSignal,
+  track: TrackWork): ReturnType<SkillLearningGenerator['generate']> {
   if (!apiRoute(ctx, route)) throw new Error('skill-learning: API generation is unavailable for this route')
   const llm = ctx.get('llm')
   const sessions = ctx.get('sessions')
@@ -264,7 +281,7 @@ async function generateDrafts(
     if (Buffer.byteLength(JSON.stringify(requestData)) > bounds.maxInputBytes) throw new Error('skill-learning: complete framed request exceeds its bound')
     const request = session.append('skill/learning-request', requestData, { ignorable: true })
     requestRef = `${session.id}:${request.seq}`
-    if (!await sessions.flush(session)) throw new Error('skill-learning: auxiliary request is not durable')
+    if (!await track(sessions.flush(session))) throw new Error('skill-learning: auxiliary request is not durable')
     deadline.signal.throwIfAborted()
     const assembler = new BlockAssembler(); let bytes = 0; let chunks = 0
     for await (const chunk of prepared.stream(options)) {
@@ -294,16 +311,16 @@ async function generateDrafts(
     const responseData = { requestRef, state: 'drafted' as const, ...result }
     if (Buffer.byteLength(JSON.stringify(responseData)) > bounds.maxOutputBytes) throw new Error('skill-learning: complete response exceeds its bound')
     session.append('skill/learning-response', responseData, { ignorable: true })
-    if (!await sessions.flush(session)) throw new Error('skill-learning: auxiliary response is not durable')
+    if (!await track(sessions.flush(session))) throw new Error('skill-learning: auxiliary response is not durable')
     deadline.signal.throwIfAborted()
     return result
   }
-  try { return await Promise.race([stream(), cancelled]) }
+  try { return await Promise.race([track(stream()), cancelled]) }
   catch {
     if (requestRef !== undefined) {
       try {
         session.append('skill/learning-response', { requestRef, state: 'unavailable' }, { ignorable: true })
-        await boundedFlush(ctx, session, bounds.timeoutMs)
+        await boundedFlush(ctx, session, bounds.timeoutMs, track)
       } catch { /* A failed durability checkpoint grants no proposal authority. */ }
     }
     throw new Error('skill-learning: bounded generation unavailable')
@@ -324,12 +341,14 @@ function chunkBytes(chunk: StreamChunk): number {
   return 0
 }
 
-async function boundedFlush(ctx: Context, session: Session, timeoutMs: number): Promise<boolean> {
+type TrackWork = <T>(work: Promise<T>) => Promise<T>
+
+async function boundedFlush(ctx: Context, session: Session, timeoutMs: number, track: TrackWork): Promise<boolean> {
   const sessions = ctx.get('sessions')
   if (sessions === undefined) return false
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => { resolve(false) }, timeoutMs) })
-  try { return await Promise.race([sessions.flush(session), timeout]) }
+  try { return await Promise.race([track(sessions.flush(session)), timeout]) }
   finally { clearTimeout(timer) }
 }
 
@@ -345,8 +364,16 @@ export function installSkillLearningRuntime(
   controller: SkillLearningRuntimeController,
   options: SkillLearningRuntimeOptions = {}): () => Promise<void> {
   const bounds = resolveBounds(options)
+  const nativeGeneratorDispose = controller.registerLearningGenerator(nativeObservationGenerator)
+  const nativeValidatorDispose = controller.registerLearningValidator?.(nativeObservationValidator)
   const captures = new Map<Session, Capture>(); const routes = new Map<string, Route>(); const completions = new Set<string>()
   const pendingRoutes = new Map<string, Route>(); const evidenceRoutes = new Map<string, Route>()
+  const underlying = new Set<Promise<unknown>>()
+  const track: TrackWork = (work) => {
+    underlying.add(work)
+    void work.then(() => { underlying.delete(work) }, () => { underlying.delete(work) })
+    return work
+  }
   let pending = 0; let chain = Promise.resolve(); let closed = false; let unregister: (() => void) | undefined
   const generator: SkillLearningGenerator = {
     id: 'harness-api',
@@ -369,7 +396,7 @@ export function installSkillLearningRuntime(
         unavailable(input.projectId, 'A live root evidence session is required for durable skill generation.')
         throw new Error('skill-learning: live root evidence unavailable')
       }
-      try { return await generateDrafts(ctx, session, route, input, bounds, signal) }
+      try { return await generateDrafts(ctx, session, route, input, bounds, signal, track) }
       catch {
         unavailable(input.projectId, 'Skill suggestions require a response-only API route retaining the task effort and processing tier, with bounded valid output. Generation was unavailable.')
         throw new Error('skill-learning: suggestion generation unavailable')
@@ -444,6 +471,8 @@ export function installSkillLearningRuntime(
           results: new Set(),
           transports: new Set(),
           observations: [],
+          nativeStarts: new Map(),
+          nativeActions: new Map(),
           prompt: '',
           claim: '',
           resultWithoutError: false,
@@ -486,6 +515,44 @@ export function installSkillLearningRuntime(
       }
       const task = capture.task
       if (task === undefined) return
+      if (event.type === 'skill/native-item') {
+        const item = event.data
+        if (item.phase === 'invalidated') { task.overflow = true; return }
+        if ([item.connectionId, item.sessionId, item.provider === 'codex' ? item.turnId : item.sendId, item.itemId].some(id => id.length === 0 || id.length > 256)
+          || item.name.length === 0 || item.name.length > 128 || (item.skillReadPath?.length ?? 0) > 1024) {
+          task.overflow = true; return
+        }
+        if (item.patchProcedure !== undefined && (item.procedure !== undefined || item.provider !== 'codex'
+          || item.kind !== 'file-change' || !hasPatchKind(item.patchProcedure))) { task.overflow = true; return }
+        const identity: SkillLearningNativeIdentity = item.provider === 'codex'
+          ? { provider: item.provider, connectionId: item.connectionId, sessionId: item.sessionId, turnId: item.turnId }
+          : { provider: item.provider, connectionId: item.connectionId, sessionId: item.sessionId, sendId: item.sendId }
+        if (task.native !== undefined && JSON.stringify(task.native) !== JSON.stringify(identity)) { task.overflow = true; return }
+        task.native = identity
+        const start = task.nativeStarts.get(item.itemId)
+        if (item.phase === 'started') {
+          if (start !== undefined) return
+          if (task.nativeStarts.size >= bounds.maxEventRefs) { task.overflow = true; return }
+          task.nativeStarts.set(item.itemId, { item, ref }); note(task, ref); return
+        }
+        if (start === undefined || task.nativeActions.has(item.itemId)) return
+        if (start.item.kind !== item.kind || start.item.name !== item.name || start.item.skillReadPath !== item.skillReadPath
+          || start.item.sourceMessageId !== item.sourceMessageId
+          || item.provider === 'claude-code' && (item.sourceMessageId === undefined || item.resultMessageId === undefined)
+          || JSON.stringify(start.item.procedure) !== JSON.stringify(item.procedure)
+          || JSON.stringify(start.item.patchProcedure) !== JSON.stringify(item.patchProcedure)) { task.overflow = true; return }
+        const outcome = item.outcome ?? 'unknown'
+        const fact = item.patchProcedure ?? item.procedure
+        task.nativeActions.set(item.itemId, { itemId: item.itemId, kind: item.kind, name: item.name, outcome,
+          startedEventRef: start.ref, settledEventRef: ref,
+          ...item.skillReadPath === undefined ? {} : { skillReadPath: item.skillReadPath },
+          ...start.item.sourceMessageId === undefined ? {} : { sourceMessageId: start.item.sourceMessageId },
+          ...item.resultMessageId === undefined ? {} : { resultMessageId: item.resultMessageId },
+          ...fact === undefined ? {} : { procedure: fact } })
+        if (outcome === 'reported-success') task.resultWithoutError = true
+        note(task, ref, `Native ${item.kind} result was delivered (${outcome}); task outcome and skill application are unverified.`)
+        return
+      }
       if (event.type === 'user/message' && event.data.source.kind === 'user') {
         for (const block of event.data.content) {
           if (block.type !== 'text') continue
@@ -550,10 +617,15 @@ export function installSkillLearningRuntime(
       }
       if (event.type !== 'turn/end' || event.data.turn !== task.turn) return
       delete capture.task; note(task, ref)
-      if (event.data.reason.kind !== 'completed' || task.overflow || task.prompt.length === 0 || task.calls.size < 2
+      const nativeActions = [...task.nativeStarts.keys()].flatMap((id) => {
+        const action = task.nativeActions.get(id)
+        return action === undefined ? [] : [action]
+      })
+      if (event.data.reason.kind !== 'completed' || task.overflow || task.prompt.length === 0
+        || (task.native === undefined ? task.calls.size < 2 : nativeActions.length < 2 || nativeActions.length !== task.nativeStarts.size)
         || !task.resultWithoutError
         || completions.has(ref)
-        || pending >= bounds.maxPendingTasks) return
+        || pending >= bounds.maxPendingTasks || underlying.size >= bounds.maxPendingTasks) return
       completions.add(ref); if (completions.size > bounds.maxCompletionRefs) {
         const oldest = completions.values().next()
         if (!oldest.done) completions.delete(oldest.value)
@@ -568,6 +640,7 @@ export function installSkillLearningRuntime(
         eventRefs: task.refs,
         observations: task.observations,
         checks: [],
+        ...task.native === undefined ? {} : { native: { ...task.native, actions: nativeActions } },
       }
       const route = capture.route
       if (route !== undefined) {
@@ -576,11 +649,21 @@ export function installSkillLearningRuntime(
       }
       pending++
       chain = chain.then(async () => {
-        if (!await boundedFlush(ctx, session, bounds.timeoutMs)) {
+        if (!await boundedFlush(ctx, session, bounds.timeoutMs, track)) {
           unavailable(project.id, 'Task observations are unavailable until durable session storage participates.')
           return
         }
         const evidence = await controller.recordLearningEvidence(observation)
+        if (evidence.native !== undefined) {
+          if (nativeObservationInstructions(evidence) === undefined) {
+            unavailable(project.id, 'Native observations were recorded, but lack two concrete allowlisted project procedure facts; automatic generation is unavailable.')
+            return
+          }
+          controller.setLearningAvailability(project.id, { state: 'available', reason: 'Live native observations support bounded procedural learning under explicit project policy; quality and successful skill use remain unverified.' })
+          if (controller.autoLearnEvidence !== undefined) await controller.autoLearnEvidence(evidence)
+          else await controller.proposeLearning({ projectId: project.id, operation: 'learn', evidenceIds: [evidence.id], generatorId: nativeObservationGenerator.id })
+          return
+        }
         if (route === undefined || !apiRoute(ctx, route)) {
           unavailable(project.id, 'Task observations were recorded; their captured route cannot generate API skill suggestions.')
           return
@@ -591,12 +674,14 @@ export function installSkillLearningRuntime(
           if (!oldest.done) evidenceRoutes.delete(oldest.value)
         }
         // The proposal owner selects relevant managed bodies once; avoid another inventory scan.
-        await controller.proposeLearning({ projectId: project.id, operation: 'learn', evidenceIds: [evidence.id] })
+        await controller.proposeLearning({ projectId: project.id, operation: 'learn', evidenceIds: [evidence.id], generatorId: generator.id })
       })
         .catch(() => {
           unavailable(
             project.id,
-            'Skill learning was unavailable. Only response-only API routes retaining the task effort and processing tier can generate bounded suggestions; no skill changes were applied.',
+            observation.native === undefined
+              ? 'Skill learning was unavailable for the captured API route and bounded request.'
+              : 'Native observation learning was unavailable under the current bounds, source protections or project policy.',
           )
         })
         .finally(() => {
@@ -615,7 +700,10 @@ export function installSkillLearningRuntime(
     closed = true
     for (const dispose of disposers) dispose()
     await chain
+    while (underlying.size > 0) await Promise.allSettled([...underlying])
     unregister?.()
+    nativeGeneratorDispose()
+    nativeValidatorDispose?.()
     unregister = undefined
     captures.clear()
     routes.clear()

@@ -492,6 +492,13 @@ export class Session {
   readonly firstLifecycleSeq: SessionLogOffset
 
   /**
+   * Exact immutable end-seed event produced by this constructor, when one was needed.
+   * Detached durable transactions retain this envelope before accepting their own events.
+   * Borrowed seed markers are not exposed as new events; this state never reads historical records.
+   */
+  readonly lifecycleMarker: SessionEvent<'session/end-seed'> | undefined
+
+  /**
    * Create a detached session by validating and snapshotting borrowed seed
    * events and storage metadata.
    * @param id - session identity.
@@ -610,13 +617,14 @@ export class Session {
     }
     this.inheritedEventCount = inheritedEventCount
     this.firstLifecycleSeq = mode === 'snapshot' && this.header.isSeeded ? inheritedEventCount : this.firstLiveSeq
+    this.lifecycleMarker = undefined
     // A fresh seeded child always owns one tagged marker at its inherited cut,
     // even when the copied prefix already ends in an ancestor marker. Restore
     // retains that durable marker and appends only the ordinary resume marker.
     if (seed !== undefined && mode === 'snapshot' && this.header.isSeeded && !markedSeed) {
-      this.append('session/end-seed', { inherited: true })
+      this.lifecycleMarker = this.append('session/end-seed', { inherited: true })
     } else if (seed !== undefined && !(mode === 'snapshot' && this.header.isSeeded) && this.log.at(-1)?.type !== 'session/end-seed') {
-      this.append('session/end-seed', {})
+      this.lifecycleMarker = this.append('session/end-seed', {})
     }
   }
 

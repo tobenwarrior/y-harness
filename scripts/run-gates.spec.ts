@@ -836,6 +836,7 @@ describe('Node 24 lane ownership', () => {
 
     expect(subject.map(item => item.id)).not.toContain('build')
     expect(subject.map(item => item.id)).not.toContain('doc-typecheck')
+    expect(subject.map(item => item.id)).not.toContain('built-bin-smoke')
   })
 
   it('owns the build and orders its artifact consumers', () => {
@@ -886,6 +887,7 @@ describe('Node 24 lane ownership', () => {
         'apps/cli/tests/profiles/headless/tests/source-tool.built.e2e.ts',
         'apps/desktop/tests/acl-skill.built.e2e.ts',
         'packages/subprocess/subprocess-local/tests/spawn-runner-built.e2e.ts',
+        'packages/session/coding-session/tests/claude-source-worker.e2e.ts',
         'packages/subagent/subagent-codex/tests/loader-composition.e2e.ts',
         'packages/subagent/subagent-claude-code/tests/loader-composition.e2e.ts',
         'packages/experimental/agent-team/tests/built-lib.e2e.ts',

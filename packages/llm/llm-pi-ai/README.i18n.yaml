@@ -24,11 +24,14 @@
   en: f8ac52c477890e10
   zh: db23580aa404611d
 /deepseek-ai-dsh-llm-pi-ai/use-this-package/optional-local-codex-backend:
-  en: 40c03c227b21e1ef
-  zh: 6ab2af535ae4b176
+  en: b3d59aa1a5f93033
+  zh: 220e8e1861b61329
+/deepseek-ai-dsh-llm-pi-ai/use-this-package/sequential-original-id-codex-handoff:
+  en: 048c9053ee4126f7
+  zh: 519869ac304331d5
 /deepseek-ai-dsh-llm-pi-ai/use-this-package/configure-provider-routes:
-  en: c5d28300fa2cfc6f
-  zh: c162855dcb54b65b
+  en: a0e31d7e82754d91
+  zh: c905f7559f77df0f
 /deepseek-ai-dsh-llm-pi-ai/use-this-package/sign-in-to-a-provider:
   en: c36f66438638ae08
   zh: 066a2fc4cb97c86f
@@ -63,8 +66,8 @@
   en: 36e0c59a0f9f5980
   zh: 90a62c4a9cd23429
 /deepseek-ai-dsh-llm-pi-ai/further-exploration:
-  en: a2a2ccdeae59d408
-  zh: c47ee091aa90ad91
+  en: 1f0cf06a3fb702eb
+  zh: 802779e4e442ade3
 /deepseek-ai-dsh-llm-pi-ai/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -92,6 +95,18 @@
 /deepseek-ai-dsh-llm-pi-ai/model-experience/provider-response/kv-cache-effect:
   en: b6bd570c0159ba08
   zh: 7d2d91eea6a8d830
+/deepseek-ai-dsh-llm-pi-ai/model-experience/sequential-original-native-conversation:
+  en: 7eb125b1c01bad69
+  zh: 21499f3e5f8e4abb
+/deepseek-ai-dsh-llm-pi-ai/model-experience/sequential-original-native-conversation/what-the-model-sees:
+  en: 4760885e5061c8fc
+  zh: afd16bbc16bd0d1d
+/deepseek-ai-dsh-llm-pi-ai/model-experience/sequential-original-native-conversation/token-effect:
+  en: f8a673824e2d2eef
+  zh: 30a9857b569b8498
+/deepseek-ai-dsh-llm-pi-ai/model-experience/sequential-original-native-conversation/kv-cache-effect:
+  en: 7a791d9570fe5397
+  zh: 718b6e39b6f11fe4
 /deepseek-ai-dsh-llm-pi-ai/known-limitations-and-deferred-work:
   en: bb240ee5dd3f81c7
   zh: 884506a36f4aac62

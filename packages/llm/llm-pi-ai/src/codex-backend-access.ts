@@ -51,7 +51,7 @@ export interface CodexTurnAccess {
  * @param options - assembled request identity and cancellation lifetime.
  * @returns session settings and action-scoped approval/question forwarding.
  */
-export function resolveCodexAccess(ctx: Context, options: GenerateOptions): CodexTurnAccess {
+export function resolveCodexAccess(ctx: Context, options: GenerateOptions | Pick<GenerateOptions, 'sessionId' | 'signal'>): CodexTurnAccess {
   const agents = ctx.get('agents')
   const agent = agents?.currentInitiator()
   if (agent === undefined || agents?.get(agent.id) !== agent

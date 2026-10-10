@@ -1,0 +1,58 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/session/coding-session/README.md
+/:
+  en: 2b48cdf03b2872f6
+  zh: 04da2b6f9ada8df1
+/deepseek-ai-dsh-coding-session:
+  en: e98bf6427df6c501
+  zh: a4b1331dc2a69eb4
+/deepseek-ai-dsh-coding-session/summary:
+  en: b8206ed5b31fa789
+  zh: 50372ce41a2d27a9
+/deepseek-ai-dsh-coding-session/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 364c80ee00a374ff
+/deepseek-ai-dsh-coding-session/use-this-package:
+  en: 72a5a21887004e10
+  zh: 78159a2a9df3d5c3
+/deepseek-ai-dsh-coding-session/use-this-package/configuration:
+  en: c6debbf840615dcb
+  zh: 36ac266aacef19a3
+/deepseek-ai-dsh-coding-session/use-this-package/history-and-recovery:
+  en: 46af8b56957625e1
+  zh: 7f7c25759880d9b4
+/deepseek-ai-dsh-coding-session/use-this-package/import-into-an-ordinary-y-session:
+  en: d38f430e1802bc99
+  zh: 0a85c182225654e2
+/deepseek-ai-dsh-coding-session/understand-the-implementation:
+  en: ed7efe221fee9919
+  zh: 7e3fbb9e2964ef0b
+/deepseek-ai-dsh-coding-session/understand-the-implementation/continuation-ownership:
+  en: da1ac3b9bd55136a
+  zh: b9c26ff5af8ff99c
+/deepseek-ai-dsh-coding-session/further-exploration:
+  en: a9c644e697d124f7
+  zh: 7e71405fe025dc55
+/deepseek-ai-dsh-coding-session/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-coding-session/model-experience/native-history-and-continuation-admission:
+  en: 285d205dba59b37c
+  zh: 6f4b41e2b875c25e
+/deepseek-ai-dsh-coding-session/model-experience/native-history-and-continuation-admission/what-the-model-sees:
+  en: 9f929ee144755d9f
+  zh: 166441e26b2cb736
+/deepseek-ai-dsh-coding-session/model-experience/native-history-and-continuation-admission/token-effect:
+  en: 36035f4a6242b403
+  zh: 9989740b6a7227e6
+/deepseek-ai-dsh-coding-session/model-experience/native-history-and-continuation-admission/kv-cache-effect:
+  en: 517be0cc9240ade3
+  zh: 0b0ad481bb7f384e
+/deepseek-ai-dsh-coding-session/known-limitations-and-deferred-work:
+  en: d45d3e4b8c68ad23
+  zh: 6ef8629d07f30698
+/deepseek-ai-dsh-coding-session/known-limitations-and-deferred-work/dev-note:
+  en: 6669bb716d32667a
+  zh: 4ad9ab2b13dcff7c

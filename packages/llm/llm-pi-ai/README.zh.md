@@ -47,6 +47,24 @@ Nous 请求通过 grant 中经过验证的推理地址使用 Chat Completions。
 
 挂载技能库后，Codex 清单仅通过已连接的原生 peer 读取元数据，并限于已注册的项目目录。技能库发现不会启动 Codex、请求登录、读取指令正文，也不会在未注册项目时扫描原生启动目录。原生条目保持受保护且只读；禁用的条目仍可见。清单区分断开连接、不受支持、不完整和读取失败等情况。原生隐式技能使用情况仍为未知。现有 Harness 技能指令通过已记录的消息路径进入原生请求；此清单不会添加原生技能输入项，也不会从助手文本推断使用情况。
 
+挂载 coding-session 服务后，已连接的原生 peer 以配置的原生 home 身份注册带来源标注的记录发现和导入。读取器使用支持的原始线程 API，不启动其他进程，也不更改模型或认证设置。连接不可用时，保留镜像仍可阅读。[coding-session 包](../../session/coding-session/README.zh.md) 负责分页、协调、限额及独立的续写模式。
+
+如需在不启用模型的情况下读取另行明确选择的原始 CLI profile，可在 `codingSessions` 和本地 `subprocess` 提供方旁挂载 `@deepseek-ai/dsh-llm-pi-ai/coding-session-source`。`sources` 默认为空列表。每个条目要求 `id`、`label`、绝对路径的原始 `home`、所选官方包的 `packageManifest`、其 `binary` Node 包装器、精确 `binarySha256`、固定的 `version: '0.160.0'`，以及明确的 `nodePath`、`shellHome` 和 `cwd`；`graceMs` 默认为 2000。不会推断或扫描 home。`cwd` 选择启动目录，发现范围仍是所选原生 home。验证时包元数据限于 64 KiB，包装器限于 1 MiB。
+
+挂载只验证所选包和包装器，不启动进程。明确发现或导入时会打开受管理的私有 stdio app-server，仅在子进程中设置 `CODEX_HOME` 和 shell 环境，验证返回的原生 home 与版本，并只暴露受支持的线程记录读取。完整 UTF-8 请求与回复帧均有上限，原生批准请求会被拒绝，每次读取结束前等待进程范围静止。父进程环境、原生认证和模型控制不会被修改。受支持的原生读取可以初始化或迁移其自有索引。只有明确启用顺序交接后，这些读取来源才可用于该续写模式。由原生机制强制执行的排他续写仍是独立且不可用的能力。
+
+### 同一原生 ID 的 Codex 顺序交接
+
+原始配置来源仅在 `enableSequentialProjectFiles: true` 与 `knownNoManagedFeatureOverrides: true` 同时成立时注册顺序写入方。两者均默认为 false；省略、false 或未确立的声明使来源保持只读。`codingSessions` 服务独立的 `enableSequentialHandoff` 设置也默认为 false，且必须启用。用户须先关闭原始会话的其他写入方，并在释放前保持所选原生配置不变。认领把已审阅的来源、记录版本和项目绑定到用户选择的活动、空闲且同项目的 Y 根 Session。它不获取全局外部写入锁，也绝不把镜像注入为原生上下文的替代记录。
+
+`knownNoManagedFeatureOverrides` 是可信部署方的声明，表示所选账户、配置及机器的原生特性要求不存在或全部为 false，且持续保持不变。它独立于已观察的原生要求及其他写入方已关闭的确认。公开 `configRequirements/read` 在初始化后运行，不能证明强制 true 要求下的 Plugin 预热启动此前未发生。观察到的 `requirements.featureRequirements` 必须不存在、为 null 或全部为 false；任何 true 值（包括别名）都使操作在线程操作前被拒绝，并在交接过程中再次检查。该声明仍是操作假设，不是证书、受管策略绕过或全局排他权。
+
+本模式允许原生文件操作，但受该根 Session 捕获的文件 sandbox 与可写根目录约束。固定的原生运行时限制 patch 路径与移动目标。原生 shell、JavaScript/code-mode 执行和多智能体工作均被禁用；否则，已记住的命令策略批准可能绕过文件 sandbox。命令、文件修改、权限提升和附加权限请求均被拒绝。只有与确切原始轮次关联的原生问题会传给所选 Y 根 Session。每个发送的轮次都通过 `serviceTierForTurn: 'default'` 请求 Standard；适配器不提供新的模型或推理强度覆盖值。实际选择由原生恢复及配置决定，省略覆盖值不保证此前所有模型控制保持不变。
+
+每个顺序模式 stdio 进程使用全新 UUID 初始化客户端名称，并须在任何线程操作前通过 `remoteControl/status/read` 确认 `status: 'disabled'`。预检通过支持的配置禁用已观测的原生 MCP 服务器、Apps 和插件，并在恢复与每次轮次前复查生效配置。固定的原生 API 没有原子配置锁定：无关的外部修改可能避开这些观测，或在被发现前启动服务器。因此，本模式依赖用户保持配置不变的确认。这些控制不能提供通用项目执行或无工具的原生对话模式。
+
+续写保留原生 ID，并复查捕获的 Agent、项目、sandbox 和保留记录。冷恢复可能更新原生时间戳，同时保留确切的标题、项目、已保存轮次 ID、状态、顺序及公开事件投影。持有者仅将已捕获的恢复时间戳变化映射到已审阅的游标；之后的时间戳或记录变化，以及已观测的原生进程或持久化失败，均在准入前拒绝。完成自有轮次及冷读取释放后，镜像保留实际原生游标。普通发现与读取的游标和 Host 新鲜度检查继续校验时间戳。释放等待所拥有的进程退出且流排空，拒绝已观测的持久化失败或强制退出，再以全新读取进程读取原始来源，确认完整保留前缀及每个已发送并完成的轮次。这些观测证实公开轮次已保存，不是通用记录器或私有上下文凭证。重启后未解决的所有权仍会阻止继续；释放成功前不得在外部恢复。代码回滚不能撤销已追加的原生轮次。[coding-session 服务](../../session/coding-session/README.zh.md) 负责持久所有权控制与拒绝状态。
+
 ### 配置提供方路由
 
 每个 profile 都可以设置 `retryPolicy`；省略时使用 normal mode、最多重试五次。`apiKeyEnv` 是按请求经 harness 凭据 seam 解析的凭据引用，因此配置文件绝不包含密钥；解析为空的引用会让请求以 `MISSING_CREDENTIAL` 失败。省略它会让路由保持已配置但无密钥（configured-but-keyless）状态，对已安装目录路由而言即交由 pi-ai 提供方原生的环境发现。
@@ -102,7 +120,7 @@ Nous 请求通过 grant 中经过验证的推理地址使用 Chat Completions。
 | `maxRequestImageBytes` | `20 MiB` | base64 图片载荷总上限，保留图片超过时请求以 `IMAGE_OFFLOAD_REQUIRED` 失败 |
 | `retryPolicy` | normal，5 次重试 | 由 `dsh-llm-retry` 执行的提供方自有重试策略 |
 
-生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-pi-ai)是每个受支持字段及其 JSDoc 的穷尽式真源。
+生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-pi-ai)完整列出包根 LLM 适配器接受的配置字段与 JSDoc。`coding-session-source` 子路径使用上文所述的显式来源配置。
 
 ### 登录提供方
 
@@ -186,7 +204,7 @@ Config 更新严格验证发生变化的 provider。初始加载将已存储的�
 - [LLM 流式子系统](../../../docs/subsystems/llm-streaming.zh.md)——`StreamChunk` 协议与适配器约定。
 - [llm-retry](../llm-retry/README.zh.md)——应用每个 profile `retryPolicy` 的重试执行器。
 - [孪生 LLM 适配器](../../../.agents/notes/implemented/architecture/2026-06-13-twin-llm-adapters.zh.md)——为什么 DeepSeek 路由交付两个结构不同的适配器。
-- [生成配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-pi-ai)——每个受支持配置字段及其源声明。
+- [生成配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-pi-ai)——包根 LLM 适配器的全部配置字段及其源声明。
 
 -----
 
@@ -220,6 +238,20 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 #### KV Cache 影响
 
 已记录的响应内容会追加到下一个请求，不会使其更早可复用前缀失效。未记录的传输元数据与用量计量不影响缓存标识。
+
+### 原始原生对话的顺序续写
+
+#### 模型看到什么
+
+Codex 恢复保留的原始原生上下文，并接收明确的人工续写消息。镜像不会替代模型输入。原生文件操作在用户确认配置保持不变的前提下，使用所选 Y 根 Session 捕获的文件 sandbox；shell、code-mode 与更广泛的项目执行均被禁用。
+
+#### Token 影响
+
+原生续写消耗 Codex 模型 token；元数据发现及镜像刷新不消耗 token。Settings 顺序轮次在 AgentLoop 之外使用所选根 Session 的权限，不向自动原生学习提供常规任务证据。
+
+#### KV Cache 影响
+
+Codex 在其原生压缩与保留机制下管理恢复上下文及缓存行为。原始 ID 的持久化不承诺迁移每个历史 token、私有运行时状态或活动缓存。
 
 ## 已知限制与延期工作
 

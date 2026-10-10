@@ -38,6 +38,127 @@ MINIMAL_PROMPT = "Exercise the packaged minimal agent's persistent shell."
 MINIMAL_TEXT = "minimal agent smoke ok"
 DYNAMIC_TOOLS_PROMPT = "Read dynamic-tool-task.txt, call the newly available snapshot_ping tool once, then reply DYNAMIC_TOOLS_OK."
 DYNAMIC_TOOLS_TEXT = "DYNAMIC_TOOLS_OK"
+NATIVE_ITEM_PROJECTION_PROMPT = "Complete the native item projection scenario."
+NATIVE_ITEM_PROJECTION_TEXT = "NATIVE_ITEM_PROJECTION_OK"
+NATIVE_ITEM_PROJECTION_SESSION_ID = "native-item-projection"
+CODING_SESSION_PROJECTION_PROMPT = "Continue the coding session projection scenario."
+CODING_SESSION_PROJECTION_SESSION_ID = "coding-session-projection"
+CODING_SESSION_IMPORT_TEXT = "coding-import-public-history-only: quoted historical native observation; private native context Unknown."
+CODING_SESSION_IMPORT_SOURCE = {
+    "kind": "coding-session-import", "provider": "codex", "profileId": "coding-import-profile",
+    "nativeSessionId": "coding-import-session", "mirrorId": "coding-import-mirror",
+    "linkId": "coding-import-link", "generation": 1, "disposition": "active",
+}
+CODING_SESSION_INITIALIZATION_RECEIPT = {
+    "source": {"provider": "codex", "profileId": "fixture-profile", "nativeSessionId": "fixture-native-session"},
+    "mirrorId": "fixture-mirror", "linkId": "fixture-link", "systemMessageId": "fixture-initializer-system",
+}
+NATIVE_ITEM_PAYLOADS = (
+    {
+        "provider": "codex",
+        "connectionId": "native-projection-codex-connection",
+        "sessionId": "native-projection-codex-session",
+        "turnId": "native-projection-codex-turn",
+        "itemId": "native-projection-codex-item",
+        "kind": "read",
+        "name": "read",
+        "phase": "settled",
+        "outcome": "reported-success",
+        "procedure": {"kind": "read", "path": "native-projection-codex-only.txt"},
+    },
+    {
+        "provider": "claude-code",
+        "connectionId": "native-projection-claude-connection",
+        "sessionId": "native-projection-claude-session",
+        "sendId": "native-projection-claude-send",
+        "itemId": "native-projection-claude-tool-use",
+        "sourceMessageId": "native-projection-claude-assistant",
+        "resultMessageId": "native-projection-claude-result",
+        "kind": "read",
+        "name": "Read",
+        "phase": "settled",
+        "outcome": "reported-success",
+        "procedure": {"kind": "read", "path": "native-projection-claude-only.txt"},
+    },
+)
+NATIVE_PROTOCOL_PAYLOADS = (
+    {
+        "provider": "claude-code",
+        "connectionId": "native-projection-claude-connection",
+        "sessionId": "native-projection-claude-session",
+        "sendId": "native-projection-claude-send",
+        "profile": {
+            "home": "/fixture/native-projection-home",
+            "configDirectory": "/fixture/native-projection-config",
+        },
+        "phase": "request",
+        "system": "native-projection-protocol-system-only",
+        "message": {
+            "type": "user", "uuid": "native-projection-claude-send",
+            "session_id": "native-projection-claude-session", "parent_tool_use_id": None,
+            "message": {"role": "user", "content": "native-projection-protocol-request-only"},
+        },
+    },
+    {
+        "provider": "claude-code",
+        "connectionId": "native-projection-claude-connection",
+        "sessionId": "native-projection-claude-session",
+        "sendId": "native-projection-claude-send",
+        "profile": {
+            "home": "/fixture/native-projection-home",
+            "configDirectory": "/fixture/native-projection-config",
+        },
+        "phase": "frame",
+        "message": {
+            "type": "user", "uuid": "native-projection-claude-result",
+            "session_id": "native-projection-claude-session", "parent_tool_use_id": None,
+            "message": {"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": "native-projection-claude-tool-use",
+                "is_error": False, "content": "native-projection-private-tool-output-only",
+            }]},
+        },
+    },
+)
+SEQUENTIAL_PROJECTION_RECORDS = (
+    {
+        "type": "skill/sequential-task-start",
+        "data": {
+            "taskId": "native-projection-sequential-task",
+            "source": {
+                "provider": "codex", "profileId": "native-projection-codex-connection",
+                "nativeSessionId": "native-projection-codex-session", "toolMode": "project-files",
+            },
+            "task": "native-projection-sequential-task-only",
+        },
+    },
+    {
+        "type": "skill/sequential-task-native-turn",
+        "data": {"taskId": "native-projection-sequential-task", "nativeTurnId": "native-projection-codex-turn"},
+    },
+    {
+        "type": "skill/sequential-native-item",
+        "data": {
+            "taskId": "native-projection-sequential-task",
+            "item": {
+                "provider": "codex", "connectionId": "native-projection-codex-connection",
+                "sessionId": "native-projection-codex-session", "turnId": "native-projection-codex-turn",
+                "itemId": "native-projection-codex-item", "kind": "read", "name": "read", "phase": "started",
+                "procedure": {"kind": "read", "path": "native-projection-codex-only.txt"},
+            },
+        },
+    },
+    {
+        "type": "skill/sequential-native-item",
+        "data": {"taskId": "native-projection-sequential-task", "item": NATIVE_ITEM_PAYLOADS[0]},
+    },
+    {
+        "type": "skill/sequential-task-end",
+        "data": {
+            "taskId": "native-projection-sequential-task", "nativeTurnId": "native-projection-codex-turn",
+            "outcome": "completed", "learning": "unavailable",
+        },
+    },
+)
 FS_SEARCH_PROMPT = "Exercise the packaged filesystem search tools."
 FS_SEARCH_TEXT = "filesystem search smoke ok"
 FS_SEARCH_MARKER = "PACKAGED_FS_SEARCH_OK"
@@ -135,6 +256,15 @@ DYNAMIC_TOOLS_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "dynamic-tools"
 )
 DYNAMIC_TOOLS_SNAPSHOT_FILENAMES = ("tool-history.json",)
+NATIVE_ITEM_PROJECTION_SNAPSHOT_DIRECTORY = (
+    Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "native-item-projection"
+)
+NATIVE_ITEM_PROJECTION_SNAPSHOT_FILENAMES = (
+    "native-items.json", "protocol-records.json", "result.json", "model-visible.json", "session.v4.jsonl",
+)
+CODING_SESSION_PROJECTION_SNAPSHOT_DIRECTORY = (
+    Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "coding-session-projection"
+)
 RESTART_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "restart"
 )
@@ -427,6 +557,8 @@ def completion_chunks(body: dict[str, object]) -> list[dict[str, object]]:
         PROFILE_PLUGIN_PROMPT,
         AUTHORING_PROMPT,
         DYNAMIC_TOOLS_PROMPT,
+        NATIVE_ITEM_PROJECTION_PROMPT,
+        CODING_SESSION_PROJECTION_PROMPT,
     }
     prompt = next(
         (candidate for candidate in user_prompts if candidate in scenario_prompts),
@@ -449,6 +581,8 @@ def completion_chunks(body: dict[str, object]) -> list[dict[str, object]]:
         )
     if prompt == RESTART_FIRST_PROMPT:
         return text_chunks(RESTART_FIRST_TEXT)
+    if prompt in {NATIVE_ITEM_PROJECTION_PROMPT, CODING_SESSION_PROJECTION_PROMPT}:
+        return text_chunks(NATIVE_ITEM_PROJECTION_TEXT)
     if prompt == DYNAMIC_TOOLS_PROMPT:
         assert_advertised_tool(body, "read")
         if "snapshot_ping" in advertised_tool_names(body):
@@ -778,7 +912,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -797,10 +931,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
-        parser.error("--exe is required for custom, minimal, dynamic-tools, fs-search, spawn-node, snapshot, recovery, restart, office, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, or all")
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
+        parser.error("--exe is required for custom, minimal, dynamic-tools, native-item-projection, coding-session-projection, fs-search, spawn-node, snapshot, recovery, restart, office, runner, and direct scenarios")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, native-item-projection, coding-session-projection, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -841,6 +975,12 @@ def main() -> None:
         if args.scenario in {"all", "sdk-dynamic-tools"}:
             assert args.exe is not None
             smoke_sdk_dynamic_tools(model.url, args.exe.resolve(), args.update_snapshots)
+        if args.scenario in {"all", "native-item-projection"}:
+            assert args.exe is not None
+            smoke_sdk_native_item_projection(model.url, args.exe.resolve(), args.update_snapshots)
+        if args.scenario in {"all", "coding-session-projection"}:
+            assert args.exe is not None
+            smoke_sdk_coding_session_projection(model.url, args.exe.resolve(), args.update_snapshots)
         if args.scenario in {"all", "sdk-fs-search"}:
             assert args.exe is not None
             smoke_sdk_fs_search(model.url, args.exe.resolve())
@@ -1324,6 +1464,106 @@ def smoke_sdk_dynamic_tools(base_url: str, executable: Path, update_snapshots: b
         )
         compare_snapshot_files(
             files, update_snapshots, DYNAMIC_TOOLS_SNAPSHOT_DIRECTORY, DYNAMIC_TOOLS_SNAPSHOT_FILENAMES,
+        )
+
+
+def smoke_sdk_native_item_projection(base_url: str, executable: Path, update_snapshots: bool) -> None:
+    """Retain ignorable native records through the packaged SDK without adding conversation input."""
+    from deepseek_harness import DeepSeekHarness
+    from pydantic import BaseModel, ConfigDict
+
+    class ShutdownReceipt(BaseModel):
+        """A successful explicit SDK shutdown contains no result fields."""
+
+        model_config = ConfigDict(extra="forbid")
+
+    first_request = len(MockModelHandler.requests)
+    with tempfile.TemporaryDirectory(prefix="dsh-sdk-native-item-projection-") as temporary:
+        root = Path(temporary).resolve()
+        dsh_home = root / "home"
+        sessions = dsh_home / "sessions"
+        patch = root / "native-item-projection.patch.yml"
+        patch.write_text(json.dumps([
+            {"id": "sessions", "config": {"root": str(sessions), "compression": "none"}},
+            {"id": "session-log-deepseek", "disabled": True},
+            {"id": "plugin-package-inventory-deepseek", "disabled": True},
+            {"id": "persistent-bash", "disabled": True},
+            {"id": "persistent-pwsh", "disabled": True},
+            {"insert": [{
+                "id": "native-item-projection",
+                "name": (Path(__file__).resolve().parent / "fixtures/python-sdk-native-item.mjs").as_uri(),
+            }]},
+        ], indent=2), encoding="utf-8")
+        with DeepSeekHarness(
+            provider="deepseek-official", model="smoke-model", cwd=str(root),
+            dsh_bin=str(executable), dsh_home=str(dsh_home), profile="sdk-minimal",
+            patches=(str(patch),), env={"DSH_TELEMETRY_DISABLED": "1"},
+            api_key="sk-keyless-smoke", base_url=base_url, request_timeout_seconds=60,
+        ) as harness:
+            result = harness.run(NATIVE_ITEM_PROJECTION_PROMPT, session_id=NATIVE_ITEM_PROJECTION_SESSION_ID)
+            harness.client.request(
+                "shutdown", None, response_model=ShutdownReceipt, timeout_seconds=60,
+            )
+        logs = read_session_logs(sessions)
+        assert set(logs) == {result.session_id}, sorted(logs)
+        files = build_native_item_projection_snapshot_files(
+            result, MockModelHandler.requests[first_request:], logs[result.session_id], root,
+        )
+        compare_snapshot_files(
+            files, update_snapshots,
+            NATIVE_ITEM_PROJECTION_SNAPSHOT_DIRECTORY, NATIVE_ITEM_PROJECTION_SNAPSHOT_FILENAMES,
+            native_writer_output=True,
+        )
+
+
+def smoke_sdk_coding_session_projection(base_url: str, executable: Path, update_snapshots: bool) -> None:
+    """Preserve actual ordinary turns and quoted fixture context beside log-only native facts."""
+    from deepseek_harness import DeepSeekHarness
+    from pydantic import BaseModel, ConfigDict
+
+    class ShutdownReceipt(BaseModel):
+        """A successful explicit SDK shutdown contains no result fields."""
+
+        model_config = ConfigDict(extra="forbid")
+
+    first_request = len(MockModelHandler.requests)
+    with tempfile.TemporaryDirectory(prefix="dsh-sdk-coding-session-projection-") as temporary:
+        root = Path(temporary).resolve()
+        dsh_home = root / "home"
+        sessions = dsh_home / "sessions"
+        patch = root / "coding-session-projection.patch.yml"
+        patch.write_text(json.dumps([
+            {"id": "sessions", "config": {"root": str(sessions), "compression": "none"}},
+            {"id": "session-log-deepseek", "disabled": True},
+            {"id": "plugin-package-inventory-deepseek", "disabled": True},
+            {"id": "persistent-bash", "disabled": True},
+            {"id": "persistent-pwsh", "disabled": True},
+            {"insert": [{
+                "id": "coding-session-projection",
+                "name": (Path(__file__).resolve().parent / "fixtures/python-sdk-native-item.mjs").as_uri(),
+                "config": {"projectionHistory": True},
+            }]},
+        ], indent=2), encoding="utf-8")
+        with DeepSeekHarness(
+            provider="deepseek-official", model="smoke-model", cwd=str(root),
+            dsh_bin=str(executable), dsh_home=str(dsh_home), profile="sdk-minimal",
+            patches=(str(patch),), env={"DSH_TELEMETRY_DISABLED": "1"},
+            api_key="sk-keyless-smoke", base_url=base_url, request_timeout_seconds=60,
+        ) as harness:
+            first = harness.run(NATIVE_ITEM_PROJECTION_PROMPT, session_id=CODING_SESSION_PROJECTION_SESSION_ID)
+            second = harness.run(CODING_SESSION_PROJECTION_PROMPT, session_id=CODING_SESSION_PROJECTION_SESSION_ID)
+            harness.client.request(
+                "shutdown", None, response_model=ShutdownReceipt, timeout_seconds=60,
+            )
+        logs = read_session_logs(sessions)
+        assert set(logs) == {CODING_SESSION_PROJECTION_SESSION_ID}, sorted(logs)
+        files = build_coding_session_projection_snapshot_files(
+            first, second, MockModelHandler.requests[first_request:], logs[first.session_id], root,
+        )
+        compare_snapshot_files(
+            files, update_snapshots,
+            CODING_SESSION_PROJECTION_SNAPSHOT_DIRECTORY, NATIVE_ITEM_PROJECTION_SNAPSHOT_FILENAMES,
+            native_writer_output=True,
         )
 
 
@@ -2266,6 +2506,244 @@ def build_dynamic_tools_snapshot_files(
         "pingResult": ping,
     }
     return {"tool-history.json": json.dumps(normalize_snapshot_value(evidence, replacements), indent=2, ensure_ascii=False) + "\n"}
+
+
+def assert_sequential_projection_delivery(result: "RunResult", log: list[dict[str, object]]) -> None:
+    """Retain exact log-only task records through SDK events, notifications and persistence."""
+    events = [event for event in result.events if event.get("type", "").startswith("skill/sequential-")]
+    assert [{"type": event["type"], "data": event["data"]} for event in events] == list(SEQUENTIAL_PROJECTION_RECORDS), events
+    for event in events:
+        assert set(event) == {"type", "seq", "time", "data", "ignorable"}, event
+        assert event["ignorable"] is True, event
+        assert isinstance(event["seq"], int) and not isinstance(event["seq"], bool), event
+        assert isinstance(event["time"], (int, float)) and not isinstance(event["time"], bool), event
+    seqs = [event["seq"] for event in events]
+    assert seqs == sorted(set(seqs)), events
+    preceding = [event["seq"] for event in result.events if event.get("type") in {"skill/native-item", "claude-code/root-protocol"}]
+    assert preceding and max(preceding) < seqs[0], events
+    notifications = []
+    for notification in result.notifications:
+        if notification.method != "session.event" or not notification.payload.get("event", {}).get("type", "").startswith("skill/sequential-"):
+            continue
+        assert set(notification.payload) == {"sessionId", "event"}, notification.payload
+        assert notification.payload["sessionId"] == result.session_id, notification.payload
+        notifications.append(notification.payload["event"])
+    assert notifications == events, "sequential SDK notifications differ from RunResult.events"
+    assert [event for event in log if event.get("type", "").startswith("skill/sequential-")] == events, (
+        "sequential SDK events differ from persistence"
+    )
+
+
+def assert_initialization_projection_delivery(result: "RunResult", log: list[dict[str, object]], *, expected: bool) -> None:
+    """Retain the authored informational receipt without importing or admitting native context."""
+    event_type = "coding-session/import-initialization"
+    events = [event for event in result.events if event.get("type") == event_type]
+    assert [event["data"] for event in events] == ([CODING_SESSION_INITIALIZATION_RECEIPT] if expected else []), events
+    for event in events:
+        assert set(event) == {"type", "seq", "time", "data", "ignorable"}, event
+        assert event["ignorable"] is True, event
+        assert isinstance(event["seq"], int) and not isinstance(event["seq"], bool), event
+        assert isinstance(event["time"], (int, float)) and not isinstance(event["time"], bool), event
+    if expected:
+        preceding = [event["seq"] for event in result.events if event.get("type") in {"skill/native-item", "claude-code/root-protocol"}
+                     or event.get("type", "").startswith("skill/sequential-")]
+        assert len(preceding) == 9 and max(preceding) < events[0]["seq"], events
+    notifications = []
+    for notification in result.notifications:
+        if notification.method != "session.event" or notification.payload.get("event", {}).get("type") != event_type:
+            continue
+        assert set(notification.payload) == {"sessionId", "event"}, notification.payload
+        assert notification.payload["sessionId"] == result.session_id, notification.payload
+        notifications.append(notification.payload["event"])
+    assert notifications == events, "initialization receipt SDK notifications differ from RunResult.events"
+    assert [event for event in log if event.get("type") == event_type] == events, (
+        "initialization receipt SDK events differ from persistence"
+    )
+
+
+def build_native_item_projection_snapshot_files(
+    result: "RunResult",
+    requests: list[dict[str, object]],
+    log: list[dict[str, object]],
+    cwd: Path,
+    *,
+    session_id: str = NATIVE_ITEM_PROJECTION_SESSION_ID,
+    expected_messages: list[dict[str, object]] | None = None,
+    initialization_receipt: bool = False,
+) -> dict[str, str]:
+    """Compare exact native learning/protocol records and delivery while pinning model history."""
+    assert result.session_id == session_id, result.session_id
+    assert result.final_response == NATIVE_ITEM_PROJECTION_TEXT, result.final_response
+    assert result.finish_reason == "completed", result.finish_reason
+    native_events = [event for event in result.events if event.get("type") == "skill/native-item"]
+    assert len(native_events) == 2, native_events
+    assert [event["data"] for event in native_events] == list(NATIVE_ITEM_PAYLOADS), native_events
+    for event in native_events:
+        assert set(event) == {"type", "seq", "time", "data", "ignorable"}, event
+        assert event["ignorable"] is True, event
+        assert isinstance(event["seq"], int) and not isinstance(event["seq"], bool), event
+        assert isinstance(event["time"], (int, float)) and not isinstance(event["time"], bool), event
+    assert native_events[0]["seq"] < native_events[1]["seq"], native_events
+    native_notifications = []
+    for notification in result.notifications:
+        if notification.method != "session.event" or notification.payload.get("event", {}).get("type") != "skill/native-item":
+            continue
+        assert set(notification.payload) == {"sessionId", "event"}, notification.payload
+        assert notification.payload["sessionId"] == result.session_id, notification.payload
+        native_notifications.append(notification.payload["event"])
+    assert native_notifications == native_events, "native SDK notifications differ from RunResult.events"
+    assert [event for event in log if event.get("type") == "skill/native-item"] == native_events, (
+        "native SDK events differ from persistence"
+    )
+    protocol_events = [event for event in result.events if event.get("type") == "claude-code/root-protocol"]
+    assert len(protocol_events) == 2, protocol_events
+    assert [event["data"] for event in protocol_events] == list(NATIVE_PROTOCOL_PAYLOADS), protocol_events
+    for event in protocol_events:
+        assert set(event) == {"type", "seq", "time", "data", "ignorable"}, event
+        assert event["ignorable"] is True, event
+        assert "turnId" not in event["data"], event
+    protocol_notifications = []
+    for notification in result.notifications:
+        if notification.method != "session.event" or notification.payload.get("event", {}).get("type") != "claude-code/root-protocol":
+            continue
+        assert set(notification.payload) == {"sessionId", "event"}, notification.payload
+        assert notification.payload["sessionId"] == result.session_id, notification.payload
+        protocol_notifications.append(notification.payload["event"])
+    assert protocol_notifications == protocol_events, "protocol SDK notifications differ from RunResult.events"
+    assert [event for event in log if event.get("type") == "claude-code/root-protocol"] == protocol_events, (
+        "exact protocol SDK records differ from persistence"
+    )
+    assert_sequential_projection_delivery(result, log)
+    assert_initialization_projection_delivery(result, log, expected=initialization_receipt)
+    assert len(requests) == 1, requests
+    for request in requests:
+        assert "native-projection-" not in json.dumps(request), request
+        assert "skill/native-item" not in json.dumps(request), request
+        assert "claude-code/root-protocol" not in json.dumps(request), request
+        assert "skill/sequential-" not in json.dumps(request), request
+        assert "coding-session/import-initialization" not in json.dumps(request), request
+        for identity in ("fixture-profile", "fixture-native-session", "fixture-mirror", "fixture-link", "fixture-initializer-system"):
+            assert identity not in json.dumps(request), request
+    if expected_messages is None:
+        expected_messages = [{
+            "role": "user", "content": [{"type": "text", "text": NATIVE_ITEM_PROJECTION_PROMPT}],
+        }]
+    assert requests[0]["messages"] == expected_messages, requests
+
+    replacements = [(str(cwd), "{{cwd}}"), (result.session_id, "{{session}}")]
+    result_value = {
+        "session_id": result.session_id,
+        "final_response": result.final_response,
+        "finish_reason": result.finish_reason,
+        "events": result.events,
+        "notifications": [
+            {"method": notification.method, "payload": notification.payload}
+            for notification in result.notifications
+        ],
+    }
+    records = project_session_snapshot([
+        normalize_snapshot_value(record, replacements) for record in log
+    ])
+    content = render_jsonl(records)
+    native_records = [
+        {"type": event["type"], "data": event["data"], "ignorable": event["ignorable"]}
+        for event in native_events
+    ]
+    protocol_records = [
+        {"type": event["type"], "data": event["data"], "ignorable": event["ignorable"]}
+        for event in protocol_events
+    ]
+    model_visible = [{"system": request.get("system"), "messages": request["messages"]} for request in requests]
+    return {
+        "native-items.json": json.dumps(native_records, indent=2, ensure_ascii=False) + "\n",
+        "protocol-records.json": json.dumps(protocol_records, indent=2, ensure_ascii=False) + "\n",
+        "result.json": json.dumps(normalize_snapshot_value(result_value, replacements), indent=2, ensure_ascii=False) + "\n",
+        "model-visible.json": json.dumps(normalize_snapshot_value(model_visible, replacements), indent=2, ensure_ascii=False) + "\n",
+        snapshot_session_filename(0, session_header_version(content, "native item projection")): content,
+    }
+
+
+def build_coding_session_projection_snapshot_files(
+    first: "RunResult",
+    second: "RunResult",
+    requests: list[dict[str, object]],
+    log: list[dict[str, object]],
+    cwd: Path,
+) -> dict[str, str]:
+    """Pin both real SDK runs and model requests; imported fixture context grants no authority."""
+    assert first.session_id == second.session_id == CODING_SESSION_PROJECTION_SESSION_ID
+    assert second.final_response == NATIVE_ITEM_PROJECTION_TEXT, second.final_response
+    assert second.finish_reason == "completed", second.finish_reason
+    assert len(requests) == 2, requests
+    for event_type in ("turn/start", "turn/end"):
+        assert [event["data"]["turn"] for event in log if event.get("type") == event_type] == [1, 2], log
+    first_wire = {"role": "user", "content": [
+        {"type": "text", "text": CODING_SESSION_IMPORT_TEXT},
+        {"type": "text", "text": NATIVE_ITEM_PROJECTION_PROMPT},
+    ]}
+    files = build_native_item_projection_snapshot_files(
+        first, requests[:1], log, cwd,
+        session_id=CODING_SESSION_PROJECTION_SESSION_ID, expected_messages=[first_wire], initialization_receipt=True,
+    )
+    assert requests[1]["messages"] == [
+        first_wire,
+        {"role": "assistant", "content": [{"type": "text", "text": NATIVE_ITEM_PROJECTION_TEXT}]},
+        {"role": "user", "content": [{"type": "text", "text": CODING_SESSION_PROJECTION_PROMPT}]},
+    ], requests
+    for request in requests:
+        serialized = json.dumps(request)
+        assert "native-projection-" not in serialized, request
+        assert "skill/native-item" not in serialized, request
+        assert "claude-code/root-protocol" not in serialized, request
+        assert "skill/sequential-" not in serialized, request
+        assert "coding-session/import-initialization" not in serialized, request
+        for identity in ("fixture-profile", "fixture-native-session", "fixture-mirror", "fixture-link", "fixture-initializer-system"):
+            assert identity not in serialized, request
+    assert not [event for event in second.events if event.get("type") in {"skill/native-item", "claude-code/root-protocol", "coding-session/import-initialization"}
+                or event.get("type", "").startswith("skill/sequential-")], second.events
+    surface_events = [event for result in (first, second) for event in result.events
+                      if event.get("type") in {"user/message", "assistant/message"}]
+    assert [event for event in log if event.get("type") in {"user/message", "assistant/message"}] == surface_events, (
+        "ordinary and imported SDK messages differ from persistence"
+    )
+    surface_notifications = []
+    for result in (first, second):
+        for notification in result.notifications:
+            if notification.method != "session.event" or notification.payload.get("event", {}).get("type") not in {"user/message", "assistant/message"}:
+                continue
+            assert set(notification.payload) == {"sessionId", "event"}, notification.payload
+            assert notification.payload["sessionId"] == result.session_id, notification.payload
+            surface_notifications.append(notification.payload["event"])
+    assert surface_notifications == surface_events, "ordinary and imported SDK notifications differ from RunResult.events"
+    users = [event for event in surface_events if event["type"] == "user/message"]
+    assert [event["data"]["source"]["kind"] for event in users] == ["coding-session-import", "user", "user"], users
+    imported = users[0]
+    assert set(imported) == {"type", "seq", "time", "data", "surfaceOp"}, imported
+    assert imported["surfaceOp"] == "append", imported
+    assert imported["data"]["role"] == "user", imported
+    assert imported["data"]["source"] == CODING_SESSION_IMPORT_SOURCE, imported
+    assert imported["data"]["content"] == [{"type": "text", "text": CODING_SESSION_IMPORT_TEXT}], imported
+    assert [event["data"]["content"] for event in users[1:]] == [
+        [{"type": "text", "text": NATIVE_ITEM_PROJECTION_PROMPT}],
+        [{"type": "text", "text": CODING_SESSION_PROJECTION_PROMPT}],
+    ], users
+    assistants = [event for event in surface_events if event["type"] == "assistant/message"]
+    assert len(assistants) == 2, assistants
+    for event in assistants:
+        assert event["surfaceOp"] == "append", event
+        assert event["data"]["message"]["role"] == "assistant", event
+        assert event["data"]["message"]["source"]["kind"] == "model", event
+        assert event["data"]["message"]["content"] == [{"type": "text", "text": NATIVE_ITEM_PROJECTION_TEXT}], event
+    replacements = [(str(cwd), "{{cwd}}"), (CODING_SESSION_PROJECTION_SESSION_ID, "{{session}}")]
+    result_value = [{
+        "session_id": result.session_id, "final_response": result.final_response,
+        "finish_reason": result.finish_reason, "events": result.events,
+        "notifications": [{"method": notification.method, "payload": notification.payload} for notification in result.notifications],
+    } for result in (first, second)]
+    model_visible = [{"system": request.get("system"), "messages": request["messages"]} for request in requests]
+    files["result.json"] = json.dumps(normalize_snapshot_value(result_value, replacements), indent=2, ensure_ascii=False) + "\n"
+    files["model-visible.json"] = json.dumps(normalize_snapshot_value(model_visible, replacements), indent=2, ensure_ascii=False) + "\n"
+    return files
 
 
 def build_minimal_snapshot_files(

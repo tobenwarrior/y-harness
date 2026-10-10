@@ -125,6 +125,10 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'native-item-projection': {
+    patches: [fileURLToPath(new URL('./native-item-projection/runtime.cordis.yml', import.meta.url))],
+    expectedFinalResponse: 'NATIVE_ITEM_PROJECTION_OK',
+  },
   'dynamic-tool-updates': {
     expectedFinalResponse: 'DONE',
   },
@@ -848,6 +852,96 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       )
       reconcileCatalogCreationTimes(ordered.map(log => log.content), 'validate')
       const actualContext = contextOf(ordered, cwd)
+      if (scenario.name === 'native-item-projection') {
+        const events = results.flatMap(result => result.events)
+        const native = events.filter(event => event.type === 'skill/native-item')
+        expect(native).toHaveLength(2)
+        expect(native.map(event => event.data['provider'])).toEqual(['codex', 'claude-code'])
+        const expectedNative = records(replayContents[0]!)
+          .filter(event => event.type === 'skill/native-item')
+        expect(native.map(event => ({ type: event.type, data: event.data, ignorable: event.ignorable })))
+          .toEqual(expectedNative)
+        expect(native[0]!.data).toHaveProperty('turnId', 'native-projection-codex-turn')
+        expect(native[0]!.data).not.toHaveProperty('sendId')
+        expect(native[1]!.data).toHaveProperty('sendId', 'native-projection-claude-send')
+        expect(native[1]!.data).not.toHaveProperty('turnId')
+        for (const event of native) {
+          expect(event.ignorable).toBe(true)
+          expect(event).not.toHaveProperty('surfaceOp')
+          expect(event).not.toHaveProperty('sourceEventSeqs')
+        }
+        const subscribed = notifications.flatMap(notification => {
+          const event = notificationEvent(notification)
+          return event?.type === 'skill/native-item' ? [event] : []
+        })
+        expect(subscribed, 'SDK notifications retain the native evidence').toEqual(native)
+        expect(records(ordered[0]!.content).filter(event => event.type === 'skill/native-item'),
+          'SDK native evidence agrees with the durable log').toEqual(native)
+        const protocol = events.filter(event => event.type === 'claude-code/root-protocol')
+        expect(protocol).toHaveLength(2)
+        expect(protocol.map(event => event.data['phase'])).toEqual(['request', 'frame'])
+        expect(protocol.map(event => ({ type: event.type, data: event.data, ignorable: event.ignorable })))
+          .toEqual(records(replayContents[0]!).filter(event => event.type === 'claude-code/root-protocol'))
+        for (const event of protocol) {
+          expect(event.ignorable).toBe(true)
+          expect(event).not.toHaveProperty('surfaceOp')
+          expect(event).not.toHaveProperty('sourceEventSeqs')
+          expect(event.data).not.toHaveProperty('turnId')
+        }
+        expect(protocol[0]!.data).toHaveProperty('system', 'native-projection-protocol-system-only')
+        expect(protocol[1]!.data).not.toHaveProperty('system')
+        expect(notifications.flatMap(notification => {
+          const event = notificationEvent(notification)
+          return event?.type === 'claude-code/root-protocol' ? [event] : []
+        }), 'SDK notifications retain exact protocol records').toEqual(protocol)
+        expect(records(ordered[0]!.content).filter(event => event.type === 'claude-code/root-protocol'),
+          'SDK protocol records agree with the durable log').toEqual(protocol)
+        const sequential = events.filter(event => event.type.startsWith('skill/sequential-'))
+        expect(sequential.map(event => event.type)).toEqual(['skill/sequential-task-start', 'skill/sequential-task-native-turn',
+          'skill/sequential-native-item', 'skill/sequential-native-item', 'skill/sequential-task-end'])
+        const sequentialTaskId = 'native-projection-sequential-task'
+        const sequentialRead = {
+          provider: 'codex', connectionId: 'native-projection-codex-connection',
+          sessionId: 'native-projection-codex-session', turnId: 'native-projection-codex-turn',
+          itemId: 'native-projection-codex-item', kind: 'read', name: 'read',
+          procedure: { kind: 'read', path: 'native-projection-codex-only.txt' },
+        }
+        expect(sequential.map(event => ({ type: event.type, data: event.data, ignorable: event.ignorable })))
+          .toEqual([
+            { type: 'skill/sequential-task-start', data: {
+              taskId: sequentialTaskId, source: {
+                provider: 'codex', profileId: 'native-projection-codex-connection',
+                nativeSessionId: 'native-projection-codex-session', toolMode: 'project-files',
+              }, task: 'native-projection-sequential-task-only',
+            }, ignorable: true },
+            { type: 'skill/sequential-task-native-turn', data: {
+              taskId: sequentialTaskId, nativeTurnId: 'native-projection-codex-turn',
+            }, ignorable: true },
+            { type: 'skill/sequential-native-item', data: {
+              taskId: sequentialTaskId, item: { ...sequentialRead, phase: 'started' },
+            }, ignorable: true },
+            { type: 'skill/sequential-native-item', data: {
+              taskId: sequentialTaskId, item: { ...sequentialRead, phase: 'settled', outcome: 'reported-success' },
+            }, ignorable: true },
+            { type: 'skill/sequential-task-end', data: {
+              taskId: sequentialTaskId, nativeTurnId: 'native-projection-codex-turn',
+              outcome: 'completed', learning: 'unavailable',
+            }, ignorable: true },
+          ])
+        for (const event of sequential) {
+          expect(event.ignorable).toBe(true)
+          expect(event).not.toHaveProperty('surfaceOp')
+          expect(event).not.toHaveProperty('sourceEventSeqs')
+        }
+        expect(notifications.flatMap(notification => {
+          const event = notificationEvent(notification)
+          return typeof event?.type === 'string' && event.type.startsWith('skill/sequential-') ? [event] : []
+        }), 'SDK notifications retain the sequential records').toEqual(sequential)
+        expect(records(ordered[0]!.content).filter(event => typeof event.type === 'string' && event.type.startsWith('skill/sequential-')),
+          'SDK sequential records agree with the durable log').toEqual(sequential)
+        const messages = events.filter(event => event.surfaceOp !== undefined)
+        expect(JSON.stringify(messages)).not.toContain('native-projection-')
+      }
       if (scenario.name === 'dynamic-tool-updates') {
         const selectedTypes = new Set(['request/header', 'request/context', 'developer/message', 'tool/call', 'tool/result'])
         const events = results.flatMap(result => result.events).filter(event => selectedTypes.has(event.type))

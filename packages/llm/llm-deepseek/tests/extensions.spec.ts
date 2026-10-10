@@ -68,6 +68,19 @@ function sentBody(fetch: Mock<typeof globalThis.fetch>): Record<string, unknown>
 }
 
 describe('Messages request extensions', () => {
+  it('carries Decision purpose through the registered response-only adapter and extension', async () => {
+    const purpose: DeepSeekLlmApiExtensionRequest['purpose'] = 'skill-decision'
+    const ctx = await boot(); let request: DeepSeekLlmApiExtensionRequest | undefined
+    ctx.deepseekLlmApiExtensions.register('dsh_messages_test', { prepare(value) { request = value; return undefined } })
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(sse(textEvents)))
+    vi.stubGlobal('fetch', fetch)
+    const signal = new AbortController().signal
+    const prepared = await ctx.llm.prepareCall({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }, signal, 'api')
+    const result = await assemble(prepared.stream(options({ ...prepared.config, purpose, tools: [], signal })))
+    expect(result.assembler.finish.kind).toBe('stop')
+    expect(request?.purpose).toBe('skill-decision')
+    expect(fetch).toHaveBeenCalledOnce()
+  })
   it('prepares the native body and accepts its contribution before yielding content', async () => {
     const ctx = await boot()
     let request: DeepSeekLlmApiExtensionRequest | undefined

@@ -63,6 +63,19 @@ describe('remote proxies over a booted client', () => {
     expect((remote.session as Record<symbol, unknown>)[Symbol.toStringTag]).toBeUndefined()
   }, 60_000)
 
+  it('defaults coding-session inventory to empty while refusing unscripted source operations', async () => {
+    const { client, mock, remote } = await booted()
+    try {
+      await expect(remote.codingSessions!.getState!()).resolves.toEqual(ok({ sources: [], mirrors: [] }))
+      expect(mock.log.calls('codingSessions/getState').map(call => call.args)).toEqual([[]])
+      await expect(remote.codingSessions!.discover!({ provider: 'codex', profileId: 'original' }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'gateway/internal' } })
+      expect(mock.log.unmatched()).toEqual([{ endpoint: 'codingSessions/discover', mode: 'unary' }])
+    } finally {
+      await expect(client.dispose()).rejects.toThrow('codingSessions/discover (unary)')
+    }
+  })
+
   it('folds a call without a rule into gateway/internal and leaves the miss in the log for dispose() to report', async () => {
     const mock = RemoteMock.create().load(remoteDefaultResponses)
     const client = await TestClient.start({ roster: API_ROSTER }, mock)

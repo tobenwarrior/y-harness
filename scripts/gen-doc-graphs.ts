@@ -596,6 +596,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Serves project and shared inventory, explicit references, durable evidence and reviewed reversible managed changes.',
   },
   {
+    key: 'codingSessions',
+    pkg: 'coding-session',
+    title: 'Native coding session sources and read-only mirrors',
+    mode: 'service',
+    consumers: ['client-ui-settings-coding-sessions', 'web-app', 'sdk-app'],
+    note: 'Registers original native provider profiles, reads bounded native histories, and retains independent read-only mirrors; continuation requires an enforceable exclusive provider adapter.',
+  },
+  {
     key: 'agents',
     pkg: 'agent',
     title: 'Agent service',

@@ -692,6 +692,127 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'codingSessions',
+    summary: 'Remote consumer and service provider for read-only mirrors.',
+    description: 'Remote consumer and service provider for read-only mirrors. Native connections register independently.',
+    methods: [
+      {
+        signature: 'registerProvider(provider: CodingSessionProvider): () => Promise<void>',
+        description: 'Attach one authorized native source to durable mirror operations.',
+        parameters: [{ name: 'provider', description: 'exact authorized native profile.' }],
+        returns: 'idempotent disposer removing availability immediately and joining this profile\'s native release work; mirrors survive removal.',
+      },
+      {
+        signature: '@Remote async getState(): Promise<CodingSessionsState>',
+        description: 'Synchronize registered Claude projects and list mirror metadata.',
+        parameters: [],
+        returns: 'source readiness and readable retained mirrors.',
+      },
+      {
+        signature: '@Remote async discover(profile: CodingSessionProfile, cursor?: string): Promise<CodingSessionPage>',
+        description: 'Browse sessions in one configured native source.',
+        parameters: [{ name: 'profile', description: 'selected authorized native source.' }, { name: 'cursor', description: 'opaque source page cursor.' }],
+        returns: 'one source-labelled metadata page.',
+      },
+      {
+        signature: '@Remote async importSession(source: CodingSessionSource): Promise<CodingSessionMirror>',
+        description: 'Retain a stable source history snapshot.',
+        parameters: [{ name: 'source', description: 'original provider/profile/native identity.' }],
+        returns: 'stable durable read-only mirror.',
+      },
+      {
+        signature: '@Remote async refreshMirror(id: CodingSessionMirrorId): Promise<CodingSessionMirror>',
+        description: 'Refresh the original source without replacing divergent retained history.',
+        parameters: [{ name: 'id', description: 'existing Y mirror.' }],
+        returns: 'fresh source history or a retained conflict.',
+      },
+      {
+        signature: '@Remote async detail(id: CodingSessionMirrorId): Promise<CodingSessionMirror>',
+        description: 'Load transcript details after explicit mirror selection.',
+        parameters: [{ name: 'id', description: 'existing Y mirror.' }],
+        returns: 'retained source-labelled transcript.',
+      },
+      {
+        signature: '@Remote async continueSession(id: CodingSessionMirrorId, text: string, expectedRevision: number): Promise<CodingSessionMirror>',
+        description: 'Delegate continuation only to a supported exclusive original-source writer.',
+        parameters: [{ name: 'id', description: 'existing Y mirror.' }, { name: 'text', description: 'human continuation.' }, { name: 'expectedRevision', description: 'reviewed mirror revision.' }],
+        returns: 'native settlement mirror or explicit unsupported-operation refusal.',
+      },
+      {
+        signature: '@Remote async claimSequential( id: CodingSessionMirrorId, acknowledgement: CodingSessionClaimAcknowledgement, ): Promise<CodingSessionMirror>',
+        description: 'Bind an explicit sequential claim to the selected exact live root\'s existing policy.',
+        parameters: [{ name: 'id', description: 'reviewed native mirror.' }, { name: 'acknowledgement', description: 'original source/project/revision, selected execution root and prior-writer closure.' }],
+        returns: 'original-source ownership without creating an Agent or issuing a model request.',
+      },
+      {
+        signature: '@Remote async continueSequential(id: CodingSessionMirrorId, text: string, expectedRevision: number): Promise<CodingSessionMirror>',
+        description: 'Continue the original native conversation under its retained exact live root\'s current policy.',
+        parameters: [{ name: 'id', description: 'claimed original-source mirror.' }, { name: 'text', description: 'human continuation message.' }, { name: 'expectedRevision', description: 'reviewed native mirror revision.' }],
+        returns: 'settled original-source history while sequential ownership remains held.',
+      },
+      {
+        signature: '@Remote async releaseSequential(id: CodingSessionMirrorId): Promise<CodingSessionMirror>',
+        description: 'Release retained native resources independently from source reconnection or root availability.',
+        parameters: [{ name: 'id', description: 'claimed original-source mirror.' }],
+        returns: 'confirmed release after native process quiescence and original-history readback.',
+      },
+      {
+        signature: '@Remote async recoverSequential( id: CodingSessionMirrorId, acknowledgement: CodingSessionRecoveryAcknowledgement, ): Promise<CodingSessionMirror>',
+        description: 'Recover an interrupted owner using reviewed cold history and stopped-writer acknowledgements.',
+        parameters: [{ name: 'id', description: 'interrupted mirror.' }, { name: 'acknowledgement', description: 'exact stopped-writer assertions and reviewed owner.' }],
+        returns: 'an acknowledged checkpoint retaining old-process uncertainty.',
+      },
+      {
+        signature: '@Remote async createImportDestination( id: CodingSessionMirrorId, ): Promise<{ destinationSessionId: SessionId; revision: CodingSessionDestinationRevision }>',
+        description: 'Create a cold ordinary-Y destination in the selected native mirror\'s known project.',
+        parameters: [{ name: 'id', description: 'reviewed native mirror.' }],
+        returns: 'a new durable ordinary-Y destination in its known exact project; no Agent is created.',
+      },
+      {
+        signature: '@Remote async inspectImportDestination( id: SessionId, ): Promise<{ destinationSessionId: SessionId; revision: CodingSessionDestinationRevision }>',
+        description: 'Inspect a cold ordinary-Y destination without appending imported history.',
+        parameters: [{ name: 'id', description: 'explicit cold ordinary-Y Session.' }],
+        returns: 'its canonical event-count and digest for review.',
+      },
+      {
+        signature: '@Remote async importIntoSession( id: CodingSessionMirrorId, acknowledgement: CodingSessionImportAcknowledgement, ): Promise<CodingSessionLinkRecord>',
+        description: 'Append reviewed native public history as attributed quoted context to a cold ordinary-Y session.',
+        parameters: [{ name: 'id', description: 'reviewed native mirror.' }, { name: 'acknowledgement', description: 'exact source, link and cold destination revisions.' }],
+        returns: 'a quoted append or retained source conflict.',
+      },
+      {
+        signature: '@Remote async linkedDetail(id: CodingSessionLinkId): Promise<CodingSessionLinkRecord>',
+        description: 'Load retained source mappings, generations and any prepared import intent.',
+        parameters: [{ name: 'id', description: 'exact retained source-to-Y mapping.' }],
+        returns: 'bounded source mappings and transaction receipts.',
+      },
+      {
+        signature: '@Remote async rollbackImport( id: CodingSessionLinkId, acknowledgement: CodingSessionRollbackAcknowledgement, ): Promise<CodingSessionLinkRecord>',
+        description: 'Withdraw active quoted generations while preserving their raw receipts and subsequent Y messages.',
+        parameters: [{ name: 'id', description: 'exact retained link.' }, { name: 'acknowledgement', description: 'reviewed link and canonical destination revisions.' }],
+        returns: 'append-only withdrawal preserving subsequent Y messages.',
+      },
+      {
+        signature: '@Remote async recoverImport(id: CodingSessionLinkId): Promise<CodingSessionLinkRecord>',
+        description: 'Finish an exact prepared import or rollback after restart; changed destination history is refused.',
+        parameters: [{ name: 'id', description: 'exact prepared link.' }],
+        returns: 'committed receipt only after exact planned event-envelope recovery.',
+      },
+      {
+        signature: '@Remote async abandonImport( id: CodingSessionLinkId, acknowledgement: CodingSessionRollbackAcknowledgement, ): Promise<CodingSessionLinkRecord>',
+        description: 'Abandon a reviewed prepared intent only when no owned payload is persisted in its destination.',
+        parameters: [{ name: 'id', description: 'exact prepared link.' }, { name: 'acknowledgement', description: 'reviewed link and canonical destination revisions.' }],
+        returns: 'cancellation only when no owned payload was persisted.',
+      },
+      {
+        signature: '@Remote async cancelPending(): Promise<void>',
+        description: 'Cancel current and queued source operations, then drain admitted work.',
+        parameters: [],
+        returns: 'native-read cancellation and durable-write quiescence.',
+      },
+    ],
+  },
+  {
     key: 'commands',
     summary: 'Human-command registry.',
     description: 'Human-command registry. Plain-context definitions are global; definitions registered through a command-injected child of an agent context shadow globals for that agent.',
@@ -2777,13 +2898,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'updated item.',
       },
       {
-        signature: '@Remote(\'archive\') archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>',
+        signature: '@Remote(\'archive\') async archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>',
         description: 'Archive a whole selected bundle reversibly.',
         parameters: [{ name: 'request', description: 'identity and expected hash.' }],
         returns: 'archived item.',
       },
       {
-        signature: '@Remote(\'restore\') restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>',
+        signature: '@Remote(\'restore\') async restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>',
         description: 'Restore a selected archive into a vacant original location.',
         parameters: [{ name: 'request', description: 'archived identity.' }],
         returns: 'restored item.',
@@ -2813,6 +2934,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'bounded ranked metadata.',
       },
       {
+        signature: '@Remote(\'decisionStatus\') decisionStatus(): Promise<DecisionStatus>',
+        description: 'Read independent Decision settings and API capability disclosure.',
+        parameters: [],
+        returns: 'disabled or available route choices without generation.',
+      },
+      {
+        signature: '@Remote(\'decisionCapabilities\') decisionCapabilities(route: DecisionRoute): Promise<DecisionCapabilities>',
+        description: 'Read exact API model effort and tier controls.',
+        parameters: [{ name: 'route', description: 'registered response-only route.' }],
+        returns: 'explicit supported controls; native routes reject.',
+      },
+      {
+        signature: '@Remote(\'configureDecision\') configureDecision(request: DecisionConfigureRequest): Promise<DecisionConfiguration>',
+        description: 'Save separate revision-checked Decision settings.',
+        parameters: [{ name: 'request', description: 'observed revision, opt-in and exact API route.' }],
+        returns: 'committed settings without altering the main chat model.',
+      },
+      {
         signature: 'recordLoad(request: { readonly id: SkillLibraryId readonly contentHash?: string readonly loadedAt?: string readonly sessionId?: string }): Promise<void>',
         description: 'Record verified explicit instruction delivery.',
         parameters: [{ name: 'request', description: 'exact library/version identity and observation.' }],
@@ -2829,6 +2968,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Register a separate independent validation provider.',
         parameters: [{ name: 'provider', description: 'separately trusted independent check capability.' }],
         returns: 'registration disposer.',
+      },
+      {
+        signature: 'runSequentialTask<T>( agent: Agent, source: SkillSequentialTaskSource, text: string, operation: (hooks: SkillSequentialTaskHooks) => Promise<T>, ): Promise<T>',
+        description: 'Run a fresh cancellable sequential task and retain only its durable current native procedure facts.',
+        parameters: [{ name: 'agent', description: 'exact selected live root supplying execution authority.' }, { name: 'source', description: 'exact original source and disclosed native tool mode.' }, { name: 'text', description: 'current human continuation, sanitized before evidence retention.' }, { name: 'operation', description: 'provider admission, current-turn metadata and settled mirror reconciliation.' }],
+        returns: 'its native result after task settlement and existing policy-controlled learning.',
       },
       {
         signature: 'recordLearningEvidence(observation: SkillLearningObservation): Promise<SkillLearningEvidence>',
@@ -2858,6 +3003,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Generate a durable uncertain suggestion.',
         parameters: [{ name: 'request', description: 'substantial task observations and selected local targets.' }],
         returns: 'durable uncertain proposal.',
+      },
+      {
+        signature: 'autoLearnEvidence(evidence: SkillLearningEvidence): Promise<SkillLearningProposal | undefined>',
+        description: 'Apply independently checkable native procedure recording under explicit project policy.',
+        parameters: [{ name: 'evidence', description: 'unchanged retained live native observation.' }],
+        returns: 'review/applied proposal or no change for an already recorded procedure.',
       },
       {
         signature: '@Remote(\'listProposals\') listProposals(request: SkillLearningListRequest): readonly SkillLearningProposalSummary[]',
@@ -2900,6 +3051,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Enable or revoke separate semantic consent.',
         parameters: [{ name: 'request', description: 'per-file consent for separate semantic policy.' }],
         returns: 'enabled or revoked consent.',
+      },
+      {
+        signature: '@Remote(\'cleanupSemantic\') cleanupSemantic(request: SkillLearningCleanupRequest): Promise<readonly SkillLearningProposal[]>',
+        description: 'Run an immediate bounded semantic pass; force preserves ownership, pins and consent.',
+        parameters: [{ name: 'request', description: 'project and optional selected managed identities.' }],
+        returns: 'durable applied proposals with exact independent mechanical receipts.',
+      },
+      {
+        signature: '@Remote(\'revokeLearningPolicy\') revokeLearningPolicy(request: SkillLearningRevokePolicyRequest): Promise<SkillLearningPolicy>',
+        description: 'Revoke an approved policy while retaining recovery history.',
+        parameters: [{ name: 'request', description: 'approved policy identity.' }],
+        returns: 'disabled retained policy.',
       },
     ],
   },
@@ -4225,6 +4388,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'key', description: 'the credential record the finished attempt was authorizing.' }, { name: 'settlement', description: 'how it ended, including the `failed` case its caller sees as a thrown error.' }],
   },
   {
+    name: 'claude-code/tool-observations',
+    mode: 'emit',
+    signature: '\'claude-code/tool-observations\': (observations: readonly ClaudeCodeToolObservation[], parent: Session) => void',
+    summary: 'Observe-only direct native child receipts, separate from parent task evidence.',
+    description: 'Observe-only direct native child receipts, separate from parent task evidence.',
+    parameters: [{ name: 'observations', description: 'frozen source-labelled metadata, without bodies or native turn claims.' }, { name: 'parent', description: 'exact Session that initiated this one-shot child query.' }],
+  },
+  {
     name: 'commands/change',
     mode: 'emit',
     signature: '\'commands/change\'(): void',
@@ -5029,6 +5200,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ChangeResult {\n    changed: boolean;\n    application: \'applied\' | \'restart-required\' | \'overridden\' | \'failed\' | \'cancelled\';\n    stage: \'install\' | \'enable\' | \'remove\';\n    target: string;\n    enabled?: boolean;\n    error?: ManagementError;\n    warnings?: string[];\n    packageResult?: PackageResult;\n    bundle?: string;\n    version?: string;\n    pendingBuilds?: string[];\n    approvedBuilds?: string[];\n    registries?: Registry[];\n    failedAt?: \'registry\' | \'spec-host\';\n}',
   },
   {
+    name: 'ClaudeCodeToolObservation',
+    declaration: 'export interface ClaudeCodeToolObservation {\n    readonly provider: \'claude-code\';\n    readonly sessionId: string;\n    readonly sourceMessageId: string;\n    readonly resultMessageId?: string;\n    readonly itemId: string;\n    readonly kind: \'read\' | \'command\' | \'file-change\' | \'web\';\n    readonly name: string;\n    readonly outcome: \'reported-success\' | \'reported-error\' | \'unknown\';\n}',
+  },
+  {
     name: 'ClientArtifactBaseline',
     declaration: 'export interface ClientArtifactBaseline {\n    readonly path: string;\n    readonly mtimeMs: number;\n    readonly ctimeMs: number;\n    readonly size: number;\n}',
   },
@@ -5039,6 +5214,202 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CodexBackendView',
     declaration: 'export interface CodexBackendView {\n    enabled: boolean;\n    connected: boolean;\n    busy: boolean;\n    running: number;\n    label?: string;\n    error?: string;\n    tiers: Record<string, string>;\n}',
+  },
+  {
+    name: 'CodingSessionCapabilities',
+    declaration: 'export interface CodingSessionCapabilities {\n    discover: boolean;\n    read: boolean;\n    refresh: boolean;\n    continue: boolean;\n    reason: \'native-writer-handoff-unavailable\' | \'exclusive-native-writer\' | \'source-disconnected\';\n}',
+  },
+  {
+    name: 'CodingSessionClaimAcknowledgement',
+    declaration: 'export interface CodingSessionClaimAcknowledgement {\n    source: CodingSessionSource;\n    project: string;\n    expectedRevision: number;\n    executionSessionId: SessionId;\n    externalWritersClosed: boolean;\n    nativeProfileUnchanged: boolean;\n}',
+  },
+  {
+    name: 'CodingSessionDestinationRevision',
+    declaration: 'export interface CodingSessionDestinationRevision {\n    eventCount: number;\n    digest: string;\n}',
+  },
+  {
+    name: 'CodingSessionEvent',
+    declaration: 'export interface CodingSessionEvent {\n    id: CodingSessionEventId;\n    role: \'user\' | \'assistant\' | \'system\' | \'tool\';\n    text: string;\n    digest: string;\n}',
+  },
+  {
+    name: 'CodingSessionEventId',
+    declaration: 'export type CodingSessionEventId = Branded<\'coding-session-event\'>;',
+  },
+  {
+    name: 'CodingSessionExecutionSession',
+    declaration: 'export interface CodingSessionExecutionSession {\n    id: SessionId;\n    project: string;\n}',
+  },
+  {
+    name: 'CodingSessionHandoff',
+    declaration: 'export interface CodingSessionHandoff {\n    id: CodingSessionMirrorId;\n    ownerToken: CodingSessionOwnerToken;\n    source: CodingSessionSource;\n    project: string;\n    executionSessionId: SessionId;\n    expectedRevision: number;\n    phase: CodingSessionHandoffPhase;\n    toolMode: CodingSessionSequentialToolMode;\n    nativeProfileUnchanged: true;\n    externalWritersClosed: true;\n    dispatchedTurnCount: number;\n    nativeTurnIds: CodingSessionNativeTurnId[];\n    interruptedPhase?: CodingSessionInterruptedHandoffPhase | undefined;\n    recoveryHistory?: CodingSessionRecoveryCheckpoint[] | undefined;\n}',
+  },
+  {
+    name: 'CodingSessionHandoffPhase',
+    declaration: 'export type CodingSessionHandoffPhase = \'claiming\' | \'y-owned\' | \'continuing\' | \'releasing\' | \'external-ready\' | \'blocked-uncertain\' | \'recovered-acknowledged\';',
+  },
+  {
+    name: 'CodingSessionImportAcknowledgement',
+    declaration: 'export interface CodingSessionImportAcknowledgement {\n    destinationSessionId: SessionId;\n    expectedDestinationRevision: CodingSessionDestinationRevision;\n    expectedMirrorRevision: number;\n    expectedLinkRevision?: number;\n}',
+  },
+  {
+    name: 'CodingSessionImportDestinationSummary',
+    declaration: 'export interface CodingSessionImportDestinationSummary {\n    id: SessionId;\n    project: string;\n    live: boolean;\n}',
+  },
+  {
+    name: 'CodingSessionImportedEventMapping',
+    declaration: 'export interface CodingSessionImportedEventMapping {\n    nativeEventId: CodingSessionEvent[\'id\'];\n    nativeDigest: string;\n    destinationSeq: SessionSeq;\n    textStart: number;\n    textEnd: number;\n}',
+  },
+  {
+    name: 'CodingSessionImportedUserEvent',
+    declaration: 'export interface CodingSessionImportedUserEvent {\n    type: \'user/message\';\n    seq: SessionSeq;\n    time: number;\n    data: CodingSessionImportedUserMessage;\n    surfaceOp: \'append\' | {\n        op: \'replace\';\n        startSeq: SessionSeq;\n        endSeq: SessionSeq;\n    };\n    sourceEventSeqs?: SessionSeq[];\n}',
+  },
+  {
+    name: 'CodingSessionImportedUserMessage',
+    declaration: 'export interface CodingSessionImportedUserMessage {\n    readonly id: MessageId;\n    readonly role: \'user\';\n    readonly content: readonly {\n        readonly type: \'text\';\n        readonly text: string;\n    }[];\n    readonly source: CodingSessionImportMessageSource;\n}',
+  },
+  {
+    name: 'CodingSessionImportGeneration',
+    declaration: 'export interface CodingSessionImportGeneration {\n    generation: number;\n    sourceRevision: number;\n    rawEvents: CodingSessionEvent[];\n    message: CodingSessionImportedUserMessage;\n    event: CodingSessionImportedUserEvent;\n    destinationSeq: SessionSeq;\n    mappings: CodingSessionImportedEventMapping[];\n    status: \'active\' | \'rolled-back\';\n    rollbackSeq?: SessionSeq | undefined;\n}',
+  },
+  {
+    name: 'CodingSessionImportInitialization',
+    declaration: 'export interface CodingSessionImportInitialization {\n    source: CodingSessionSource;\n    mirrorId: CodingSessionMirrorId;\n    linkId: CodingSessionLinkId;\n    systemMessageId: MessageId;\n}',
+  },
+  {
+    name: 'CodingSessionImportMessageSource',
+    declaration: 'export interface CodingSessionImportMessageSource extends CodingSessionSource {\n    kind: \'coding-session-import\';\n    mirrorId: CodingSessionMirrorId;\n    linkId: CodingSessionLinkId;\n    generation: number;\n    disposition: \'active\' | \'rolled-back\';\n}',
+  },
+  {
+    name: 'CodingSessionImportPending',
+    declaration: 'export interface CodingSessionImportPending {\n    kind: \'import\' | \'rollback\';\n    before: CodingSessionDestinationRevision;\n    append: CodingSessionImportPlannedEvent[];\n    nextMirror: CodingSessionMirror;\n    nextGenerations: CodingSessionImportGeneration[];\n}',
+  },
+  {
+    name: 'CodingSessionImportPlannedEvent',
+    declaration: 'export type CodingSessionImportPlannedEvent = CodingSessionImportedUserEvent | {\n    type: \'session/end-seed\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        inherited?: true;\n    };\n} | {\n    type: \'turn/start\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        turn: number;\n    };\n} | {\n    type: \'step/start\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        turn: number;\n        step: 1;\n    };\n} | {\n    type: \'system/message\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        turn: number;\n        step: 1;\n        message: {\n            id: MessageId;\n            role: \'system\';\n            content: never[];\n            source: {\n                kind: \'system-prompt\';\n            };\n        };\n    };\n    surfaceOp: \'append\';\n} | {\n    type: \'coding-session/import-initialization\';\n    seq: SessionSeq;\n    time: number;\n    data: CodingSessionImportInitialization;\n    ignorable: true;\n} | {\n    type: \'step/end\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        turn: number;\n        step: 1;\n    };\n} | {\n    type: \'turn/end\';\n    seq: SessionSeq;\n    time: number;\n    data: {\n        turn: number;\n        reason: {\n            kind: \'blocked\';\n        };\n    };\n};',
+  },
+  {
+    name: 'CodingSessionInterruptedHandoffPhase',
+    declaration: 'export type CodingSessionInterruptedHandoffPhase = Exclude<CodingSessionHandoffPhase, \'external-ready\' | \'recovered-acknowledged\'>;',
+  },
+  {
+    name: 'CodingSessionLinkId',
+    declaration: 'export type CodingSessionLinkId = Branded<\'coding-session-link\'>;',
+  },
+  {
+    name: 'CodingSessionLinkRecord',
+    declaration: 'export interface CodingSessionLinkRecord {\n    version: 1;\n    id: CodingSessionLinkId;\n    mirrorId: CodingSessionMirrorId;\n    source: CodingSessionSource;\n    destinationSessionId: SessionId;\n    project: string;\n    revision: number;\n    status: \'active\' | \'rolled-back\' | \'conflict\';\n    conflict?: \'history-diverged\' | undefined;\n    mirror: CodingSessionMirror;\n    generations: CodingSessionImportGeneration[];\n    pending?: CodingSessionImportPending | undefined;\n}',
+  },
+  {
+    name: 'CodingSessionLinkSummary',
+    declaration: 'export interface CodingSessionLinkSummary {\n    id: CodingSessionLinkId;\n    mirrorId: CodingSessionMirrorId;\n    source: CodingSessionSource;\n    destinationSessionId: SessionId;\n    project: string;\n    revision: number;\n    status: CodingSessionLinkRecord[\'status\'];\n    conflict?: \'history-diverged\' | undefined;\n    prepared: boolean;\n    generationCount: number;\n    importedEventCount: number;\n}',
+  },
+  {
+    name: 'CodingSessionMirror',
+    declaration: 'export interface CodingSessionMirror extends CodingSessionSnapshot {\n    id: CodingSessionMirrorId;\n    revision: number;\n    digest: string;\n    refreshedAt: string;\n    status: \'ready\' | \'conflict\';\n    conflict?: \'history-diverged\' | undefined;\n    capabilities: CodingSessionCapabilities;\n    sequentialAvailable?: boolean;\n    sequentialReleaseAvailable?: boolean;\n    sequentialToolMode?: CodingSessionSequentialToolMode;\n    handoff?: CodingSessionHandoff;\n}',
+  },
+  {
+    name: 'CodingSessionMirrorId',
+    declaration: 'export type CodingSessionMirrorId = Branded<\'coding-session-mirror\'>;',
+  },
+  {
+    name: 'CodingSessionMirrorSummary',
+    declaration: 'export type CodingSessionMirrorSummary = Omit<CodingSessionMirror, \'events\'> & {\n    eventCount: number;\n};',
+  },
+  {
+    name: 'CodingSessionNativeId',
+    declaration: 'export type CodingSessionNativeId = Branded<\'coding-session-native\'>;',
+  },
+  {
+    name: 'CodingSessionNativeTurnId',
+    declaration: 'export type CodingSessionNativeTurnId = Branded<\'coding-session-native-turn\'>;',
+  },
+  {
+    name: 'CodingSessionOwnerToken',
+    declaration: 'export type CodingSessionOwnerToken = Branded<\'coding-session-owner\'>;',
+  },
+  {
+    name: 'CodingSessionPage',
+    declaration: 'export interface CodingSessionPage {\n    items: CodingSessionSummary[];\n    nextCursor?: string;\n}',
+  },
+  {
+    name: 'CodingSessionProfile',
+    declaration: 'export interface CodingSessionProfile {\n    provider: \'codex\' | \'claude\';\n    profileId: CodingSessionProfileId;\n}',
+  },
+  {
+    name: 'CodingSessionProfileId',
+    declaration: 'export type CodingSessionProfileId = Branded<\'coding-session-profile\'>;',
+  },
+  {
+    name: 'CodingSessionProvider',
+    declaration: 'export interface CodingSessionProvider extends CodingSessionProfile {\n    label: string;\n    writer?: CodingSessionWriterProvider;\n    sequentialWriter?: CodingSessionSequentialWriterProvider;\n    connected(): boolean;\n    discover(request: CodingSessionReadRequest, cursor?: string): Promise<CodingSessionPage>;\n    read(nativeSessionId: CodingSessionNativeId, request: CodingSessionReadRequest): Promise<CodingSessionSnapshot>;\n}',
+  },
+  {
+    name: 'CodingSessionProviderView',
+    declaration: 'export interface CodingSessionProviderView extends CodingSessionProfile {\n    label: string;\n    connected: boolean;\n    capabilities: CodingSessionCapabilities;\n}',
+  },
+  {
+    name: 'CodingSessionReadRequest',
+    declaration: 'export interface CodingSessionReadRequest {\n    signal: AbortSignal;\n    limit: number;\n    maxEvents: number;\n    maxBytes: number;\n}',
+  },
+  {
+    name: 'CodingSessionRecoveryAcknowledgement',
+    declaration: 'export interface CodingSessionRecoveryAcknowledgement {\n    source: CodingSessionSource;\n    project: string;\n    expectedRevision: number;\n    expectedOwnerToken: CodingSessionOwnerToken;\n    externalWritersClosed: boolean;\n    nativeProfileUnchanged: boolean;\n    acceptUnresolvedTurns: boolean;\n}',
+  },
+  {
+    name: 'CodingSessionRecoveryCheckpoint',
+    declaration: 'export interface CodingSessionRecoveryCheckpoint {\n    ownerToken: CodingSessionOwnerToken;\n    previousPhase: CodingSessionInterruptedHandoffPhase;\n    recoveredAt: string;\n    reviewedRevision: number;\n    sourceRevision: number;\n    previousCursor: string;\n    sourceCursor: string;\n    sourceDigest: string;\n    dispatchedTurnCount: number;\n    nativeTurnIds: CodingSessionNativeTurnId[];\n    unresolvedDispatchCount: number;\n    oldProcessExit: \'not-observed\';\n    oldStreamsDrain: \'not-observed\';\n    nativePersistence: \'not-established\';\n    historyChange: \'unchanged\' | \'appended\';\n    externalWritersClosed: true;\n    nativeProfileUnchanged: true;\n    acceptedUnresolvedTurns: boolean;\n}',
+  },
+  {
+    name: 'CodingSessionRollbackAcknowledgement',
+    declaration: 'export interface CodingSessionRollbackAcknowledgement {\n    expectedLinkRevision: number;\n    expectedDestinationRevision: CodingSessionDestinationRevision;\n}',
+  },
+  {
+    name: 'CodingSessionSequentialAcquireRequest',
+    declaration: 'export interface CodingSessionSequentialAcquireRequest extends CodingSessionReadRequest {\n    ownerToken: CodingSessionOwnerToken;\n    nativeProfileUnchanged: true;\n}',
+  },
+  {
+    name: 'CodingSessionSequentialReleaseReceipt',
+    declaration: 'export interface CodingSessionSequentialReleaseReceipt {\n    source: CodingSessionSource;\n    snapshot: CodingSessionSnapshot;\n    processExited: true;\n    streamsDrained: true;\n    expectedPrefixPersisted: true;\n    completedTurnPersisted: boolean;\n    nativeTurnIds: CodingSessionNativeTurnId[];\n    noObservedPersistenceErrors: true;\n}',
+  },
+  {
+    name: 'CodingSessionSequentialToolMode',
+    declaration: 'export type CodingSessionSequentialToolMode = \'conversation\' | \'project-files\' | \'project-tools\';',
+  },
+  {
+    name: 'CodingSessionSequentialWriterLease',
+    declaration: 'export interface CodingSessionSequentialWriterLease {\n    source: CodingSessionSource;\n    read(request: CodingSessionReadRequest): Promise<CodingSessionSnapshot>;\n    resumeOriginal(request: {\n        source: CodingSessionSource;\n        text: string;\n        signal: AbortSignal;\n        beforeDispatch(): Promise<void>;\n        onNativeTurn?(id: string): Promise<void>;\n        onNativeItem?(item: SkillLearningNativeItem): Promise<void>;\n    }): Promise<{\n        nativeTurnId: CodingSessionNativeTurnId;\n    }>;\n    release(request: CodingSessionReadRequest): Promise<CodingSessionSequentialReleaseReceipt>;\n}',
+  },
+  {
+    name: 'CodingSessionSequentialWriterProvider',
+    declaration: 'export interface CodingSessionSequentialWriterProvider {\n    authority: \'user-acknowledged-sequential\';\n    toolMode: CodingSessionSequentialToolMode;\n    acquire(source: CodingSessionSource, request: CodingSessionSequentialAcquireRequest): Promise<CodingSessionSequentialWriterLease>;\n}',
+  },
+  {
+    name: 'CodingSessionSnapshot',
+    declaration: 'export interface CodingSessionSnapshot extends CodingSessionSummary {\n    events: CodingSessionEvent[];\n    cursor: string;\n}',
+  },
+  {
+    name: 'CodingSessionSource',
+    declaration: 'export interface CodingSessionSource extends CodingSessionProfile {\n    nativeSessionId: CodingSessionNativeId;\n}',
+  },
+  {
+    name: 'CodingSessionsState',
+    declaration: 'export interface CodingSessionsState {\n    sources: CodingSessionProviderView[];\n    mirrors: CodingSessionMirrorSummary[];\n    executionSessions?: CodingSessionExecutionSession[];\n    linkedImportsAvailable?: boolean;\n    links?: CodingSessionLinkSummary[];\n    importDestinations?: CodingSessionImportDestinationSummary[];\n}',
+  },
+  {
+    name: 'CodingSessionSummary',
+    declaration: 'export interface CodingSessionSummary {\n    source: CodingSessionSource;\n    title: string;\n    cwd?: string | undefined;\n    writerState: CodingSessionWriterState;\n}',
+  },
+  {
+    name: 'CodingSessionWriterLease',
+    declaration: 'export interface CodingSessionWriterLease {\n    source: CodingSessionSource;\n    read(request: CodingSessionReadRequest): Promise<CodingSessionSnapshot>;\n    resumeOriginal(request: {\n        source: CodingSessionSource;\n        text: string;\n        signal: AbortSignal;\n    }): Promise<void>;\n    release(): Promise<void>;\n}',
+  },
+  {
+    name: 'CodingSessionWriterProvider',
+    declaration: 'export interface CodingSessionWriterProvider {\n    authority: \'native-enforced-exclusion\';\n    acquire(source: CodingSessionSource, request: CodingSessionReadRequest): Promise<CodingSessionWriterLease>;\n}',
+  },
+  {
+    name: 'CodingSessionWriterState',
+    declaration: 'export type CodingSessionWriterState = \'idle\' | \'active\' | \'unknown\';',
   },
   {
     name: 'CollectedOutput',
@@ -5345,6 +5716,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DailyScheduleRecord {\n    readonly id: ScheduleId;\n    readonly kind: \'daily\';\n    readonly title: string;\n    readonly prompt: string;\n    readonly time: string;\n    readonly timeZone: string;\n    readonly scheduledAt: string;\n}',
   },
   {
+    name: 'DecisionCapabilities',
+    declaration: 'export interface DecisionCapabilities {\n    readonly reasoning?: LlmResolvedModelInfo[\'reasoning\'];\n    readonly serviceTiers?: LlmResolvedModelInfo[\'serviceTiers\'];\n}',
+  },
+  {
+    name: 'DecisionConfiguration',
+    declaration: 'export interface DecisionConfiguration {\n    readonly revision: number;\n    readonly enabled: boolean;\n    readonly route?: DecisionRoute;\n}',
+  },
+  {
+    name: 'DecisionConfigureRequest',
+    declaration: 'export interface DecisionConfigureRequest {\n    readonly expectedRevision: number;\n    readonly enabled: boolean;\n    readonly route?: DecisionRoute;\n}',
+  },
+  {
+    name: 'DecisionModel',
+    declaration: 'export interface DecisionModel {\n    readonly provider: string;\n    readonly model: string;\n    readonly name: string;\n    readonly available: boolean;\n    readonly reason: \'response-only\' | \'native-tools\' | \'undeclared\' | \'unavailable\';\n}',
+  },
+  {
+    name: 'DecisionRoute',
+    declaration: 'export type DecisionRoute = Readonly<Pick<LlmCallConfig, \'provider\' | \'model\' | \'reasoningEffort\' | \'serviceTier\'>>;',
+  },
+  {
+    name: 'DecisionStatus',
+    declaration: 'export interface DecisionStatus {\n    readonly configuration: DecisionConfiguration;\n    readonly models: readonly DecisionModel[];\n    readonly maxInputBytes: number;\n    readonly maxInputTokens: number;\n    readonly maxOutputTokens: number;\n    readonly timeoutMs: number;\n    readonly maxCalls: 1;\n}',
+  },
+  {
     name: 'DeepSeekLlmApiExtensionMap',
     declaration: 'export interface DeepSeekLlmApiExtensionMap {\n}',
   },
@@ -5354,7 +5749,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DeepSeekLlmApiExtensionRequest',
-    declaration: 'export interface DeepSeekLlmApiExtensionRequest {\n    readonly body: Readonly<Record<string, DeepSeekLlmApiJson>>;\n    readonly sessionId?: string;\n    readonly purpose?: \'compaction\' | \'session-title\' | \'skill-learning\';\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface DeepSeekLlmApiExtensionRequest {\n    readonly body: Readonly<Record<string, DeepSeekLlmApiJson>>;\n    readonly sessionId?: string;\n    readonly purpose?: \'compaction\' | \'session-title\' | \'skill-learning\' | \'skill-decision\';\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'DeepSeekLlmApiJson',
@@ -5598,7 +5993,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\' | \'skill-learning\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    serviceTier?: ServiceTierId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\' | \'skill-learning\' | \'skill-decision\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -6890,7 +7285,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Session',
-    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T> & {\n            ignorable?: never;\n        }\n    ] : [\n        opts?: SessionInformationalOptions\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n    deriveEventMessage(event: SessionEvent): Message | null;\n}',
+    declaration: 'export class Session {\n    get surface(): SessionSurface;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    get id(): SessionId;\n    readonly firstLiveSeq: SessionLogOffset;\n    readonly firstLifecycleSeq: SessionLogOffset;\n    readonly lifecycleMarker: SessionEvent<\'session/end-seed\'> | undefined;\n    static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader, inheritedEventCount?: SessionLogOffset, projections?: readonly SessionMessageProjection[]): Session;\n    static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader, inheritedEventCount: SessionLogOffset, eventState: SessionSeedEventState, projections?: readonly SessionMessageProjection[]): Session;\n    eventAt(seq: SessionSeq): SessionEvent | undefined;\n    snapshotEvents(fromSeq: SessionLogOffset = SessionLogOffset(0), toSeqExclusive: SessionLogOffset = this.seq): readonly SessionEvent[];\n    ownEvents(): readonly SessionEvent[];\n    isOwnSeq(seq: SessionSeq): boolean;\n    get seq(): SessionLogOffset;\n    append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [\n        opts: SurfaceIntent<T> & {\n            ignorable?: never;\n        }\n    ] : [\n        opts?: SessionInformationalOptions\n    ]): SessionEvent<T>;\n    requestHeader(): EpochHeader | undefined;\n    requestContext(): RequestContext | undefined;\n    toolHistory(): ToolHistory;\n    deriveMessages(): Message[];\n   /* …truncated — full shape in source */',
   },
   {
     name: 'SessionAccess',
@@ -7549,6 +7944,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillCatalogSnapshot {\n    readonly skills: SkillSummary[];\n    readonly complete: boolean;\n}',
   },
   {
+    name: 'SkillClaudeMessageId',
+    declaration: 'export type SkillClaudeMessageId = Branded<\'SkillClaudeMessageId\'>;',
+  },
+  {
+    name: 'SkillClaudeSendId',
+    declaration: 'export type SkillClaudeSendId = Branded<\'SkillClaudeSendId\'>;',
+  },
+  {
+    name: 'SkillClaudeSessionId',
+    declaration: 'export type SkillClaudeSessionId = Branded<\'SkillClaudeSessionId\'>;',
+  },
+  {
+    name: 'SkillClaudeToolUseId',
+    declaration: 'export type SkillClaudeToolUseId = Branded<\'SkillClaudeToolUseId\'>;',
+  },
+  {
     name: 'SkillCleanupChange',
     declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n}',
   },
@@ -7559,6 +7970,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SkillCleanupProposalId',
     declaration: 'export type SkillCleanupProposalId = Branded<\'SkillCleanupProposalId\'>;',
+  },
+  {
+    name: 'SkillCodexItemId',
+    declaration: 'export type SkillCodexItemId = Branded<\'SkillCodexItemId\'>;',
+  },
+  {
+    name: 'SkillCodexSessionId',
+    declaration: 'export type SkillCodexSessionId = Branded<\'SkillCodexSessionId\'>;',
+  },
+  {
+    name: 'SkillCodexTurnId',
+    declaration: 'export type SkillCodexTurnId = Branded<\'SkillCodexTurnId\'>;',
   },
   {
     name: 'SkillDefinition',
@@ -7597,6 +8020,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillLearningCheck {\n    readonly kind: \'test\' | \'constraint\' | \'resource\' | \'user-confirmation\';\n    readonly result: \'passed\' | \'failed\' | \'unknown\';\n    readonly eventRef: string;\n    readonly summary: string;\n    readonly issuer?: string | undefined;\n    readonly scope?: \'task-verification\' | undefined;\n    readonly inputHash?: string | undefined;\n    readonly outputHash?: string | undefined;\n}',
   },
   {
+    name: 'SkillLearningCleanupRequest',
+    declaration: 'export interface SkillLearningCleanupRequest {\n    readonly projectId?: string | undefined;\n    readonly ids?: readonly SkillLibraryId[] | undefined;\n    readonly force?: boolean | undefined;\n}',
+  },
+  {
     name: 'SkillLearningDraft',
     declaration: 'export interface SkillLearningDraft {\n    readonly kind: SkillLearningChangeKind;\n    readonly id?: SkillLibraryId | undefined;\n    readonly name: string;\n    readonly description: string;\n    readonly content: string;\n    readonly survivorId?: SkillLibraryId | undefined;\n}',
   },
@@ -7621,16 +8048,36 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillLearningListRequest {\n    readonly projectId?: string;\n}',
   },
   {
+    name: 'SkillLearningNativeAction',
+    declaration: 'export interface SkillLearningNativeAction {\n    readonly itemId: SkillCodexItemId | SkillClaudeToolUseId;\n    readonly kind: \'read\' | \'command\' | \'file-change\' | \'web\' | \'mcp\';\n    readonly name: string;\n    readonly outcome: \'reported-success\' | \'reported-error\' | \'unknown\';\n    readonly startedEventRef: string;\n    readonly settledEventRef: string;\n    readonly skillReadPath?: string | undefined;\n    readonly procedure?: SkillLearningNativeProcedure | undefined;\n    readonly sourceMessageId?: SkillClaudeMessageId | undefined;\n    readonly resultMessageId?: SkillClaudeMessageId | undefined;\n}',
+  },
+  {
+    name: 'SkillLearningNativeEvidence',
+    declaration: 'export type SkillLearningNativeEvidence = SkillLearningNativeIdentity & {\n    readonly actions: readonly SkillLearningNativeAction[];\n};',
+  },
+  {
+    name: 'SkillLearningNativeIdentity',
+    declaration: 'export type SkillLearningNativeIdentity = {\n    readonly connectionId: SkillNativeConnectionId;\n} & ({\n    readonly provider: \'codex\';\n    readonly sessionId: SkillCodexSessionId;\n    readonly turnId: SkillCodexTurnId;\n} | {\n    readonly provider: \'claude-code\';\n    readonly sessionId: SkillClaudeSessionId;\n    readonly sendId: SkillClaudeSendId;\n});',
+  },
+  {
+    name: 'SkillLearningNativeItem',
+    declaration: 'export type SkillLearningNativeItem = SkillLearningNativeIdentity & {\n    readonly itemId: SkillLearningNativeAction[\'itemId\'];\n    readonly kind: SkillLearningNativeAction[\'kind\'];\n    readonly name: string;\n    readonly phase: \'started\' | \'settled\' | \'invalidated\';\n    readonly outcome?: SkillLearningNativeAction[\'outcome\'] | undefined;\n    readonly skillReadPath?: string | undefined;\n    readonly procedure?: {\n        readonly kind: \'read\';\n        readonly path: string;\n    } | {\n        readonly kind: \'check\';\n        readonly command: string;\n    } | undefined;\n    readonly patchProcedure?: {\n        readonly kind: \'patch\';\n        readonly changes: readonly {\n            readonly operation: \'add\' | \'delete\' | \'update\';\n            readonly path: string;\n            readonly movePath?: string | undefined;\n        }[];\n    } | undefined;\n    readonly sourceMessageId?: SkillClaudeMessageId | undefined;\n    readonly resultMessageId?: SkillClaudeMessageId | undefined;\n};',
+  },
+  {
+    name: 'SkillLearningNativeProcedure',
+    declaration: 'export type SkillLearningNativeProcedure = {\n    readonly kind: \'read\';\n    readonly path: string;\n} | {\n    readonly kind: \'check\';\n    readonly command: string;\n} | {\n    readonly kind: \'patch\';\n    readonly changes: readonly {\n        readonly operation: \'add\' | \'delete\' | \'update\';\n        readonly path: string;\n        readonly movePath?: string | undefined;\n    }[];\n};',
+  },
+  {
     name: 'SkillLearningObservation',
-    declaration: 'export interface SkillLearningObservation {\n    readonly projectId: string;\n    readonly sessionId: string;\n    readonly task: string;\n    readonly completed: boolean;\n    readonly substantial: boolean;\n    readonly eventRefs: readonly string[];\n    readonly observations: readonly string[];\n    readonly checks: readonly SkillLearningCheck[];\n}',
+    declaration: 'export interface SkillLearningObservation {\n    readonly projectId: string;\n    readonly sessionId: string;\n    readonly task: string;\n    readonly completed: boolean;\n    readonly substantial: boolean;\n    readonly eventRefs: readonly string[];\n    readonly observations: readonly string[];\n    readonly checks: readonly SkillLearningCheck[];\n    readonly native?: SkillLearningNativeEvidence | undefined;\n    readonly sequentialTask?: {\n        readonly taskId: SkillSequentialTaskId;\n        readonly source: SkillSequentialTaskSource;\n        readonly nativeTurnId: string;\n    } | undefined;\n}',
   },
   {
     name: 'SkillLearningOptIn',
-    declaration: 'export interface SkillLearningOptIn {\n    readonly id: SkillLibraryId;\n    readonly contentHash: string;\n    readonly policyId: SkillLearningPolicyId;\n    readonly enabled: boolean;\n}',
+    declaration: 'export interface SkillLearningOptIn {\n    readonly id: SkillLibraryId;\n    readonly contentHash: string;\n    readonly policyId: SkillLearningPolicyId;\n    readonly enabled: boolean;\n    readonly lastMaintenanceAt?: string | undefined;\n    readonly lastMaintenanceSurvivorId?: SkillLibraryId | undefined;\n}',
   },
   {
     name: 'SkillLearningPolicy',
-    declaration: 'export interface SkillLearningPolicy {\n    readonly id: SkillLearningPolicyId;\n    readonly approvedAt: string;\n    readonly validatorId: string;\n    readonly operations: readonly (\'update\' | \'compress\' | \'archive\')[];\n}',
+    declaration: 'export interface SkillLearningPolicy {\n    readonly id: SkillLearningPolicyId;\n    readonly approvedAt: string;\n    readonly validatorId: string;\n    readonly operations: readonly SkillLearningChangeKind[];\n    readonly projectId?: string | undefined;\n    readonly generatorId?: string | undefined;\n    readonly enabled?: boolean | undefined;\n}',
   },
   {
     name: 'SkillLearningPolicyId',
@@ -7638,11 +8085,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillLearningPolicyRequest',
-    declaration: 'export interface SkillLearningPolicyRequest {\n    readonly validatorId: string;\n    readonly operations: readonly (\'update\' | \'compress\' | \'archive\')[];\n}',
+    declaration: 'export interface SkillLearningPolicyRequest {\n    readonly validatorId: string;\n    readonly operations: readonly SkillLearningChangeKind[];\n    readonly projectId?: string | undefined;\n    readonly generatorId?: string | undefined;\n}',
   },
   {
     name: 'SkillLearningProposal',
-    declaration: 'export interface SkillLearningProposal {\n    readonly id: SkillLearningProposalId;\n    readonly projectId: string;\n    readonly operation: \'learn\' | \'compress\' | \'deduplicate\';\n    readonly state: \'review\' | \'validated\' | \'applying\' | \'applied\' | \'blocked\' | \'rejected\';\n    readonly createdAt: string;\n    readonly generator: string;\n    readonly digest: string;\n    readonly changes: readonly SkillLearningChange[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly evidence: readonly SkillLearningEvidence[];\n    readonly uncertainty: readonly string[];\n    readonly findings: readonly string[];\n    readonly validation?: SkillLearningValidation | undefined;\n    readonly appliedIds: readonly SkillLibraryId[];\n}',
+    declaration: 'export interface SkillLearningProposal {\n    readonly id: SkillLearningProposalId;\n    readonly projectId: string;\n    readonly operation: \'learn\' | \'compress\' | \'deduplicate\';\n    readonly state: \'review\' | \'validated\' | \'applying\' | \'applied\' | \'blocked\' | \'rejected\';\n    readonly createdAt: string;\n    readonly generator: string;\n    readonly digest: string;\n    readonly changes: readonly SkillLearningChange[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly evidence: readonly SkillLearningEvidence[];\n    readonly uncertainty: readonly string[];\n    readonly findings: readonly string[];\n    readonly validation?: SkillLearningValidation | undefined;\n    readonly applicationMode?: \'automatic\' | \'reviewed\' | undefined;\n    readonly appliedIds: readonly SkillLibraryId[];\n}',
   },
   {
     name: 'SkillLearningProposalId',
@@ -7650,7 +8097,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillLearningProposalRequest',
-    declaration: 'export interface SkillLearningProposalRequest {\n    readonly proposalId: SkillLearningProposalId;\n}',
+    declaration: 'export interface SkillLearningProposalRequest {\n    readonly proposalId: SkillLearningProposalId;\n    readonly validatorId?: string | undefined;\n}',
   },
   {
     name: 'SkillLearningProposalSummary',
@@ -7658,11 +8105,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillLearningProposeRequest',
-    declaration: 'export interface SkillLearningProposeRequest {\n    readonly projectId: string;\n    readonly operation: SkillLearningProposal[\'operation\'];\n    readonly targetIds?: readonly SkillLibraryId[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n}',
+    declaration: 'export interface SkillLearningProposeRequest {\n    readonly projectId: string;\n    readonly operation: SkillLearningProposal[\'operation\'];\n    readonly targetIds?: readonly SkillLibraryId[];\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly generatorId?: string | undefined;\n}',
   },
   {
     name: 'SkillLearningResource',
     declaration: 'export interface SkillLearningResource {\n    readonly path: string;\n    readonly hash: string;\n    readonly bytes: number;\n}',
+  },
+  {
+    name: 'SkillLearningRevokePolicyRequest',
+    declaration: 'export interface SkillLearningRevokePolicyRequest {\n    readonly policyId: SkillLearningPolicyId;\n}',
   },
   {
     name: 'SkillLearningSource',
@@ -7678,7 +8129,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillLearningValidationReceipt',
-    declaration: 'export interface SkillLearningValidationReceipt {\n    readonly scope: \'full-proposal\';\n    readonly digest: string;\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly eventRefs: readonly string[];\n    readonly sourceHashes: readonly string[];\n    readonly resourceHashes: readonly string[];\n}',
+    declaration: 'export interface SkillLearningValidationReceipt {\n    readonly scope: \'full-proposal\' | \'instruction-redundancy-v1\' | \'native-observation-v1\';\n    readonly digest: string;\n    readonly evidenceIds: readonly SkillLearningEvidenceId[];\n    readonly eventRefs: readonly string[];\n    readonly sourceHashes: readonly string[];\n    readonly resourceHashes: readonly string[];\n}',
   },
   {
     name: 'SkillLearningValidationResult',
@@ -7781,6 +8232,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SkillLookupOptions {\n    readonly cwd?: string | undefined;\n    readonly signal?: AbortSignal | undefined;\n}',
   },
   {
+    name: 'SkillNativeConnectionId',
+    declaration: 'export type SkillNativeConnectionId = Branded<\'SkillNativeConnectionId\'>;',
+  },
+  {
     name: 'SkillProvider',
     declaration: 'export interface SkillProvider {\n    readonly name: string;\n    readonly list: (options: SkillLookupOptions) => Promise<readonly SkillCandidate[] | SkillProviderObservation>;\n    readonly get: (candidate: SkillCandidate, options: SkillLookupOptions) => Promise<SkillDefinition | undefined>;\n}',
   },
@@ -7803,6 +8258,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SkillRevisionId',
     declaration: 'export type SkillRevisionId = Branded<\'SkillRevisionId\'>;',
+  },
+  {
+    name: 'SkillSequentialTaskHooks',
+    declaration: 'export interface SkillSequentialTaskHooks {\n    readonly signal: AbortSignal;\n    beforeDispatch(): Promise<void>;\n    onNativeTurn(nativeTurnId: string): Promise<void>;\n    onNativeItem(item: SkillLearningNativeItem): Promise<void>;\n}',
+  },
+  {
+    name: 'SkillSequentialTaskId',
+    declaration: 'export type SkillSequentialTaskId = Branded<\'SkillSequentialTaskId\'>;',
+  },
+  {
+    name: 'SkillSequentialTaskSource',
+    declaration: 'export interface SkillSequentialTaskSource {\n    readonly provider: \'codex\' | \'claude\';\n    readonly profileId: string;\n    readonly nativeSessionId: string;\n    readonly toolMode: \'conversation\' | \'project-files\' | \'project-tools\';\n}',
   },
   {
     name: 'SkillSource',

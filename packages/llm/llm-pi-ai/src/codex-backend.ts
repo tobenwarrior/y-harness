@@ -1,5 +1,6 @@
 /** Optional native Codex loop. This route does not dispatch Harness tools. */
 import { Buffer } from 'node:buffer'
+import type { CodexCodingSessionReader } from './codex-coding-sessions.ts'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, normalize } from 'node:path'
 import { LlmAdapter, ReasoningEffortId, ServiceTierId, offloadedImageText } from '@deepseek-ai/dsh-llm'
@@ -9,6 +10,8 @@ import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
 import type { CodexTurnAccess } from './codex-backend-access.ts'
 import type { NativeSkillLibraryObservation, SkillLibraryProject } from '@deepseek-ai/dsh-skill-library/types'
 import { parseCodexSkills } from './codex-skill-library.ts'
+import { codexNativeItem } from './codex-native-evidence.ts'
+import type { SkillLearningNativeItem } from '@deepseek-ai/dsh-skill-library/types'
 
 type Obj = Record<string, unknown>
 function obj(value: unknown): Obj { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {} }
@@ -124,10 +127,18 @@ export interface CodexPreferences {
 interface RuntimeOptions {
   connect: (handleRequest: (method: string, params: Obj) => Promise<unknown>) => Promise<CodexPeer>
   resolveAccess: (options: GenerateOptions) => CodexTurnAccess
+  /** Actual registered root for this initiating request; absence disables reusable facts. */
+  resolveObservationProjectRoot?: (options: GenerateOptions) => string | undefined
   preferences: CodexPreferences
   persist: (preferences: CodexPreferences) => Promise<void>
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
+  /** Configured process/profile identity; observation is disabled when absent. */
+  connectionId?: string
+  /** Maximum distinct retained native tool identities per turn. */
+  nativeEvidenceMaxItems?: number
+  /** Receives sanitized current-turn item facts without tool authority. */
+  observeNativeItem?: (options: GenerateOptions, item: SkillLearningNativeItem) => void
 }
 interface ThreadCursor { id: string; marker: string; input: string; instructions: string; access: string }
 /** Lazy process and account lifecycle; merely mounting Models never starts Codex. */
@@ -143,7 +154,10 @@ export class CodexBackendRuntime {
   private signingIn = false
   private readonly cursors = new Map<string, ThreadCursor>()
   private activeRequest: { threadId: string; turnId: string | undefined; access: CodexTurnAccess; items: Map<string, Obj> } | undefined
-  constructor(private readonly options: RuntimeOptions) {}
+  constructor(private readonly options: RuntimeOptions) {
+    if (options.nativeEvidenceMaxItems !== undefined
+      && (!Number.isSafeInteger(options.nativeEvidenceMaxItems) || options.nativeEvidenceMaxItems < 1)) throw new Error('Invalid native evidence item bound.')
+  }
   /**
    * Read display state without touching the native process.
    * @returns enablement, connection, running count, optional label/error, and stored tiers.
@@ -158,6 +172,22 @@ export class CodexBackendRuntime {
    * @returns a detached copy of the stored model views.
    */
   models(): CodexBackendModelView[] { return structuredClone(this.options.preferences.models) }
+  /**
+   * Capture only the exact already connected peer's supported history reads.
+   * No native subprocess is started, and reconnect invalidates this capability.
+   * @returns a read-only connected-peer capability, or unavailable.
+   */
+  codingSessionReader(): CodexCodingSessionReader | undefined {
+    const peer = this.peer
+    if (peer === undefined || !this.skillLibraryPeerCurrent(peer)) return undefined
+    return { connected: () => this.skillLibraryPeerCurrent(peer), request: async (method, params) => {
+      if (!this.skillLibraryPeerCurrent(peer)) throw new Error('Native Codex coding session connection changed.')
+      const value = await peer.request(method, params)
+      if (!this.skillLibraryPeerCurrent(peer)) throw new Error('Native Codex coding session connection changed.')
+      return value
+    } }
+  }
+
   /**
    * Observe native skills through an existing connected peer; discovery never launches Codex.
    * @param projects - registered project directories; an empty list scans nothing.
@@ -343,6 +373,7 @@ export class CodexBackendRuntime {
     if (tier !== 'default' && !model.serviceTiers.some(choice => choice.id === tier)) throw new Error('That processing tier is not in the native Codex catalog.')
     options.signal?.throwIfAborted()
     const access = this.options.resolveAccess(options)
+    const observationProjectRoot = this.options.resolveObservationProjectRoot?.(options)
     const accessKey = JSON.stringify([access.cwd, access.sandbox, access.approvalPolicy, access.sandboxPolicy])
     const history = projectCodexHistory(options.messages)
     const instructions = [options.system, ...options.messages.filter(message => message.role === 'system').flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])),
@@ -396,6 +427,9 @@ export class CodexBackendRuntime {
     }
     options.signal?.addEventListener('abort', onAbort, { once: true })
     const blocks = new Map<string, { index: number; text: string; ended: boolean }>()
+    const nativeItems = new Map<string, SkillLearningNativeItem>()
+    const settledItems = new Set<string>()
+    let evidenceInvalidated = false
     let usage: TokenUsage | undefined
     try {
       this.activeRequest = activeRequest
@@ -415,6 +449,37 @@ export class CodexBackendRuntime {
         if (event.method === '__closed') throw new Error('Codex stopped before the turn completed.')
         const params = event.params
         if (params.turnId !== undefined && params.turnId !== turnId) continue
+        if ((event.method === 'item/started' || event.method === 'item/completed') && params.turnId === turnId
+          && options.purpose === undefined && this.options.connectionId !== undefined && !evidenceInvalidated) {
+          const phase = event.method === 'item/started' ? 'started' : 'settled'
+          const item = codexNativeItem(
+            this.options.connectionId, activeCursor.id, turnId, phase, params.item,
+            observationProjectRoot, this.options.nativeEvidenceMaxItems ?? 64,
+          )
+          if (item !== undefined && !settledItems.has(item.itemId)) {
+            const start = nativeItems.get(item.itemId)
+            if (phase === 'started' && start === undefined) {
+              if (nativeItems.size >= (this.options.nativeEvidenceMaxItems ?? 64)) {
+                evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
+                try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
+                catch (error) { void error /* Observation failure grants no source-write authority. */ }
+                continue
+              }
+              nativeItems.set(item.itemId, item)
+            } else if (phase === 'settled' && start !== undefined) {
+              if (start.kind !== item.kind || start.name !== item.name || start.skillReadPath !== item.skillReadPath
+                || JSON.stringify(start.procedure) !== JSON.stringify(item.procedure)) {
+                evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
+                try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
+                catch (error) { void error /* Mismatching settlement grants no learning authority. */ }
+                continue
+              }
+              settledItems.add(item.itemId)
+            } else continue
+            try { this.options.observeNativeItem?.(options, item) }
+            catch (error) { void error /* Evidence observers cannot change native result or permission settlement. */ }
+          }
+        }
         if (event.method === 'thread/tokenUsage/updated') {
           const counts = obj(obj(params.tokenUsage).last)
           const input = Number(counts.inputTokens)

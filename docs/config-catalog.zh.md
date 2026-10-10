@@ -682,6 +682,39 @@ export type ThemePreference = typeof THEME_PREFERENCES[number]
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-client-ui-theme -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-coding-session -->
+<a id="deepseek-aidsh-coding-session"></a>
+
+## `@deepseek-ai/dsh-coding-session`
+
+- `inject`: `storageDomain`
+- `source`: [`packages/session/coding-session/src/index.ts:27`](../packages/session/coding-session/src/index.ts)
+
+```ts config-catalog
+/** Complete native page, retained history, and operation deadline budgets. */
+export interface Config {
+  /** Maximum native metadata items per page. */
+  pageSize: number
+  /** Maximum retained native history items per mirror. */
+  maxEvents: number
+  /** Maximum retained source mirrors. */
+  maxMirrors: number
+  /** Maximum complete native response and retained mirror bytes. */
+  maxBytes: number
+  /** Deadline for one native-source operation in milliseconds. */
+  timeoutMs: number
+  /** Allow metadata discovery for registered project profiles. */
+  enableClaudeDiscovery: boolean
+  /** Allow explicitly acknowledged sequential native ownership; adapters must independently support it. */
+  enableSequentialHandoff: boolean
+  /** Deadline for a sequential native turn, including settled readback, in milliseconds. */
+  sequentialTurnTimeoutMs: number
+  /** Maximum retained reversible generations in one linked native history. */
+  maxImportGenerations: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-coding-session -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-compaction-basic -->
 <a id="deepseek-aidsh-compaction-basic"></a>
 
@@ -2914,11 +2947,13 @@ export interface Config {
 ## `@deepseek-ai/dsh-skill-library`
 
 - `inject`: `typert` · `workspaceRegistry` · `storageDomain`
-- `source`: [`packages/skill/skill-library/src/index.ts:57`](../packages/skill/skill-library/src/index.ts)
+- `source`: [`packages/skill/skill-library/src/index.ts:68`](../packages/skill/skill-library/src/index.ts)
 
 ```ts config-catalog
 /** Filesystem discovery and bounded local maintenance policy. */
 export interface Config {
+  /** Separate optional Decision budgets; configuration starts disabled and never changes the chat model. */
+  decision?: Partial<DecisionBounds>
   /** Skill home override, identical to the filesystem provider's setting. */
   dshHome?: string
   /** Shared agent skill home override. */
@@ -2945,6 +2980,36 @@ export interface Config {
   learningMaxResourceFiles?: number
   /** Maximum bytes hashed for one selected bundle's resources. */
   learningMaxResourceBytes?: number
+  /** Maximum automatic semantic changes admitted in one maintenance pass. */
+  maintenanceMaxOperations?: number
+  /** Wall-clock admission deadline for a semantic pass or source application. */
+  learningOperationTimeoutMs?: number
+  /** Maximum current project-managed skills admitted by native automatic creation. */
+  automaticProjectSkillLimit?: number
+  /** Maximum paired current-native items retained for one sequential task. */
+  sequentialLearningMaxItems?: number
+  /** Maximum sanitized human-task bytes retained in sequential evidence. */
+  sequentialLearningMaxTaskBytes?: number
+}
+
+/** Deployment-owned complete input/output, concurrency, history and time caps. */
+export interface DecisionBounds {
+  /** Complete serialized system, query and candidate input byte ceiling. */
+  readonly maxInputBytes: number
+  /** Conservative input token admission ceiling, also checked against reported usage. */
+  readonly maxInputTokens: number
+  /** Complete accumulated response byte ceiling. */
+  readonly maxOutputBytes: number
+  /** Requested response token ceiling, also checked against reported usage. */
+  readonly maxOutputTokens: number
+  /** Maximum streamed response chunks per admitted request. */
+  readonly maxOutputChunks: number
+  /** Request lifetime in milliseconds, including preparation and durable recording. */
+  readonly timeoutMs: number
+  /** Maximum unsettled requests, including work pending after cancellation. */
+  readonly maxPending: number
+  /** Maximum durable advisory records retained. */
+  readonly maxRecords: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-library -->
@@ -3220,7 +3285,7 @@ export type PermissionPolicy = 'allow' | 'reject'
 ## `@deepseek-ai/dsh-subagent-claude-code`
 
 - `inject`: `subagents` · `subprocess`
-- `source`: [`packages/subagent/subagent-claude-code/src/index.ts:38`](../packages/subagent/subagent-claude-code/src/index.ts)
+- `source`: [`packages/subagent/subagent-claude-code/src/index.ts:60`](../packages/subagent/subagent-claude-code/src/index.ts)
 
 ```ts config-catalog
 /** Deployment-owned model, permission, environment, and process-release settings. */
@@ -3243,10 +3308,38 @@ export interface Config {
   permissionMode?: ClaudeCodePermissionMode
   /** Grace in milliseconds between Claude Code managed-range termination tiers. */
   disposeGraceMs?: number
+  /** Direct SDK tool identity collection bound; overflow discards the batch. Defaults to 64, maximum 256. */
+  toolObservationMaxItems?: number
+  /** Explicit opt-in normal root LLM route; absent means no native root adapter or process. */
+  rootRoute?: ClaudeCodeRootConfig | undefined
 }
 
 /** Profile-selectable non-interactive Claude Code permission mode. */
 export type ClaudeCodePermissionMode = typeof CLAUDE_CODE_PERMISSION_MODES[number]
+
+/** Explicit native profile and model; all retained or pending work is deployment bounded. */
+export interface ClaudeCodeRootConfig {
+  /** Stable configured connection identity, distinct from SDK sessions. */
+  connectionId: string
+  /** Native model/alias chosen by the deployment; no model is inferred from authentication. */
+  model: string
+  /** Maximum live or shutting-down native root sessions; defaults to 4. */
+  maxSessions?: number
+  /** Maximum tool identities retained for one send; defaults to 64. */
+  maxItems?: number
+  /** Maximum pending SDK frames for one send; defaults to 256. */
+  maxPendingFrames?: number
+  /** Complete serialized root prompt and system byte bound; defaults to 65536. */
+  maxInputBytes?: number
+  /** Complete SDK-frame byte bound per send; defaults to 1048576. */
+  maxOutputBytes?: number
+  /** Maximum native send lifetime; defaults to 300000 milliseconds. */
+  maxTurnMs?: number
+  /** Complete retained public protocol byte bound per native session; defaults to 8388608. */
+  maxSessionBytes?: number
+  /** Managed process termination grace; defaults to 3000 milliseconds. */
+  disposeGraceMs?: number
+}
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-claude-code -->
 
@@ -4443,6 +4536,7 @@ export interface Config {
 | `@deepseek-ai/dsh-client-ui-session` | — | [`packages/client/ui-session/src/index.ts`](../packages/client/ui-session/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings` | — | [`packages/client/ui-settings/src/index.ts`](../packages/client/ui-settings/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-agent-loop` | — | [`packages/client/ui-settings-agent-loop/src/index.ts`](../packages/client/ui-settings-agent-loop/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-settings-coding-sessions` | — | [`packages/client/ui-settings-coding-sessions/src/index.ts`](../packages/client/ui-settings-coding-sessions/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-general` | — | [`packages/client/ui-settings-general/src/index.ts`](../packages/client/ui-settings-general/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-plugin-inventory` | — | [`packages/client/ui-settings-plugin-inventory/src/index.ts`](../packages/client/ui-settings-plugin-inventory/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-settings-plugins` | — | [`packages/client/ui-settings-plugins/src/index.ts`](../packages/client/ui-settings-plugins/src/index.ts) |

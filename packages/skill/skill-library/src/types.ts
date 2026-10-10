@@ -172,3 +172,4 @@ export interface SkillLibraryRetrieveRequest {
 }
 
 export type * from './learning-types.ts'
+export type * from './decision-types.ts'

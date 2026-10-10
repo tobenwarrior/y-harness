@@ -2,7 +2,8 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import Schema from '@deepseek-ai/schemastery'
 import { Context } from '@deepseek-ai/cordis'
 import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
@@ -13,20 +14,38 @@ import { startCodexProcess } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
 import type {} from '@deepseek-ai/dsh-skill-library'
+import type {} from '@deepseek-ai/dsh-workspace'
 import { createCodexSkillLibraryProvider } from './codex-skill-library.ts'
+
+import type {} from '@deepseek-ai/dsh-coding-session'
+import { createCodexCodingSessionProvider } from './codex-coding-sessions.ts'
+
+/** Deployment-owned bounds for sanitized native learning observations. */
+export interface CodexBackendConnectionConfig {
+  /** Maximum distinct retained native tool identities per turn. */
+  nativeEvidenceMaxItems?: number
+}
+
 
 declare module '@deepseek-ai/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
 /** Independent optional model family. */
 export class CodexBackendConnection extends TypertRemoteService {
   static inject = ['llm']
+  static Config = Schema.object({ nativeEvidenceMaxItems: Schema.natural().min(1).default(64) })
   private runtime: CodexBackendRuntime | undefined
   private initialization: Promise<CodexBackendRuntime> | undefined
   private disposed = false
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private readonly config: Required<CodexBackendConnectionConfig>) {
     super(ctx, 'codexBackendConnection', { namespace: 'codexBackend' })
     ctx.effect(() => () => { this.disposed = true; this.runtime?.close() })
     ctx.inject(['skillLibrary'], (child) => {
       child.effect(() => child.skillLibrary.registerNativeProvider(createCodexSkillLibraryProvider(() => this.runtime)))
+    })
+    const home = launchEnvironmentOf(ctx).get('DSH_CODEX_HOME')?.value
+    if (home !== undefined) ctx.inject(['codingSessions'], (child) => {
+      child.effect(() => child.codingSessions.registerProvider(createCodexCodingSessionProvider(
+        `home:${createHash('sha256').update(home).digest('hex')}`, 'Codex', () => this.runtime?.codingSessionReader(),
+      )), 'codex-backend: read-only coding sessions')
     })
     // Restore only our display preferences and route. No subprocess or native auth read.
     void this.getRuntime().catch(() => {})
@@ -76,6 +95,18 @@ export class CodexBackendConnection extends TypertRemoteService {
       const runtime = new CodexBackendRuntime({ connect: handleRequest => Promise.resolve(startCodexProcess(options, handleRequest)),
         resolveAccess: request => resolveCodexAccess(this.ctx, request), preferences,
         resolveAttachments: () => this.ctx.get('attachments'),
+        resolveObservationProjectRoot: (request) => {
+          const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
+          if (session?.header.cwd === undefined) return undefined
+          return this.ctx.get('workspaceRegistry')?.list().find(project => project.path === session.header.cwd)?.path
+        },
+        connectionId: createHash('sha256').update(JSON.stringify([options.home, options.binary])).digest('hex'),
+        nativeEvidenceMaxItems: this.config.nativeEvidenceMaxItems,
+        observeNativeItem: (request, item) => {
+          const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
+          if (session === undefined) return
+          session.append('skill/native-item', item, { ignorable: true })
+        },
         persist: async (next) => {
           await mkdir(options.home, { recursive: true, mode: 0o700 })
           const temporary = `${file}.${randomUUID()}.tmp`

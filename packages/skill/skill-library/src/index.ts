@@ -7,7 +7,7 @@ import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { } from '@deepseek-ai/dsh-tools'
 import type { } from '@deepseek-ai/dsh-workspace'
-import type { } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { } from '@deepseek-ai/dsh-agent-preset-registry'
 import { createRegistryInventory } from './registry-inventory.ts'
 import { SkillLibrary } from './library.ts'
@@ -15,6 +15,13 @@ import { skillLibraryDomain } from './record.ts'
 import { SkillLearning } from './learning.ts'
 import { skillLearningDomain } from './learning-record.ts'
 import { installSkillLearningRuntime } from './learning-runtime.ts'
+import { SequentialSkillLearning } from './sequential-learning.ts'
+import { DecisionAdvisory } from './decision.ts'
+import { decisionDomain } from './decision-record.ts'
+import type { DecisionBounds } from './decision.ts'
+import type { DecisionCapabilities, DecisionConfiguration, DecisionConfigureRequest, DecisionRoute, DecisionStatus } from './decision-types.ts'
+import { maintenanceGenerator, maintenanceValidator } from './semantic-maintenance.ts'
+
 import type {
   NativeSkillLibraryProvider,
   SkillCleanupProposal,
@@ -49,12 +56,18 @@ import type {
   SkillLearningOptIn,
   SkillLearningStatus,
   SkillLearningAvailability,
+  SkillLearningCleanupRequest,
+  SkillLearningRevokePolicyRequest,
+  SkillSequentialTaskSource,
+  SkillSequentialTaskHooks,
 } from './types.ts'
 
 export type * from './types.ts'
 
 /** Filesystem discovery and bounded local maintenance policy. */
 export interface Config {
+  /** Separate optional Decision budgets; configuration starts disabled and never changes the chat model. */
+  decision?: Partial<DecisionBounds>
   /** Skill home override, identical to the filesystem provider's setting. */
   dshHome?: string
   /** Shared agent skill home override. */
@@ -81,8 +94,19 @@ export interface Config {
   learningMaxResourceFiles?: number
   /** Maximum bytes hashed for one selected bundle's resources. */
   learningMaxResourceBytes?: number
+  /** Maximum automatic semantic changes admitted in one maintenance pass. */
+  maintenanceMaxOperations?: number
+  /** Wall-clock admission deadline for a semantic pass or source application. */
+  learningOperationTimeoutMs?: number
+  /** Maximum current project-managed skills admitted by native automatic creation. */
+  automaticProjectSkillLimit?: number
+  /** Maximum paired current-native items retained for one sequential task. */
+  sequentialLearningMaxItems?: number
+  /** Maximum sanitized human-task bytes retained in sequential evidence. */
+  sequentialLearningMaxTaskBytes?: number
 }
 type ResolvedConfig = Config & {
+  decision: DecisionBounds
   bodyBudgetBytes: number
   retrievalLimit: number
   proposalLimit: number
@@ -92,6 +116,11 @@ type ResolvedConfig = Config & {
   learningMaxEvidence: number
   learningMaxResourceFiles: number
   learningMaxResourceBytes: number
+  maintenanceMaxOperations: number
+  learningOperationTimeoutMs: number
+  automaticProjectSkillLimit: number
+  sequentialLearningMaxItems: number
+  sequentialLearningMaxTaskBytes: number
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -102,6 +131,16 @@ declare module '@deepseek-ai/cordis' {
 export class SkillLibraryController extends TypertRemoteService {
   static inject = ['typert', 'workspaceRegistry', 'storageDomain']
   static Config: z<Config, ResolvedConfig> = z.object({
+    decision: z.object({
+      maxInputBytes: z.natural().min(1).max(2147483647).default(16000),
+      maxInputTokens: z.natural().min(1).max(2147483647).default(16000),
+      maxOutputBytes: z.natural().min(1).max(2147483647).default(8000),
+      maxOutputTokens: z.natural().min(1).max(2147483647).default(512),
+      maxOutputChunks: z.natural().min(1).max(2147483647).default(1024),
+      timeoutMs: z.natural().min(1).max(2147483647).default(10000),
+      maxPending: z.natural().min(1).max(2147483647).default(2),
+      maxRecords: z.natural().min(1).max(2147483647).default(100),
+    }).default({}),
     dshHome: z.string(),
     agentsHome: z.string(),
     customSkillDirs: z.array(z.string()).default([]),
@@ -115,10 +154,16 @@ export class SkillLibraryController extends TypertRemoteService {
     learningMaxEvidence: z.natural().min(1).default(4),
     learningMaxResourceFiles: z.natural().min(1).default(100),
     learningMaxResourceBytes: z.natural().min(1).default(1048576),
+    maintenanceMaxOperations: z.natural().min(1).default(4),
+    learningOperationTimeoutMs: z.natural().min(1).default(10000),
+    automaticProjectSkillLimit: z.natural().min(1).default(16),
+    sequentialLearningMaxItems: z.natural().min(1).default(64),
+    sequentialLearningMaxTaskBytes: z.natural().min(1).default(1600),
   })
   private readonly config: ResolvedConfig
   private library?: SkillLibrary
   private learning?: SkillLearning
+  private decision?: DecisionAdvisory
   private readonly learningGenerators = new Map<string, SkillLearningGenerator>()
   private readonly learningValidators = new Map<string, SkillLearningValidator>()
   private readonly learningDisposers = new Map<string, () => void>()
@@ -127,6 +172,7 @@ export class SkillLibraryController extends TypertRemoteService {
   private readonly providerDisposers = new Map<string, () => void>()
   private maintenance: Promise<void> | undefined
   private learningRuntimeDispose?: () => Promise<void>
+  private sequentialLearning?: SequentialSkillLearning
 
   /**
  * @param ctx - Host workspace, storage and Remote services.
@@ -139,6 +185,8 @@ export class SkillLibraryController extends TypertRemoteService {
 
   protected async [Service.init](): Promise<void> {
     const domain = await this.ctx.storageDomain.open(skillLibraryDomain)
+    const decisionLog = await this.ctx.storageDomain.open(decisionDomain)
+    this.decision = new DecisionAdvisory(this.ctx, { configuration: decisionLog.global, records: decisionLog.table('requests') }, this.config.decision)
     const provider = new FileSystemSkillProvider(
       this.ctx,
       {
@@ -198,8 +246,14 @@ export class SkillLibraryController extends TypertRemoteService {
       maxEvidence: this.config.learningMaxEvidence,
       maxResourceFiles: this.config.learningMaxResourceFiles,
       maxResourceBytes: this.config.learningMaxResourceBytes,
+      maintenanceMaxOperations: this.config.maintenanceMaxOperations,
+      maintenanceIntervalMs: this.config.automaticMaintenanceIntervalMs,
+      operationTimeoutMs: this.config.learningOperationTimeoutMs,
+      automaticProjectSkillLimit: this.config.automaticProjectSkillLimit,
       signal: this.lifetime.signal,
     })
+    this.learningDisposers.set('generator:' + maintenanceGenerator.id, this.learning.registerGenerator(maintenanceGenerator))
+    this.learningDisposers.set('validator:' + maintenanceValidator.id, this.learning.registerValidator(maintenanceValidator))
     for (const registered of this.learningGenerators.values()) this.learningDisposers.set(
       'generator:' + registered.id,
       this.learning.registerGenerator(registered),
@@ -213,6 +267,9 @@ export class SkillLibraryController extends TypertRemoteService {
       this,
       { maxInputBytes: this.config.learningMaxInputBytes, maxDrafts: this.config.learningMaxSources },
     )
+    this.sequentialLearning = new SequentialSkillLearning(this.ctx, this, { maxItems: this.config.sequentialLearningMaxItems,
+      maxTaskBytes: this.config.sequentialLearningMaxTaskBytes, maxInputBytes: this.config.learningMaxInputBytes,
+      timeoutMs: this.config.learningOperationTimeoutMs })
     this.ctx.on('tools/result', (exec, result) => {
       if (result.isError || exec.name !== 'skill' || this.lifetime.signal.aborted) return
       void this.requireLibrary().observeToolResult(exec.name, result.isError, result.value).catch((error: unknown) => {
@@ -227,15 +284,18 @@ export class SkillLibraryController extends TypertRemoteService {
     if (this.config.automaticMaintenanceIntervalMs > 0) {
       timer = setInterval(() => {
         if (this.maintenance !== undefined || this.lifetime.signal.aborted) return
-        this.maintenance = this.requireLibrary().cleanupOptedIn().then(() => { }, (error: unknown) => {
-          this.ctx.logger.warn(`skill-library: automatic whitespace cleanup stopped: ${String(error)}`)
+        this.maintenance = this.requireLearning().cleanup({}).then(async () => {
+          await this.requireLibrary().cleanupOptedIn() }).catch((error: unknown) => {
+          this.ctx.logger.warn(`skill-library: automatic managed maintenance stopped: ${String(error)}`)
         }).finally(() => { this.maintenance = undefined })
       }, this.config.automaticMaintenanceIntervalMs)
       timer.unref()
     }
     this.ctx.effect(() => async () => {
       this.lifetime.abort(); if (timer !== undefined) clearInterval(timer)
+      await this.decision?.dispose(); await decisionLog.close()
       await this.maintenance
+      await this.sequentialLearning?.dispose()
       await this.learningRuntimeDispose?.()
       for (const dispose of this.providerDisposers.values()) dispose()
       this.providerDisposers.clear()
@@ -306,14 +366,24 @@ export class SkillLibraryController extends TypertRemoteService {
  * @returns archived item.
  */
   @Remote('archive')
-  archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue> { return this.requireLibrary().archive(request) }
+  async archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue> {
+    const consent = this.requireLearning().status().optIns.find(value => value.id === request.id)
+    if (consent?.enabled === true) await this.requireLearning().setAutomatic({ id: request.id,
+      expectedHash: request.expectedHash, policyId: consent.policyId, enabled: false })
+    return this.requireLibrary().archive(request)
+  }
   /**
  * Restore a selected archive into a vacant original location.
  * @param request - archived identity.
  * @returns restored item.
  */
   @Remote('restore')
-  restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue> { return this.requireLibrary().restore(request) }
+  async restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue> {
+    const consent = this.requireLearning().status().optIns.find(value => value.id === request.id)
+    if (consent?.enabled === true) await this.requireLearning().setAutomatic({ id: request.id,
+      expectedHash: consent.contentHash, policyId: consent.policyId, enabled: false })
+    return this.requireLibrary().restore(request)
+  }
   /**
  * Preview conservative managed-file compression.
  * @param request - selected ids or all eligible entries.
@@ -351,9 +421,28 @@ export class SkillLibraryController extends TypertRemoteService {
  */
   @Remote('retrieve')
   retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]> {
-    return this.requireLibrary()
-      .retrieve(request)
+    return this.requireLibrary().retrieve(request).then(items => this.requireDecision().select(request, items))
   }
+  /**
+   * Read independent Decision settings and API capability disclosure.
+   * @returns disabled or available route choices without generation.
+   */
+  @Remote('decisionStatus')
+  decisionStatus(): Promise<DecisionStatus> { return this.requireDecision().status() }
+  /**
+   * Read exact API model effort and tier controls.
+   * @param route - registered response-only route.
+   * @returns explicit supported controls; native routes reject.
+   */
+  @Remote('decisionCapabilities')
+  decisionCapabilities(route: DecisionRoute): Promise<DecisionCapabilities> { return this.requireDecision().capabilities(route) }
+  /**
+   * Save separate revision-checked Decision settings.
+   * @param request - observed revision, opt-in and exact API route.
+   * @returns committed settings without altering the main chat model.
+   */
+  @Remote('configureDecision')
+  configureDecision(request: DecisionConfigureRequest): Promise<DecisionConfiguration> { return this.requireDecision().configure(request) }
   /**
  * Record verified explicit instruction delivery.
  * @param request - exact library/version identity and observation.
@@ -400,6 +489,23 @@ export class SkillLibraryController extends TypertRemoteService {
       this.learningDisposers.get('validator:' + provider.id)?.()
       this.learningDisposers.delete('validator:' + provider.id)
     }
+  }
+  /**
+   * Run a fresh cancellable sequential task and retain only its durable current native procedure facts.
+   * @param agent - exact selected live root supplying execution authority.
+   * @param source - exact original source and disclosed native tool mode.
+   * @param text - current human continuation, sanitized before evidence retention.
+   * @param operation - provider admission, current-turn metadata and settled mirror reconciliation.
+   * @returns its native result after task settlement and existing policy-controlled learning.
+   */
+  runSequentialTask<T>(
+    agent: Agent,
+    source: SkillSequentialTaskSource,
+    text: string,
+    operation: (hooks: SkillSequentialTaskHooks) => Promise<T>,
+  ): Promise<T> {
+    if (this.sequentialLearning === undefined) throw new Error('Sequential task learning is not ready.')
+    return this.sequentialLearning.run(agent, source, text, operation)
   }
   /**
    * Capture immutable task observations without inferring success.
@@ -455,6 +561,14 @@ export class SkillLibraryController extends TypertRemoteService {
   proposeLearning(request: SkillLearningProposeRequest): Promise<SkillLearningProposal> {
     return this.requireLearning()
       .propose(request)
+  }
+  /**
+   * Apply independently checkable native procedure recording under explicit project policy.
+   * @param evidence - unchanged retained live native observation.
+   * @returns review/applied proposal or no change for an already recorded procedure.
+   */
+  autoLearnEvidence(evidence: SkillLearningEvidence): Promise<SkillLearningProposal | undefined> {
+    return this.requireLearning().autoLearnEvidence(evidence)
   }
   /**
    * Read metadata-only proposal summaries.
@@ -525,6 +639,28 @@ export class SkillLibraryController extends TypertRemoteService {
   setAutomaticLearning(request: SkillLearningAutomaticRequest): Promise<SkillLearningOptIn> {
     return this.requireLearning()
       .setAutomatic(request)
+  }
+  /**
+   * Run an immediate bounded semantic pass; force preserves ownership, pins and consent.
+   * @param request - project and optional selected managed identities.
+   * @returns durable applied proposals with exact independent mechanical receipts.
+   */
+  @Remote('cleanupSemantic')
+  cleanupSemantic(request: SkillLearningCleanupRequest): Promise<readonly SkillLearningProposal[]> {
+    return this.requireLearning().cleanup(request)
+  }
+  /**
+   * Revoke an approved policy while retaining recovery history.
+   * @param request - approved policy identity.
+   * @returns disabled retained policy.
+   */
+  @Remote('revokeLearningPolicy')
+  revokeLearningPolicy(request: SkillLearningRevokePolicyRequest): Promise<SkillLearningPolicy> {
+    return this.requireLearning().revokePolicy(request)
+  }
+  private requireDecision(): DecisionAdvisory {
+    if (this.decision === undefined) throw new Error('skill decision is not initialized')
+    return this.decision
   }
   private requireLearning(): SkillLearning {
     if (this.learning === undefined) throw new Error('skill learning is not initialized')

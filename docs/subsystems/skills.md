@@ -242,11 +242,121 @@ Shipped source enables relevance mode in the base CLI row and web Standard, PTC,
 
 ## Learning observations and review
 
-The [Host library](../../packages/skill/skill-library/README.md) keeps observations and semantic proposals separate from skill files. Its [runtime collector](../../packages/skill/skill-library/src/learning-runtime.ts) records live root Session work after durability, requiring at least two concrete Harness tool calls and one paired result without a reported error. It skips inherited, seeded, delegated, trivial, interrupted and failed tasks. Bounded task text and assistant completion claims remain unverified; raw tool arguments and output are not retained, and the collector supplies no verification checks.
+The [Host library](../../packages/skill/skill-library/README.md) keeps observations and semantic proposals separate from skill files. Its [runtime collector](../../packages/skill/skill-library/src/learning-runtime.ts) records live root Session work after durability, requiring at least two paired Harness or supported native actions and one delivered result without a reported error. It skips inherited, seeded, delegated, trivial, interrupted and failed tasks. Bounded task text and assistant completion claims remain unverified; raw tool arguments and output are not retained, and the collector supplies no verification checks.
 
-Suggestion generation uses the task's captured route only when cached provider metadata explicitly declares `auxiliaryGeneration: api`. Native or undeclared routes remain unavailable, and manual generation requires a live root evidence Session. The Host selects relevant managed sources before loading complete bodies, rejects oversized or credential-shaped inputs, and checks existing metadata before creating a project skill. Generators return uncertain suggestions without paths, permission authority or verification authority; [learning types](../../packages/skill/skill-library/src/learning-types.ts) define the evidence, full diffs and independent receipts.
+Suggestion generation uses the task's captured route only when cached provider metadata explicitly declares `auxiliaryGeneration: api`. Undeclared routes remain unavailable, and manual API generation requires a live root evidence Session. The Host selects relevant managed sources before loading complete bodies, rejects oversized or credential-shaped inputs, and checks existing metadata before creating a project skill. Generators return uncertain suggestions without paths, permission authority or verification authority; [learning types](../../packages/skill/skill-library/src/learning-types.ts) define the evidence, full diffs and independent receipts.
 
-Review retains source and survivor instructions, resource hashes, constraints, resolved reference targets and uncertainty. Archive preserves skill-reference identities and external targets; equivalent bundle resources may relocate. Application rechecks current sources and protections within the source writer, retains rollback history, and reconciles interrupted applications before continuing. Creates always require review. Automatic update, compression or archive additionally requires an approved policy, current per-file consent and an independent trusted receipt bound to the full proposal with passed source checks. No trusted semantic validator ships by default; completion, a tool result or a model claim alone cannot authorize automatic changes.
+Native evidence keeps the configured connection, original provider session and item identities, plus an actual Codex turn or explicit Claude client send UUID; Claude actions also keep actual source and result message UUIDs without inventing a native turn. Each action retains its start and settlement event references, neutral reported outcome, optional best-effort Skill read path and optional sanitized procedure fact. A read fact contains a safe project-relative source path; a check fact contains a normalized allowlisted project-root invocation. Raw arguments and results, replayed history, nested sessions, unmatched results and overflow cannot supply automatic learning. Two distinct concrete procedure facts can produce exact deterministic instructions; unknown-only action metadata remains durable evidence without an automatic proposal. Independent recomputation and explicit project policy authorize managed create or update, while full native Skill-load and application coverage remain unknown. The explicitly enabled normal Claude root route retains a confined SDK query across live Y turns and durably records separate ignorable bounded public inputs and context frames; those records neither restore hidden native context nor enter sanitized learning evidence. The separate Claude one-shot child observer cannot authorize root learning.
+
+Review retains source and survivor instructions, resource hashes, constraints, resolved reference targets and uncertainty. Archive preserves skill-reference identities and external targets; equivalent bundle resources may relocate. Application rechecks current sources and protections within the source writer, retains rollback history, and reconciles interrupted applications before continuing. Automatic maintenance requires a policy, current per-file consent and an independently recomputed known transformation. The built-in operator removes adjacent identical reference-only Markdown links under an explicit `References` heading and can retire equivalent duplicate bundles with an active compatible survivor; action multiplicity, indentation, continuations, task lists, code, order, resources and reference targets remain protected. Uncertain rephrasing and supersession remain reviewable. An explicit native project policy can create and update exact observation-derived procedures, granting consent only to newly created Y-managed files. Force bypasses routine timing while preserving every ownership and permission check. Revocation and archive disable automatic authority; restore keeps it disabled. Deadlines, source-operation counts, body and resource limits, and project growth bounds govern automatic admission. Completion, a tool result or a model claim cannot validate itself or establish successful skill use.
+
+<a id="native-learning-evidence-types"></a>
+
+### Native learning evidence types
+
+The provider-discriminated evidence vocabulary is owned by [learning-types.ts](../../packages/skill/skill-library/src/learning-types.ts). The identity brands use the [core branded-string contract](core.md). `skill/native-item` records sanitized live metadata; the separate [Claude root protocol record](subagent.md#optional-claude-root-route) retains bounded public SDK messages.
+
+```ts type-equiv
+/** Safe retained procedural facts; raw arguments and output are never retained. */
+type SkillLearningNativeProcedure = { readonly kind: 'read'; readonly path: string } | { readonly kind: 'check'; readonly command: string }
+  | { readonly kind: 'patch'; readonly changes: readonly { readonly operation: 'add' | 'delete' | 'update'; readonly path: string; readonly movePath?: string | undefined }[] }
+```
+
+```ts type-equiv
+/** Validated configured native connection identity. */
+type SkillNativeConnectionId = Branded<'SkillNativeConnectionId'>
+```
+
+```ts type-equiv
+/** Original Codex thread identity. */
+type SkillCodexSessionId = Branded<'SkillCodexSessionId'>
+```
+
+```ts type-equiv
+/** Original Codex turn identity. */
+type SkillCodexTurnId = Branded<'SkillCodexTurnId'>
+```
+
+```ts type-equiv
+/** Original Codex item identity. */
+type SkillCodexItemId = Branded<'SkillCodexItemId'>
+```
+
+```ts type-equiv
+/** Actual Claude SDK session identity, confirmed by a live frame. */
+type SkillClaudeSessionId = Branded<'SkillClaudeSessionId'>
+```
+
+```ts type-equiv
+/** Explicit client send UUID echoed by the SDK; not a native turn identity. */
+type SkillClaudeSendId = Branded<'SkillClaudeSendId'>
+```
+
+```ts type-equiv
+/** Actual Claude SDK source or result message UUID. */
+type SkillClaudeMessageId = Branded<'SkillClaudeMessageId'>
+```
+
+```ts type-equiv
+/** Actual Claude SDK tool-use identity. */
+type SkillClaudeToolUseId = Branded<'SkillClaudeToolUseId'>
+```
+
+```ts type-equiv
+/** Provider-specific live correlation; Claude ordinary frames do not expose a native turn id. */
+type SkillLearningNativeIdentity = { readonly connectionId: SkillNativeConnectionId } & (
+  { readonly provider: 'codex'; readonly sessionId: SkillCodexSessionId; readonly turnId: SkillCodexTurnId }
+  | { readonly provider: 'claude-code'; readonly sessionId: SkillClaudeSessionId; readonly sendId: SkillClaudeSendId }
+)
+```
+
+```ts type-equiv
+/** Sanitized live native action; reported outcomes do not establish task verification. */
+interface SkillLearningNativeAction {
+  readonly itemId: SkillCodexItemId | SkillClaudeToolUseId
+  readonly kind: 'read' | 'command' | 'file-change' | 'web' | 'mcp'
+  readonly name: string
+  readonly outcome: 'reported-success' | 'reported-error' | 'unknown'
+  readonly startedEventRef: string
+  readonly settledEventRef: string
+  readonly skillReadPath?: string | undefined
+  readonly procedure?: SkillLearningNativeProcedure | undefined
+  readonly sourceMessageId?: SkillClaudeMessageId | undefined
+  readonly resultMessageId?: SkillClaudeMessageId | undefined
+}
+```
+
+```ts type-equiv
+/** Original live identities prevent native items from merging across connections or turns. */
+type SkillLearningNativeEvidence = SkillLearningNativeIdentity & {
+  readonly actions: readonly SkillLearningNativeAction[]
+}
+```
+
+```ts type-equiv
+/** Log-only native item metadata, without command arguments, stdout or imported history. */
+type SkillLearningNativeItem = SkillLearningNativeIdentity & {
+  readonly itemId: SkillLearningNativeAction['itemId']
+  readonly kind: SkillLearningNativeAction['kind']
+  readonly name: string
+  readonly phase: 'started' | 'settled' | 'invalidated'
+  readonly outcome?: SkillLearningNativeAction['outcome'] | undefined
+  readonly skillReadPath?: string | undefined
+  /** Historical read/check slot keeps its existing persisted variants. */
+  readonly procedure?: { readonly kind: 'read'; readonly path: string } | { readonly kind: 'check'; readonly command: string } | undefined
+  /** Additive Codex file-change facts are paired separately before action evidence conversion. */
+  readonly patchProcedure?: {
+    readonly kind: 'patch'
+    readonly changes: readonly {
+      readonly operation: 'add' | 'delete' | 'update'
+      readonly path: string
+      readonly movePath?: string | undefined
+    }[]
+  } | undefined
+  readonly sourceMessageId?: SkillClaudeMessageId | undefined
+  readonly resultMessageId?: SkillClaudeMessageId | undefined
+}
+```
 
 ## Browser Session catalog
 
@@ -333,14 +443,14 @@ registerNativeProvider(provider: NativeSkillLibraryProvider): () => void
  * @param request - identity and expected hash.
  * @returns archived item.
  */
-@Remote('archive') archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
+@Remote('archive') async archive(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue>
 
 /**
  * Restore a selected archive into a vacant original location.
  * @param request - archived identity.
  * @returns restored item.
  */
-@Remote('restore') restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>
+@Remote('restore') async restore(request: SkillLibraryIdRequest): Promise<SkillLibraryItemValue>
 
 /**
  * Preview conservative managed-file compression.
@@ -371,6 +481,26 @@ registerNativeProvider(provider: NativeSkillLibraryProvider): () => void
 @Remote('retrieve') retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]>
 
 /**
+ * Read independent Decision settings and API capability disclosure.
+ * @returns disabled or available route choices without generation.
+ */
+@Remote('decisionStatus') decisionStatus(): Promise<DecisionStatus>
+
+/**
+ * Read exact API model effort and tier controls.
+ * @param route - registered response-only route.
+ * @returns explicit supported controls; native routes reject.
+ */
+@Remote('decisionCapabilities') decisionCapabilities(route: DecisionRoute): Promise<DecisionCapabilities>
+
+/**
+ * Save separate revision-checked Decision settings.
+ * @param request - observed revision, opt-in and exact API route.
+ * @returns committed settings without altering the main chat model.
+ */
+@Remote('configureDecision') configureDecision(request: DecisionConfigureRequest): Promise<DecisionConfiguration>
+
+/**
  * Record verified explicit instruction delivery.
  * @param request - exact library/version identity and observation.
  * @returns persistence completion.
@@ -390,6 +520,16 @@ registerLearningGenerator(provider: SkillLearningGenerator): () => void
  * @returns registration disposer.
  */
 registerLearningValidator(provider: SkillLearningValidator): () => void
+
+/**
+ * Run a fresh cancellable sequential task and retain only its durable current native procedure facts.
+ * @param agent - exact selected live root supplying execution authority.
+ * @param source - exact original source and disclosed native tool mode.
+ * @param text - current human continuation, sanitized before evidence retention.
+ * @param operation - provider admission, current-turn metadata and settled mirror reconciliation.
+ * @returns its native result after task settlement and existing policy-controlled learning.
+ */
+runSequentialTask<T>( agent: Agent, source: SkillSequentialTaskSource, text: string, operation: (hooks: SkillSequentialTaskHooks) => Promise<T>, ): Promise<T>
 
 /**
  * Capture immutable task observations without inferring success.
@@ -425,6 +565,13 @@ setLearningAvailability(projectId: string, value: Omit<SkillLearningAvailability
  * @returns durable uncertain proposal.
  */
 @Remote('proposeLearning') proposeLearning(request: SkillLearningProposeRequest): Promise<SkillLearningProposal>
+
+/**
+ * Apply independently checkable native procedure recording under explicit project policy.
+ * @param evidence - unchanged retained live native observation.
+ * @returns review/applied proposal or no change for an already recorded procedure.
+ */
+autoLearnEvidence(evidence: SkillLearningEvidence): Promise<SkillLearningProposal | undefined>
 
 /**
  * Read metadata-only proposal summaries.
@@ -474,7 +621,23 @@ setLearningAvailability(projectId: string, value: Omit<SkillLearningAvailability
  * @returns enabled or revoked consent.
  */
 @Remote('setAutomaticLearning') setAutomaticLearning(request: SkillLearningAutomaticRequest): Promise<SkillLearningOptIn>
+
+/**
+ * Run an immediate bounded semantic pass; force preserves ownership, pins and consent.
+ * @param request - project and optional selected managed identities.
+ * @returns durable applied proposals with exact independent mechanical receipts.
+ */
+@Remote('cleanupSemantic') cleanupSemantic(request: SkillLearningCleanupRequest): Promise<readonly SkillLearningProposal[]>
+
+/**
+ * Revoke an approved policy while retaining recovery history.
+ * @param request - approved policy identity.
+ * @returns disabled retained policy.
+ */
+@Remote('revokeLearningPolicy') revokeLearningPolicy(request: SkillLearningRevokePolicyRequest): Promise<SkillLearningPolicy>
 ```
+
+Types: [Agent](core.md) · [SkillSequentialTaskHooks](../../packages/skill/skill-library/README.md) · [SkillSequentialTaskSource](../../packages/skill/skill-library/README.md)
 
 Source: [`packages/skill/skill-library/src/index.ts`](../../packages/skill/skill-library/src/index.ts)
 

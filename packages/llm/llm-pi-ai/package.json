@@ -31,6 +31,10 @@
     "./types": {
       "types": "./lib/types/types.d.ts",
       "default": "./lib/types/types.js"
+    },
+    "./coding-session-source": {
+      "types": "./lib/types/coding-session-source.d.ts",
+      "default": "./lib/types/coding-session-source.js"
     }
   },
   "files": [
@@ -60,7 +64,10 @@
     "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
     "@deepseek-ai/dsh-user-approval": "workspace:*",
     "@deepseek-ai/dsh-user-questions": "workspace:*",
-    "@deepseek-ai/dsh-skill-library": "workspace:*"
+    "@deepseek-ai/dsh-skill-library": "workspace:*",
+    "@deepseek-ai/dsh-coding-session": "workspace:*",
+    "@deepseek-ai/dsh-subprocess": "workspace:*",
+    "@deepseek-ai/dsh-workspace": "workspace:*"
   },
   "dependencies": {
     "@deepseek-ai/dsh-brand": "workspace:*",
@@ -98,13 +105,25 @@
     "@deepseek-ai/dsh-tools": "workspace:*",
     "@deepseek-ai/dsh-system-prompt": "workspace:*",
     "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/dsh-skill-library": "workspace:*"
+    "@deepseek-ai/dsh-skill-library": "workspace:*",
+    "@deepseek-ai/dsh-coding-session": "workspace:*",
+    "@deepseek-ai/dsh-subprocess": "workspace:*",
+    "@deepseek-ai/dsh-workspace": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis-plugin-loader": {
       "optional": true
     },
     "@deepseek-ai/dsh-skill-library": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-workspace": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-coding-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subprocess": {
       "optional": true
     }
   }

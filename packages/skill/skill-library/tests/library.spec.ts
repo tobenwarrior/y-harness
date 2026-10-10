@@ -156,8 +156,8 @@ describe('file-backed skill library', () => {
     await f.skill('project', 'deploy', 'Replacement body.')
     const inventory = await f.library.list({}); expect(new Set(inventory.items.map(item => item.id)).size).toBe(2)
     const replacement = inventory.items.find(item => item.status === 'active')!
-    expect((await f.library.detail({ id: old.id })).content).toBe('Original body.')
-    expect((await f.library.detail({ id: replacement.id })).content).toBe('Replacement body.')
+    expect((await f.library.detail({ id: old.id })).content).toBe('\nOriginal body.\n')
+    expect((await f.library.detail({ id: replacement.id })).content).toBe('\nReplacement body.\n')
     await expect(f.library.restore({ id: old.id })).rejects.toThrow(/occupied/)
     expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toContain('Replacement body.')
   })
@@ -196,7 +196,7 @@ describe('file-backed skill library', () => {
     const restarted = new SkillLibrary(f.options)
     const inventory = await restarted.list({})
     expect(inventory.items.find(item => item.status === 'archived')).toBeDefined()
-    expect((await restarted.detail({ id: item.id })).content).toBe('Original body.')
+    expect((await restarted.detail({ id: item.id })).content).toBe('\nOriginal body.\n')
   })
   it('reports malformed recovery documents without blocking unrelated skill inventory', async () => {
     const f = await fixture(); await f.skill('project', 'deploy')

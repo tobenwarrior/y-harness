@@ -89,6 +89,45 @@ describe('bundleRoster on a scratch installation', () => {
     expect(linked.roster(['@t/base', '@t/linked'])).toEqual(['@t/theme'])
   })
 
+  it('reads linked bundle self rows from their own declarations and refuses an uninstalled adjacent package', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const browser = join(linked.root, 'workspace', 'browser')
+    const host = join(linked.root, 'workspace', 'host')
+    const adjacent = join(linked.root, 'workspace', 'adjacent')
+    for (const directory of [browser, host, adjacent]) mkdirSync(directory, { recursive: true })
+    writeFileSync(join(browser, 'package.json'), JSON.stringify({
+      name: '@t/browser-self',
+      dsh: {
+        bundle: { patch: './cordis.patch.yml' },
+        client: { platform: 'web', inject: ['react'], immediately: true },
+      },
+    }))
+    writeFileSync(join(host, 'package.json'), JSON.stringify({
+      name: '@t/host-self', dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(join(adjacent, 'package.json'), JSON.stringify({
+      name: '@t/adjacent', dsh: { client: { platform: 'web' } },
+    }))
+    const browserPatch = "- insert:\n    - id: self\n      name: '@t/browser-self'\n"
+    writeFileSync(join(browser, 'cordis.patch.yml'), browserPatch)
+    writeFileSync(join(host, 'cordis.patch.yml'), "- insert:\n    - id: host-self\n      name: '@t/host-self'\n")
+    linked.bundle('@t/base', '- insert: []\n')
+    symlinkSync(browser, join(linked.root, 'app', 'node_modules', '@t', 'browser-self'), 'junction')
+    symlinkSync(host, join(linked.root, 'app', 'node_modules', '@t', 'host-self'), 'junction')
+
+    expect(bundleRoster(['@t/browser-self', '@t/host-self'], linked.anchor).rows).toEqual([
+      { name: '@t/browser-self', inject: ['react'], immediately: true },
+    ])
+    expect(bundleRoster(['@t/browser-self'], join(browser, 'package.json')).rows).toEqual([
+      { name: '@t/browser-self', inject: ['react'], immediately: true },
+    ])
+
+    writeFileSync(join(browser, 'cordis.patch.yml'), browserPatch + "    - id: adjacent\n      name: '@t/adjacent'\n")
+    expect(() => bundleRoster(['@t/browser-self', '@t/host-self'], linked.anchor))
+      .toThrow('cannot resolve plugin package @t/adjacent from @t/browser-self, @t/host-self')
+  })
+
   it('applies the layers in order and keeps enabled browser rows once, with their dsh.client declaration', () => {
     scratch.web('@t/a', { inject: ['@t/b'], immediately: true })
     scratch.web('@t/b')

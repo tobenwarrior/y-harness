@@ -36,6 +36,7 @@ import {
   claudeSpawnSpec,
   ManagedClaudeCodeProcess,
 } from './process.ts'
+import { createClaudeCodeToolObserver, type ClaudeCodeToolObservationOptions } from './tool-observations.ts'
 
 /** Default POSIX grace between subprocess termination tiers. */
 export const DEFAULT_DISPOSE_GRACE_MS = 3_000
@@ -162,6 +163,8 @@ export interface ClaudeCodeRunSpec {
   readonly spawn: (spec: SubprocessSpawnSpec) => SubprocessHandle
   /** Host diagnostic sink for a product failure kept outside model-visible text. */
   readonly onError?: (error: Error, stopReason: SubagentStopReason) => void
+  /** Optional source-labelled direct child diagnostics; never parent task verification. */
+  readonly toolObservations?: ClaudeCodeToolObservationOptions
 }
 
 function thrown(value: unknown): Error {
@@ -231,15 +234,19 @@ export function successfulResult(message: SDKResultMessage): string {
  * @param query - published official SDK query.
  * @param onPermissionDenied - records a safe fact when the SDK reports native denial.
  * @param onResult - records that the SDK supplied a terminal result message.
+ * @param toolObservations - bounded direct receipts published only after normal iterator completion.
  * @returns the completed shared result.
  */
 export async function consumeClaudeQuery(
   query: AsyncIterable<SDKMessage>,
   onPermissionDenied?: () => void,
   onResult?: () => void,
+  toolObservations?: ClaudeCodeToolObservationOptions,
 ): Promise<SubagentResult> {
+  const observer = toolObservations === undefined ? undefined : createClaudeCodeToolObserver(toolObservations)
   let answer: string | undefined
   for await (const message of query) {
+    observer?.observe(message)
     if (message.type === 'system' && message.subtype === 'permission_denied') {
       onPermissionDenied?.()
       continue
@@ -254,6 +261,7 @@ export async function consumeClaudeQuery(
       category: 'invalid-result',
     })
   }
+  observer?.publish()
   return {
     output: [{ type: 'text', text: answer }],
     stopReason: 'completed',
@@ -518,6 +526,12 @@ export async function startClaudeCodeRun(
   const publishedQuery = query
   const publishedChild = child
   const publishedProcessFailure = childProcessFailure
+  const toolObservations: ClaudeCodeToolObservationOptions | undefined = spec.toolObservations === undefined ? undefined : {
+    ...spec.toolObservations,
+    sink: (observations) => {
+      if (!controller.signal.aborted && childFailure === undefined) spec.toolObservations?.sink(observations)
+    },
+  }
   let receivedResult = false
   const result = settleRunResult({
     attempt: async () => {
@@ -532,7 +546,7 @@ export async function startClaudeCodeRun(
             ))
           }, () => {
             receivedResult = true
-          }),
+          }, toolObservations),
           publishedProcessFailure,
         ])
       } catch (error: unknown) {

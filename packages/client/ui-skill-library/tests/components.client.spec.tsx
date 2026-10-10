@@ -6,7 +6,7 @@ import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import type { SkillLibraryId, SkillLibraryItem, SkillCleanupProposalId } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLibraryId, SkillLibraryItem, SkillCleanupProposalId, SkillRevisionId } from '@deepseek-ai/dsh-skill-library/types'
 import { SkillLibraryPage, type SkillLibraryPageProps } from '../src/client/SkillLibraryPage.tsx'
 import { en } from '../src/client/locales.ts'
 import { createNavigationStore } from '../src/client/navigation-store.ts'
@@ -14,19 +14,32 @@ import { createLearningState, type SkillLibraryState } from '../src/client/contr
 
 afterEach(cleanup)
 const id = 'release' as SkillLibraryId
-const item: SkillLibraryItem = { id, name: 'Release workflow', description: 'Ship verified releases', provider: 'filesystem', source: 'project', path: '/work/project/.dsh/skills/release/SKILL.md', scope: 'project', projectIds: ['project'], ownership: 'protected', status: 'active', shadowed: false, pinned: false, automaticCleanup: false, invocation: { modelInvocable: true, userInvocable: true }, contentHash: 'hash', bodyBytes: 560, usage: { coverage: 'unknown', loadCount: 0 }, references: [], capabilities: { adopt: true, archive: false, restore: false, cleanup: false, native: false } }
+const item: SkillLibraryItem = { id, name: 'Release workflow',
+  description: 'Ship verified releases', provider: 'filesystem', source: 'project',
+  path: '/work/project/.dsh/skills/release/SKILL.md', scope: 'project', projectIds: ['project'],
+  ownership: 'protected', status: 'active', shadowed: false, pinned: false, automaticCleanup: false,
+  invocation: { modelInvocable: true, userInvocable: true }, contentHash: 'hash', bodyBytes: 560,
+  usage: { coverage: 'unknown', loadCount: 0 }, references: [], capabilities: { adopt: true,
+    archive: false, restore: false, cleanup: false, native: false } }
 const dictionary = { ...commonEn, ...en }
 const t: SkillLibraryPageProps['t'] = (key, params) => Object.entries(params ?? {}).reduce(
   (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), dictionary[key])
 
 function fixture(patch: Partial<SkillLibraryState> = {}) {
-  const data = createSnapshotStore<SkillLibraryState>({ status: 'ready', inventory: { items: [item, { ...item, id: 'filesystem:/skills/review/SKILL.md' as SkillLibraryId, name: 'Review workflow', scope: 'shared', projectIds: [], ownership: 'vendor' }], projects: [{ id: 'project', title: 'Y Harness', path: '/work/project' }], providers: [], bodyBudgetBytes: 6000 }, readError: false, detail: null, detailId: null, detailStatus: 'idle', busy: false, cleanupOpen: false, previewLoading: false, previewError: false, proposal: null, notice: null, learning: createLearningState(), ...patch })
+  const data = createSnapshotStore<SkillLibraryState>({ status: 'ready', inventory: { items: [item,
+    { ...item, id: 'filesystem:/skills/review/SKILL.md' as SkillLibraryId, name: 'Review workflow',
+      scope: 'shared', projectIds: [], ownership: 'vendor' }], projects: [{ id: 'project',
+    title: 'Y Harness', path: '/work/project' }], providers: [], bodyBudgetBytes: 6000 },
+  readError: false, detail: null, detailId: null, detailStatus: 'idle', busy: false,
+  cleanupOpen: false, previewLoading: false, previewError: false, proposal: null, notice: null,
+  learning: createLearningState(), ...patch })
   const navigation = createNavigationStore().create()
   const callbacks = {
     ensure: vi.fn(), refresh: vi.fn(), loadDetail: vi.fn(), act: vi.fn(), preview: vi.fn(), closePreview: vi.fn(),
     applyPreview: vi.fn(), rollback: vi.fn(), dismissNotice: vi.fn(), refreshLearning: vi.fn(), loadReview: vi.fn(),
-    proposeLearning: vi.fn(), validateReview: vi.fn(), approveReview: vi.fn(), rejectReview: vi.fn(), approvePolicy: vi.fn(),
-    setLearningAutomatic: vi.fn(),
+    proposeLearning: vi.fn(), validateReview: vi.fn(), approveReview: vi.fn(), rejectReview: vi.fn(
+    ), approvePolicy: vi.fn(), revokePolicy: vi.fn(),
+    setLearningAutomatic: vi.fn(), cleanupSemantic: vi.fn(),
   }
   render(<SkillLibraryPage {...callbacks} useLibrary={bindSnapshotSelector(data)} useStore={bindSnapshotSelector(navigation)}
     actions={navigation.actions} t={t} />)
@@ -34,6 +47,77 @@ function fixture(patch: Partial<SkillLibraryState> = {}) {
 }
 
 describe('skill library panel', () => {
+  it('offers historical restore with the current source and retained revision', () => {
+    const revisionId = 'revision:learning' as SkillRevisionId
+    const managed = { ...item, ownership: 'y-managed' as const, contentHash: 'reduced-hash',
+      capabilities: { ...item.capabilities, adopt: false, archive: true, cleanup: true } }
+    const state = fixture({ inventory: { items: [managed], projects: [], providers: [], bodyBudgetBytes: 6000 },
+      detailId: id, detailStatus: 'ready', detail: { item: managed, content: 'Reduced instructions', revisions: [{
+        id: revisionId, createdAt: '2026-10-09T01:00:00Z', reason: 'learning',
+        beforeHash: 'original-hash', afterHash: 'reduced-hash', beforeBytes: 120, afterBytes: 90,
+      }] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    expect(screen.getByText('Learning maintenance')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore content from before this revision' }))
+    expect(state.rollback).toHaveBeenCalledWith(managed, revisionId)
+  })
+
+  it('approves project learning from an empty library after explicit project selection', () => {
+    const state = fixture({ inventory: { items: [], projects: [{ id: 'project', title: 'Y Harness',
+      path: '/work/project' }], providers: [], bodyBudgetBytes: 6000 }, learning: {
+      ...createLearningState(), status: 'ready', providers: { availability: [], generators: [
+        'native-observation'], validators: [{ id: 'native-observation-validator', trusted: true }],
+      policies: [], optIns: [], evidence: [] },
+    } })
+    fireEvent.click(screen.getByRole('button', { name: 'Project learning' }))
+    const dialog = screen.getByRole('dialog', { name: 'Project learning' })
+    const approve = within(dialog).getByRole('button', { name: 'Approve project learning' })
+    expect(approve.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Learning project' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Y Harness' }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Allow new skills from native work' }))
+    expect(state.approvePolicy).not.toHaveBeenCalled()
+    fireEvent.click(approve)
+    expect(state.approvePolicy).toHaveBeenCalledWith({ validatorId: 'native-observation-validator',
+      generatorId: 'native-observation', projectId: 'project', operations: ['create', 'update'] })
+    expect(state.act).not.toHaveBeenCalled()
+    expect(state.loadDetail).not.toHaveBeenCalled()
+  })
+
+  it('confirms reversible deletion and keeps archived restore easy to find', () => {
+    const managed = { ...item, ownership: 'y-managed' as const,
+      capabilities: { ...item.capabilities, adopt: false, archive: true, cleanup: true } }
+    const archived = { ...managed, id: 'retired' as SkillLibraryId, name: 'Retired workflow', status: 'archived' as const,
+      capabilities: { ...managed.capabilities, archive: false, cleanup: false, restore: true } }
+    const state = fixture({ inventory: { items: [managed, archived], projects: [], providers: [], bodyBudgetBytes: 6000 },
+      detail: { item: managed, content: 'Instructions', revisions: [] }, detailId: id, detailStatus: 'ready' })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete skill' })
+    expect(within(dialog).getByText(/retain its full bundle/)).toBeTruthy()
+    expect(state.act).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(state.act).toHaveBeenCalledWith('archive', managed)
+    fireEvent.click(screen.getByRole('button', { name: 'Deleted skills' }))
+    expect(state.navigation.getSnapshot().status).toBe('archived')
+    expect(screen.queryByRole('button', { name: 'Inspect Release workflow' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Retired workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    expect(state.act).toHaveBeenLastCalledWith('restore', archived)
+  })
+
+  it('keeps Delete disabled when a managed skill is pinned', () => {
+    const pinned = { ...item, pinned: true, ownership: 'y-managed' as const,
+      capabilities: { ...item.capabilities, adopt: false, archive: true, cleanup: true } }
+    const state = fixture({ inventory: { items: [pinned], projects: [], providers: [], bodyBudgetBytes: 6000 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    const button = screen.getByRole('button', { name: 'Delete' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(button)
+    expect(screen.queryByRole('dialog', { name: 'Delete skill' })).toBeNull()
+    expect(state.act).not.toHaveBeenCalled()
+  })
+
   it('reserves the macOS shell control band within the compact header', () => {
     const stylesheet = readFileSync('packages/client/ui-skill-library/src/client/SkillLibraryPage.module.css', 'utf8')
     const darwinHeader = stylesheet.match(/:global\(\[data-platform='darwin'\]\) \.header \{([^}]+)\}/)?.[1]
@@ -100,7 +184,8 @@ describe('skill library panel', () => {
     fireEvent.click(screen.getByRole('tab', { name: en.graph }))
     expect(screen.queryByRole('complementary', { name: 'Skill explorer' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Show explorer' }))
-    expect(within(screen.getByRole('complementary', { name: 'Skill explorer' })).getByRole('button', { name: 'Inspect Review workflow' })).toBeTruthy()
+    expect(within(screen.getByRole('complementary', { name: 'Skill explorer' })).getByRole('button',
+      { name: 'Inspect Review workflow' })).toBeTruthy()
     expect(state.loadDetail).not.toHaveBeenCalled()
   })
 
@@ -121,7 +206,8 @@ describe('skill library panel', () => {
     expect(screen.getByText('Run the focused check.')).toBeTruthy()
     expect(state.loadDetail).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: 'Hide inspector' }))
-    fireEvent.click(within(screen.getByRole('complementary', { name: 'Skill explorer' })).getByRole('button', { name: 'Inspect Release workflow' }))
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Skill explorer' })).getByRole(
+      'button', { name: 'Inspect Release workflow' }))
     expect(screen.getByRole('complementary', { name: en.details })).toBeTruthy()
   })
 
@@ -200,7 +286,8 @@ describe('skill library panel', () => {
   })
 
   it('keeps archived skills from an unregistered project visible in the graph', () => {
-    const archived = { ...item, id: 'archived' as SkillLibraryId, name: 'Retired release', projectIds: ['old-project'], status: 'archived' as const }
+    const archived = { ...item, id: 'archived' as SkillLibraryId, name: 'Retired release',
+      projectIds: ['old-project'], status: 'archived' as const }
     fixture({ inventory: { items: [archived], projects: [], providers: [], bodyBudgetBytes: 6000 } })
     fireEvent.click(screen.getByRole('tab', { name: en.graph }))
     expect(screen.getByRole('button', { name: 'Open skill Retired release' })).toBeTruthy()
@@ -208,7 +295,8 @@ describe('skill library panel', () => {
   })
 
   it('keeps unavailable sources visible in the compact status area across modes', () => {
-    fixture({ inventory: { items: [item], projects: [{ id: 'project', title: 'Y Harness', path: '/work/project' }], providers: [{ provider: 'codex', state: 'disconnected' }], bodyBudgetBytes: 6000 } })
+    fixture({ inventory: { items: [item], projects: [{ id: 'project', title: 'Y Harness',
+      path: '/work/project' }], providers: [{ provider: 'codex', state: 'disconnected' }], bodyBudgetBytes: 6000 } })
     const warning = screen.getByText(en.sourceUnavailable)
     fireEvent.click(warning)
     expect(screen.getByText(en.providerUnavailable)).toBeTruthy()
@@ -220,8 +308,9 @@ describe('skill library panel', () => {
   it('shows native metadata as unknown instead of an empty skill body', () => {
     const native = { ...item, bodyBytes: 0, contentHash: '', ownership: 'vendor' as const,
       capabilities: { adopt: false, archive: false, restore: false, cleanup: false, native: true } }
-    const state = fixture({ inventory: { items: [native], projects: [], providers: [{ provider: 'codex', state: 'disconnected' }], bodyBudgetBytes: 6000 },
-      detailId: id, detailStatus: 'ready', detail: { item: native, content: '', revisions: [] } })
+    const state = fixture({ inventory: { items: [native], projects: [], providers: [{
+      provider: 'codex', state: 'disconnected' }], bodyBudgetBytes: 6000 },
+    detailId: id, detailStatus: 'ready', detail: { item: native, content: '', revisions: [] } })
     fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
     expect(screen.getByText(en.unknownSize)).toBeTruthy()
     expect(screen.getByText(en.instructionsUnavailable)).toBeTruthy()
@@ -229,26 +318,31 @@ describe('skill library panel', () => {
     expect(state.act).not.toHaveBeenCalled()
   })
 
-  it('previews archiving a shared managed skill and exposes restore for archived items', () => {
+  it('confirms deleting a shared managed skill and exposes restore for archived items', () => {
     const managed = { ...item, scope: 'shared' as const, projectIds: [], ownership: 'y-managed' as const,
       capabilities: { ...item.capabilities, adopt: false, archive: true, cleanup: true } }
     const state = fixture({ inventory: { items: [managed], projects: [], providers: [], bodyBudgetBytes: 6000 },
       detail: { item: managed, content: 'Instructions', revisions: [] }, detailId: id, detailStatus: 'ready' })
     fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
-    fireEvent.click(screen.getByRole('button', { name: en.archive }))
-    const dialog = screen.getByRole('dialog', { name: en.archiveTitle })
-    expect(within(dialog).getByText(en.archiveDescription)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.deleteSkill }))
+    const dialog = screen.getByRole('dialog', { name: en.deleteTitle })
+    expect(within(dialog).getByText(en.deleteDescription)).toBeTruthy()
     expect(state.act).not.toHaveBeenCalled()
-    fireEvent.click(within(dialog).getByRole('button', { name: en.archive }))
+    fireEvent.click(within(dialog).getByRole('button', { name: en.deleteSkill }))
     expect(state.act).toHaveBeenCalledWith('archive', managed)
     const archived = { ...managed, status: 'archived' as const, capabilities: { ...managed.capabilities, archive: false, restore: true } }
-    act(() => { state.data.set({ ...state.data.getSnapshot(), inventory: { items: [archived], projects: [], providers: [], bodyBudgetBytes: 6000 }, detail: { item: archived, content: 'Instructions', revisions: [] } }) })
+    act(() => { state.data.set({ ...state.data.getSnapshot(), inventory: { items: [archived],
+      projects: [], providers: [], bodyBudgetBytes: 6000 }, detail: { item: archived,
+      content: 'Instructions', revisions: [] } }) })
     fireEvent.click(screen.getByRole('button', { name: en.restore }))
     expect(state.act).toHaveBeenLastCalledWith('restore', archived)
   })
 
   it('shows a reviewed diff before an explicit cleanup application', () => {
-    const state = fixture({ cleanupOpen: true, proposal: { id: 'preview' as SkillCleanupProposalId, createdAt: '2026-10-09T00:00:00Z', skipped: [], changes: [{ id, name: item.name, expectedHash: 'hash', before: 'Old instructions', after: 'Short instructions', beforeBytes: 30, afterBytes: 20, overBudget: false }] } })
+    const state = fixture({ cleanupOpen: true, proposal: { id: 'preview' as SkillCleanupProposalId,
+      createdAt: '2026-10-09T00:00:00Z', skipped: [], changes: [{ id, name: item.name,
+        expectedHash: 'hash', before: 'Old instructions', after: 'Short instructions', beforeBytes: 30,
+        afterBytes: 20, overBudget: false }] } })
     const dialog = screen.getByRole('dialog', { name: en.cleanupTitle })
     expect(within(dialog).getByText('Old instructions')).toBeTruthy()
     expect(within(dialog).getByText('Short instructions')).toBeTruthy()

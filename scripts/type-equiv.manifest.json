@@ -1512,6 +1512,71 @@
       "source": "packages/skill/skill/src/index.ts"
     },
     {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillLearningNativeProcedure",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillNativeConnectionId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillCodexSessionId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillCodexTurnId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillCodexItemId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillClaudeSessionId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillClaudeSendId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillClaudeMessageId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillClaudeToolUseId",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillLearningNativeIdentity",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillLearningNativeAction",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillLearningNativeEvidence",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
+      "doc": "docs/subsystems/skills.md",
+      "symbol": "SkillLearningNativeItem",
+      "source": "packages/skill/skill-library/src/learning-types.ts"
+    },
+    {
       "doc": "docs/subsystems/compaction.md",
       "symbol": "CompactionResult",
       "source": "packages/compaction/compaction/src/types.ts"
@@ -1610,6 +1675,11 @@
       "doc": "docs/subsystems/subagent.md",
       "symbol": "SubagentProvider",
       "source": "packages/subagent/subagent/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/subagent.md",
+      "symbol": "ClaudeRootProtocolRecord",
+      "source": "packages/subagent/subagent-claude-code/src/root-types.ts"
     },
     {
       "doc": "docs/subsystems/web.md",
@@ -2356,6 +2426,86 @@
       "doc": "docs/subsystems/product-telemetry.md",
       "symbol": "ProductTelemetryRecord",
       "source": "packages/host/product-telemetry-otel/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionOwnerToken",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionNativeTurnId",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionMirror",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionsState",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionProvider",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionLibraryOptions",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionExecutionSession",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionClaimAcknowledgement",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionSequentialToolMode",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionHandoffPhase",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionHandoff",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionHandoffStore",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionSequentialAcquireRequest",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionSequentialWriterProvider",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionSequentialReleaseReceipt",
+      "source": "packages/session/coding-session/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/session.md",
+      "symbol": "CodingSessionSequentialWriterLease",
+      "source": "packages/session/coding-session/src/types.ts"
     }
   ]
 }

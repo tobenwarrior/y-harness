@@ -884,6 +884,7 @@ function builtBinSmokeGate(needs: string[] = ['build']): Gate {
     // unbuilt, so these files self-skip there.
     'packages/workflow/workflow-ptc/tests/built-runtime.e2e.ts',
     'packages/ptc-runtime/ptc-runtime-node/tests/built-lib.e2e.ts',
+    'packages/session/coding-session/tests/claude-source-worker.e2e.ts',
     'packages/session/session-persistence-jsonl/tests/built-migration-worker.e2e.ts',
     'packages/lsp/lsp-stdio/tests/built-lib.e2e.ts',
   ], {

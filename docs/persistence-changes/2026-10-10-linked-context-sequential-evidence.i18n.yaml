@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-10-linked-context-sequential-evidence.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-10-linked-context-sequential-evidence.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-10-linked-context-sequential-evidence:
+  en: 7f67bb8ae0233aa0
+  zh: 22b9d1248c3988ce
+/2026-10-10-linked-context-sequential-evidence/summary:
+  en: 795bfea9801a9b34
+  zh: 58ffb499e0ddd24c
+/2026-10-10-linked-context-sequential-evidence/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-10-linked-context-sequential-evidence/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-10-linked-context-sequential-evidence/compatibility:
+  en: 1df1f742a4f241ac
+  zh: 0f52fc7a2265dbdf
+/2026-10-10-linked-context-sequential-evidence/verification:
+  en: 990a48e0b4cfdf16
+  zh: 783c876fcf2c7712
+/2026-10-10-linked-context-sequential-evidence/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

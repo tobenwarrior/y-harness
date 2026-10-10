@@ -1134,7 +1134,7 @@ export class LlmRuntime extends TypertRemoteService {
     let iterator: AsyncIterator<StreamChunk>
     try {
       const registration = prepared?.registration ?? this.registration(options.provider)
-      if (options.purpose === 'skill-learning') this.requireApiGeneration(registration)
+      if (options.purpose === 'skill-learning' || options.purpose === 'skill-decision') this.requireApiGeneration(registration)
       const adapter = registration.adapter
       let modelInfo: LlmResolvedModelInfo
       let resolvedConfig: LlmCallConfig

@@ -133,7 +133,7 @@ export class SkillLibrary {
         automaticCleanup: managed && state.automaticCleanup,
         invocation: entry.candidate.invocation,
         contentHash: currentHash,
-        bodyBytes: Buffer.byteLength(body(raw)),
+        bodyBytes: Buffer.byteLength(instructionBody(raw)),
         usage: state.usage,
         references: references(raw, dirname(entry.candidate.path), entry.candidate.metadata),
         capabilities: { adopt: safe, archive: safe, restore: false, cleanup: managed && !state.pinned, native: false },
@@ -255,7 +255,7 @@ export class SkillLibrary {
   }
 
   /**
-   * Load one selected body and its durable history; no broad instruction response is produced.
+   * Load one selected complete instruction body and its durable history; local boundary whitespace is retained.
    * @param request - stable selected skill identity.
    * @returns instructions and revision history.
    */
@@ -264,8 +264,8 @@ export class SkillLibrary {
     const state = this.record(request.id)
     const local = this.local.get(request.id)
     let content = ''
-    if (state.archive !== undefined) content = body(await readFile(state.archive.instructionPath, 'utf8'))
-    else if (local !== undefined) content = body(local.raw)
+    if (state.archive !== undefined) content = instructionBody(await readFile(state.archive.instructionPath, 'utf8'))
+    else if (local !== undefined) content = instructionBody(local.raw)
     else if (this.registryOwners.has(item.id)) {
       const registry = this.options.registryInventory
       if (registry === undefined) throw new Error('registry skill source is no longer available')
@@ -425,7 +425,7 @@ export class SkillLibrary {
         after,
         beforeBytes: Buffer.byteLength(entry.raw),
         afterBytes: Buffer.byteLength(after),
-        overBudget: Buffer.byteLength(body(after)) > this.options.bodyBudgetBytes,
+        overBudget: Buffer.byteLength(instructionBody(after)) > this.options.bodyBudgetBytes,
       })
     }
     const proposal = {
@@ -750,7 +750,7 @@ export class SkillLibrary {
   }> {
     const entry = await this.requireLocal(id)
     await this.assertHash(entry, entry.item.contentHash)
-    return { item: entry.item, raw: entry.raw, content: body(entry.raw), bundlePath: entry.bundlePath }
+    return { item: entry.item, raw: entry.raw, content: instructionBody(entry.raw), bundlePath: entry.bundlePath }
   }
 
   /**
@@ -769,41 +769,46 @@ export class SkillLibrary {
       const entry = await this.requireLocal(request.id)
       if (entry.item.ownership !== 'y-managed') throw new Error('skill is protected; adopt the current version first')
       const header = entry.raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? ''
-      await this.revise(request.id, request.expectedHash, header + '\n' + request.content.trim() + '\n', 'learning')
+      await this.revise(request.id, request.expectedHash, header + request.content, 'learning')
       return { item: await this.requireItem(request.id) }
     })
   }
 
   /**
    * Create an explicitly reviewed project skill without replacing any existing path.
-   * @param request - registered project and host-validated new name and body.
+   * @param request - registered project, exact reviewed destination and host-validated new name and body.
    * @param verify - host-owned update-before-create checks at admission.
-   * @returns deliberately managed new item with all automation disabled.
+   * @returns deliberately managed new item with automatic consent granted separately by the coordinator under an explicit project policy.
    */
   createLearning(request: {
     projectId: string
     name: string
     description: string
     content: string
+    expectedPath: string
   }, verify: () => Promise<void>): Promise<SkillLibraryItemValue> {
     return this.enqueue(async () => {
       await verify()
       const project = this.options.projects().find(item => item.id === request.projectId)
       if (project === undefined
         || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(request.name)) throw new Error('invalid project or skill name')
+      const projectPath = project.path
+      if (request.expectedPath !== join(projectPath, '.dsh', 'skills', request.name, 'SKILL.md')) throw new Error('skill destination changed from the reviewed project path')
       if ((await this.list({})).items.some(item => item.status !== 'archived' && item.name === request.name
         && (item.scope === 'shared'
           || item.projectIds.includes(request.projectId)))) throw new Error('existing skill must be updated before creation')
-      const root = join(project.path, '.dsh', 'skills')
-      for (const path of [project.path, join(
-        project.path,
+      const root = join(projectPath, '.dsh', 'skills')
+      for (const path of [projectPath, join(
+        projectPath,
         '.dsh',
       ), root]) if (await exists(path)
         && !await isUnlinked(path)) throw new Error('skill destination is protected')
+      await verify()
+      if (this.options.projects().find(item => item.id === request.projectId)?.path !== projectPath) throw new Error('skill destination changed from the reviewed project path')
       await mkdir(root, { recursive: true })
       const directory = join(root, request.name); await mkdir(directory, { mode: 0o700 })
       const path = join(directory, 'SKILL.md')
-      const raw = '---\nname: ' + request.name + '\ndescription: ' + JSON.stringify(request.description) + '\n---\n\n' + request.content.trim() + '\n'
+      const raw = '---\nname: ' + request.name + '\ndescription: ' + JSON.stringify(request.description) + '\n---\n' + request.content
       const canonical = join(await realpath(directory), 'SKILL.md')
       const id = identity(this.options.provider.name, canonical)
       const created = { ...this.record(id), managedHash: hash(raw), automaticCleanup: false }
@@ -983,7 +988,8 @@ async function isUnlinked(path: string): Promise<boolean> {
   return !(await lstat(path)).isSymbolicLink() && !(await lstat(dirname(path))).isSymbolicLink()
     && await realpath(path) === join(await realpath(dirname(path)), basename(path))
 }
-function body(raw: string): string { return raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '').trim() }
+function instructionBody(raw: string): string { return raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '') }
+function body(raw: string): string { return instructionBody(raw).trim() }
 function references(
   raw: string,
   directory: string,
@@ -991,7 +997,7 @@ function references(
   const result: SkillLibraryReference[] = []
   const related = metadata?.relatedSkills
   if (Array.isArray(related)) for (const target of related) if (typeof target === 'string') result.push({ target, kind: 'skill' })
-  for (const match of withoutCodeExamples(body(raw)).matchAll(/\[[^\]]*\]\(([^\s)]+)(?:\s+[^)]*)?\)/g)) {
+  for (const match of withoutCodeExamples(instructionBody(raw)).matchAll(/\[[^\]]*\]\(([^\s)]+)(?:\s+[^)]*)?\)/g)) {
     const value = match[1]
     if (value === undefined) throw new Error('skill reference capture is unavailable')
     if (value.startsWith('#')) continue

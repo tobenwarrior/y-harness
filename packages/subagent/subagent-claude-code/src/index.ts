@@ -8,6 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import {
   assertPositiveFinite,
@@ -26,6 +27,27 @@ import {
   type ClaudeCodePermissionMode,
   type ClaudeCodeRunSpec,
 } from './run.ts'
+import { MAX_CLAUDE_CODE_TOOL_OBSERVATIONS, type ClaudeCodeToolObservation } from './tool-observations.ts'
+import * as Root from './root.ts'
+import type { ClaudeCodeRootConfig } from './root.ts'
+
+export type { ClaudeCodeToolObservation, ClaudeCodeToolObservationOptions } from './tool-observations.ts'
+export type { ClaudeCodeRootConfig } from './root.ts'
+export type { ClaudeRootProtocolRecord } from './root-types.ts'
+export { createClaudeSequentialExecutor, claudeSequentialProjectDirectory } from './sequential.ts'
+export type { ClaudeSequentialSelection, ClaudeSequentialSdk, ClaudeSequentialStartupPolicyReceipt, ClaudeSequentialTurnReceipt, ClaudeSequentialExecutor } from './sequential.ts'
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Observe-only direct native child receipts, separate from parent task evidence.
+     * @mode emit
+     * @param observations - frozen source-labelled metadata, without bodies or native turn claims.
+     * @param parent - exact Session that initiated this one-shot child query.
+     */
+    'claude-code/tool-observations': (observations: readonly ClaudeCodeToolObservation[], parent: Session) => void
+  }
+}
 
 export const name = 'subagent-claude-code'
 export const inject = ['subagents', 'subprocess']
@@ -54,6 +76,10 @@ export interface Config {
   permissionMode?: ClaudeCodePermissionMode
   /** Grace in milliseconds between Claude Code managed-range termination tiers. */
   disposeGraceMs?: number
+  /** Direct SDK tool identity collection bound; overflow discards the batch. Defaults to 64, maximum 256. */
+  toolObservationMaxItems?: number
+  /** Explicit opt-in normal root LLM route; absent means no native root adapter or process. */
+  rootRoute?: ClaudeCodeRootConfig | undefined
 }
 
 export const Config: z<Config> = z.object({
@@ -63,9 +89,11 @@ export const Config: z<Config> = z.object({
   permissionMode: z.union([...CLAUDE_CODE_PERMISSION_MODES])
     .default(DEFAULT_CLAUDE_CODE_PERMISSION_MODE),
   disposeGraceMs: z.number().default(DEFAULT_DISPOSE_GRACE_MS),
+  toolObservationMaxItems: z.number().default(64),
+  rootRoute: z.union([Root.Config, z.const(undefined)]),
 })
 
-type ResolvedConfig = Omit<Required<Config>, 'model'> & Pick<Config, 'model'>
+type ResolvedConfig = Omit<Required<Config>, 'model' | 'rootRoute'> & Pick<Config, 'model' | 'rootRoute'>
 /* jscpd:ignore-end */
 
 /* jscpd:ignore-start -- Cordis registration and shared-seam plumbing mirror
@@ -114,6 +142,23 @@ class ClaudeCodeProvider implements SubagentProvider {
       env: this.config.env,
       disposeGraceMs: this.config.disposeGraceMs,
       spawn: spawnSpec => this.ctx.subprocess.spawn(spawnSpec),
+      toolObservations: {
+        maxItems: this.config.toolObservationMaxItems,
+        sink: (observations) => {
+          for (const callback of this.ctx.events.dispatch('emit', [
+            request.parent, 'claude-code/tool-observations', observations, request.parent.session,
+          ])) {
+            try {
+              const returned: unknown = callback(observations, request.parent.session)
+              void Promise.resolve(returned).catch((error: unknown) => {
+                this.ctx.logger.warn('subagent-claude-code: tool observation listener rejected: %o', error)
+              })
+            } catch (error: unknown) {
+              this.ctx.logger.warn('subagent-claude-code: tool observation listener threw: %o', error)
+            }
+          }
+        },
+      },
       onError: (error, stopReason) => {
         this.ctx.logger.warn(
           `subagent-claude-code "${this.name}": child run failed (${stopReason}): %o`,
@@ -137,6 +182,8 @@ export function apply(ctx: Context, config: Config): void {
     env: config.env as Record<string, string>,
     permissionMode: config.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
     disposeGraceMs: config.disposeGraceMs as number,
+    toolObservationMaxItems: config.toolObservationMaxItems ?? 64,
+    ...config.rootRoute === undefined ? {} : { rootRoute: config.rootRoute },
   }
   assertPositiveFinite(
     'subagent-claude-code',
@@ -148,10 +195,15 @@ export function apply(ctx: Context, config: Config): void {
       `subagent-claude-code: disposeGraceMs must be no greater than ${MAX_TIMER_DELAY_MS}`,
     )
   }
+  if (!Number.isSafeInteger(resolved.toolObservationMaxItems) || resolved.toolObservationMaxItems < 1
+    || resolved.toolObservationMaxItems > MAX_CLAUDE_CODE_TOOL_OBSERVATIONS) {
+    throw new Error('subagent-claude-code: tool observation bound must be an integer from 1 to 256')
+  }
   ctx.subagents.registerProvider(new ClaudeCodeProvider(
     resolved.providerName,
     ctx,
     resolved,
   ))
+  if (resolved.rootRoute !== undefined) ctx.plugin(Root, resolved.rootRoute)
 }
 /* jscpd:ignore-end */

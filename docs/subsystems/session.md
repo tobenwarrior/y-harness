@@ -6,6 +6,226 @@ The in-memory, event-sourced model of [dsh-session](../../packages/core/session)
 
 Source: [`packages/core/session/src/types.ts`](../../packages/core/session/src/types.ts)
 
+## Native coding-session mirrors
+
+The separately mounted [`coding-session`](../../packages/session/coding-session/README.md) service discovers explicitly configured Codex or Claude source profiles and retains source-labelled mirrors in its own storage domain. Its metadata list omits event bodies; detail and refresh read bounded full histories only when requested. Provider, original profile, native session and stable event identities prevent cross-source merges. Append-only refresh is idempotent; edited or truncated history preserves the prior mirror and reports a conflict. These records do not create runnable Harness Sessions or authorize model calls. Native-enforced exclusive continuation remains a distinct unavailable capability in the shipped native adapters.
+
+The separate default-off sequential mode admits original-ID continuation only with an opted-in source, a reviewed current mirror revision and one selected live idle same-project Y root Session. The user acknowledges that other native writers are closed and the selected profile stays unchanged until release. Durable ownership and dispatch markers precede native effects; unresolved ownership remains blocked across restart when the old process handle is unavailable. The adapter declares its mode: Claude conversation disables project tools; Codex project-file mode disables shell and broader execution. Release requires actual owned-process exit, stream drainage and fresh original-source readback preserving the complete retained prefix and dispatched completed turns. This establishes saved public history, without a global writer lock or a certificate of every private context token. Settings continuation uses the selected root outside AgentLoop, creates no normal Y human-task lifecycle and supplies no automatic learning integration. Provider contracts and retained-context limits are in the [Codex adapter](../../packages/llm/llm-pi-ai/README.md) and [Claude adapter](../../packages/subagent/subagent-claude-code/README.md); native execution acceptance remains separate from fixture evidence.
+
+Source: [`packages/session/coding-session/src/types.ts`](../../packages/session/coding-session/src/types.ts). The following declarations preserve the public mirror, configuration and sequential ownership contracts.
+
+```ts type-equiv
+/** Opaque owned-process instance token, published before acquisition. */
+type CodingSessionOwnerToken = Branded<'coding-session-owner'>
+```
+
+```ts type-equiv
+/** Provider-owned native turn identity, scoped by its original source. */
+type CodingSessionNativeTurnId = Branded<'coding-session-native-turn'>
+```
+
+```ts type-equiv
+/** Durable source-labelled Y mirror, separate from runnable Harness chat sessions. */
+interface CodingSessionMirror extends CodingSessionSnapshot {
+  id: CodingSessionMirrorId
+  revision: number
+  digest: string
+  refreshedAt: string
+  status: 'ready' | 'conflict'
+  conflict?: 'history-diverged' | undefined
+  capabilities: CodingSessionCapabilities
+  /** Live sequential capability and ownership are not stored in the history table. */
+  sequentialAvailable?: boolean
+  sequentialReleaseAvailable?: boolean
+  sequentialToolMode?: CodingSessionSequentialToolMode
+  handoff?: CodingSessionHandoff
+}
+```
+
+```ts type-equiv
+/** Read-only settings inventory and mirror summaries. */
+interface CodingSessionsState {
+  sources: CodingSessionProviderView[]
+  mirrors: CodingSessionMirrorSummary[]
+  executionSessions?: CodingSessionExecutionSession[]
+  linkedImportsAvailable?: boolean
+  links?: CodingSessionLinkSummary[]
+  importDestinations?: CodingSessionImportDestinationSummary[]
+}
+```
+
+```ts type-equiv
+/** Public native discovery/read operations. Current read providers do not establish a safe client-owned continuation handoff. */
+interface CodingSessionProvider extends CodingSessionProfile {
+  label: string
+  /** Optional supported native exclusion API; not established by the current Codex and Claude read adapters. */
+  writer?: CodingSessionWriterProvider
+  /** Separate opted-in operational handoff; it does not exclude arbitrary external native writers. */
+  sequentialWriter?: CodingSessionSequentialWriterProvider
+  /** @returns whether the exact configured native connection is available. */
+  connected(): boolean
+  /** @param request - bounded operation lifetime. @param cursor - native pagination token. @returns one native metadata page. */
+  discover(request: CodingSessionReadRequest, cursor?: string): Promise<CodingSessionPage>
+  /**
+   * @param nativeSessionId - original source ID, never a created replacement.
+   * @param request - bounded operation lifetime.
+   * @returns complete stable history or explicit failure.
+   */
+  read(nativeSessionId: CodingSessionNativeId, request: CodingSessionReadRequest): Promise<CodingSessionSnapshot>
+}
+```
+
+```ts type-equiv
+/** Deployment-owned discovery, retention, and read deadline limits. */
+interface CodingSessionLibraryOptions {
+  store: CodingSessionStore
+  pageSize: number
+  maxEvents: number
+  maxMirrors: number
+  maxBytes: number
+  timeoutMs: number
+  /** Default-off sequential mode also requires an independent durable ownership store. */
+  enableSequentialHandoff?: boolean
+  /** Native turn deadline is separate from metadata-read deadlines. */
+  sequentialTurnTimeoutMs?: number
+  handoffStore?: CodingSessionHandoffStore
+}
+```
+
+```ts type-equiv
+/** Human-selected live root supplying the current Y execution approvals and sandbox policy. */
+interface CodingSessionExecutionSession { id: SessionId; project: string }
+```
+
+```ts type-equiv
+/** Exact reviewed selection and operational acknowledgement; no global native lock is implied. */
+interface CodingSessionClaimAcknowledgement {
+  source: CodingSessionSource
+  project: string
+  expectedRevision: number
+  executionSessionId: SessionId
+  externalWritersClosed: boolean
+  nativeProfileUnchanged: boolean
+}
+```
+
+```ts type-equiv
+/** Native conversation-only mode and project execution require distinct capability disclosure. */
+type CodingSessionSequentialToolMode = 'conversation' | 'project-files' | 'project-tools'
+```
+
+```ts type-equiv
+/** Persisted phases retain unresolved ownership when the Host or native child stops unexpectedly. */
+type CodingSessionHandoffPhase = 'claiming' | 'y-owned' | 'continuing' | 'releasing' | 'external-ready' | 'blocked-uncertain' | 'recovered-acknowledged'
+```
+
+```ts type-equiv
+/** Minimal original-source ownership marker; it stores neither credentials nor transcript text. */
+interface CodingSessionHandoff {
+  id: CodingSessionMirrorId
+  ownerToken: CodingSessionOwnerToken
+  source: CodingSessionSource
+  project: string
+  executionSessionId: SessionId
+  expectedRevision: number
+  phase: CodingSessionHandoffPhase
+  toolMode: CodingSessionSequentialToolMode
+  nativeProfileUnchanged: true
+  externalWritersClosed: true
+  dispatchedTurnCount: number
+  nativeTurnIds: CodingSessionNativeTurnId[]
+  /** Original phase retained when restart blocks a lost process handle. */
+  interruptedPhase?: CodingSessionInterruptedHandoffPhase | undefined
+  /** Bounded prior-owner uncertainty survives subsequent claims and releases. */
+  recoveryHistory?: CodingSessionRecoveryCheckpoint[] | undefined
+}
+```
+
+```ts type-equiv
+/** Independently versioned durable ownership markers, separate from native history mirrors. */
+interface CodingSessionHandoffStore {
+  /** @param id - Y mirror identity. @returns its retained ownership marker. */
+  get(id: CodingSessionMirrorId): CodingSessionHandoff | undefined
+  /** @returns all retained ownership markers. */
+  entries(): IterableIterator<[CodingSessionMirrorId, CodingSessionHandoff]>
+  /** @param id - Y mirror identity. @param marker - complete ownership state. @returns after durable publication. */
+  put(id: CodingSessionMirrorId, marker: CodingSessionHandoff): Promise<void>
+  /**
+   * Transform the current marker at its serialized durable-write slot; required for restart recovery.
+   * @param id - retained Y mirror identity.
+   * @param transform - synchronous review and replacement; throwing leaves the current marker unchanged.
+   * @returns replacement after durable publication, or rejection without an update.
+   */
+  update?(id: CodingSessionMirrorId, transform: (current: CodingSessionHandoff) => CodingSessionHandoff): Promise<CodingSessionHandoff>
+}
+```
+
+```ts type-equiv
+/** Acquisition owns a pre-published opaque process-instance token; piped process IDs are unavailable. */
+interface CodingSessionSequentialAcquireRequest extends CodingSessionReadRequest {
+  ownerToken: CodingSessionOwnerToken
+  nativeProfileUnchanged: true
+}
+```
+
+```ts type-equiv
+/** Separate operational writer after the user closes every prior writer of this original session. */
+interface CodingSessionSequentialWriterProvider {
+  authority: 'user-acknowledged-sequential'
+  toolMode: CodingSessionSequentialToolMode
+  /**
+   * Cold-claim the original session without starting a model turn; use the current live root's policy.
+   * @param source - exact authorized original identity.
+   * @param request - acquisition limits, cancellation and durably published owner token.
+   * @returns the original-source owner; caller retains the prior-writer-close precondition.
+   */
+  acquire(source: CodingSessionSource, request: CodingSessionSequentialAcquireRequest): Promise<CodingSessionSequentialWriterLease>
+}
+```
+
+```ts type-equiv
+/** Fresh native readback follows a drained, naturally exited owned process; it is no recorder-wide certificate. */
+interface CodingSessionSequentialReleaseReceipt {
+  source: CodingSessionSource
+  snapshot: CodingSessionSnapshot
+  processExited: true
+  streamsDrained: true
+  expectedPrefixPersisted: true
+  completedTurnPersisted: boolean
+  nativeTurnIds: CodingSessionNativeTurnId[]
+  noObservedPersistenceErrors: true
+}
+```
+
+```ts type-equiv
+/** Held sequential native owner; the registered provider discloses its supported tool mode. */
+interface CodingSessionSequentialWriterLease {
+  source: CodingSessionSource
+  /** @param request - bounded read lifetime. @returns the original source's complete retained native history. */
+  read(request: CodingSessionReadRequest): Promise<CodingSessionSnapshot>
+  /**
+   * Resume the same original ID under the captured live root's policy and declared tool mode.
+   * @param request - exact source, human text, cancellation and durable admission callback;
+   * await it once immediately before native dispatch.
+   * @returns its exact settled native turn ID; settlement alone does not confirm persistence.
+   */
+  resumeOriginal(request: {
+    source: CodingSessionSource
+    text: string
+    signal: AbortSignal
+    beforeDispatch(): Promise<void>
+    onNativeTurn?(id: string): Promise<void>
+    onNativeItem?(item: SkillLearningNativeItem): Promise<void>
+  }): Promise<{ nativeTurnId: CodingSessionNativeTurnId }>
+  /**
+   * Reject forced termination, missing readback, unresolved persistence and process/stream uncertainty.
+   * @param request - independent bounded release/readback lifetime; cancellation still drains owned processes.
+   * @returns fresh original-source history and independently established release evidence.
+   */
+  release(request: CodingSessionReadRequest): Promise<CodingSessionSequentialReleaseReceipt>
+}
+```
+
 ## `SessionEventMap` — the event vocabulary
 
 The append-only event types. Merge-extensible: a plugin declares extra event types via declaration merging — e.g. the [compaction seam](compaction.md) adds `compaction/start` / `compaction/summary` / `compaction/end`, and `@deepseek-ai/dsh-hook-protocol` adds log-only `hook/invoked` / `hook/result` records for a hook bridge. Like `compaction/*`, these are NOT `SurfaceEventType`s (no `surfaceOp`). The generated [persistence log event catalog](../persistence-catalog.md) enumerates every member — core and merged — with its payload, surface badge, and declaration site.
@@ -509,6 +729,13 @@ declare class Session {
   readonly firstLifecycleSeq: SessionLogOffset;
 
   /**
+   * Exact immutable end-seed event produced by this constructor, when one was needed.
+   * Detached durable transactions retain this envelope before accepting their own events.
+   * Borrowed seed markers are not exposed as new events; this state never reads historical records.
+   */
+  readonly lifecycleMarker: SessionEvent<'session/end-seed'> | undefined;
+
+  /**
    * Create a detached session by validating and snapshotting borrowed seed
    * events and storage metadata.
    * @param id - session identity.
@@ -792,6 +1019,159 @@ The optional `application` selects a registered file handler without changing th
 ## Cordis API
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+
+<a id="ctxcodingsessions--codingsessions"></a>
+
+### `ctx.codingSessions` — `CodingSessions`
+
+Remote consumer and service provider for read-only mirrors. Native connections register independently.
+
+```ts cordis-catalog
+/**
+ * Attach one authorized native source to durable mirror operations.
+ * @param provider - exact authorized native profile.
+ * @returns idempotent disposer removing availability immediately and joining this profile's native release work; mirrors survive removal.
+ */
+registerProvider(provider: CodingSessionProvider): () => Promise<void>
+
+/**
+ * Synchronize registered Claude projects and list mirror metadata.
+ * @returns source readiness and readable retained mirrors.
+ */
+@Remote async getState(): Promise<CodingSessionsState>
+
+/**
+ * Browse sessions in one configured native source.
+ * @param profile - selected authorized native source.
+ * @param cursor - opaque source page cursor.
+ * @returns one source-labelled metadata page.
+ */
+@Remote async discover(profile: CodingSessionProfile, cursor?: string): Promise<CodingSessionPage>
+
+/**
+ * Retain a stable source history snapshot.
+ * @param source - original provider/profile/native identity.
+ * @returns stable durable read-only mirror.
+ */
+@Remote async importSession(source: CodingSessionSource): Promise<CodingSessionMirror>
+
+/**
+ * Refresh the original source without replacing divergent retained history.
+ * @param id - existing Y mirror.
+ * @returns fresh source history or a retained conflict.
+ */
+@Remote async refreshMirror(id: CodingSessionMirrorId): Promise<CodingSessionMirror>
+
+/**
+ * Load transcript details after explicit mirror selection.
+ * @param id - existing Y mirror.
+ * @returns retained source-labelled transcript.
+ */
+@Remote async detail(id: CodingSessionMirrorId): Promise<CodingSessionMirror>
+
+/**
+ * Delegate continuation only to a supported exclusive original-source writer.
+ * @param id - existing Y mirror.
+ * @param text - human continuation.
+ * @param expectedRevision - reviewed mirror revision.
+ * @returns native settlement mirror or explicit unsupported-operation refusal.
+ */
+@Remote async continueSession(id: CodingSessionMirrorId, text: string, expectedRevision: number): Promise<CodingSessionMirror>
+
+/**
+ * Bind an explicit sequential claim to the selected exact live root's existing policy.
+ * @param id - reviewed native mirror.
+ * @param acknowledgement - original source/project/revision, selected execution root and prior-writer closure.
+ * @returns original-source ownership without creating an Agent or issuing a model request.
+ */
+@Remote async claimSequential( id: CodingSessionMirrorId, acknowledgement: CodingSessionClaimAcknowledgement, ): Promise<CodingSessionMirror>
+
+/**
+ * Continue the original native conversation under its retained exact live root's current policy.
+ * @param id - claimed original-source mirror.
+ * @param text - human continuation message.
+ * @param expectedRevision - reviewed native mirror revision.
+ * @returns settled original-source history while sequential ownership remains held.
+ */
+@Remote async continueSequential(id: CodingSessionMirrorId, text: string, expectedRevision: number): Promise<CodingSessionMirror>
+
+/**
+ * Release retained native resources independently from source reconnection or root availability.
+ * @param id - claimed original-source mirror.
+ * @returns confirmed release after native process quiescence and original-history readback.
+ */
+@Remote async releaseSequential(id: CodingSessionMirrorId): Promise<CodingSessionMirror>
+
+/**
+ * Recover an interrupted owner using reviewed cold history and stopped-writer acknowledgements.
+ * @param id - interrupted mirror.
+ * @param acknowledgement - exact stopped-writer assertions and reviewed owner.
+ * @returns an acknowledged checkpoint retaining old-process uncertainty.
+ */
+@Remote async recoverSequential( id: CodingSessionMirrorId, acknowledgement: CodingSessionRecoveryAcknowledgement, ): Promise<CodingSessionMirror>
+
+/**
+ * Create a cold ordinary-Y destination in the selected native mirror's known project.
+ * @param id - reviewed native mirror.
+ * @returns a new durable ordinary-Y destination in its known exact project; no Agent is created.
+ */
+@Remote async createImportDestination( id: CodingSessionMirrorId, ): Promise<{ destinationSessionId: SessionId; revision: CodingSessionDestinationRevision }>
+
+/**
+ * Inspect a cold ordinary-Y destination without appending imported history.
+ * @param id - explicit cold ordinary-Y Session.
+ * @returns its canonical event-count and digest for review.
+ */
+@Remote async inspectImportDestination( id: SessionId, ): Promise<{ destinationSessionId: SessionId; revision: CodingSessionDestinationRevision }>
+
+/**
+ * Append reviewed native public history as attributed quoted context to a cold ordinary-Y session.
+ * @param id - reviewed native mirror.
+ * @param acknowledgement - exact source, link and cold destination revisions.
+ * @returns a quoted append or retained source conflict.
+ */
+@Remote async importIntoSession( id: CodingSessionMirrorId, acknowledgement: CodingSessionImportAcknowledgement, ): Promise<CodingSessionLinkRecord>
+
+/**
+ * Load retained source mappings, generations and any prepared import intent.
+ * @param id - exact retained source-to-Y mapping.
+ * @returns bounded source mappings and transaction receipts.
+ */
+@Remote async linkedDetail(id: CodingSessionLinkId): Promise<CodingSessionLinkRecord>
+
+/**
+ * Withdraw active quoted generations while preserving their raw receipts and subsequent Y messages.
+ * @param id - exact retained link.
+ * @param acknowledgement - reviewed link and canonical destination revisions.
+ * @returns append-only withdrawal preserving subsequent Y messages.
+ */
+@Remote async rollbackImport( id: CodingSessionLinkId, acknowledgement: CodingSessionRollbackAcknowledgement, ): Promise<CodingSessionLinkRecord>
+
+/**
+ * Finish an exact prepared import or rollback after restart; changed destination history is refused.
+ * @param id - exact prepared link.
+ * @returns committed receipt only after exact planned event-envelope recovery.
+ */
+@Remote async recoverImport(id: CodingSessionLinkId): Promise<CodingSessionLinkRecord>
+
+/**
+ * Abandon a reviewed prepared intent only when no owned payload is persisted in its destination.
+ * @param id - exact prepared link.
+ * @param acknowledgement - reviewed link and canonical destination revisions.
+ * @returns cancellation only when no owned payload was persisted.
+ */
+@Remote async abandonImport( id: CodingSessionLinkId, acknowledgement: CodingSessionRollbackAcknowledgement, ): Promise<CodingSessionLinkRecord>
+
+/**
+ * Cancel current and queued source operations, then drain admitted work.
+ * @returns native-read cancellation and durable-write quiescence.
+ */
+@Remote async cancelPending(): Promise<void>
+```
+
+Types: [CodingSessionDestinationRevision](../../packages/session/coding-session/README.md) · [CodingSessionImportAcknowledgement](../../packages/session/coding-session/README.md) · [CodingSessionLinkId](../../packages/session/coding-session/README.md) · [CodingSessionLinkRecord](../../packages/session/coding-session/README.md) · [CodingSessionRecoveryAcknowledgement](../../packages/session/coding-session/README.md) · [CodingSessionRollbackAcknowledgement](../../packages/session/coding-session/README.md) · [SessionId](core.md)
+
+Source: [`packages/session/coding-session/src/index.ts`](../../packages/session/coding-session/src/index.ts)
 
 <a id="ctxsessioncontroller--sessioncontroller"></a>
 

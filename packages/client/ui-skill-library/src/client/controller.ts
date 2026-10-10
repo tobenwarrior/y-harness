@@ -10,7 +10,7 @@ import type {
   SkillLearningProposal, SkillLearningProposalSummary, SkillLearningProposalId, SkillLearningEvidence,
   SkillLearningStatus, SkillLearningProposeRequest, SkillLearningListRequest, SkillLearningProposalRequest,
   SkillLearningApplyRequest, SkillLearningPolicyRequest, SkillLearningPolicy, SkillLearningPolicyId,
-  SkillLearningAutomaticRequest, SkillLearningOptIn,
+  SkillLearningAutomaticRequest, SkillLearningOptIn, SkillLearningCleanupRequest, SkillLearningRevokePolicyRequest,
 } from '@deepseek-ai/dsh-skill-library/types'
 
 type Method<Request, Value> = (request: Request) => Promise<RemoteResult<Value>>
@@ -27,6 +27,7 @@ export interface SkillLibraryApi {
   readonly previewCleanup: Method<SkillLibraryCleanupRequest, SkillCleanupProposal>
   readonly applyCleanup: Method<SkillLibraryApplyRequest, SkillLibraryApplyValue>
   readonly rollback: Method<SkillLibraryRollbackRequest, SkillLibraryItemValue>
+  readonly cleanupSemantic: Method<SkillLearningCleanupRequest, readonly SkillLearningProposal[]>
   readonly listProposals: Method<SkillLearningListRequest, readonly SkillLearningProposalSummary[]>
   readonly detailProposal: Method<SkillLearningProposalRequest, SkillLearningProposal>
   readonly proposeLearning: Method<SkillLearningProposeRequest, SkillLearningProposal>
@@ -36,13 +37,14 @@ export interface SkillLibraryApi {
   readonly listLearningEvidence: Method<SkillLearningListRequest, readonly SkillLearningEvidence[]>
   readonly learningStatus: Method<Record<string, never>, SkillLearningStatus>
   readonly approveLearningPolicy: Method<SkillLearningPolicyRequest, SkillLearningPolicy>
+  readonly revokeLearningPolicy: Method<SkillLearningRevokePolicyRequest, SkillLearningPolicy>
   readonly setAutomaticLearning: Method<SkillLearningAutomaticRequest, SkillLearningOptIn>
 }
 
 /** Deliberate item actions; every source edit carries its observed hash. */
 export type LibraryAction = 'pin' | 'unpin' | 'adopt' | 'archive' | 'restore' | 'automaticOn' | 'automaticOff'
 /** Transient operation outcome displayed outside the main panel. */
-export interface LibraryNotice { readonly seq: number; readonly kind: 'changed' | 'restored' | 'cleanupApplied' | 'actionError' }
+export interface LibraryNotice { readonly seq: number; readonly kind: 'changed' | 'restored' | 'cleanupApplied' | 'semanticCleanupFinished' | 'actionError' }
 /** Review metadata and lazy full proposal state, independent from skill bodies. */
 export interface SkillLearningUiState {
   readonly status: 'idle' | 'loading' | 'ready' | 'error'
@@ -89,6 +91,7 @@ export interface SkillLibraryFace {
   readonly closePreview: () => void
   readonly applyPreview: () => void
   readonly rollback: (item: SkillLibraryItem, revisionId: SkillRevisionId) => void
+  readonly cleanupSemantic: (request: SkillLearningCleanupRequest) => void
   readonly dismissNotice: () => void
   readonly refreshLearning: () => void
   readonly loadReview: (id: SkillLearningProposalId) => void
@@ -97,6 +100,7 @@ export interface SkillLibraryFace {
   readonly approveReview: (id: SkillLearningProposalId) => void
   readonly rejectReview: (id: SkillLearningProposalId) => void
   readonly approvePolicy: (request: SkillLearningPolicyRequest) => void
+  readonly revokePolicy: (policyId: SkillLearningPolicyId) => void
   readonly setLearningAutomatic: (item: SkillLibraryItem, policyId: SkillLearningPolicyId, enabled: boolean) => void
 }
 
@@ -136,11 +140,13 @@ export class SkillLibraryController {
       act: (action, item) => { void this.act(action, item) }, preview: (ids) => { void this.preview(ids) },
       closePreview: () => { this.closePreview() }, applyPreview: () => { void this.applyPreview() },
       rollback: (item, revisionId) => { void this.rollback(item, revisionId) },
+      cleanupSemantic: (request) => { void this.cleanupSemantic(request) },
       dismissNotice: () => { this.patch({ notice: null }) },
       refreshLearning: () => { void this.refreshLearning() }, loadReview: (id) => { void this.loadReview(id) },
       proposeLearning: (request) => { void this.proposeLearning(request) }, validateReview: (id) => { void this.validateReview(id) },
       approveReview: (id) => { void this.approveReview(id) }, rejectReview: (id) => { void this.rejectReview(id) },
       approvePolicy: (request) => { void this.approvePolicy(request) },
+      revokePolicy: (policyId) => { void this.revokePolicy(policyId) },
       setLearningAutomatic: (item, policyId, enabled) => { void this.setLearningAutomatic(item, policyId, enabled) } }
   }
 
@@ -360,6 +366,24 @@ export class SkillLibraryController {
    */
   async rollback(item: SkillLibraryItem, revisionId: SkillRevisionId): Promise<void> {
     await this.operation(() => valueOf(this.api.rollback({ id: item.id, expectedHash: item.contentHash, revisionId })), 'restored')
+  }
+
+  /**
+   * Run approved semantic maintenance and refresh suggestions and retained revisions.
+   * @param request - selected scope and scheduling override; the Host checks current consent and protections.
+   * @returns completion of the maintenance pass and refreshed library.
+   */
+  async cleanupSemantic(request: SkillLearningCleanupRequest): Promise<void> {
+    await this.operation(() => valueOf(this.api.cleanupSemantic(request)), 'semanticCleanupFinished')
+  }
+
+  /**
+   * Revoke a selected policy independently of recorded per-file consent.
+   * @param policyId - approved file or project policy to disable.
+   * @returns completion of revocation and refreshed consent controls.
+   */
+  async revokePolicy(policyId: SkillLearningPolicyId): Promise<void> {
+    await this.operation(() => valueOf(this.api.revokeLearningPolicy({ policyId })), 'changed')
   }
 
   private async operation(run: () => Promise<unknown>, kind: LibraryNotice['kind']): Promise<void> {

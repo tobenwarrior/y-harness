@@ -467,6 +467,27 @@ spawn 和 fork 后端通过 `parent.ctx` 创建一个普通的单次 agent，将
 
 `SubagentCatalogEntry` 描述一条完整或未知模式的直接子级目录记录；`SubagentCatalogState` 是仅 host 使用的 projection state。`listChildren()` 拥有一次 live-preferred 父 Session observation，不打开子级日志。浏览器消费者通过共享 Session projection store 读取 `subagentCatalog`，并将成员关系与 Session 列表活动状态组合。`SubagentCatalogRow` 属于递归目录列表。[父目录决策](../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.zh.md) 规定持久事实与读取语义。
 
+<a id="optional-claude-root-route"></a>
+
+## 可选 Claude 根路由
+
+[Claude Code 包](../../packages/subagent/subagent-claude-code/README.zh.md) 同时提供 `llm-claude-code-native` 根 LLM 适配器。明确配置的 `rootRoute.connectionId` 和 `rootRoute.model` 为所选模型注册提供方 `claude-code-native`。缺少 `rootRoute` 时根适配器保持禁用；挂载已配置适配器后，只有获准的活动根 send 才启动 SDK 进程。路由要求确切注册的项目与 Session，并使用 Host sandbox 和审批服务。Session、条目、待处理 frame、输入／输出、协议累计量、轮次时间与终止宽限均由部署配置限定。
+
+`claude-code/root-protocol` 是可忽略、仅记录日志的事件，保留有上限且确切的所属公开 SDK 请求和 frame，其中可能包含工具参数与结果。它不提供模型会话投影，也不承诺恢复隐藏的原生上下文。独立的 [`skill/native-item` 证据](skills.zh.md#native-learning-evidence-types) 只为学习保留净化后的标识与步骤事实。两者都使用真实 Claude SDK Session ID 和明确的客户端 send UUID；send UUID 不虚构原生轮次标识。
+
+```ts type-equiv
+/** Exact bounded owned request or public SDK frame; never a model conversation projection. */
+type ClaudeRootProtocolRecord = {
+  readonly provider: 'claude-code'
+  readonly connectionId: SkillNativeConnectionId
+  readonly sessionId: SkillClaudeSessionId
+  readonly sendId: SkillClaudeSendId
+  /** Actual launched native profile paths; no account or external-session identity is inferred. */
+  readonly profile: { readonly home: string; readonly configDirectory: string }
+  readonly message: JsonValue
+} & ({ readonly phase: 'request'; readonly system: string } | { readonly phase: 'frame' })
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -677,6 +698,30 @@ async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageId](llm-streaming.zh.md) · [SessionId](core.zh.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
+<a id="claude-code-events"></a>
+
+### `claude-code/*` events
+
+<a id="claude-codetool-observations--emit"></a>
+
+#### `claude-code/tool-observations` — emit
+
+Observe-only direct native child receipts, separate from parent task evidence.
+
+```ts cordis-catalog
+/**
+ * Observe-only direct native child receipts, separate from parent task evidence.
+ * @mode emit
+ * @param observations - frozen source-labelled metadata, without bodies or native turn claims.
+ * @param parent - exact Session that initiated this one-shot child query.
+ */
+'claude-code/tool-observations': (observations: readonly ClaudeCodeToolObservation[], parent: Session) => void
+```
+
+Types: [Session](session.zh.md)
+
+Source: [`packages/subagent/subagent-claude-code/src/index.ts`](../../packages/subagent/subagent-claude-code/src/index.ts)
 
 <a id="subagent-events"></a>
 

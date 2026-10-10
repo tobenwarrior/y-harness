@@ -9,9 +9,9 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`SlotTestRuntime.create()` lets Vitest suites drive production slots, stores, typed Session and Workspace fixtures, and local DOM assertions in jsdom. For plugin activation, reload, reconnect, and cleanup tests, `createClientTest` starts the web profile's bundle roster with endpoint-named Remote mocks, without a business Host. Missing services and unstubbed calls fail explicitly. The whole-client fixture owns startup and disposal; the local runtime provides idempotent disposal. Use this package through `devDependencies` for client tests; it is not a product plugin.
+`SlotTestRuntime.create()` lets Vitest suites drive production slots, stores, typed Session and Workspace fixtures, and local DOM assertions in jsdom. `createClientTest` boots the web profile's bundle roster with endpoint-named Remote mocks for activation, reload, reconnect, and cleanup without a business Host; missing services and unstubbed calls fail explicitly. The whole-client fixture owns startup and disposal; local disposal is idempotent, and client tests consume this non-product package through `devDependencies`.
 
-Linked bundles resolve dependencies from their real package directories; dependencies next to any bundle take precedence over packages inherited from ancestor directories.
+Linked bundles resolve exact self-package names from their manifests before dependency lookup. Dependencies resolve from real package directories, preferring bundle-local packages over ancestor-inherited packages; missing packages fail explicitly.
 
 ## Table of Contents
 

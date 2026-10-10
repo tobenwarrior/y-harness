@@ -307,6 +307,8 @@ export interface WebScaffold {
 export interface LaunchOptions {
   /** Override the developer-tools preference; omitted uses the shipped default. */
   developerTools?: boolean
+  /** Exact launcher inputs for native fixtures; supplying this does not enable Open In rows. */
+  launchEnvironment?: LaunchEnvironmentSnapshot
   /** Enable the real Open In rows with deterministic launch-environment facts. */
   openInAppEnvironment?: LaunchEnvironmentSnapshot
   /** Compare the replayed root Session; `read-only` also forbids refresh writes to a borrowed fixture. */
@@ -461,6 +463,9 @@ async function cleanupScaffoldWorld(ctx: Context, workspaceCwd: string, persiste
  */
 export async function launchWebScaffold(options: LaunchOptions = {}): Promise<WebScaffold> {
   requireDist()
+  if (options.launchEnvironment !== undefined && options.openInAppEnvironment !== undefined) {
+    throw new Error('web scaffold accepts one launch-environment source per world')
+  }
   const {
     auditStartupEntries, composeEntries, createRuntimeResolution, initProfile,
     mountRootInclude, readProfileManifest, readProfilePatches, loadProfileDirectory, loadOverlayPatches, PluginPackages,
@@ -698,7 +703,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
   // the temp workspace so tool cwd, session cwd, and fixtures agree.
   const originalCwd = process.cwd()
   const ctx = new Context()
-  if (options.openInAppEnvironment !== undefined) ctx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.openInAppEnvironment)
+  if (options.launchEnvironment !== undefined) ctx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.launchEnvironment)
+  else if (options.openInAppEnvironment !== undefined) ctx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, options.openInAppEnvironment)
   const observedSessions = new Map<SessionId, Session>()
   const stopObservingSessions = ctx.on('session/created', (session) => {
     observedSessions.set(session.id, session)

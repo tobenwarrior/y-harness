@@ -10,6 +10,7 @@ import type { ILayout, PanelInfo } from '@deepseek-ai/dsh-client-ui-layout/clien
 import { apply, inject } from '../src/client/index.ts'
 import { SkillLibraryPage } from '../src/client/SkillLibraryPage.tsx'
 import { SkillLibraryToast } from '../src/client/SkillLibraryToast.tsx'
+import { DecisionSettings, DecisionToast } from '../src/client/DecisionSettings.tsx'
 import type { SkillLibraryFace } from '../src/client/controller.ts'
 
 usePinnedBrowserLanguages('en-US')
@@ -36,13 +37,15 @@ describe('skill library Loader composition', () => {
     const fiber = await ctx.plugin({ inject: [...inject], apply }).await()
     expect(slots.entries('main')).toHaveLength(0)
     const removeRoot = slots.register({ name: 'root', children: {
-      main: { kind: 'keyed', scope: 'root' }, 'sidebar.panellist': { kind: 'list', scope: 'root' }, 'shell.overlay': { kind: 'list', scope: 'root' },
+      main: { kind: 'keyed', scope: 'root' }, 'sidebar.panellist': { kind: 'list', scope: 'root' }, 'shell.overlay': { kind: 'list', scope: 'root' }, 'settings.models.footer': { kind: 'list', scope: 'root' },
     } } as never, () => null)
     const entry = slots.entries('main')[0]!
     expect(entry.component).toBe(SkillLibraryPage)
     expect(entry.options).toMatchObject({ key: 'skills' })
     expect(entry.locale).toBe('skillLibrary')
-    expect(slots.entries('shell.overlay')[0]?.component).toBe(SkillLibraryToast)
+    expect(slots.entries('shell.overlay').find(entry => entry.options.id === 'skill-library.notice')?.component).toBe(SkillLibraryToast)
+    expect(slots.entries('shell.overlay').find(entry => entry.options.id === 'skill-decision.notice')?.component).toBe(DecisionToast)
+    expect(slots.entries('settings.models.footer')[0]?.component).toBe(DecisionSettings)
     const sidebar = slots.entries('sidebar.panellist')[0]!
     expect(resolveSlotLabel(sidebar.options.label)).toBe('Skills')
     locale.setLocale('zh')
@@ -61,6 +64,7 @@ describe('skill library Loader composition', () => {
     expect(slots.entries('main')).toHaveLength(0)
     expect(slots.entries('sidebar.panellist')).toHaveLength(0)
     expect(slots.entries('shell.overlay')).toHaveLength(0)
+    expect(slots.entries('settings.models.footer')).toHaveLength(0)
     removeRoot()
   })
 })
