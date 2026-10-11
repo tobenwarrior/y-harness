@@ -11,6 +11,18 @@ import type { SkillLibraryRecord } from '../src/record.ts'
 import type { SkillLibraryId, SkillLibraryProject } from '../src/types.ts'
 import type { RegistryInventory } from '../src/registry-inventory.ts'
 
+const historyFault = vi.hoisted(() => {
+  const hooks: { beforeLstat?: (path: string) => void } = {}
+  return hooks
+})
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, lstat: async (...args: Parameters<typeof fs.lstat>) => {
+    if (typeof args[0] === 'string') historyFault.beforeLstat?.(args[0])
+    return fs.lstat(...args)
+  } }
+})
+
 async function fixture(registryInventory?: RegistryInventory) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-library-followup-'))
   const ctx = new Context()
@@ -190,11 +202,17 @@ it.each(['archives', 'revisions', 'creations'] as const)('preserves invalid dura
   expect(f.rows.size).toBe(0)
 })
 
-it('refuses an unreadable history path rather than treating its filesystem error as an absent journal', async () => {
+it('propagates a non-missing history filesystem fault while preserving the existing ancestor file', async () => {
   const f = await fixture(); const occupied = join(f.root, 'occupied'); await writeFile(occupied, 'Preserve this existing file.')
   const library = new SkillLibrary({ ...f.options, historyDirectory: join(occupied, 'history') })
-  onTestFinished(async () => { await library.dispose() })
-  await expect(library.list()).rejects.toMatchObject({ code: 'ENOTDIR' })
+  onTestFinished(async () => { delete historyFault.beforeLstat; await library.dispose() })
+  const fault = Object.assign(new Error('Fixture history access denied'), { code: 'EACCES' })
+  let faults = 0
+  historyFault.beforeLstat = (path) => {
+    if (path === join(occupied, 'history', 'pending-archives')) { faults++; throw fault }
+  }
+  await expect(library.list()).rejects.toBe(fault)
+  expect(faults).toBe(1)
   expect(await readFile(occupied, 'utf8')).toBe('Preserve this existing file.')
 })
 

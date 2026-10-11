@@ -43,7 +43,7 @@ async function fixture(linkBeforePublication: boolean) {
     name, description: 'Owned fixture', content, expectedPath: join(project, '.dsh/skills', name, 'SKILL.md') }, async () => {})).item
   const survivor = await create('a-survivor', 'Keep the exact checked procedure.\n')
   const target = await create('z-target', 'Keep the exact checked procedure.\n')
-  const newLink = `[Target](${target.path})\n`
+  const newLink = '[Target](../z-target/SKILL.md)\n'
   const body = '# Incoming source\n\nShort introduction.\n\n## Procedure\n\n'
     + (linkBeforePublication ? newLink + '\n' : '') + 'Keep a complete source paragraph.\n\n'.repeat(120)
   const incoming = await create('incoming-source', body)

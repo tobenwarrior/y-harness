@@ -1,5 +1,5 @@
 /** Service readiness, preregistered capabilities and real tool-result delivery retain their ownership. */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -24,7 +24,7 @@ import SkillLibraryController, { type Config } from '../src/index.ts'
 import { SkillLibrary } from '../src/library.ts'
 
 async function fixture(beforeInit: (controller: SkillLibraryController, agent: Agent) => void = () => undefined, volatileRegistry = false) {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-skill-entry-followup-')); const ctx = new Context()
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-skill-entry-followup-'))); const ctx = new Context()
   onTestFinished(async () => { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }) })
   await ctx.plugin(Storage)
   if (volatileRegistry) await ctx.plugin({ name: 'fixture-memory-backend', inject: ['storage'], apply(context: Context) {
