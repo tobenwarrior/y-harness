@@ -20,6 +20,25 @@ describe('coding-session settings controller', () => {
     await f.controller.refreshMirror(mirror.id)
     expect(f.controller.source.getSnapshot()).toMatchObject({ selected: mirror, notice: { kind: 'failed' }, busy: false }); f.controller.dispose()
   })
+  it.each([
+    ['import', 'ready', 'imported'],
+    ['refresh', 'ready', 'refreshed'],
+    ['import', 'conflict', 'failed'],
+    ['refresh', 'conflict', 'failed'],
+    ['release', 'conflict', 'released'],
+  ] as const)('reports %s of a %s mirror as %s while retaining its history', async (operation, status, notice) => {
+    const f = fixture(); await f.controller.select(mirror.id)
+    const retained: CodingSessionMirror = { ...mirror, status, ...(status === 'conflict' ? { conflict: 'history-diverged' as const } : {}) }
+    const { events, ...summary } = retained
+    f.api.getState = () => ok({ sources: [], mirrors: [{ ...summary, eventCount: events.length }] })
+    f.api.importSession = () => ok(retained); f.api.refreshMirror = () => ok(retained); f.api.releaseSequential = () => ok(retained)
+    if (operation === 'import') await f.controller.importSession(source)
+    else if (operation === 'refresh') await f.controller.refreshMirror(mirror.id)
+    else await f.controller.releaseSequential(mirror.id)
+    expect(f.controller.source.getSnapshot()).toMatchObject({ selected: retained, notice: { kind: notice }, busy: false })
+    expect(f.controller.source.getSnapshot().selected?.events).toEqual(mirror.events)
+    f.controller.dispose()
+  })
   it('discards old connection responses after reconnect and disposal', async () => {
     const f = fixture(); let resolve!: (value: Awaited<ReturnType<CodingSessionsApi['detail']>>) => void
     f.api.detail = () => new Promise((done) => { resolve = done })
