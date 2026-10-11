@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reduceInstructionRedundancy, mechanicalMaintenanceValid } from '../src/semantic-maintenance.ts'
+import { reduceInstructionRedundancy, mechanicalMaintenanceValid, maintenanceGenerator } from '../src/semantic-maintenance.ts'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SkillLearningProposal, SkillLearningProposalId, SkillLibraryId } from '../src/types.ts'
 
@@ -63,4 +63,17 @@ describe('independent instruction redundancy maintenance', () => {
     expect(mechanicalMaintenanceValid({ ...archive, changes: [{ ...archive.changes[0]!,
       survivorResources: [{ path: 'run.sh', hash: 'different', bytes: 1 }] }] })).toBe(false)
   })
+})
+
+it('retains empty bodies and refuses incomplete or circular duplicate retirement', async () => {
+  expect(reduceInstructionRedundancy('')).toBe('')
+  const value = proposal('unchanged', '')
+  const change = value.changes[0]!
+  for (const fields of [{}, { survivorId: change.id }, { survivorId: brandString<SkillLibraryId>('other'), survivorContent: 'unchanged' }, { survivorId: brandString<SkillLibraryId>('other'), survivorContent: 'unchanged', survivorResources: [] }]) {
+    expect(mechanicalMaintenanceValid({ ...value, changes: [{ ...change, kind: 'archive', ...fields }] })).toBe(false)
+  }
+  const source = { item: { id: brandString<SkillLibraryId>('source'), name: 'source', description: 'Source' } as never, content: 'Keep instructions.', resources: [], resourceHash: 'resources', constraints: [], references: [] }
+  const input = { projectId: 'project', operation: 'compress' as const, evidence: [], catalog: [], sources: [source], bodyBudgetBytes: 5000 }
+  expect((await maintenanceGenerator.generate(input, new AbortController().signal)).drafts).toEqual([])
+  expect((await maintenanceGenerator.generate({ ...input, operation: 'learn' }, new AbortController().signal)).drafts).toEqual([])
 })
