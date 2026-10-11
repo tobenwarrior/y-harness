@@ -1533,9 +1533,9 @@ def _encode_json_plain(value: Any) -> str:
     same iterative idiom in ``protocol.ts``). Accepts what the callers already
     validated or constructed: ``None``/``bool``/``int``/finite ``float``/
     ``str``, exact ``list``/``tuple``, and exact ``dict`` with ``str`` keys.
-    Scalar encoding delegates to ``json.dumps`` (string escaping, float repr)
-    so the bytes match; non-finite floats still raise ``ValueError`` exactly
-    like ``allow_nan=False``.
+    Scalar encoding uses the canonical spellings in :func:`_dump_scalar`;
+    non-finite floats still raise ``ValueError`` exactly like
+    ``allow_nan=False``.
 
     Containers are classified by EXACT type and traversed through the unbound
     built-in methods rather than the instance's own: a ``dict``/``list``
@@ -1621,7 +1621,7 @@ def _dump_scalar(value: Any) -> str:
     Dispatch is on EXACT type, matching the validators: a ``float`` subclass
     reaching :func:`_dump_float` would have its overridden ``__repr__`` read as
     the number's digits, so ``F(2.5)`` whose ``__repr__`` returns ``"1.0"``
-    would serialize as ``1``. ``json.dumps`` then refuses any subclass by
+    would serialize as ``1``. This encoder refuses any subclass by
     ``TypeError`` instead of emitting a value nothing validated; the callers
     reject subclasses first, so this is the encoder refusing to be the place a
     validation gap turns into corrupted output.
@@ -1631,8 +1631,15 @@ def _dump_scalar(value: Any) -> str:
         return _dump_float(value)
     if type(value) is str:
         return _dump_string(value)
-    if value is None or type(value) is bool or type(value) is int:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+    # These exact scalar types have fixed JSON spellings. Constructing a
+    # general JSONEncoder for each member in a wide list repeats the setup
+    # twice (metering and encoding) without doing any escaping or float work.
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return str(value)
     raise TypeError(f"unsupported type ({type(value).__name__})")
 
 
