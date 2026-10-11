@@ -1,4 +1,4 @@
-/** Account settings renders safe Host state and explicit login actions. */
+/** Models presents safe Host state and explicit DeepSeek provider connection actions. */
 import { Big } from 'big.js'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Button, IconRightUpOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -10,9 +10,12 @@ import { formatBalance } from './formatBalance.ts'
 import { AccountAvatar } from './AccountAvatar.tsx'
 import { authorizeUrlWithTheme } from './authorize-url.ts'
 import type { BonusNotice } from './bonus-notices.ts'
+import { AccountNoticeCard } from './AccountNotice.tsx'
+import { SignInDialog } from './SignInDialog.tsx'
+import { SignOutDialog } from './SignOutDialog.tsx'
 import css from './AccountSection.module.css'
 
-/** Safe account snapshot shared by the settings page and launcher. */
+/** Safe provider snapshot shared by the optional connection UI and Host stream. */
 export interface AccountSnapshot {
   /** Server-authored bonus notice awaiting display, absent when none is available. */
   notice?: BonusNotice
@@ -27,6 +30,8 @@ export interface AccountSnapshot {
   loginVisible?: boolean
   /** Latest explicit start request failed before a Host state was available. */
   loginFailed?: boolean
+  /** An explicit sign-in request has not yet supplied a cancellable attempt. */
+  loginStarting?: boolean
   /** Mounted onboarding owns the dialog while active. */
   onboarding?: boolean
 }
@@ -53,8 +58,8 @@ export interface AccountSectionInjected {
     theme: HostObservable<ThemeSnapshot>
   }
   /**
-   * Read the balance, bonus wallets and unnotified bonus once. The Settings launcher
-   * calls it on each entry, and a page opener on return from top-up.
+   * Read the balance, bonus wallets and unnotified bonus once. The Models provider
+   * card calls it on each mount, and a page opener on return from top-up.
    * @returns after both reads settle.
    */
   refreshAccount: () => Promise<void>
@@ -79,16 +84,20 @@ export interface AccountSectionInjected {
 }
 /** Composed account section props. */
 export type AccountSectionProps =
-  PropsRuntime<'settings.section'> & PropsLocale<'settings.account'> & InjectFace<AccountSectionInjected>
+  PropsRuntime<'settings.models.footer'> & PropsLocale<'settings.account'> & InjectFace<AccountSectionInjected>
 /** @param props - localized actions, account subscription, and the shared Platform page channel. @returns account settings UI. */
-export function AccountSection({ t, useAccount, useTheme, start, cancel, openPlatformPage }: AccountSectionProps) {
-  const { view: state, details, failed: streamFailed } = useAccount(value => value)
+export function AccountSection({ t, useAccount, useTheme, start, cancel, openPlatformPage,
+  refreshAccount, showLogin, signOut, hasRunningAccountTasks, bonusNoticeShown, bonusNoticeDismissed }: AccountSectionProps) {
+  const account = useAccount(value => value)
+  const { view: state, details, failed: streamFailed } = account
   const colorScheme = useTheme(snapshot => snapshot.active.colorScheme)
   // The shared host owns the native view; this page holds only its own request,
   // and only while it is the latest owner.
   const releasePage = useRef<(() => void) | undefined>(undefined)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [signOutImpact, setSignOutImpact] = useState<boolean | 'unknown'>()
+  const disconnectGeneration = useRef(0)
   const profile = details?.profile?.status === 'ready' ? details.profile.value : undefined
   const wallets = details?.balance?.status === 'ready' ? details.balance.value : undefined
   const bonusWallets = details?.balance?.status === 'ready'
@@ -98,9 +107,13 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
   const active = attempt !== null && attempt !== undefined
     && ['initializing', 'waiting-browser', 'exchanging', 'committing'].includes(attempt.phase)
   const signedIn = state?.status === 'credential-stored'
-  useEffect(() => () => { releasePage.current?.(); releasePage.current = undefined }, [])
+  useEffect(() => { void refreshAccount() }, [refreshAccount])
+  useEffect(() => { if (signedIn && account.loginVisible) showLogin(false) }, [signedIn, account.loginVisible, showLogin])
+  useEffect(() => () => { disconnectGeneration.current++; releasePage.current?.(); releasePage.current = undefined }, [])
+  useEffect(() => { disconnectGeneration.current++; setSignOutImpact(undefined) }, [signedIn, attempt?.id])
   useEffect(() => {
     if (signedIn) return
+    setSignOutImpact(undefined)
     releasePage.current?.()
     releasePage.current = undefined
   }, [signedIn])
@@ -113,6 +126,13 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
     setFailed(false)
     try { await action() } catch { setFailed(true) } finally { setBusy(false) }
   }
+  const requestDisconnect = () => run(async () => {
+    const generation = ++disconnectGeneration.current
+    let impact: boolean | 'unknown'
+    try { impact = await hasRunningAccountTasks() }
+    catch { impact = 'unknown' }
+    if (generation === disconnectGeneration.current) setSignOutImpact(impact)
+  })
   /**
    * @param event - click on a Platform destination link.
    * @returns nothing; on Desktop the embedded page replaces the pending navigation.
@@ -137,22 +157,31 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
     : attempt?.phase === 'expired' ? t('expired')
       : active ? t(attempt.phase === 'initializing' ? 'initializing' : attempt.phase === 'waiting-browser' ? 'waiting' : 'completing')
         : signedIn ? profile?.contact ?? t(details?.profile === undefined ? 'loading' : 'profileUnavailable') : t('signInDescription')
+  const dialogs = <>
+    {account.loginVisible && !signedIn && <SignInDialog account={account} colorScheme={colorScheme}
+      start={start} cancel={cancel} close={() => { showLogin(false) }} t={t} />}
+    {signedIn && signOutImpact !== undefined && <SignOutDialog running={signOutImpact} signOut={signOut}
+      close={() => { setSignOutImpact(undefined) }} t={t} />}
+  </>
   if (!signedIn && !active) return (
-    <section className={css.signedOut} aria-label={t('nav')}>
+    <section className={css.section} aria-label={t('nav')}>
+      <h3 className={css.heading}>{t('nav')}</h3>
       <div className={css.signedOutContent}>
         <div className={css.signedOutCopy}>
           <span className={css.signedOutTitle}>{t('settingsSignedOutTitle')}</span>
           <span className={css.signedOutDescription} role="status">
-            {failed || streamFailed ? t('failed') : t('settingsSignedOutDescription')}
+            {failed || streamFailed || attempt?.phase === 'failed' ? t('failed') : state === undefined ? t('loading') : t('settingsSignedOutDescription')}
           </span>
         </div>
         <Button variant="primary" className={css.signInButton} disabled={busy || state === undefined}
           onClick={() => { void run(start) }}>{t('signIn')}</Button>
       </div>
+      {dialogs}
     </section>
   )
   return (
     <section className={css.section} aria-label={t('nav')}>
+      <h3 className={css.heading}>{t('nav')}</h3>
       <div className={css.card}>
         <div className={css.identity}>
           <span className={css.avatar}><AccountAvatar url={signedIn ? profile?.avatarUrl : null} /></span>
@@ -165,6 +194,9 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
           {t('accountInfo')}<IconRightUpOutlineRegular size={12} />
         </a>}
       </div>
+      {signedIn && <div className={css.actions}>
+        <Button variant="outline" disabled={busy} onClick={() => { void requestDisconnect() }}>{t('signOut')}</Button>
+      </div>}
       {active && <div className={css.actions}>
         {attempt.authorizeUrl && <a className={css.linkButton} href={authorizeUrlWithTheme(attempt.authorizeUrl, colorScheme)}
           target="_blank" rel="noreferrer">
@@ -173,18 +205,18 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
         <Button variant="outline" disabled={busy || attempt.phase === 'committing'}
           onClick={() => { void run(() => cancel(attempt.id)) }}>{t('cancel')}</Button>
       </div>}
-      <div className={css.balanceCard}>
+      {signedIn && <div className={css.balanceCard}>
         <div className={css.row}>
           <span>{t('balance')}</span>
-          {signedIn && wallets !== undefined && wallets.length > 0
+          {wallets !== undefined && wallets.length > 0
             ? <span className={css.amount}>{wallets.map(wallet => <span key={wallet.currency}>
               {formatBalance(wallet.balance, wallet.currency === 'CNY' ? '¥' : '$')}
             </span>)}</span>
-            : !signedIn || details?.balance === undefined
-              ? <span className={css.unavailable}>{t(!signedIn ? 'balanceSignedOut' : 'loading')}</span>
+            : details?.balance === undefined
+              ? <span className={css.unavailable}>{t('loading')}</span>
               : platformLink(t('balanceUnavailable'), css.unavailableLink)}
         </div>
-        {signedIn && showBonusRow && <>
+        {showBonusRow && <>
           <div className={css.divider} />
           <div className={css.row}>
             <span>{t('bonusBalance')}</span>
@@ -204,12 +236,16 @@ export function AccountSection({ t, useAccount, useTheme, start, cancel, openPla
           <span className={css.secondary}>{t('more')}</span>
           <div className={css.links}>
             {platformLink(t('usage'), css.linkButton)}
-            <a className={`${css.linkButton} ${css.primary}`} href={state?.links.topUpUrl} aria-disabled={state === undefined}
+            <a className={`${css.linkButton} ${css.primary}`} href={state.links.topUpUrl}
               target="_blank" rel="noreferrer"
-              onClick={(event) => { if (openPlatformPage !== undefined && signedIn) { event.preventDefault(); showPage(openPlatformPage, 'top-up') } }}>{t('topUp')}</a>
+              onClick={(event) => { if (openPlatformPage !== undefined) { event.preventDefault(); showPage(openPlatformPage, 'top-up') } }}>{t('topUp')}</a>
           </div>
         </div>
-      </div>
+      </div>}
+      {signedIn && account.notice && <AccountNoticeCard key={account.notice.orderId} notice={account.notice}
+        inline title={t('bonusNoticeTitle')} closeLabel={t('close')}
+        onShown={bonusNoticeShown} onDismiss={bonusNoticeDismissed} />}
+      {dialogs}
     </section>
   )
 }
