@@ -11,6 +11,7 @@ import type { InjectFace, PropsLocale, PropsStore } from '@deepseek-ai/dsh-clien
 import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList } from '@deepseek-ai/dsh-skill-library/types'
 import type { SkillLibraryFace, SkillLibraryState } from './controller.ts'
 import type { createNavigationStore, LibraryNavigation } from './navigation-store.ts'
+import { createSkillConfirmationHandler, createSkillSelectionHandler } from './skill-panel-actions.ts'
 import { SkillGraph } from './SkillGraph.tsx'
 import { SkillReviews } from './SkillReviews.tsx'
 import { SkillLearningPolicyControls, SkillProjectLearningControls } from './SkillLearningPolicyControls.tsx'
@@ -108,7 +109,7 @@ function SkillDetail({
   readonly budget: number
   readonly t: Translate
   readonly onClose: () => void
-  readonly closeLabel?: string
+  readonly closeLabel: string
   readonly act: SkillLibraryPageProps['act']
   readonly preview: SkillLibraryPageProps['preview']
   readonly rollback: SkillLibraryPageProps['rollback']
@@ -123,9 +124,9 @@ function SkillDetail({
   const detail = state.detail?.item.id === item.id ? state.detail : null
   const loaded = detail?.item ?? item
   const hasSize = loaded.contentHash !== ''
-  const closeCopy = closeLabel ?? t('close')
+  const closeCopy = closeLabel
   const requestedAction = confirm
-  const submit = (): void => { if (requestedAction !== null) { act(requestedAction, loaded); setConfirm(null) } }
+  const submit = createSkillConfirmationHandler(requestedAction, loaded, act, () => { setConfirm(null) })
   return <aside className={css.detail} aria-label={t('details')}>
     <div className={css.detailHeader}>
       <span className={css.documentTab}><IconSkillOutlineRegular size={14} /><span>{loaded.name}</span>
@@ -276,15 +277,14 @@ export function SkillLibraryPage(props: SkillLibraryPageProps): ReactNode {
     [inventory, navigation.query, navigation.project, navigation.status])
   const selected = inventory?.items.find(item => item.id === navigation.selectedId)
   const select = (item: SkillLibraryItem): void => { setInspectorVisible(true); actions.select(item.id); loadDetail(item.id) }
-  const selectId = (id: SkillLibraryItem['id']): void => { const item = inventory?.items.find(
-    candidate => candidate.id === id); if (item !== undefined) select(item) }
+  const selectId = createSkillSelectionHandler(inventory, select)
   const unavailable = inventory?.providers.some(provider => provider.state !== 'connected') === true
   const projectOptions = inventory?.projects.map(project => ({ value: project.id, label: project.title })) ?? []
   for (const id of new Set(inventory?.items.flatMap(item => item.projectIds) ?? [])) {
     if (!projectOptions.some(option => option.value === id)) projectOptions.push({ value: id, label: id })
   }
-  const detail = selected === undefined ? null : <SkillDetail key={selected.id} item={selected} state={state}
-    budget={inventory?.bodyBudgetBytes ?? 0} t={t}
+  const detail = inventory === null || selected === undefined ? null : <SkillDetail key={selected.id} item={selected} state={state}
+    budget={inventory.bodyBudgetBytes} t={t}
     act={act} preview={preview} rollback={rollback} loadDetail={loadDetail} onSelect={select}
     approvePolicy={approvePolicy} revokePolicy={revokePolicy}
     setLearningAutomatic={setLearningAutomatic} cleanupSemantic={cleanupSemantic} closeLabel={

@@ -5,6 +5,7 @@ import { Button, IconFullscreenOutlineRegular, IconPlusOutlineRegular, IconSlide
 import type { SkillLibraryId, SkillLibraryItem, SkillLibraryProject } from '@deepseek-ai/dsh-skill-library/types'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { layoutGraph, zoomGraph, type GraphInput, type GraphTransform } from './graph.ts'
+import { resolveGraphEdges } from './graph-edges.ts'
 import css from './SkillGraph.module.css'
 
 interface SkillGraphProps {
@@ -146,14 +147,11 @@ export function SkillGraph({ items, projects, selectedId, onSelect, onProject, t
       onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
       <g data-graph-transform="" transform={`translate(${transform.x} ${transform.y}) scale(${transform.scale})`}>
         {(['membership', 'link'] as const).map(kind => <g key={kind} data-graph-layer={kind === 'link' ? 'links' : 'membership'}>
-          {graph.edges.filter(edge => edge.kind === kind).map((edge) => {
-            const source = positions.get(edge.source), target = positions.get(edge.target)
-            if (source === undefined || target === undefined) throw new Error('Graph edge does not resolve to an existing node.')
-            return <line key={`${edge.kind}:${edge.source}:${edge.target}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y}
+          {resolveGraphEdges(graph.edges.filter(edge => edge.kind === kind), positions).map(({ edge, source, target }) =>
+            <line key={`${edge.kind}:${edge.source}:${edge.target}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y}
               pointerEvents="none"
               className={clsx(edge.kind === 'link' ? css.graphLink : css.graphMembership,
-                (edge.source === activeId || edge.target === activeId) && css.graphActiveEdge)} />
-          })}
+                (edge.source === activeId || edge.target === activeId) && css.graphActiveEdge)} />)}
         </g>)}
         <g data-graph-layer="hit-targets" aria-hidden="true">
           {graph.nodes.map(node => <rect key={node.id} data-graph-hit="" data-graph-hit-for={node.id}

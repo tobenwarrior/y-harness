@@ -143,4 +143,32 @@ describe('skill graph navigation', () => {
     expect(zoomGraph(next, 20, { x: 100, y: 100 }).scale).toBe(4)
     expect(zoomGraph(next, 0.001, { x: 100, y: 100 }).scale).toBe(0.25)
   })
+
+  it('deduplicates additional membership and retains links between unassigned skills', () => {
+    const graph = layoutGraph({
+      groups: [{ id: 'empty', label: 'Empty project' }],
+      skills: [{ id: 'first', label: 'First', groupId: '' }, { id: 'second', label: 'Second', groupId: '' }],
+      memberships: [{ group: 'empty', skill: 'first' }, { group: 'empty', skill: 'first' }, { group: 'empty', skill: 'missing' }],
+      links: [{ source: 'first', target: 'second' }],
+    })
+    expect(graph.edges).toEqual([
+      { source: 'empty', target: 'first', kind: 'membership' }, { source: 'first', target: 'second', kind: 'link' },
+    ])
+    expect(graph.nodes.filter(node => node.kind === 'skill').map(node => [node.groupId, node.explicitDegree])).toEqual([[null, 1], [null, 1]])
+  })
+
+  it('keeps a crowded project navigable when the other projects contain no skills', () => {
+    const graph = layoutGraph({
+      // An off-center crowded group initially places several nodes at the drawing border.
+      groups: Array.from({ length: 16 }, (_, index) => ({ id: `project-${index}`, label: `Project ${index}` })),
+      skills: Array.from({ length: 1000 }, (_, index) => ({ id: `skill-${index}`, label: `Skill ${index}`, groupId: 'project-8' })),
+      links: [],
+    })
+    expect(graph.nodes).toHaveLength(1016)
+    expect(graph.edges).toHaveLength(1000)
+    expect(new Set(graph.nodes.map(node => `${node.x},${node.y}`)).size).toBe(graph.nodes.length)
+    expect(graph.nodes.every(node => Number.isFinite(node.x) && Number.isFinite(node.y)
+      && node.x >= node.radius && node.y >= node.radius
+      && node.x <= graph.width - node.radius && node.y <= graph.height - node.radius)).toBe(true)
+  })
 })
