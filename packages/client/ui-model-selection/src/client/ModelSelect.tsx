@@ -42,6 +42,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
+import { SelectionOption } from './SelectionOption.tsx'
 
 /** Which pane the dropdown shows: the root menu or one drilled-in list. */
 type Pane = 'root' | 'model' | 'effort' | 'speed'
@@ -738,7 +739,7 @@ export function ModelSelect(
             </>
           )}
 
-          {pane === 'effort' && (
+          {(pane === 'effort' || pane === 'speed') && (
             <>
               {state.error !== null && lastActionRef.current === 'load' && (
                 <div className={css.error}>
@@ -746,65 +747,25 @@ export function ModelSelect(
                   <button type="button" className={css.retry} onClick={reload}>{t('action.reload')}</button>
                 </div>
               )}
-              {effortChoices.length === 0
-                ? <div className={css.empty}>{t('empty.efforts')}</div>
-                : effortChoices.map(level => (
-                  <button
-                    ref={itemRef()}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={effectiveEffort === level.effort}
-                    className={clsx(css.option, effectiveEffort === level.effort && css.selected)}
-                    key={level.key}
-                    disabled={busy}
-                    onClick={() => { chooseEffort(level.effort) }}
-                  >
-                    <span className={css.optionCopy}>
-                      <span className={css.modelName}>{level.label}</span>
-                    </span>
-                    <span className={css.check}>
-                      {pending !== null && pending.provider === state.current?.provider
-                        && pending.model === state.current.model && pending.reasoningEffort === level.effort
-                        ? <StateDot state="ongoing" />
-                        : effectiveEffort === level.effort ? <IconCheckOutlineRegular /> : null}
-                    </span>
-                  </button>
-                ))}
-            </>
-          )}
-
-          {pane === 'speed' && (
-            <>
-              {state.error !== null && lastActionRef.current === 'load' && (
-                <div className={css.error}>
-                  <span>{t('error.action', { message: state.error })}</span>
-                  <button type="button" className={css.retry} onClick={reload}>{t('action.reload')}</button>
-                </div>
-              )}
-              {tierChoices.length === 0
-                ? <div className={css.empty}>{t('empty.tiers')}</div>
-                : tierChoices.map(level => (
-                  <button
-                    ref={itemRef()}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={effectiveTier === level.tier}
-                    className={clsx(css.option, effectiveTier === level.tier && css.selected)}
-                    key={level.key}
-                    disabled={busy}
-                    onClick={() => { chooseTier(level.tier) }}
-                  >
-                    <span className={css.optionCopy}>
-                      <span className={css.modelName}>{level.label}</span>
-                    </span>
-                    <span className={css.check}>
-                      {pending !== null && pending.provider === state.current?.provider
-                        && pending.model === state.current.model && pending.serviceTier === level.tier
-                        ? <StateDot state="ongoing" />
-                        : effectiveTier === level.tier ? <IconCheckOutlineRegular /> : null}
-                    </span>
-                  </button>
-                ))}
+              {pane === 'effort'
+                ? effortChoices.length === 0
+                  ? <div className={css.empty}>{t('empty.efforts')}</div>
+                  : effortChoices.map(level => (
+                    <SelectionOption key={level.key} buttonRef={itemRef()} label={level.label}
+                      selected={effectiveEffort === level.effort} disabled={busy}
+                      pending={pending !== null && pending.provider === state.current?.provider
+                        && pending.model === state.current.model && pending.reasoningEffort === level.effort}
+                      onChoose={() => { chooseEffort(level.effort) }} />
+                  ))
+                : tierChoices.length === 0
+                  ? <div className={css.empty}>{t('empty.tiers')}</div>
+                  : tierChoices.map(level => (
+                    <SelectionOption key={level.key} buttonRef={itemRef()} label={level.label}
+                      selected={effectiveTier === level.tier} disabled={busy}
+                      pending={pending !== null && pending.provider === state.current?.provider
+                        && pending.model === state.current.model && pending.serviceTier === level.tier}
+                      onChoose={() => { chooseTier(level.tier) }} />
+                  ))}
             </>
           )}
         </MenuSurface>,
