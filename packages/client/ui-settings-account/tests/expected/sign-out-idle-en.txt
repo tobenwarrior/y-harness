@@ -1,1 +1,1 @@
-Sign outSigning out will not delete any data. You can sign in to this account again.CancelSign out
+Disconnect DeepSeekDisconnecting DeepSeek removes this provider’s sign-in from this device. Your local projects and files remain available. You can reconnect later.CancelDisconnect DeepSeek

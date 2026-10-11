@@ -1,1 +1,1 @@
-尚未连接 DeepSeek 账号连接 DeepSeek 账号以使用模型，或在 设置 → 模型 中配置其他提供方登录
+DeepSeek 连接尚未连接可选连接你的 DeepSeek 账号，以使用其可用额度。其他提供方和本地功能仍可使用。连接 DeepSeek

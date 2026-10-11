@@ -62,7 +62,7 @@ function mount(state: Omit<AccountView, 'links'>, copy: typeof en | typeof zh = 
     <AccountSection {...globals} {...operations}
       useAccount={selector => selector(operations.hooks.account.getSnapshot())}
       useTheme={selector => selector(operations.hooks.theme.getSnapshot())}
-      close={() => {}} t={key => key in copy ? copy[key as AccountKey] : key} />
+      t={key => key in copy ? copy[key as AccountKey] : key} />
     {/* The application renders this from `shell.overlay`; the settings page only requests a page. */}
     {platform !== undefined && pages !== undefined
       && <SharedPlatformHost Globals={globals} pages={pages} platform={platform} copy={copy}
@@ -115,7 +115,7 @@ it.each([en, zh])('renders account cards without inventing profile or balance da
   expect(screen.getAllByText(copy.loading)).toHaveLength(3)
   expect(screen.getByRole('link', { name: copy.usage }).getAttribute('href')).toBe('http://localhost:8081/usage')
   expect(screen.getByRole('link', { name: copy.topUp }).getAttribute('href')).toBe('http://localhost:8081/top_up')
-  expect(screen.queryByRole('button', { name: copy.signOut })).toBeNull()
+  expect(screen.getByRole('button', { name: copy.signOut })).toBeTruthy()
   expect(document.body.textContent).not.toContain('209.00')
   await expect(`${screen.getByRole('region').textContent}\n`).toMatchFileSnapshot(`./expected/account-${copy === en ? 'en' : 'zh'}.txt`)
 })
@@ -521,7 +521,7 @@ it('opens the authorization link with the active Desktop palette and follows lat
   const operations = operationsOf({ status: 'signed-out', attempt: { id: 'attempt' as SignInAttemptId, phase: 'waiting-browser', authorizeUrl } })
   const element = (theme: ThemeSnapshot) => <AccountSection {...({} as GlobalStandardProps)} {...operations}
     useAccount={selector => selector(operations.hooks.account.getSnapshot())}
-    useTheme={selector => selector(theme)} close={() => {}} t={key => key in en ? en[key as AccountKey] : key} />
+    useTheme={selector => selector(theme)} t={key => key in en ? en[key as AccountKey] : key} />
   const view = render(element(themeOf('dark')))
   expect(screen.getByRole('link', { name: en.open }).getAttribute('href'))
     .toBe('https://platform.deepseek.com/dsh/authorize?state=example&theme=dark')
@@ -571,7 +571,7 @@ it('reports a rejected settings login and disables login while initial state is 
   const props = { ...({} as GlobalStandardProps), ...operations,
     start: vi.fn(async () => { throw new Error('unavailable') }),
     useAccount: <T,>(select: (value: AccountSnapshot) => T) => select(snapshot),
-    useTheme: <T,>(select: (value: ThemeSnapshot) => T) => select(operations.hooks.theme.getSnapshot()), close: () => {},
+    useTheme: <T,>(select: (value: ThemeSnapshot) => T) => select(operations.hooks.theme.getSnapshot()),
     t: (key: string) => en[key as AccountKey],
   }
   const view = render(<AccountSection {...props} />)
@@ -633,8 +633,8 @@ it('paints the bonus notice under the open settings panel and reports its displa
 })
 
 it('reads once per Settings entry, whatever section the entry opens', async () => {
-  const operations = mount({ status: 'credential-stored', attempt: null }, en)
-  cleanup()
+  // The legacy launcher is tested directly; the application now uses the Models footer.
+  const operations = operationsOf({ status: 'credential-stored', attempt: null })
   let snapshot: AccountSnapshot = operations.hooks.account.getSnapshot()
   const view = render(await accountMenu(operations, () => snapshot, false))
   // The sidebar launcher outlives the panel, so a closed panel reads nothing.
@@ -656,6 +656,7 @@ it('reads the account again when the user returns from the top-up view, and not 
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const platform: PlatformBridge = { open: vi.fn(async () => {}), setBounds: vi.fn(async () => {}), close: vi.fn(async () => {}) }
   const operations = mount({ status: 'credential-stored', attempt: null }, en, undefined, platform)
+  vi.mocked(operations.refreshAccount).mockClear()
   // Opening the view enters the top-up page; leaving it is the user coming back to Settings.
   await act(async () => { fireEvent.click(screen.getByRole('link', { name: en.topUp })) })
   expect(platform.open).toHaveBeenCalledWith('top-up', expect.anything())

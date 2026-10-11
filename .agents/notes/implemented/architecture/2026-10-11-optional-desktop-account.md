@@ -12,7 +12,7 @@ Credential-first startup prevents access to local projects and files before a us
 
 Desktop opens the workspace after Host readiness and locale resolution without using account state or provider credentials to gate entry. Account sign-out, expiry and transport failure retain that document. The [account login](2026-09-14-deepseek-account-login.md) provider continues to own optional PKCE, credential persistence, cancellation and inference authentication. This decision partially supersedes the startup policy in the [native welcome record](2026-09-08-desktop-welcome-window-material.md); its retained renderer, native material and restricted preload remain separate components.
 
-Fresh introduction progress stays invisible, including during loading and after optional login. Startup writes no introduction completion or preference defaults. Saved credit, purpose and process steps remain resumable after sign-in; credit is the first visible step, with Back available on later steps. Persisted completion values retain their existing schema and interpretation.
+Introduction progress stays invisible, including saved credit, purpose and process steps. Startup writes no completion marker or preference defaults. Stored values retain their schema and remain untouched. The [provider-only UI decision](2026-10-11-provider-only-desktop-ui.md) partially supersedes the earlier saved-step presentation policy.
 
 Optional login initializes an account model only when no provider API-key reference or saved model override exists. Initialization rereads redacted settings after asynchronous discovery and writes against the observed revision, preserving concurrent model choices. Existing sessions keep their own selections.
 

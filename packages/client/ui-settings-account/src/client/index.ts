@@ -1,31 +1,23 @@
-/** Desktop account settings registration and reconnecting Remote subscription. */
-import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
-import type { TranscriptViewMode } from '@deepseek-ai/dsh-client-ui-chat/client'
+/** Optional Desktop DeepSeek provider connection and reconnecting Remote subscription. */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type { AccountView, AccountDetails } from '@deepseek-ai/dsh-deepseek-account/types'
-import type { OnboardingChange } from './onboarding-contract.ts'
+import type { AccountView, AccountDetails, SignInAttemptId } from '@deepseek-ai/dsh-deepseek-account/types'
 import type { PlatformBridge } from './PlatformOverlay.tsx'
 import { ContactConfig, CONTACT_CONFIG_GLOBAL } from '../contact-config.ts'
 import { contactUrl } from './contact-url.ts'
-import { AccountOnboarding } from './AccountOnboarding.tsx'
 import { AccountPlatformHost, type AccountPlatformHostInjected } from './AccountPlatformHost.tsx'
-import { AccountMenu } from './AccountMenu.tsx'
 import { createPlatformPages, type PlatformPages } from './platform-pages.ts'
 import { AccountSection, type AccountSnapshot, type AccountSectionInjected } from './AccountSection.tsx'
 import { createBonusNoticeController } from './bonus-notices.ts'
 import { accountClientMetadata } from './client-metadata.ts'
 import { en, zh, type AccountKey } from './locales.ts'
-import { AccountQuotaNotice, type AccountQuotaNoticeInjected } from './AccountQuotaNotice.tsx'
-import { DESKTOP_ONBOARDING_NAMESPACE, type OnboardingSettings } from '../onboarding-settings.ts'
-import { DesktopOnboardingController } from './onboarding-state.ts'
-import { DesktopOnboardingEntry, type DesktopOnboardingInjected } from './DesktopOnboardingEntry.tsx'
 import { refreshAfterReturn } from './account-refresh.ts'
 export type { AccountSectionInjected, AccountSectionProps } from './AccountSection.tsx'
 export type { AccountMenuProps } from './AccountMenu.tsx'
@@ -37,12 +29,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Services required by account settings. */
-export const inject = ['slots', 'locale', 'remote', 'remote.account', 'remote.session', 'theme', 'configForms']
+export const inject = ['slots', 'locale', 'remote', 'remote.account', 'remote.session', 'theme']
 /** Register account UI only in the Desktop renderer. @param ctx - client plugin context. */
 export function apply(ctx: Context): void {
   if (!('dshDesktop' in globalThis)) return
   ctx.effect(() => ctx.locale.register('settings.account', { en, zh }), 'account: dictionaries')
-  const t = ctx.locale.bind('settings.account')
   const page = globalThis as Partial<Record<typeof CONTACT_CONFIG_GLOBAL, unknown>>
   const config = ContactConfig(page[CONTACT_CONFIG_GLOBAL] ?? {})
   let snapshot: AccountSnapshot = { view: undefined, details: undefined, failed: false, loginVisible: false }
@@ -108,15 +99,42 @@ export function apply(ctx: Context): void {
     name: 'account', open: signal => ctx.remote.account.watch(signal), ended: () => new Error('account stream ended'),
   })
   let disposed = false
+  let signInGeneration = 0
+  let signInSupersededGeneration = 0
+  let startingFromAttempt: SignInAttemptId | undefined
+  let startingFromStatus: AccountView['status'] | undefined
+  let lastInitializationAttempt: SignInAttemptId | undefined
+  let streamGeneration = 0
+  let returnedAttemptFence: { previous: SignInAttemptId; generation: number } | undefined
   ctx.effect(() => () => { disposed = true; return stream.dispose() }, 'account: state stream')
   void (async () => {
     for await (const frame of stream) {
+      // HTTP may return a new attempt before an older watch item is delivered.
+      // Only its known predecessor's terminal item can be discarded here.
+      if (returnedAttemptFence?.generation === frame.generation
+        && frame.value.attempt?.id === returnedAttemptFence.previous
+        && ['succeeded', 'cancelled', 'expired', 'failed'].includes(frame.value.attempt.phase)) {
+        frame.accept()
+        continue
+      }
+      returnedAttemptFence = undefined
+      streamGeneration = frame.generation
       revision++
       refreshing = undefined
-      const initialize = frame.value.status === 'credential-stored' && frame.value.attempt?.phase === 'succeeded'
-        && snapshot.view?.attempt?.phase !== 'succeeded'
+      // Only the stream claims completion; a start response may already have
+      // published this successful attempt for presentation.
+      const completedAttempt = frame.value.status === 'credential-stored' && frame.value.attempt?.phase === 'succeeded'
+        ? frame.value.attempt.id : undefined
+      const initialize = completedAttempt !== undefined && completedAttempt !== lastInitializationAttempt
+      if (initialize) lastInitializationAttempt = completedAttempt
       const { notice, ...previous } = snapshot
+      const identified = frame.value.attempt !== null && (frame.value.attempt.id !== startingFromAttempt
+        || ['initializing', 'waiting-browser', 'exchanging', 'committing'].includes(frame.value.attempt.phase))
+      const credentialChanged = frame.value.status === 'credential-stored'
+        || (startingFromStatus !== undefined && frame.value.status !== startingFromStatus)
+      if (identified || credentialChanged) signInSupersededGeneration = signInGeneration
       publish({ ...previous, view: frame.value, details: undefined, failed: false,
+        loginStarting: snapshot.loginStarting === true && frame.value.status !== 'credential-stored' && !identified,
         ...(frame.value.status === 'credential-stored' && notice ? { notice } : {}) })
       frame.accept()
       if (frame.value.status === 'credential-stored') notices.begin()
@@ -139,7 +157,7 @@ export function apply(ctx: Context): void {
   const platformPages = createPlatformPages()
   ctx.effect(() => () => { platformPages.dispose() }, 'account: platform page request')
   // One account refresh: the recharge/bonus wallet and the unnotified-bonus read,
-  // whichever surface asks — a Settings entry, or returning from top-up. Both
+  // whichever surface asks — a Models provider-card entry, or returning from top-up. Both
   // reads are independent, and a concurrent refresh shares the in-flight request.
   const refreshAccount = async (): Promise<void> => { await Promise.all([refresh(), notices.refresh()]) }
   /**
@@ -203,7 +221,11 @@ export function apply(ctx: Context): void {
       },
     },
     async start() {
-      publish({ ...snapshot, loginVisible: true, loginFailed: false })
+      const generation = ++signInGeneration
+      returnedAttemptFence = undefined
+      startingFromAttempt = snapshot.view?.attempt?.id
+      startingFromStatus = snapshot.view?.status
+      publish({ ...snapshot, loginVisible: true, loginFailed: false, loginStarting: true })
       const transport = (globalThis as typeof globalThis & {
         __DSH_TRANSPORT__?: { streamBaseUrl?: string }
       }).__DSH_TRANSPORT__
@@ -212,8 +234,22 @@ export function apply(ctx: Context): void {
           transport?.streamBaseUrl !== undefined ? new URL(transport.streamBaseUrl).origin : window.location.origin,
           'desktop')
         if (!result.ok) throw new Error('account start failed')
+        if (disposed || generation !== signInGeneration) return
+        // A same-old terminal frame does not identify this start. Admit safe
+        // returned metadata unless a new/active attempt or credential change
+        // has superseded it, so cancellation never depends on its watch frame.
+        if (signInSupersededGeneration !== generation) {
+          revision++
+          refreshing = undefined
+          const returnedId = result.value.attempt?.id
+          if (startingFromAttempt !== undefined && returnedId !== undefined && returnedId !== startingFromAttempt) {
+            returnedAttemptFence = { previous: startingFromAttempt, generation: streamGeneration }
+          }
+          publish({ ...snapshot, view: result.value, details: undefined, loginStarting: false })
+          void refresh()
+        } else publish({ ...snapshot, loginStarting: false })
       } catch (error) {
-        publish({ ...snapshot, loginFailed: true })
+        if (!disposed && generation === signInGeneration) publish({ ...snapshot, loginFailed: true, loginStarting: false })
         throw error
       }
     },
@@ -229,39 +265,6 @@ export function apply(ctx: Context): void {
       throw result.error
     },
   }
-  if ('dshDesktop' in globalThis) {
-    const controller = new DesktopOnboardingController(
-      ctx.configForms.get<OnboardingSettings>(DESKTOP_ONBOARDING_NAMESPACE),
-      ctx.configForms.get<{ transcriptView?: TranscriptViewMode | null; performanceUsage: 'compact' | 'detailed' }>('ui-chat'),
-      enabled => ctx.configForms.developerTools.setEnabled(enabled),
-      operations.hooks.account,
-      ctx.configForms.describe(),
-    )
-    ctx.effect(() => () => { controller.dispose() }, 'account: desktop onboarding lifetime')
-    ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-      name: 'shell.overlay', id: 'desktop-onboarding', locale: 'settings.account',
-      inject: (): DesktopOnboardingInjected => ({
-        hooks: { account: operations.hooks.account, onboarding: controller.state },
-        // Onboarding's recharge return re-reads profile and balance only.
-        ...nativePlatform === undefined ? {} : { openPlatformPage: platformPageOpener(refresh) },
-        update: (change: OnboardingChange) => controller.update(change),
-        complete: (reason: 'completed' | 'skipped') => controller.complete(reason),
-        retry: () => controller.retry(),
-        track: (name, attributes) => ctx.get('productAnalytics')?.track(name, attributes),
-      }),
-    }, DesktopOnboardingEntry))
-  }
-  ctx.slots.inject('settings.models.sign-in', () => ctx.slots.register({
-    name: 'settings.models.sign-in', locale: 'settings.account', inject: () => operations,
-  }, AccountOnboarding))
-  ctx.slots.inject('shell.quota-notice', () => ctx.slots.register({
-    name: 'shell.quota-notice', locale: 'settings.account',
-    select: owner => owner.code === 'ACCOUNT_QUOTA' ? owner : null,
-    inject: (): AccountQuotaNoticeInjected => ({
-      hooks: { account: operations.hooks.account, platformPage: platformPages },
-      ...nativePlatform === undefined ? {} : { openPlatformPage: platformPageOpener(refreshAccount) },
-    }),
-  }, AccountQuotaNotice))
   if (nativePlatform !== undefined) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay', id: 'account.platform-page', locale: 'settings.account',
@@ -271,24 +274,7 @@ export function apply(ctx: Context): void {
       }),
     }, AccountPlatformHost))
   }
-  ctx.slots.inject('settings.launcher', () => ctx.slots.register({
-    name: 'settings.launcher', locale: 'settings.account', inject: () => operations,
-  }, AccountMenu))
-  ctx.slots.inject('settings.section', () => {
-    let unregister: (() => void) | undefined
-    const update = () => {
-      if (snapshot.view?.status === 'credential-stored') {
-        unregister ??= ctx.slots.register({
-          name: 'settings.section', id: 'account', order: -10, label: () => t('nav'),
-          locale: 'settings.account', inject: () => operations,
-        }, AccountSection)
-      } else {
-        unregister?.()
-        unregister = undefined
-      }
-    }
-    listeners.add(update)
-    update()
-    return () => { listeners.delete(update); unregister?.() }
-  })
+  ctx.slots.inject('settings.models.footer', () => ctx.slots.register({
+    name: 'settings.models.footer', id: 'deepseek-connection', locale: 'settings.account', inject: () => operations,
+  }, AccountSection))
 }

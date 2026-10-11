@@ -11,7 +11,6 @@ import {
 import { openSettings, ZH_BROWSER_LOCALE, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/onboarding-native', import.meta.url))
-const SIGNED_OUT_MENU_EXPECTED = join(SNAPSHOT_DIR, 'signed-out-menu.expected.md')
 const MODE = webSnapshotMode()
 
 describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credential onboarding (desktop marker: %s)', (desktop) => {
@@ -28,7 +27,7 @@ describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credenti
     })
     browser = await chromium.launch()
     page = await browser.newPage({ viewport: { width: 1440, height: 960 }, locale: ZH_BROWSER_LOCALE })
-    // The shared menu golden uses the Linux shortcut profile on every test host.
+    // Shortcut chrome uses the same platform profile on every test host.
     await page.addInitScript(() => { Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64' }) })
     if (desktop) await page.addInitScript(() => { Object.defineProperty(globalThis, 'dshDesktop', { value: { protocolVersion: 1 } }) })
     tripwire = watchConsole(page)
@@ -57,51 +56,34 @@ describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credenti
         await page.reload({ waitUntil: 'load' })
         acknowledgeReloadConnectionLoss(tripwire, warningsBefore)
       }
-      const accountMenu = page.getByRole('button', { name: '账号菜单', exact: true })
-      if (desktop) {
-        await accountMenu.waitFor()
-        expect(await accountMenu.textContent()).toBe('更多')
-        const triggerBox = (await accountMenu.boundingBox())!
-        expect(Math.abs(triggerBox.height - 32)).toBeLessThan(1)
-        await accountMenu.click()
-        const menu = page.getByRole('menu')
-        await menu.waitFor()
-        expect(await menu.getByRole('menuitem').count()).toBe(3)
-        // Shortcut hints vary by host platform; accessible names identify the three actions.
-        for (const name of ['设置', '意见反馈', '登录']) {
-          expect(await menu.getByRole('menuitem', { name, exact: true }).count()).toBe(1)
-        }
-        const menuBox = (await menu.boundingBox())!
-        expect(Math.abs(menuBox.width - 124)).toBeLessThan(1)
-        expect(Math.abs(menuBox.height - 128)).toBeLessThan(1)
-        expect(Math.abs(triggerBox.y - (menuBox.y + menuBox.height) - 4)).toBeLessThan(1)
-        for (const row of await menu.getByRole('menuitem').all()) {
-          const rowBox = (await row.boundingBox())!
-          expect(Math.abs(rowBox.height - 40)).toBeLessThan(1)
-          expect(Math.abs(menuBox.width - rowBox.width - 8)).toBeLessThan(1)
-          const glyph = (await row.locator('svg').first().boundingBox())!
-          expect(Math.abs(glyph.width - 16)).toBeLessThan(1)
-          expect(Math.abs(glyph.height - 16)).toBeLessThan(1)
-        }
-        const menuAria = await captureStableAria(page, '[role="menu"]', scaffold.workspaceCwd)
-        await compareOrRefreshGolden(SIGNED_OUT_MENU_EXPECTED, menuAria, MODE)
-        await page.keyboard.press('Escape')
-        await menu.waitFor({ state: 'detached' })
-      } else {
-        await page.getByRole('button', { name: '设置', exact: true }).waitFor()
-        expect(await accountMenu.count()).toBe(0)
-        expect(await page.getByRole('dialog', { name: '开始你的创作' }).count()).toBe(0)
-      }
+      const launcher = page.getByRole('button', { name: '设置', exact: true })
+      await launcher.waitFor()
+      expect(await launcher.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(await launcher.getAttribute('aria-expanded')).toBe('false')
+      expect(await page.getByRole('button', { name: '账号菜单', exact: true }).count()).toBe(0)
+      expect(await page.locator('[data-desktop-onboarding]').count()).toBe(0)
+      expect(await page.getByRole('dialog', { name: '开始你的创作' }).count()).toBe(0)
+      expect(await page.locator('#root').evaluate(element => (element as HTMLElement).inert)).toBe(false)
       await openSettings(page, 'zh')
       const settings = page.getByRole('dialog', { name: '设置', exact: true })
-      await settings.getByRole('button', { name: '模型', exact: true }).click()
+      expect(await settings.locator('nav').getByRole('button', { name: '账号与余额', exact: true }).count()).toBe(0)
+      await settings.locator('nav').getByRole('button', { name: '模型', exact: true }).click()
+      if (desktop) {
+        const connection = settings.getByRole('region', { name: 'DeepSeek 连接', exact: true })
+        await connection.waitFor()
+        await expect.poll(() => connection.getByRole('button', { name: '连接 DeepSeek', exact: true }).isEnabled()).toBe(true)
+      }
       await settings.getByLabel('API 密钥', { exact: true }).waitFor()
       expect(await page.getByRole('dialog', { name: '添加一个 API Key 开始使用' }).count()).toBe(0)
       expect(await welcome.count()).toBe(0)
       expect(await readFile(credentialPath, 'utf8')).toBe(credentials)
-      const aria = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
-      await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'models.expected.md'), aria, MODE)
+      if (!desktop) {
+        const aria = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
+        await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'models.expected.md'), aria, MODE)
+      }
       await page.keyboard.press('Escape')
+      await settings.waitFor({ state: 'detached' })
+      await expect.poll(() => launcher.evaluate(element => element === document.activeElement)).toBe(true)
     }
     expect(tripwire.warnings).toEqual([])
     expect(tripwire.pageErrors).toEqual([])

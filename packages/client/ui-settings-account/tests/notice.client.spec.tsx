@@ -5,7 +5,7 @@
  * presented frame. Closing counts as seen because the user acted on it.
  */
 import { createRef } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { act } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AccountBonusOrderId } from '@deepseek-ai/dsh-deepseek-account/types'
@@ -136,5 +136,85 @@ it.each([true, false])('cancels the presentation task when the card unmounts fir
   act(() => { for (const frame of frames.splice(0)) frame() })
   view.unmount()
   act(() => { vi.runAllTimers() })
+  expect(onShown).not.toHaveBeenCalled()
+})
+
+function inlineNotice() {
+  let notifyIntersection: ((entries: IntersectionObserverEntry[]) => void) | undefined
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback: (entries: IntersectionObserverEntry[]) => void) { notifyIntersection = callback }
+    observe() {}
+    disconnect() {}
+  })
+  const onShown = vi.fn()
+  const onDismiss = vi.fn()
+  const view = render(<section aria-label="DeepSeek connection">
+    <AccountNoticeCard inline title="Bonus credited" closeLabel="Close"
+      notice={{ orderId: 'inline-order' as AccountBonusOrderId, message: 'Provider bonus', expiresAt: '2099-01-01T00:00:00Z' }}
+      onShown={onShown} onDismiss={onDismiss} />
+  </section>)
+  const region = screen.getByRole('region', { name: 'DeepSeek connection' })
+  const card = region.querySelector('aside')!
+  vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({ left: 20, top: 20, right: 280, bottom: 160, width: 260, height: 140, x: 20, y: 20, toJSON() {} })
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => card })
+  const intersect = (visible: boolean) => {
+    act(() => {
+      const bounds = card.getBoundingClientRect()
+      const entry: IntersectionObserverEntry = {
+        target: card, isIntersecting: visible, intersectionRatio: visible ? 1 : 0,
+        boundingClientRect: bounds, intersectionRect: visible ? bounds : new DOMRect(),
+        rootBounds: null, time: performance.now(),
+      }
+      notifyIntersection?.([entry])
+    })
+  }
+  return { view, region, card, onShown, onDismiss, intersect }
+}
+
+it('reports an inline provider notice only after it enters the Models viewport', async () => {
+  const { region, onShown, intersect } = inlineNotice()
+  expect(within(region).getByRole('status').textContent).toContain('Provider bonus')
+  intersect(false)
+  await presentFrames()
+  expect(onShown).not.toHaveBeenCalled()
+  intersect(true)
+  await presentFrames()
+  expect(onShown).toHaveBeenCalledExactlyOnceWith('inline-order')
+})
+
+it.each(['inert', 'aria-hidden', 'ancestor-opacity', 'native-cover', 'hit-test-cover'] as const)('does not acknowledge an inline notice behind %s', async (cover) => {
+  const { region, card, onShown, intersect } = inlineNotice()
+  const layer = document.createElement('div')
+  if (cover === 'inert') region.setAttribute('inert', '')
+  else if (cover === 'aria-hidden') region.setAttribute('aria-hidden', 'true')
+  else if (cover === 'ancestor-opacity') region.style.opacity = '0'
+  else if (cover === 'native-cover') { layer.setAttribute('role', 'dialog'); layer.setAttribute('aria-modal', 'true'); document.body.append(layer) }
+  else Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => layer })
+  intersect(true)
+  await presentFrames()
+  expect(onShown).not.toHaveBeenCalled()
+  region.removeAttribute('inert')
+  region.removeAttribute('aria-hidden')
+  region.style.opacity = ''
+  layer.remove()
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => card })
+  fireEvent.scroll(region)
+  await presentFrames()
+  expect(onShown).toHaveBeenCalledExactlyOnceWith('inline-order')
+})
+
+it('cancels an inline presentation when the provider region becomes hidden before its frame', async () => {
+  const { region, onShown, intersect } = inlineNotice()
+  intersect(true)
+  await presentFrames(() => { region.setAttribute('aria-hidden', 'true') })
+  expect(onShown).not.toHaveBeenCalled()
+})
+
+it('cancels an intersecting inline presentation when Models closes before its frame', async () => {
+  const { view, onShown, intersect } = inlineNotice()
+  intersect(true)
+  expect(frames.length).toBeGreaterThan(0)
+  view.unmount()
+  await presentFrames()
   expect(onShown).not.toHaveBeenCalled()
 })
