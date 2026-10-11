@@ -89,12 +89,12 @@ $rules=@($after.GetAccessRules($true,$false,[System.Security.Principal.SecurityI
           const backup = join(scratch, `victim-${mode}-${index}.acl.sddl`); backups.push({ path: victim, backup })
           // Snapshot before modifying only this fresh fixture's DACL; preserve it for finally recovery.
           diagnostics.push(pwsh(`$ErrorActionPreference='Stop';$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+& icacls.exe ${quote(victim)} /setintegritylevel L|Out-Null;if($LASTEXITCODE -ne 0){throw 'Low label fixture failed'};
 $acl=Get-Acl -LiteralPath ${quote(victim)};
 $before=$acl.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access);
 Set-Content -LiteralPath ${quote(backup)} -NoNewline -Value $before;
 $acl.SetSecurityDescriptorSddlForm(('D:P(A;;FR;;;'+$sid+')'),[System.Security.AccessControl.AccessControlSections]::Access);
 Set-Acl -LiteralPath ${quote(victim)} -AclObject $acl;
-& icacls.exe ${quote(victim)} /setintegritylevel L|Out-Null;if($LASTEXITCODE -ne 0){throw 'Low label fixture failed'};
 $after=Get-Acl -LiteralPath ${quote(victim)};
 $delete=@($after.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])|
  Where-Object {$_.AccessControlType -eq 'Allow' -and ([int]$_.FileSystemRights -band 0x10000) -ne 0});
