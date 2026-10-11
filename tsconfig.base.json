@@ -275,6 +275,7 @@
       "@deepseek-ai/dsh-client-ui-skill": ["./packages/client/ui-skill/src"],
       "@deepseek-ai/dsh-client-ui-skill-library": ["./packages/client/ui-skill-library/src"],
       "@deepseek-ai/dsh-skill-library/types": ["./packages/skill/skill-library/src/types.ts"],
+      "@deepseek-ai/dsh-util-values/native-procedure-path": ["./packages/util/values/src/native-procedure-path.ts"],
       "@deepseek-ai/dsh-coding-session/types": ["./packages/session/coding-session/src/types.ts"],
       "@deepseek-ai/dsh-client-ui-settings-coding-sessions": ["./packages/client/ui-settings-coding-sessions/src"],
       "@deepseek-ai/dsh-client-ui-settings-coding-sessions/client": ["./packages/client/ui-settings-coding-sessions/src/client/index.ts"],

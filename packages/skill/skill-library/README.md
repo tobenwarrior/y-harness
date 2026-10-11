@@ -77,6 +77,8 @@ Human-labelled fixtures in `tests/fixtures/decision-labels.json` identify releva
 <a id="configuration-and-provider-extension"></a>
 ## Configuration and provider extension
 
+Native readers share lexical project-path admission through the dependency-free [value utility](../../util/values/README.md). The learning validator independently checks retained facts.
+
 `dshHome`, `agentsHome`, `customSkillDirs` and `bundledSkillDir` select the same roots as the filesystem provider. Additional root configuration must match the mounted invocation source. `bodyBudgetBytes`, `retrievalLimit`, `proposalLimit` and `automaticMaintenanceIntervalMs` bound local maintenance and metadata selection. Native providers use `registerNativeProvider()`. Learning uses `registerLearningGenerator()`; `registerLearningValidator()` registers independent checks. Each registration returns a disposer. `learningMaxInputBytes`, `learningMaxSources`, `learningMaxEvidence`, `learningMaxResourceFiles` and `learningMaxResourceBytes` bound complete provider inputs, proposals and resource inspection. Resource hashes use bounded reads of actual bytes and bounded directory entry inspection, and refuse changing files. `maintenanceMaxOperations` limits automatic changes in one pass; `learningOperationTimeoutMs` sets its admission deadline; `automaticProjectSkillLimit` limits managed project growth during native creation.
 
 <a id="understand-the-implementation"></a>
