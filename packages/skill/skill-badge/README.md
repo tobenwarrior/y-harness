@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Agents can load the official "powered by dsh" badge skill from this bundled provider and follow its instructions for adding attribution badges to documents, PRs, and other content produced with DeepSeek Harness. The provider has no configuration, and the shipped CLI composition includes the plugin disabled, so deployments enable it explicitly. The skill ships both Markdown snippets and a packaged PNG for systems that cannot reliably import remote images.
+Agents can load the official "powered by dsh" badge skill from this bundled provider and follow its instructions for adding attribution badges to documents, PRs, and other content produced with Y Harness. The provider has no configuration, and the shipped CLI composition includes the plugin disabled, so deployments enable it explicitly. The skill ships both Markdown snippets and a packaged PNG for systems that cannot reliably import remote images.
 
 ## Table of Contents
 
@@ -25,11 +25,11 @@ Agents can load the official "powered by dsh" badge skill from this bundled prov
 <a id="use-this-package"></a>
 ## Use this package
 
-Enable the plugin to make the `dsh-badge` skill available in the session skill catalog; the model can then load it like any other skill and follow its instructions for adding a "powered by dsh" badge.
+Enable the plugin to register the `dsh-badge` skill; the model can then load it by exact name and follow its instructions for adding a "powered by dsh" badge.
 
 ### When to choose it
 
-Choose this provider when content produced with DeepSeek Harness should carry official attribution badges, and the deployment wants the badge skill available to agents without storing it in a local skill directory. Skip it when the badge is irrelevant to the deployment — the plugin is disabled by default and adds nothing until enabled.
+Choose this provider when content produced with Y Harness should carry official attribution badges, and the deployment wants the badge skill available to agents without storing it in a local skill directory. Skip it when the badge is irrelevant to the deployment — the plugin is disabled by default and adds nothing until enabled.
 
 ### Enable the plugin
 
@@ -39,7 +39,7 @@ The plugin has no configuration. Add its composition row to a composition; the s
 - name: '@deepseek-ai/dsh-skill-badge'
 ```
 
-After enabling, `dsh-badge` appears in the available skills of the session catalog. The skill covers remote Markdown badges (Shields.io-based) and a packaged PNG badge asset for targets that cannot fetch remote images reliably.
+After enabling, `dsh-badge` is available for exact-name loading. The shipped relevance catalog advertises it when the user names it or the task matches its metadata; the complete catalog advertises every model-invocable skill. The skill covers remote Markdown badges (Shields.io-based) and a packaged PNG badge asset for targets that cannot fetch remote images reliably.
 
 ### What the badge skill provides
 
@@ -48,7 +48,7 @@ After enabling, `dsh-badge` appears in the available skills of the session catal
 
 ### Observable success and failures
 
-Enabling the plugin makes `dsh-badge` appear in the catalog and loadable by name; disabling or omitting the row keeps it out of every catalog. Because the provider is immutable, discovery always succeeds with exactly one skill and never reports partial results.
+Enabling the plugin makes `dsh-badge` discoverable and loadable by name, even when the current task shortlist omits it; disabling or omitting the row keeps it out of every catalog and rejects exact-name loading. Because the provider is immutable, discovery always succeeds with exactly one skill and never reports partial results.
 
 -----
 

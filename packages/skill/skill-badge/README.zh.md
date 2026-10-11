@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-agent（智能体）可以通过该内置提供方加载官方「powered by dsh」徽章 skill，并遵循其指令，给文档、PR（Pull Request）以及其他用 DeepSeek Harness 生成的内容添加署名徽章。该提供方没有配置，随附 CLI（命令行界面）组合以禁用状态包含该插件，因此部署方需要显式启用。该 skill 同时提供 Markdown 片段和随包分发的 PNG，供无法可靠导入远程图片的系统使用。
+agent（智能体）可以通过该内置提供方加载官方「powered by dsh」徽章 skill，并遵循其指令，给文档、PR（Pull Request）以及其他用 Y Harness 生成的内容添加署名徽章。该提供方没有配置，随附 CLI（命令行界面）组合以禁用状态包含该插件，因此部署方需要显式启用。该 skill 同时提供 Markdown 片段和随包分发的 PNG，供无法可靠导入远程图片的系统使用。
 
 ## 目录
 
@@ -25,11 +25,11 @@ agent（智能体）可以通过该内置提供方加载官方「powered by dsh�
 <a id="use-this-package"></a>
 ## 使用本包
 
-启用插件即可让 `dsh-badge` skill 出现在会话 skill 目录中；随后模型可以像加载任何其他 skill 一样加载它，并遵循其指令添加「powered by dsh」徽章。
+启用插件即可注册 `dsh-badge` skill；随后模型可以凭确切名称加载它，并遵循其指令添加「powered by dsh」徽章。
 
 ### 何时选择
 
-当用 DeepSeek Harness 生成的内容应携带官方署名徽章、且部署方希望该徽章 skill 对 agent 可用而无需存入本地 skill 目录时，选择此提供方。当徽章与部署无关时，请跳过——插件默认禁用，启用前不增加任何东西。
+当用 Y Harness 生成的内容应携带官方署名徽章、且部署方希望该徽章 skill 对 agent 可用而无需存入本地 skill 目录时，选择此提供方。当徽章与部署无关时，请跳过——插件默认禁用，启用前不增加任何东西。
 
 ### 启用插件
 
@@ -39,7 +39,7 @@ agent（智能体）可以通过该内置提供方加载官方「powered by dsh�
 - name: '@deepseek-ai/dsh-skill-badge'
 ```
 
-启用后，`dsh-badge` 会出现在会话目录的可用 skill 中。该 skill 覆盖远程 Markdown 徽章（基于 Shields.io）和随包分发的 PNG 徽章资源，后者用于无法可靠获取远程图片的目标环境。
+启用后，`dsh-badge` 可凭确切名称加载。随附的相关性目录会在用户点名它或任务匹配其元数据时展示它；完整目录会展示所有可供模型调用的 skill。该 skill 覆盖远程 Markdown 徽章（基于 Shields.io）和随包分发的 PNG 徽章资源，后者用于无法可靠获取远程图片的目标环境。
 
 ### 徽章 skill 提供什么
 
@@ -48,7 +48,7 @@ agent（智能体）可以通过该内置提供方加载官方「powered by dsh�
 
 ### 可观察的成功与失败
 
-启用插件会使 `dsh-badge` 出现在目录中并可凭名称加载；禁用或省略该行则它不会出现在任何目录中。由于提供方不可变，发现始终成功且恰好返回一个 skill，绝不会报告部分结果。
+启用插件会使 `dsh-badge` 可被发现并凭名称加载，即使当前任务候选列表省略了它；禁用或省略该行则它不会出现在任何目录中，凭确切名称加载也会被拒绝。由于提供方不可变，发现始终成功且恰好返回一个 skill，绝不会报告部分结果。
 
 -----
 
