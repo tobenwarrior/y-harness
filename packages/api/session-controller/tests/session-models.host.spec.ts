@@ -83,10 +83,39 @@ const REASONING: LlmModelReasoningInfo = {
   defaultEffort: ReasoningEffortId('high'),
 }
 
+it.each([true, false])('projects service tier descriptions and optional default into the catalog: %s', async (hasDefault) => {
+  const { ctx } = await harness()
+  onTestFinished(() => ctx.fiber.dispose())
+  ctx.llm.registerAdapter(['speed'], new class extends CatalogAdapter {
+    override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+      return Promise.resolve({ provider, id: model, name: model, serviceTiers: {
+        tiers: [
+          { id: ServiceTierId('default'), name: 'Standard' },
+          { id: ServiceTierId('priority'), name: 'Fast', description: 'Prioritized processing' },
+        ],
+        ...hasDefault ? { defaultTier: ServiceTierId('default') } : {},
+      } })
+    }
+  }('Speed', [{ provider: 'speed', id: 'model', name: 'Model' }]))
+  const catalog = await buildModelCatalog(ctx, { provider: 'speed', model: 'model' })
+  expect(catalog.groups.find(group => group.id === 'speed')).toEqual({
+    id: 'speed', name: 'Speed', models: [{
+      id: 'model', name: 'Model', serviceTiers: {
+        tiers: [
+          { id: 'default', name: 'Standard' },
+          { id: 'priority', name: 'Fast', description: 'Prioritized processing' },
+        ],
+        ...hasDefault ? { defaultTier: 'default' } : {},
+      },
+    }],
+  })
+})
+
 async function harness(logged?: {
   provider: string
   model: string
   reasoningEffort?: ReasoningEffortId
+  serviceTier?: ServiceTierId
   adapterDefaults?: LlmCallConfigAdapterDefaults
 }, ctx = new Context()): Promise<{
   ctx: Context
@@ -681,6 +710,23 @@ describe('Web session model selection', () => {
 
     expect(new ApiSessionAgentController(ctx).selectionFor(agent).current)
       .toEqual({ provider: 'deepseek-official', model: 'deepseek-chat' })
+    await ctx.fiber.dispose()
+  })
+
+  it.each([true, false])('restores a logged service tier according to adapter ownership: %s', async (adapterOwned) => {
+    const { ctx, agent } = await harness({
+      provider: 'deepseek-official', model: 'deepseek-chat',
+      serviceTier: ServiceTierId('priority'),
+      adapterDefaults: { serviceTier: adapterOwned },
+    })
+    createSessionTestRemote(ctx, {
+      defaultModelSelection: () => ({ provider: 'duplicate', model: 'same' }),
+      cwd: '/tmp',
+    })
+    expect(new ApiSessionAgentController(ctx).selectionFor(agent).current).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-chat',
+      ...adapterOwned ? {} : { serviceTier: 'priority' },
+    })
     await ctx.fiber.dispose()
   })
 
