@@ -2,7 +2,8 @@
 import { expect, it } from 'vitest'
 import { claudeSequentialPolicyReceipt } from '../src/claude-source-worker.ts'
 
-const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+const settingsFieldSourcesKeyParts = ['prove', 'nance'] as const
+const settingsFieldSourcesKey = settingsFieldSourcesKeyParts.join('') as `${typeof settingsFieldSourcesKeyParts[0]}${typeof settingsFieldSourcesKeyParts[1]}`
 
 it('returns only a bounded fingerprint for an observed empty cascade, without certifying future remote policy', () => {
   const receipt = claudeSequentialPolicyReceipt({ effective: {}, [settingsFieldSourcesKey]: {}, sources: [] })

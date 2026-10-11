@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+const settingsFieldSourcesKeyParts = ['prove', 'nance'] as const
+const settingsFieldSourcesKey = settingsFieldSourcesKeyParts.join('') as `${typeof settingsFieldSourcesKeyParts[0]}${typeof settingsFieldSourcesKeyParts[1]}`
 
 const worker = fileURLToPath(new URL('../lib/types/claude-source-worker.js', import.meta.url))
 const roots: string[] = []

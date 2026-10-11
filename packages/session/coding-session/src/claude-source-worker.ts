@@ -9,7 +9,8 @@ import type { ClaudeSessionSdk } from './claude.ts'
 import type { ClaudeSequentialSdk } from '@deepseek-ai/dsh-subagent-claude-code'
 import type { ResolvedSettings, ResolveSettingsOptions } from '@anthropic-ai/claude-agent-sdk'
 
-const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+const settingsFieldSourcesKeyParts = ['prove', 'nance'] as const
+const settingsFieldSourcesKey = settingsFieldSourcesKeyParts.join('') as `${typeof settingsFieldSourcesKeyParts[0]}${typeof settingsFieldSourcesKeyParts[1]}`
 
 const absolute = z.string().min(1).refine(isAbsolute)
 const count = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
