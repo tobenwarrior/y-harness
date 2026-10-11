@@ -6,7 +6,7 @@ import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepse
 import SessionStore, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, TurnEndReason } from '@deepseek-ai/dsh-session'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
+import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillClaudeSessionId, SkillClaudeSendId, SkillClaudeMessageId, SkillClaudeToolUseId, SkillLearningNativeItem, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { installSkillLearningRuntime } from '../src/learning-runtime.ts'
 import type { SkillLearningRuntimeController, SkillLearningRuntimeOptions } from '../src/learning-runtime.ts'
@@ -382,3 +382,70 @@ function ctxDetachedTask() {
   // A seed created off-store never emits live session/event notifications.
   const ctx = new Context(); const store = new SessionStore(ctx); const session = store.prepare(SessionId('seed'), { meta: { cwd: '/test/project' } }); turn(session); return session
 }
+
+
+it.each([0, -1, 1.5, Number.NaN, 2147483648])('refuses an invalid runtime bound %s before mounting listeners', (maxInputBytes) => {
+  const ctx = new Context(); contexts.push(ctx)
+  const controller = { registerLearningGenerator: () => () => {}, setLearningAvailability: () => {}, recordLearningEvidence: async () => { throw new Error('must not admit') }, proposeLearning: async () => {} }
+  expect(() => installSkillLearningRuntime(ctx, controller, { maxInputBytes })).toThrow(/invalid runtime bound/)
+})
+it('pairs Claude messages and refuses native identity changes, duplicate starts and overlong metadata', async () => {
+  for (const control of ['paired', 'identity-change', 'duplicate', 'long-name', 'too-many'] as const) {
+    const f = await fixture({ maxEventRefs: control === 'too-many' ? 2 : 40 }, 'native')
+    f.session.append('turn/start', { turn: 1 })
+    f.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Inspect the current project.' }] }), { surfaceOp: 'append' })
+    const item: SkillLearningNativeItem = { provider: 'claude-code', connectionId: brandString<SkillNativeConnectionId>('profile'), sessionId: brandString<SkillClaudeSessionId>('native'), sendId: brandString<SkillClaudeSendId>('send'),
+      itemId: brandString<SkillClaudeToolUseId>('read'), kind: 'read', name: 'read', phase: 'started', sourceMessageId: brandString<SkillClaudeMessageId>('assistant'), skillReadPath: 'src/source.ts', procedure: { kind: 'read', path: 'src/source.ts' } }
+    for (let n = 0; n < (control === 'too-many' ? 3 : 2); n++) {
+      const current: SkillLearningNativeItem = { ...item, itemId: brandString<SkillClaudeToolUseId>(`item-${n}`), name: control === 'long-name' ? 'x'.repeat(129) : 'read',
+        procedure: { kind: 'read', path: `src/source-${n}.ts` }, ...(control === 'identity-change' && n === 1 ? { sendId: brandString<SkillClaudeSendId>('foreign') } : {}) }
+      f.session.append('skill/native-item', current, { ignorable: true })
+      if (control === 'duplicate') f.session.append('skill/native-item', current, { ignorable: true })
+      f.session.append('skill/native-item', { ...current, phase: 'settled', outcome: 'reported-success', resultMessageId: brandString<SkillClaudeMessageId>('result') }, { ignorable: true })
+    }
+    f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await f.dispose()
+    expect(f.adapter.calls).toEqual([])
+    if (control === 'paired' || control === 'duplicate') {
+      expect(f.evidence).toHaveLength(1)
+      expect(f.evidence[0]?.native).toMatchObject({ provider: 'claude-code', sendId: 'send', actions: [
+        { sourceMessageId: 'assistant', resultMessageId: 'result', skillReadPath: 'src/source.ts' },
+        { sourceMessageId: 'assistant', resultMessageId: 'result', skillReadPath: 'src/source.ts' }] })
+    } else expect(f.evidence).toEqual([])
+  }
+})
+it('bounds live captures, route and completion caches, and forgets disposed sessions', async () => {
+  const f = await fixture({ maxSessions: 1, maxCompletionRefs: 1 })
+  for (let n = 0; n < 3; n++) {
+    const session = n === 0 ? f.session : f.ctx.sessions.create(SessionId(`bounded-${n}`), { meta: { cwd: '/test/project' } })
+    turn(session)
+    await vi.waitFor(() => { expect(f.evidence).toHaveLength(n + 1) })
+  }
+  const generator = f.generators.get('harness-api')!
+  await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: [f.evidence[0]!], catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)).rejects.toThrow(/captured evidence/)
+  const disposable = f.ctx.sessions.prepare(SessionId('disposable'), { meta: { cwd: '/test/project' } })
+  const detach = f.ctx.sessions.enter(disposable); f.ctx.sessions.announce(disposable)
+  disposable.append('turn/start', { turn: 1 }); detach()
+  await f.dispose()
+  expect(f.adapter.calls).toHaveLength(3)
+  expect(f.evidence.every(row => row.checks.length === 0)).toBe(true)
+})
+it('refuses overlong route metadata and ignores roots outside the registered project', async () => {
+  const f = await fixture()
+  const outside = f.ctx.sessions.create(SessionId('outside'), { meta: { cwd: '/different/project' } }); turn(outside)
+  f.session.append('turn/start', { turn: 1 })
+  f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'x'.repeat(257), model: 'model' } } })
+  await f.dispose()
+  expect(f.adapter.calls).toEqual([]); expect(f.evidence).toEqual([])
+  expect(f.availability.get('p')?.reason).toContain('metadata bound')
+})
+it.each([
+  '<skill-learning-json>{"drafts":[{"kind":"update","id":"existing","name":"existing","description":"Existing procedure","content":"Preserve checks."}],"uncertainty":[]}</skill-learning-json>',
+  '<skill-learning-json>{"drafts":[{"kind":"create","name":"new","description":"Authorization: Bearer synthetic","content":"Preserve checks."}],"uncertainty":[]}</skill-learning-json>',
+  '<skill-learning-json>{"drafts":[{"kind":"create","name":"new","description":"New procedure","content":"Preserve checks."}],"uncertainty":["Authorization: Bearer synthetic"]}</skill-learning-json>',
+])('validates draft identities and refuses sensitive generated metadata', async (reply) => {
+  const f = await fixture({}, 'api', reply); turn(f.session); await f.dispose()
+  expect(f.adapter.calls).toHaveLength(1)
+  if (reply.includes('"id":"existing"')) expect(f.generated[0]?.drafts[0]?.id).toBe('existing')
+  else { expect(f.generated).toEqual([]); expect(f.availability.get('p')?.state).toBe('unavailable') }
+})

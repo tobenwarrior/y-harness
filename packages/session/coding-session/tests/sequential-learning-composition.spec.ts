@@ -287,8 +287,9 @@ it('reserves complete task settlement and refuses an oversized native identity b
 
 it('retains native completion but refuses complete oversized evidence before learning controller admission', async () => {
   const f = await fixture(); const probe = readonlyController()
-  const calibration = await f.ctx.agentLoop.create(Sessions.SessionId('calibration-' + 'a'.repeat(240)), { provider: 'fixture', model: 'fixture' }, { cwd: f.project.path })
-  const selected = await f.ctx.agentLoop.create(Sessions.SessionId('measurement-' + 'b'.repeat(240)), { provider: 'fixture', model: 'fixture' }, { cwd: f.project.path })
+  const padding = 255 - Buffer.byteLength('calibration-.jsonl.zstd')
+  const calibration = await f.ctx.agentLoop.create(Sessions.SessionId('calibration-' + 'a'.repeat(padding)), { provider: 'fixture', model: 'fixture' }, { cwd: f.project.path })
+  const selected = await f.ctx.agentLoop.create(Sessions.SessionId('measurement-' + 'b'.repeat(padding)), { provider: 'fixture', model: 'fixture' }, { cwd: f.project.path })
   const send = async (hooks: SkillSequentialTaskHooks) => {
     await hooks.beforeDispatch(); await hooks.onNativeTurn('current-native-turn-1')
     for (const [index, path] of ['src/a.ts', 'src/b.ts'].entries()) {
@@ -320,4 +321,52 @@ it('retains native completion but refuses complete oversized evidence before lea
   const ending = selected.session.snapshotEvents().findLast(event => event.type === 'skill/sequential-task-end')
   expect(ending?.data).toMatchObject({ outcome: 'completed', learning: 'unavailable' })
   expect(probe.controller.setLearningAvailability).toHaveBeenLastCalledWith(f.project.id, expect.objectContaining({ state: 'unavailable' }))
+})
+
+it('refuses repeated admission, missing turns, and foreign or mismatched live observations', async () => {
+  const f = await fixture(); const probe = readonlyController()
+  const bridge = new SequentialSkillLearning(f.ctx, probe.controller, {
+    maxItems: 1, maxTaskBytes: 1600, maxInputBytes: 64000, timeoutMs: 1000 })
+  onTestFinished(() => bridge.dispose())
+  const item: SkillLearningNativeItem = { provider: 'codex', connectionId: brandString<SkillNativeConnectionId>(directSource.profileId),
+    sessionId: brandString<SkillCodexSessionId>(directSource.nativeSessionId), turnId: brandString<SkillCodexTurnId>('turn'),
+    itemId: brandString<SkillCodexItemId>('item'), kind: 'read', name: 'read', phase: 'started', procedure: { kind: 'read', path: 'src/a.ts' } }
+  const operations: ((hooks: SkillSequentialTaskHooks) => Promise<void>)[] = [
+    async () => {},
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.beforeDispatch() },
+    async (hooks) => { await hooks.onNativeTurn('turn') },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('') },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeTurn('turn') },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, connectionId: brandString<SkillNativeConnectionId>('foreign') }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, sessionId: brandString<SkillCodexSessionId>('foreign') }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, turnId: brandString<SkillCodexTurnId>('old') }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, phase: 'invalidated' }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, phase: 'settled' }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem(item) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem(item); await hooks.onNativeItem({ ...item, itemId: brandString<SkillCodexItemId>('second') }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem(item); await hooks.onNativeItem({ ...item, phase: 'settled', name: 'changed' }) },
+    async (hooks) => { await hooks.beforeDispatch(); await hooks.onNativeTurn('turn'); await hooks.onNativeItem({ ...item, patchProcedure: { kind: 'patch', changes: [{ operation: 'update', path: 'src/a.ts' }] } }) },
+  ]
+  for (const operation of operations) await expect(bridge.run(f.agent, directSource, 'Current synthetic task.', operation)).rejects.toThrow()
+  expect(probe.controller.recordLearningEvidence).not.toHaveBeenCalled()
+  expect(probe.controller.autoLearnEvidence).not.toHaveBeenCalled()
+  expect(f.agent.session.snapshotEvents().filter(event => event.type === 'skill/sequential-task-end').every(event => event.data.outcome === 'failed')).toBe(true)
+})
+it('requires the exact live root, registered project and nonempty source before maintenance starts', async () => {
+  const f = await fixture(); const probe = readonlyController()
+  const bridge = new SequentialSkillLearning(f.ctx, probe.controller, {
+    maxItems: 8, maxTaskBytes: 1600, maxInputBytes: 64000, timeoutMs: 1000 })
+  onTestFinished(() => bridge.dispose())
+  const operation = vi.fn(async () => {})
+  for (const source of [{ ...directSource, profileId: '' }, { ...directSource, nativeSessionId: 'x'.repeat(257) }]) {
+    expect(() => bridge.run(f.agent, source, 'Current task.', operation)).toThrow(/source/)
+  }
+  expect(() => bridge.run(f.agent, directSource, '  ', operation)).toThrow(/input/)
+  const projects = vi.spyOn(f.ctx.workspaceRegistry, 'list').mockReturnValue([])
+  expect(() => bridge.run(f.agent, directSource, 'Current task.', operation)).toThrow(/registered project/)
+  projects.mockRestore()
+  expect(() => bridge.run({ ...f.agent }, directSource, 'Current task.', operation)).toThrow(/exact live root/)
+  await bridge.dispose()
+  expect(() => bridge.run(f.agent, directSource, 'Current task.', operation)).toThrow(/disposed/)
+  expect(operation).not.toHaveBeenCalled()
 })
