@@ -68,6 +68,7 @@ export interface CodingSessionsUiState {
   queryError: boolean
   notice: CodingSessionsNotice | null
 }
+type CodingSessionsWriteResult = Partial<CodingSessionsUiState> & Pick<CodingSessionsUiState, 'reviewedDestination'>
 /** Registration-side derived props; no transport or other client-plugin values reach the component. */
 export interface CodingSessionsFace {
   hooks: { sessions: HostObservable<CodingSessionsUiState> }
@@ -294,7 +295,7 @@ export class CodingSessionsController {
         link.mirrorId === id && link.destinationSessionId === acknowledgement.destinationSessionId)
       if (existing !== undefined && before.selectedLink?.id !== existing.id) throw new Error('Review the existing mapping first.')
       const selectedLink = await valueOf(this.api.importIntoSession(id, acknowledgement))
-      return { selectedLink }
+      return { selectedLink, reviewedDestination: null }
     })
   }
   /**
@@ -307,7 +308,7 @@ export class CodingSessionsController {
     await this.write('compensated', async () => {
       const selected = this.requireLink(id, acknowledgement)
       if (selected.pending !== undefined || this.api.rollbackImport === undefined) throw new Error('Compensation unavailable.')
-      return { selectedLink: await valueOf(this.api.rollbackImport(id, acknowledgement)) }
+      return { selectedLink: await valueOf(this.api.rollbackImport(id, acknowledgement)), reviewedDestination: null }
     })
   }
   /**
@@ -322,7 +323,7 @@ export class CodingSessionsController {
       const current = await valueOf(this.api.linkedDetail(id))
       if (!active()) throw new Error('Prepared recovery review was cancelled.')
       if (current.revision !== selected.revision || JSON.stringify(current.pending) !== JSON.stringify(selected.pending)) throw new Error('Prepared import changed.')
-      return { selectedLink: await valueOf(this.api.recoverImport(id)) }
+      return { selectedLink: await valueOf(this.api.recoverImport(id)), reviewedDestination: null }
     })
   }
   /**
@@ -335,7 +336,7 @@ export class CodingSessionsController {
     await this.write('importAbandoned', async () => {
       const selected = this.requireLink(id, acknowledgement)
       if (selected.pending === undefined || this.api.abandonImport === undefined) throw new Error('No prepared import to abandon.')
-      return { selectedLink: await valueOf(this.api.abandonImport(id, acknowledgement)) }
+      return { selectedLink: await valueOf(this.api.abandonImport(id, acknowledgement)), reviewedDestination: null }
     })
   }
   private requireMirror(id: CodingSessionMirrorId | undefined, ready = true): CodingSessionMirror {
@@ -371,7 +372,7 @@ export class CodingSessionsController {
     this.requireReview(selected.destinationSessionId, acknowledgement.expectedDestinationRevision)
     return selected
   }
-  private async write(kind: CodingSessionsNotice['kind'], operation: (active: () => boolean) => Promise<Partial<CodingSessionsUiState>>, reload = true): Promise<void> {
+  private async write(kind: CodingSessionsNotice['kind'], operation: (active: () => boolean) => Promise<CodingSessionsWriteResult>, reload = true): Promise<void> {
     if (this.disposed || this.source.getSnapshot().busy) return
     const generation = ++this.generation
     this.patch({ busy: true, queryError: false })
@@ -382,7 +383,7 @@ export class CodingSessionsController {
       let queryError = false
       if (reload) { try { inventory = await valueOf(this.api.getState()) } catch (_error) { queryError = true } }
       if (generation !== this.generation || this.isDisposed()) return
-      this.patch({ ...result, inventory, reviewedDestination: reload ? null : result.reviewedDestination ?? null, busy: false, queryError,
+      this.patch({ ...result, inventory, reviewedDestination: reload ? null : result.reviewedDestination, busy: false, queryError,
         notice: { seq: ++this.noticeSequence, kind: kind === 'linked' && result.selectedLink?.status === 'conflict' ? 'failed' : kind } })
     } catch (_error) {
       if (generation !== this.generation || this.isDisposed()) return
