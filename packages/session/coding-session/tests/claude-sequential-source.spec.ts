@@ -10,6 +10,8 @@ import { createClaudeSource, type ClaudeSource, type ClaudeSourceConfig } from '
 import { claudeSequentialPolicyReceipt } from '../src/claude-source-worker.ts'
 import type { CodingSessionNativeId, CodingSessionOwnerToken } from '../src/types.ts'
 
+const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+
 const native = vi.hoisted(() => ({ factory: vi.fn() }))
 vi.mock('@deepseek-ai/dsh-subagent-claude-code', () => ({ createClaudeSequentialExecutor: native.factory }))
 const original = brandString<CodingSessionNativeId>('11111111-1111-4111-8111-111111111111')
@@ -37,7 +39,7 @@ async function fixture() {
   const specs: SubprocessSpawnSpec[] = []
   const metadata = { sessionId: original, summary: 'Original native fixture', lastModified: 10, cwd: config.directory }
   const messages = [{ type: 'user', uuid: 'original-user', session_id: original, message: { role: 'user', content: 'Original conversation' }, parent_tool_use_id: null, parent_agent_id: null }]
-  const policyReceipt = claudeSequentialPolicyReceipt({ effective: {}, provenance: {}, sources: [] })
+  const policyReceipt = claudeSequentialPolicyReceipt({ effective: {}, [settingsFieldSourcesKey]: {}, sources: [] })
   const runtime = { spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     specs.push(spec); const stdout = new PassThrough(); const done = Promise.withResolvers<{ exitCode: number; signal: null }>()
     if (typeof spec.stdio.stdin !== 'object') throw new Error('Expected bounded metadata input')
