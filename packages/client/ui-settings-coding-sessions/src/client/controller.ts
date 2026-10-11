@@ -162,13 +162,13 @@ export class CodingSessionsController {
   /**
    * Import and select the original native history.
    * @param source - original native identity.
-   * @returns settled import feedback and selected readable mirror.
+   * @returns settled import feedback and selected readable mirror; source conflicts report failure.
    */
   async importSession(source: CodingSessionSource): Promise<void> { await this.change('imported', () => valueOf(this.api.importSession(source))) }
   /**
    * Request a source refresh with persistent operation feedback.
    * @param id - selected Y mirror.
-   * @returns settled refresh feedback; failures retain the history.
+   * @returns settled refresh feedback; source conflicts and failures retain history and report failure.
    */
   async refreshMirror(id: CodingSessionMirrorId): Promise<void> { await this.change('refreshed', () => valueOf(this.api.refreshMirror(id))) }
   /**
@@ -473,9 +473,11 @@ export class CodingSessionsController {
       let queryError = false
       try { inventory = await valueOf(this.api.getState()) } catch (_error) { queryError = true }
       if (generation !== this.generation || this.isDisposed()) return
+      const failed = ((kind === 'imported' || kind === 'refreshed') && selected.status === 'conflict')
+        || (kind === 'recovered' && selected.handoff?.phase !== 'recovered-acknowledged')
       this.patch({
         selected, inventory, selectedLink: null, reviewedDestination: null, queryError,
-        busy: false, notice: { seq: ++this.noticeSequence, kind: kind === 'recovered' && selected.handoff?.phase !== 'recovered-acknowledged' ? 'failed' : kind },
+        busy: false, notice: { seq: ++this.noticeSequence, kind: failed ? 'failed' : kind },
       })
     } catch (_error) {
       if (generation !== this.generation || this.isDisposed()) return
