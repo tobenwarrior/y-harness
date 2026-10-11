@@ -1,8 +1,8 @@
 /** Bounded metadata advice with native denial and deterministic fallback; no real model calls. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { DecisionAdvisory } from '../src/decision.ts'
@@ -19,15 +19,17 @@ class Adapter extends LlmAdapter {
   controls = false
   prepareDelay?: Promise<void>
   nextDelay?: Promise<void>
+  chunks?: readonly StreamChunk[]
   closed = 0
   override async resolveModel(provider: string, model: string) { await this.prepareDelay; return { provider, id: model, name: model, ...(this.controls ? { reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }] }, serviceTiers: { tiers: [{ id: ServiceTierId('default'), name: 'Default' }] } } : {}) } }
-  override providerInfo(provider: string) { return { id: provider, name: provider, auxiliaryGeneration: this.mode } }
+  override providerInfo(provider: string): LlmProviderInfo { return { id: provider, name: provider, auxiliaryGeneration: this.mode } }
   constructor(readonly mode: 'api' | 'native' = 'api') { super() }
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.calls.push(options)
     try {
       await this.nextDelay
       if (this.wait) await new Promise<void>(resolve => options.signal?.addEventListener('abort', () => { resolve() }, { once: true }))
+      if (this.chunks !== undefined) { for (const chunk of this.chunks) yield chunk; return }
       if (this.tool) yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: this.reply } }
       yield { type: 'finish', reason: { kind: 'stop' } }
@@ -164,4 +166,66 @@ describe('Decision advice', () => {
     const one = f.run(); const two = f.run(); expect(await one).toEqual(candidates); expect(await two).toEqual(candidates)
     expect(f.records.size).toBe(1); expect(f.adapter.calls).toHaveLength(1); await f.service.dispose()
   })
+})
+
+
+it('reports API catalogs, native or undeclared routes, and catalog failures without generation', async () => {
+  const f = await fixture()
+  vi.spyOn(f.adapter, 'listModels').mockResolvedValue([{ provider: 'fixture', id: 'small', name: 'Small' }])
+  expect((await f.service.status()).models).toEqual([{ provider: 'fixture', model: 'small', name: 'Small', available: true, reason: 'response-only' }])
+  expect(f.adapter.calls).toEqual([])
+  vi.spyOn(f.adapter, 'providerInfo').mockReturnValue({ id: 'fixture', name: 'Fixture' }); f.registration.replace(['fixture'])
+  expect((await f.service.status()).models[0]?.reason).toBe('undeclared')
+  vi.spyOn(f.adapter, 'providerInfo').mockReturnValue({ id: 'fixture', name: 'Fixture', auxiliaryGeneration: 'native' }); f.registration.replace(['fixture'])
+  expect((await f.service.status()).models[0]?.reason).toBe('native-tools')
+  vi.spyOn(f.adapter, 'providerInfo').mockReturnValue({ id: 'fixture', name: 'Fixture', auxiliaryGeneration: 'api' }); f.registration.replace(['fixture'])
+  vi.spyOn(f.adapter, 'listModels').mockRejectedValue(new Error('Catalog unavailable'))
+  expect((await f.service.status()).models[0]?.reason).toBe('unavailable')
+  await f.service.dispose()
+  expect((await f.service.status()).models).toEqual([])
+})
+it('requires a route for enablement and permits route-free disablement', async () => {
+  const f = await fixture()
+  await expect(f.service.configure({ expectedRevision: 0, enabled: true })).rejects.toThrow(/requires.*route/)
+  expect(await f.service.configure({ expectedRevision: 0, enabled: false })).toEqual({ revision: 1, enabled: false })
+  expect(f.adapter.calls).toEqual([]); await f.service.dispose()
+})
+const normalText: StreamChunk = { type: 'block-end', index: 0, block: { type: 'text', text: '{"state":"selected","ids":["two"]}' } }
+const normalFinish: StreamChunk = { type: 'finish', reason: { kind: 'stop' } }
+it.each([
+  { chunks: [normalText, normalFinish, normalFinish], reason: 'incomplete-response' },
+  { chunks: [normalText, normalFinish, normalText], reason: 'incomplete-response' },
+  { chunks: [normalText], reason: 'incomplete-response' },
+  { chunks: [normalText, { type: 'finish', reason: { kind: 'max-tokens' } }], reason: 'incomplete-response' },
+  { chunks: [{ type: 'tool-call-delta', index: 0, id: ToolCallId('call'), argumentsDelta: '{}' }], reason: 'output-budget-or-tools' },
+  { chunks: [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: ToolCallId('call'), name: 'exec', arguments: '{}' } }], reason: 'output-budget-or-tools' },
+  { chunks: [{ type: 'usage', usage: { inputTokens: 1, outputTokens: 1001 } }], reason: 'token-budget' },
+  { chunks: [{ type: 'usage', usage: { inputTokens: 8001, outputTokens: 1 } }], reason: 'token-budget' },
+  { chunks: [{ type: 'usage', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 8000, cacheWriteTokens: 1 } }], reason: 'token-budget' },
+] as { chunks: StreamChunk[]; reason: string }[])('records bounded fallback for invalid stream $reason', async ({ chunks, reason }) => {
+  const f = await fixture(); await f.enable(); f.adapter.chunks = chunks
+  expect(await f.run()).toEqual(candidates); await f.service.dispose()
+  expect([...f.records.values()][0]).toMatchObject({ outcome: 'abstained', reason })
+  expect(f.adapter.closed).toBe(1); await f.service.dispose()
+})
+it('accepts final usage and reasoning while retaining candidate membership', async () => {
+  const f = await fixture(); await f.enable()
+  f.adapter.chunks = [{ type: 'block-end', index: 1, block: { type: 'reasoning', text: 'Compare metadata.' } }, normalText, normalFinish,
+    { type: 'usage', usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } }]
+  expect((await f.run()).map(item => item.id)).toEqual(['two', 'one'])
+  expect([...f.records.values()][0]?.outcome).toBe('selected'); await f.service.dispose()
+})
+it('rejects sensitive input, small token admission, excessive chunks, and complete output envelopes', async () => {
+  const sensitive = await fixture(); await sensitive.enable()
+  expect(await sensitive.service.select({ query: 'Authorization: Bearer synthetic' }, candidates)).toEqual(candidates)
+  expect(sensitive.adapter.calls).toEqual([]); await sensitive.service.dispose()
+  const input = await fixture('api', { maxInputTokens: 1 }); await input.enable()
+  expect(await input.run()).toEqual(candidates); expect(input.adapter.calls).toEqual([]); await input.service.dispose()
+  const chunks = await fixture('api', { maxOutputChunks: 1 }); await chunks.enable()
+  expect(await chunks.run()).toEqual(candidates); await chunks.service.dispose()
+  expect([...chunks.records.values()][0]?.reason).toBe('output-budget-or-tools'); await chunks.service.dispose()
+  const output = await fixture(); await output.enable()
+  output.adapter.chunks = [{ type: 'block-end', index: 1, block: { type: 'reasoning', text: 'Authorization: Bearer synthetic' } }, normalText, normalFinish]
+  expect(await output.run()).toEqual(candidates)
+  expect([...output.records.values()][0]?.reason).toBe('output-budget'); await output.service.dispose()
 })

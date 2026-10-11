@@ -117,3 +117,17 @@ test('keeps separately packaged resource roots distinct even when their names ma
   assert.equal(await inventory.detail(result.entries[0]!.path), 'First package')
   assert.equal(await inventory.detail(result.entries[1]!.path), 'Second package')
 })
+
+test('keeps URL and opaque resource identities distinct and refuses changed instruction providers', async () => {
+  for (const resourceBase of [{ kind: 'url' as const, url: 'https://example.invalid/skill' }, { kind: 'opaque' as const, description: 'packaged resource' }]) {
+    const skill = summary('resource', { resourceBase })
+    let loaded: SkillDefinition | undefined = { ...skill, content: 'Original instructions' }
+    const inventory = createRegistryInventory({ global: () => ({ list: async () => [skill], get: async () => loaded }), views: () => [] })
+    const observed = (await inventory.list([])).entries[0]!
+    assert.equal(await inventory.detail(observed.path), 'Original instructions')
+    for (const replacement of [undefined, { ...skill, provider: 'other', content: 'Changed' }, { ...skill, path: '/different/SKILL.md', content: 'Changed' }, { ...skill, resourceBase: { kind: 'opaque' as const, description: 'changed resource' }, content: 'Changed' }]) {
+      loaded = replacement
+      await assert.rejects(inventory.detail(observed.path), /no longer available/)
+    }
+  }
+})
