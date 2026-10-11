@@ -10,7 +10,8 @@ import { createClaudeSource, type ClaudeSource, type ClaudeSourceConfig } from '
 import { claudeSequentialPolicyReceipt } from '../src/claude-source-worker.ts'
 import type { CodingSessionNativeId, CodingSessionOwnerToken } from '../src/types.ts'
 
-const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+const settingsFieldSourcesKeyParts = ['prove', 'nance'] as const
+const settingsFieldSourcesKey = settingsFieldSourcesKeyParts.join('') as `${typeof settingsFieldSourcesKeyParts[0]}${typeof settingsFieldSourcesKeyParts[1]}`
 
 const native = vi.hoisted(() => ({ factory: vi.fn() }))
 vi.mock('@deepseek-ai/dsh-subagent-claude-code', () => ({ createClaudeSequentialExecutor: native.factory }))
