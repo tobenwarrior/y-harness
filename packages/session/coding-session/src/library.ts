@@ -596,16 +596,11 @@ export class CodingSessionLibrary {
         controller.abort(new Error('Native coding session read exceeded its time limit.'))
       }, timeoutMs)
       const signal = AbortSignal.any([this.lifetime.signal, controller.signal])
-      let onAbort = (): void => {}
+      const aborted = Promise.withResolvers<never>()
+      const onAbort = (): void => { aborted.reject(signal.reason) }
+      signal.addEventListener('abort', onAbort, { once: true })
       try {
-        const aborted = new Promise<never>((_resolve, reject) => {
-          onAbort = () => {
-            const reason: unknown = signal.reason
-            reject(reason instanceof Error ? reason : new Error('Coding session operation was cancelled.'))
-          }
-          signal.addEventListener('abort', onAbort, { once: true })
-        })
-        if (nativeWriter) void aborted.catch((_error: unknown) => {
+        if (nativeWriter) void aborted.promise.catch((_error: unknown) => {
           /* The writer observes this same abort signal and owns settlement. */
         })
         const pending = read(provider, {
@@ -613,12 +608,12 @@ export class CodingSessionLibrary {
         })
         work = pending
         // A writer owns native resources and must settle/release before teardown completes.
-        const result = nativeWriter ? await pending : await Promise.race([pending, aborted])
+        const result = nativeWriter ? await pending : await Promise.race([pending, aborted.promise])
         this.current(provider, signal)
         return result
       } finally {
         clearTimeout(timer); signal.removeEventListener('abort', onAbort)
-        if (this.active === controller) this.active = undefined
+        this.active = undefined
       }
     })
     const drain = async (): Promise<void> => {
