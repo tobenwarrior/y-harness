@@ -1,7 +1,7 @@
 /** External process fixtures exercise selected-profile reads without launching a native process. */
 import { PassThrough } from 'node:stream'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -74,9 +74,10 @@ describe('explicit original Claude source', () => {
     expect(page.items[0]?.source).toEqual(snapshot.source); expect(snapshot.events[0]?.id).toBe('native-message-uuid')
     expect(snapshot.source.nativeSessionId).toBe(original); expect(f.source.provider).not.toHaveProperty('writer')
     expect(process.env.CLAUDE_CONFIG_DIR).toBe('/parent/claude'); expect(process.env.HOME).toBe('/parent/home')
-    expect(f.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: '/native/claude', HOME: '/native/shell', NODE_OPTIONS: undefined, ANTHROPIC_API_KEY: undefined })
-    expect(f.specs[0]?.argv).toEqual(['/runtime/node', expect.stringMatching(/lib\/types\/claude-source-worker\.js$/), '10000'])
-    expect(f.specs.every(spec => spec.cwd === '/native/project')).toBe(true)
+    expect(f.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: resolve(config.profileRoot),
+      HOME: resolve(config.shellHome), NODE_OPTIONS: undefined, ANTHROPIC_API_KEY: undefined })
+    expect(f.specs[0]?.argv).toEqual([resolve(config.nodePath), expect.stringMatching(/lib[\\/]types[\\/]claude-source-worker\.js$/), '10000'])
+    expect(f.specs.every(spec => spec.cwd === resolve(config.directory))).toBe(true)
     const operations = f.specs.map(spec => typeof spec.stdio.stdin === 'object' ? z.object({ operation: z.string() }).parse(JSON.parse(spec.stdio.stdin.data)).operation : '')
     expect(operations).toEqual(['listSessions', 'getSessionInfo', 'getSessionMessages', 'getSessionInfo', 'getSessionInfo', 'getSessionMessages', 'getSessionInfo'])
     await f.source.close()

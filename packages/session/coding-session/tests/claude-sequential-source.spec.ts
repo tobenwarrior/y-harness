@@ -1,5 +1,6 @@
 /** Captured release reads survive public source closure; only external native execution and workers are mocked. */
 import { PassThrough } from 'node:stream'
+import { resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -74,7 +75,7 @@ it('blocks public reads and new admission after close while captured lease relea
   expect(receipt).toMatchObject({ source: f.source, expectedPrefixPersisted: true, completedTurnPersisted: false, nativeTurnIds: [] })
   expect(f.specs.length).toBeGreaterThan(beforeClose); expect(f.turn).not.toHaveBeenCalled(); expect(f.close).toHaveBeenCalled()
   for (const spec of f.specs) {
-    expect(spec.env).toMatchObject({ CLAUDE_CONFIG_DIR: config.profileRoot, HOME: config.shellHome })
+    expect(spec.env).toMatchObject({ CLAUDE_CONFIG_DIR: resolve(config.profileRoot), HOME: resolve(config.shellHome) })
     if (typeof spec.stdio.stdin !== 'object') throw new Error('Expected bounded metadata input')
     expect(z.object({ operation: z.string() }).parse(JSON.parse(spec.stdio.stdin.data)).operation).not.toBe('query')
   }
@@ -96,7 +97,7 @@ it('passes only a bounded selected-profile policy read to the executor startup g
   expect(await inspect(request.signal)).toEqual(f.policyReceipt)
   const spec = f.specs.at(-1)!
   if (typeof spec.stdio.stdin !== 'object') throw new Error('Expected bounded policy input')
-  const body = z.object({ operation: z.literal('inspectSequentialPolicy'), profileRoot: z.literal('/fixture/claude'), directory: z.literal('/fixture/project'),
+  const body = z.object({ operation: z.literal('inspectSequentialPolicy'), profileRoot: z.literal(resolve(config.profileRoot)), directory: z.literal(resolve(config.directory)),
     protocol: z.literal(1), shellHome: z.string(), sdkModulePath: z.string(), sdkManifestPath: z.string(), sdkModuleSha256: z.string(),
     sdkVersion: z.literal('0.3.263'), maxBytes: z.number(), maxEvents: z.literal(1) }).strict().parse(JSON.parse(spec.stdio.stdin.data))
   expect(body.maxBytes).toBe(config.sequentialHandoff!.maxOutputBytes); expect(f.turn).not.toHaveBeenCalled()

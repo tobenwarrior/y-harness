@@ -1,4 +1,5 @@
 /** Native skill observations never start a process or claim implicit usage. */
+import { normalize } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CodexBackendRuntime, declineCodexRequest, type CodexPeer } from '../src/codex-backend.ts'
 import { createCodexSkillLibraryProvider } from '../src/codex-skill-library.ts'
@@ -56,9 +57,9 @@ describe('connected-only native skill inventory', () => {
     expect(connections()).toBe(0)
     await runtime.refresh()
     expect((await provider.list(projects)).entries).toHaveLength(4)
-    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: ['/projects/alpha', '/projects/beta'], forceReload: false } })
+    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: projects.map(project => normalize(project.path)), forceReload: false } })
     await provider.list(projects, { forceReload: true })
-    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: ['/projects/alpha', '/projects/beta'], forceReload: true } })
+    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: projects.map(project => normalize(project.path)), forceReload: true } })
     const pending = createCodexSkillLibraryProvider(() => undefined)
     expect(await pending.list(projects)).toMatchObject({ entries: [], status: { state: 'disconnected' } })
     expect(connections()).toBe(1)
@@ -77,12 +78,12 @@ describe('connected-only native skill inventory', () => {
     const observation = await runtime.listSkills(projects, true)
     expect(observation.status.state).toBe('connected')
     expect(observation.entries).toEqual([
-      { name: 'release', description: 'Alpha release', path: '/projects/alpha/.agents/skills/release/SKILL.md', source: 'codex:repo', projectIds: ['alpha'], enabled: true },
-      { name: 'shared', description: 'Shared workflow', path: '/native/skills/shared/SKILL.md', source: 'codex:user', projectIds: [], enabled: false },
-      { name: 'vendor', description: 'Vendor workflow', path: '/native/plugin/vendor/SKILL.md', source: 'codex:system:official/vendor', projectIds: [], enabled: true },
-      { name: 'release', description: 'Beta release', path: '/projects/beta/.agents/skills/release/SKILL.md', source: 'codex:repo', projectIds: ['beta'], enabled: true },
+      { name: 'release', description: 'Alpha release', path: normalize('/projects/alpha/.agents/skills/release/SKILL.md'), source: 'codex:repo', projectIds: ['alpha'], enabled: true },
+      { name: 'shared', description: 'Shared workflow', path: normalize('/native/skills/shared/SKILL.md'), source: 'codex:user', projectIds: [], enabled: false },
+      { name: 'vendor', description: 'Vendor workflow', path: normalize('/native/plugin/vendor/SKILL.md'), source: 'codex:system:official/vendor', projectIds: [], enabled: true },
+      { name: 'release', description: 'Beta release', path: normalize('/projects/beta/.agents/skills/release/SKILL.md'), source: 'codex:repo', projectIds: ['beta'], enabled: true },
     ])
-    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: ['/projects/alpha', '/projects/beta'], forceReload: true } })
+    expect(requests.at(-1)).toEqual({ method: 'skills/list', params: { cwds: projects.map(project => normalize(project.path)), forceReload: true } })
     expect(connections()).toBe(1)
     expect(JSON.stringify(observation)).not.toContain('instruction bodies')
   })
