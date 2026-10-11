@@ -21,12 +21,19 @@ import type { SkillCodexItemId, SkillCodexSessionId, SkillCodexTurnId, SkillLibr
   SkillLearningPolicy, SkillLearningProposal, SkillNativeConnectionId } from '../src/types.ts'
 
 const resourceRace = vi.hoisted(() => {
-  const hooks: { beforeOpen?: (path: string) => Promise<void>; afterOpen?: (handle: FileHandle, path: string) => void } = {}
+  const hooks: {
+    beforeOpen?: (path: string) => Promise<void>
+    beforeRealpath?: (path: string) => void
+    afterOpen?: (handle: FileHandle, path: string) => void
+  } = {}
   return hooks
 })
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
+  return { ...fs, realpath: async (...args: Parameters<typeof fs.realpath>) => {
+    if (typeof args[0] === 'string') resourceRace.beforeRealpath?.(args[0])
+    return fs.realpath(...args)
+  }, open: async (...args: Parameters<typeof fs.open>) => {
     if (typeof args[0] === 'string') await resourceRace.beforeOpen?.(args[0])
     const handle = await fs.open(...args)
     if (typeof args[0] === 'string') resourceRace.afterOpen?.(handle, args[0])
@@ -38,6 +45,7 @@ const roots: string[] = []
 const owners: SkillLearning[] = []
 afterEach(async () => {
   delete resourceRace.beforeOpen
+  delete resourceRace.beforeRealpath
   delete resourceRace.afterOpen
   vi.restoreAllMocks()
   for (const owner of owners.splice(0)) await owner.dispose()
@@ -198,7 +206,8 @@ describe('learning durable and bundle followup boundaries', () => {
     const f = await fixture(); const proposal = await creation(f)
     await mkdir(join(f.project, '.dsh'), { recursive: true }); await writeFile(join(f.project, '.dsh', 'skills'), 'Preserve this file.')
     await f.options.proposals.put(proposal.id, { ...proposal, state: 'applying', appliedIds: [brandString<SkillLibraryId>('previous')] })
-    await expect(f.learning.apply({ proposalId: proposal.id, mode: 'reviewed' })).rejects.toThrow(/ENOTDIR/)
+    await expect(f.learning.apply({ proposalId: proposal.id, mode: 'reviewed' }))
+      .rejects.toMatchObject({ code: process.platform === 'win32' ? 'EEXIST' : 'ENOTDIR' })
     expect(await readFile(join(f.project, '.dsh', 'skills'), 'utf8')).toBe('Preserve this file.')
   })
   it('preserves trailing indented code as an exact reviewed compression constraint', async () => {
@@ -452,7 +461,11 @@ describe('learning durable and bundle followup boundaries', () => {
     const proposal = await f.learning.propose({ projectId: 'p', operation: 'compress', targetIds: [item.id], evidenceIds: [], generatorId: maintenanceGenerator.id })
     await f.options.proposals.put(proposal.id, { ...proposal, state: 'applying', applicationMode: 'reviewed' })
     await rm(dirname(item.path), { recursive: true }); await writeFile(dirname(item.path), 'Parent changed to file.')
-    await expect(f.learning.apply({ proposalId: proposal.id, mode: 'reviewed' })).rejects.toThrow(/ENOTDIR/)
+    const fault = Object.assign(new Error('Fixture reconciliation access denied'), { code: 'EACCES' })
+    let faults = 0
+    resourceRace.beforeRealpath = (path) => { if (path === item.path) { faults++; throw fault } }
+    await expect(f.learning.apply({ proposalId: proposal.id, mode: 'reviewed' })).rejects.toBe(fault)
+    expect(faults).toBe(1)
     expect(await readFile(dirname(item.path), 'utf8')).toBe('Parent changed to file.')
   })
   it('refuses a resource that changes after bytes were read and closes its actual handle', async () => {
