@@ -1,6 +1,7 @@
 /** Actual root agent and Loader composition with only external SDK/process/policy enforcement mocked. */
 import { mkdir, mkdtemp, rm, writeFile, symlink } from 'node:fs/promises'
 import { PassThrough } from 'node:stream'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
@@ -44,7 +45,7 @@ async function fixture(
   rootConfig: Partial<Root.ClaudeCodeRootConfig> = {}, bundled = false,
   lifecycle: { deferredConfine?: boolean; throwAfterSpawn?: boolean; unconfirmed?: boolean } = {},
 ) {
-  const root = await mkdtemp('/tmp/dsh-root-claude-')
+  const root = await mkdtemp(join(tmpdir(), 'dsh-root-claude-'))
   const profile = await mkdtemp(join(process.cwd(), '.fixture-native-profile-'))
   sdk.env = { HOME: profile, USERPROFILE: profile, CLAUDE_CONFIG_DIR: join(profile, '.claude') }
   const ctx = new Context()
