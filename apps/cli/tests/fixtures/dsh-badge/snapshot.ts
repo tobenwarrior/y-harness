@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-skill'
@@ -34,10 +34,11 @@ try {
     runMaintenance: job => job(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
   }
+  const task = createUserMessage({ content: [{ type: 'text', text: 'Use dsh-badge to add attribution to a pull request.' }], source: { kind: 'user' } })
   const decision = await agentEvents(ctx, agent).waterfall(
     'agent/pre-step',
-    { messages: [], turn: 1, step: 1, signal: new AbortController().signal },
-    () => Promise.resolve({ kind: 'enter' as const, messages: [] }),
+    { messages: [task], turn: 1, step: 1, signal: new AbortController().signal },
+    () => Promise.resolve({ kind: 'enter' as const, messages: [task] }),
   )
   const catalog = decision.kind === 'enter'
     ? decision.messages.find(message => message.role === 'user'
