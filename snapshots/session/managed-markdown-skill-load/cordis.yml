@@ -1,0 +1,19 @@
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js process.cwd() + '/skills'
+    includeDefaultRoots: false
+    watch: false
+
+- insert:
+    - id: workspace
+      name: './managed-workspace-service.mjs'
+    - id: skill-library
+      name: './managed-skill-services.mjs'
+      config:
+        customSkillDirs:
+          - !!js process.cwd() + '/skills'
+        automaticMaintenanceIntervalMs: 0
+    - id: managed-markdown-skill-load-fixture
+      name: './managed-skill-fixture.mjs'

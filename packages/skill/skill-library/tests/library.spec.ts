@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
 import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { SkillLibrary, type SkillLibraryStore } from '../src/library.ts'
-import type { SkillLibraryId } from '../src/types.ts'
+import type { NativeSkillLibraryEntry, NativeSkillLibraryProvider, SkillLibraryId, SkillRevisionId } from '../src/types.ts'
+import type { RegistryInventory } from '../src/registry-inventory.ts'
 import type { SkillLibraryRecord } from '../src/record.ts'
 
 const roots: string[] = []
@@ -117,6 +119,28 @@ describe('file-backed skill library', () => {
     const text = await readFile(join(dir, 'SKILL.md'), 'utf8'); await writeFile(join(dir, 'SKILL.md'), text + '\nManual note.\n')
     expect((await f.library.list({})).items[0]!).toMatchObject({ ownership: 'protected', automaticCleanup: false })
     expect((await f.library.cleanupOptedIn()).revised).toHaveLength(0)
+  })
+
+  it('cleans only explicitly opted-in current unpinned managed files and is idempotent', async () => {
+    const f = await fixture()
+    const opted = await f.skill('project', 'opted', 'Work.  \n\n\n\nDone.')
+    const pinned = await f.skill('project', 'pinned', 'Pinned.  \n\n\n\nDone.')
+    const unconsented = await f.skill('project', 'unconsented', 'Unconsented.  \n\n\n\nDone.')
+    const protectedDir = await f.skill('project', 'protected', 'Protected.  \n\n\n\nDone.')
+    const items = (await f.library.list({})).items
+    for (const name of ['opted', 'pinned', 'unconsented']) {
+      const item = items.find(item => item.name === name)!
+      await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
+      if (name !== 'unconsented') await f.library.setAutomaticCleanup({ id: item.id, expectedHash: item.contentHash, enabled: true })
+      if (name === 'pinned') await f.library.setPinned({ id: item.id, pinned: true })
+    }
+    const preserved = await Promise.all([pinned, unconsented, protectedDir].map(dir => readFile(join(dir, 'SKILL.md'), 'utf8')))
+    const original = await readFile(join(opted, 'SKILL.md'), 'utf8')
+    const result = await f.library.cleanupOptedIn()
+    expect(result.revised).toEqual([items.find(item => item.name === 'opted')!.id])
+    expect(await readFile(join(opted, 'SKILL.md'), 'utf8')).toBe(original.replace('Work.  \n\n\n\nDone.', 'Work.  \n\n\nDone.'))
+    expect(await Promise.all([pinned, unconsented, protectedDir].map(dir => readFile(join(dir, 'SKILL.md'), 'utf8')))).toEqual(preserved)
+    expect((await f.library.cleanupOptedIn()).revised).toEqual([])
   })
 
   it('recovers revision metadata after source replacement without overwriting a later hand edit', async () => {
@@ -263,6 +287,180 @@ it.each(['unchanged', 'edited'] as const)('recovers a created source without rew
   await expect(readFile(journal)).rejects.toThrow(/ENOENT/)
   expect(f.rows.get(item.id)?.managedHash).toBe(expectedHash)
   await restarted.dispose()
+})
+
+it('keeps native metadata protected, loads selected instructions lazily, and removes disposed registrations', async () => {
+  const f = await fixture(); const requests: (boolean | undefined)[] = []; let details = 0
+  const projectEntry: NativeSkillLibraryEntry = {
+    path: 'skill://fixture-native/project', name: 'native-project', description: 'Native project instructions',
+    source: 'fixture-native', projectIds: ['p'], enabled: true,
+    references: [{ target: 'https://example.invalid/native-guide', kind: 'url' }],
+  }
+  const sharedEntry: NativeSkillLibraryEntry = {
+    path: 'skill://fixture-native/shared', name: 'native-shared', description: 'Native shared instructions',
+    source: 'fixture-native', projectIds: [], enabled: false, userInvocable: false,
+  }
+  const provider: NativeSkillLibraryProvider = {
+    name: 'fixture-native',
+    list: async (projects, request) => {
+      expect(projects.map(project => project.id)).toEqual(['p']); requests.push(request?.forceReload)
+      return { status: { provider: 'fixture-native', state: 'connected' }, entries: [projectEntry, projectEntry, sharedEntry] }
+    },
+    detail: async (path) => { expect(path).toBe(projectEntry.path); details++; return 'Selected native instructions' },
+  }
+  const remove = f.library.registerNativeProvider(provider)
+  try {
+    expect(() => f.library.registerNativeProvider(provider)).toThrow(/duplicate/)
+    const inventory = await f.library.list({ forceReload: true }); expect(requests[0]).toBe(true)
+    expect(inventory.items).toHaveLength(2); expect(details).toBe(0)
+    const item = inventory.items.find(row => row.name === projectEntry.name)!
+    expect(item).toMatchObject({ ownership: 'protected', scope: 'project', projectIds: ['p'],
+      invocation: { modelInvocable: true, userInvocable: true },
+      capabilities: { native: true, adopt: false, archive: false, cleanup: false } })
+    expect(inventory.items.find(row => row.name === sharedEntry.name)).toMatchObject({ scope: 'shared', status: 'disabled', invocation: { modelInvocable: false, userInvocable: false }, references: [] })
+    expect(inventory.items.every(row => !('content' in row))).toBe(true)
+    expect((await f.library.detail({ id: item.id })).content).toBe('Selected native instructions'); expect(details).toBe(1)
+    expect((await f.library.setPinned({ id: item.id, pinned: true })).item.pinned).toBe(true)
+    await expect(f.library.adopt({ id: item.id, expectedHash: '' })).rejects.toThrow(/protected/)
+    await expect(f.library.archive({ id: item.id, expectedHash: '' })).rejects.toThrow(/protected/)
+    expect((await f.library.previewCleanup()).changes).toEqual([])
+    expect(await f.library.retrieve({ query: 'native', explicitIds: [item.id] })).toEqual([])
+    remove(); expect((await f.library.list()).items).toEqual([])
+    const next = f.library.registerNativeProvider({ name: provider.name, list: async () => ({
+      status: { provider: provider.name, state: 'connected' }, entries: [projectEntry],
+    }) })
+    try {
+      remove(); expect((await f.library.list()).items).toHaveLength(1)
+      expect((await f.library.detail({ id: item.id })).content).toBe('')
+    } finally { next() }
+    expect((await f.library.list()).items).toEqual([])
+  } finally { remove(); await f.library.dispose() }
+})
+
+it('reports failed native observations while retaining unrelated filesystem inventory', async () => {
+  const f = await fixture(); const dir = await f.skill('project', 'retained')
+  const original = await readFile(join(dir, 'SKILL.md'), 'utf8')
+  const remove = f.library.registerNativeProvider({ name: 'fixture-unavailable', list: async () => { throw new Error('Native metadata unavailable') } })
+  try {
+    const inventory = await f.library.list()
+    expect(inventory.items.map(row => row.name)).toEqual(['retained'])
+    expect(inventory.providers).toContainEqual({ provider: 'fixture-unavailable', state: 'unavailable', message: 'Error: Native metadata unavailable' })
+    expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toBe(original)
+  } finally { remove(); await f.library.dispose() }
+})
+
+it('keeps registry-only instructions protected and prefers the existing filesystem item for duplicate identities', async () => {
+  const f = await fixture(); await f.skill('project', 'local')
+  const [local] = (await f.library.list()).items; let loads = 0
+  const locator = 'skill://registry/fixture/bundled'
+  const registryInventory: RegistryInventory = {
+    list: async () => ({ statuses: [{ provider: 'registry:fixture', state: 'connected' }], entries: [
+      { provider: local!.provider, path: local!.path, name: 'duplicate', description: 'Duplicate registry metadata',
+        source: 'project-dsh', projectIds: ['p'], enabled: true, modelInvocable: true, userInvocable: true, native: false },
+      { provider: 'fixture-bundled', path: locator, name: 'bundled', description: 'Bundled instructions',
+        source: 'bundled', projectIds: [], enabled: true, modelInvocable: true, userInvocable: false, native: false },
+    ] }),
+    detail: async (path, provider) => { expect([path, provider]).toEqual([locator, 'fixture-bundled']); loads++; return 'Selected registry instructions' },
+  }
+  const library = new SkillLibrary({ ...f.options, registryInventory })
+  try {
+    const inventory = await library.list(); expect(inventory.items).toHaveLength(2); expect(loads).toBe(0)
+    expect(inventory.items.find(row => row.id === local!.id)?.name).toBe('local')
+    const bundled = inventory.items.find(row => row.name === 'bundled')!
+    expect(bundled).toMatchObject({ ownership: 'vendor', bodyBytes: 0, contentHash: '', capabilities: { native: false, adopt: false, archive: false } })
+    expect((await library.detail({ id: bundled.id })).content).toBe('Selected registry instructions'); expect(loads).toBe(1)
+    await expect(library.adopt({ id: bundled.id, expectedHash: '' })).rejects.toThrow(/protected/)
+    await expect(library.archive({ id: bundled.id, expectedHash: '' })).rejects.toThrow(/protected/)
+  } finally { await library.dispose(); await f.library.dispose() }
+})
+
+it('expires evicted and applied previews while preserving source bytes until a current preview is applied', async () => {
+  const f = await fixture(); const dir = await f.skill('project', 'deploy', 'Work.\n\n\n\nDone.')
+  const path = join(dir, 'SKILL.md'); const original = await readFile(path, 'utf8')
+  const library = new SkillLibrary({ ...f.options, proposalLimit: 1 })
+  try {
+    const [item] = (await library.list()).items
+    await library.adopt({ id: item!.id, expectedHash: item!.contentHash })
+    const first = await library.previewCleanup(); const second = await library.previewCleanup()
+    expect(second.changes).toHaveLength(1)
+    await expect(library.applyCleanup({ proposalId: first.id })).rejects.toThrow(/expired/)
+    expect(await readFile(path, 'utf8')).toBe(original)
+    expect((await library.applyCleanup({ proposalId: second.id })).revised).toEqual([item!.id])
+    expect(await readFile(path, 'utf8')).toBe('---\nname: deploy\ndescription: deploy deployment workflow\n---\n\nWork.\n\n\nDone.\n')
+    await expect(library.applyCleanup({ proposalId: second.id })).rejects.toThrow(/expired/)
+  } finally { await library.dispose(); await f.library.dispose() }
+})
+
+it('protects a newly pinned member of a cleanup preview before editing any selected source', async () => {
+  const f = await fixture(); const first = await f.skill('project', 'alpha', 'Work.\n\n\n\nDone.')
+  const second = await f.skill('project', 'beta', 'Work.\n\n\n\nDone.')
+  const originals = await Promise.all([first, second].map(dir => readFile(join(dir, 'SKILL.md'), 'utf8')))
+  try {
+    const items = (await f.library.list()).items
+    for (const item of items) await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
+    const preview = await f.library.previewCleanup(); expect(preview.changes).toHaveLength(2)
+    const beta = items.find(row => row.name === 'beta')!
+    await f.library.setPinned({ id: beta.id, pinned: true })
+    await expect(f.library.applyCleanup({ proposalId: preview.id })).rejects.toThrow(/protected/)
+    await expect(f.library.archive({ id: beta.id, expectedHash: beta.contentHash })).rejects.toThrow(/pinned/)
+    await expect(f.library.setAutomaticCleanup({ id: beta.id, expectedHash: beta.contentHash, enabled: true })).rejects.toThrow(/protected/)
+    expect((await f.library.previewCleanup({ ids: [beta.id] })).changes).toEqual([])
+    expect(await Promise.all([first, second].map(dir => readFile(join(dir, 'SKILL.md'), 'utf8')))).toEqual(originals)
+  } finally { await f.library.dispose() }
+})
+
+it('refuses stale load hashes without recording usage for edited instructions', async () => {
+  const f = await fixture(); const dir = await f.skill('project', 'deploy')
+  try {
+    const [item] = (await f.library.list()).items
+    await writeFile(join(dir, 'SKILL.md'), '---\nname: deploy\ndescription: Updated workflow\n---\nChanged instructions.\n')
+    await expect(f.library.recordLoad({ id: item!.id, contentHash: item!.contentHash })).rejects.toThrow(/version changed/)
+    const [current] = (await f.library.list()).items
+    expect(current?.usage).toMatchObject({ coverage: 'unknown', loadCount: 0 })
+    await f.library.recordLoad({ id: current!.id, contentHash: current!.contentHash, loadedAt: '2026-10-11T00:00:00.000Z' })
+    expect((await f.library.list()).items[0]?.usage).toEqual({ coverage: 'recorded-loads', loadCount: 1, lastLoadedAt: '2026-10-11T00:00:00.000Z' })
+    expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toContain('Changed instructions.')
+  } finally { await f.library.dispose() }
+})
+
+it('deduplicates URL and local references while ignoring anchors and unrelated schemes', async () => {
+  const f = await fixture(); await f.skill('project', 'references', [
+    '[Guide](https://example.invalid/guide#part)', '[Again](https://example.invalid/guide#part)',
+    '[Local](reference.md#part)', '[Anchor](#section)', '[Mail](mailto:fixture@example.invalid)', '[Other](skill://fixture/ignored)',
+  ].join('\n'))
+  try {
+    const [item] = (await f.library.list()).items
+    expect(item!.references).toEqual([
+      { target: 'https://example.invalid/guide#part', kind: 'url' },
+      { target: join(dirname(item!.path), 'reference.md'), kind: 'file' },
+    ])
+  } finally { await f.library.dispose() }
+})
+
+it.each([{ budget: 1, reason: 'over budget: semantic review required' }, { budget: 1000, reason: 'already compact' }])('leaves compact instruction bytes unchanged under a $budget byte body budget', async ({ budget, reason }) => {
+  const f = await fixture(); const dir = await f.skill('project', 'compact', 'Retain these exact instructions.')
+  const path = join(dir, 'SKILL.md'); const original = await readFile(path, 'utf8')
+  const library = new SkillLibrary({ ...f.options, bodyBudgetBytes: budget })
+  try {
+    const [item] = (await library.list()).items
+    await library.adopt({ id: item!.id, expectedHash: item!.contentHash })
+    const preview = await library.previewCleanup()
+    expect(preview.changes).toEqual([]); expect(preview.skipped).toEqual([{ id: item!.id, reason }])
+    expect((await library.applyCleanup({ proposalId: preview.id })).revised).toEqual([])
+    expect(await readFile(path, 'utf8')).toBe(original)
+  } finally { await library.dispose(); await f.library.dispose() }
+})
+
+it('refuses stale source and revision identities before changing current instruction bytes', async () => {
+  const f = await fixture(); const dir = await f.skill('project', 'current')
+  const original = await readFile(join(dir, 'SKILL.md'), 'utf8')
+  try {
+    const [item] = (await f.library.list()).items
+    await expect(f.library.detail({ id: brandString<SkillLibraryId>('missing') })).rejects.toThrow(/no longer available/)
+    await expect(f.library.restore({ id: item!.id })).rejects.toThrow(/not archived/)
+    await expect(f.library.rollback({ id: item!.id, expectedHash: item!.contentHash, revisionId: brandString<SkillRevisionId>('missing') })).rejects.toThrow(/unknown skill revision/)
+    expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toBe(original)
+  } finally { await f.library.dispose() }
 })
 it.each(['before', 'after'] as const)('settles a revision journal at its %s replacement checkpoint', async (mode) => {
   const f = await fixture(); const dir = await f.skill('project', 'revised')

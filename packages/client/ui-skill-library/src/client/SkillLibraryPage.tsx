@@ -234,12 +234,20 @@ function CleanupDialog({ state, t, closePreview, applyPreview }: Pick<SkillLibra
     {state.previewError && <p className={css.note}>{t('loadError')}</p>}
     {proposal !== null && <>
       {proposal.changes.length === 0 ? <p>{t('cleanupEmpty')}</p>
-        : <p>{t('cleanupSummary', { count: proposal.changes.length, bytes: proposal.changes.reduce((
-          sum, change) => sum + change.beforeBytes - change.afterBytes, 0) })}</p>}
-      {proposal.changes.map(change => <section key={change.id} className={css.cleanupChange}>
-        <div className={css.sectionHeading}><h3>{change.name}</h3>{change.overBudget && <Tag tone="warning">{t('overBudget')}</Tag>}</div>
-        <DiffBlock diffs={[{ path: change.name, oldText: change.before, newText: change.after }]} labels={labels} maxLines={24} />
-      </section>)}
+        : <p>{t(proposal.changes.some(change => change.markdownGeneration !== undefined)
+          ? 'cleanupSplitSummary' : 'cleanupSummary', { count: proposal.changes.length,
+          bytes: proposal.changes.reduce((sum, change) => sum + change.beforeBytes - change.afterBytes, 0),
+          files: proposal.changes.reduce((sum, change) => sum + (change.markdownGeneration?.files.length ?? 0), 0) })}</p>}
+      {proposal.changes.map((change) => {
+        const generation = change.markdownGeneration
+        return <section key={change.id} className={css.cleanupChange}>
+          <div className={css.sectionHeading}><h3>{change.name}</h3>{change.overBudget && <Tag tone="warning">{t('overBudget')}</Tag>}</div>
+          <DiffBlock diffs={[{ path: change.name, oldText: change.before, newText: change.after }]} labels={labels} maxLines={24} />
+          {generation?.files.map(file => <DiffBlock key={file.path} diffs={[{
+            path: `.y-topics/${generation.id}/${file.path}`, oldText: null, newText: file.content,
+          }]} labels={labels} maxLines={24} />)}
+        </section>
+      })}
       {proposal.skipped.length > 0 && <p className={css.secondary}>{t('cleanupSkipped', { count: proposal.skipped.length })}</p>}
     </>}
   </Modal>
