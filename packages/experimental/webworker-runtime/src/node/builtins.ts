@@ -35,6 +35,7 @@ import * as nodeOs from './builtin_modules/implemented/os.ts'
 import * as nodePath from './builtin_modules/implemented/path.ts'
 import * as nodePerfHooks from './builtin_modules/implemented/perf_hooks.ts'
 import * as nodeStream from './builtin_modules/implemented/stream.ts'
+import * as nodeStringDecoder from './builtin_modules/implemented/string_decoder.ts'
 import * as nodeStreamPromises from './builtin_modules/implemented/stream/promises.ts'
 import * as nodeTimersPromises from './builtin_modules/implemented/timers/promises.ts'
 import * as nodeTty from './builtin_modules/implemented/tty.ts'
@@ -47,6 +48,7 @@ import * as nodeNet from './builtin_modules/mock/net.ts'
 import * as nodeSqlite from './builtin_modules/mock/sqlite.ts'
 import * as nodeVm from './builtin_modules/mock/vm.ts'
 import * as nodeWorkerThreads from './builtin_modules/mock/worker_threads.ts'
+import * as claudeAgentSdk from './external_packages/claude-agent-sdk.ts'
 import * as systemFlock from './external_packages/node-addon-system-flock.ts'
 import * as koffi from './external_packages/koffi.ts'
 import * as libreofficeKit from './external_packages/libreoffice-kit.ts'
@@ -80,6 +82,7 @@ const BUILTINS: Record<string, StaticModuleFactory> = {
   perf_hooks: () => nodePerfHooks,
   sqlite: () => nodeSqlite,
   stream: () => nodeStream,
+  string_decoder: () => nodeStringDecoder,
   'stream/promises': () => nodeStreamPromises,
   'timers/promises': () => nodeTimersPromises,
   tty: () => nodeTty,
@@ -93,6 +96,7 @@ const BUILTINS: Record<string, StaticModuleFactory> = {
 
 /** Exact package or subpath specifiers served by worker stubs and fakes. */
 const EXTERNALS: Record<string, StaticModuleFactory> = {
+  '@anthropic-ai/claude-agent-sdk': () => claudeAgentSdk,
   '@deepseek-ai/libreoffice-kit': () => libreofficeKit,
   '@deepseek-ai/node-addon-system/flock': () => systemFlock,
   'koffi': () => koffi,

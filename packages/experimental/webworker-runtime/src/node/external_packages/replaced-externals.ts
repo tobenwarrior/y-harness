@@ -7,6 +7,7 @@
 
 /** Package or subpath specifiers served from the worker bundle instead of the VFS. */
 export const REPLACED_EXTERNAL_PACKAGES: readonly string[] = [
+  '@anthropic-ai/claude-agent-sdk',
   '@earendil-works/pi-ai',
   '@vscode/ripgrep',
   '@deepseek-ai/libreoffice-kit',
