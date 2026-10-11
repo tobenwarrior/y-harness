@@ -6,7 +6,7 @@ import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type {} from '@deepseek-ai/dsh-workspace'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-skill-library'
 import { CodingSessionColdDestinations } from './cold-destinations.ts'
@@ -215,14 +215,12 @@ export default class CodingSessions extends TypertRemoteService {
   @Remote async claimSequential(
     id: CodingSessionMirrorId, acknowledgement: CodingSessionClaimAcknowledgement,
   ): Promise<CodingSessionMirror> {
-    const agent = this.executionRoot(acknowledgement.executionSessionId, acknowledgement.project)
-    const agents = this.ctx.get('agents')
-    if (agents === undefined) throw new Error('Sequential continuation requires a live Y execution session.')
+    const { agent, agents } = this.executionRoot(acknowledgement.executionSessionId, acknowledgement.project)
     const selected = await this.ready().detail(id)
     if (selected.handoff !== undefined && selected.handoff.phase !== 'external-ready' && selected.handoff.phase !== 'recovered-acknowledged') {
       throw new Error('Native writer ownership is unresolved. Release the retained owner before claiming again.')
     }
-    if (this.executionRoot(acknowledgement.executionSessionId, acknowledgement.project) !== agent) {
+    if (this.executionRoot(acknowledgement.executionSessionId, acknowledgement.project).agent !== agent) {
       throw new Error('The selected Y execution session changed before acquisition.')
     }
     this.executionOwners.set(id, agent)
@@ -239,12 +237,11 @@ export default class CodingSessions extends TypertRemoteService {
     const captured = this.executionOwners.get(id)
     const selected = await this.ready().detail(id)
     const handoff = selected.handoff
-    if (captured === undefined || handoff === undefined
-      || this.executionRoot(handoff.executionSessionId, handoff.project) !== captured) {
+    if (captured === undefined || handoff === undefined) {
       throw new Error('The selected Y execution session changed. Release the native owner before continuing.')
     }
-    const agents = this.ctx.get('agents')
-    if (agents === undefined) throw new Error('Sequential continuation requires a live Y execution session.')
+    const { agent, agents } = this.executionRoot(handoff.executionSessionId, handoff.project)
+    if (agent !== captured) throw new Error('The selected Y execution session changed. Release the native owner before continuing.')
     return agents.withInitiator(captured, () => {
       const skills = this.ctx.get('skillLibrary')
       return skills === undefined ? this.ready().continueSequential(id, text, expectedRevision)
@@ -345,7 +342,7 @@ export default class CodingSessions extends TypertRemoteService {
   }
   private imports(): CodingSessionLinkedImports { if (this.linkedImports === undefined) throw new Error('Linked import storage is not ready.'); return this.linkedImports }
   private cold(): CodingSessionColdDestinations { if (this.destinations === undefined) throw new Error('Import destination storage is not ready.'); return this.destinations }
-  private executionRoot(id: SessionId, project: string): Agent {
+  private executionRoot(id: SessionId, project: string): { agent: Agent; agents: AgentRegistry } {
     if (!this.config.enableSequentialHandoff) throw new Error('Sequential native handoff is disabled.')
     const agents = this.ctx.get('agents')
     const agent = agents?.get(id)
@@ -354,7 +351,7 @@ export default class CodingSessions extends TypertRemoteService {
       || agent.session.header.cwd !== project || !isAbsolute(project)) {
       throw new Error('Select an idle live Y root in the exact native project before claiming this session.')
     }
-    return agent
+    return { agent, agents }
   }
 
   /**

@@ -41,6 +41,8 @@ Fresh native observations still apply. Before each Claude dispatch, a selected-p
 
 Explicit discovery and history operations start private Node workers with child-only `CLAUDE_CONFIG_DIR` and `HOME`; the parent environment stays unchanged. Workers verify the official SDK manifest name, version and entry path plus the configured module digest before importing it. History requests accept only `listSessions`, `getSessionInfo` and `getSessionMessages`; the separate sequential policy observation uses `resolveSettings`. Complete UTF8 request/reply wrappers and raw history pages share the configured byte bounds. SDK and process failures expose sanitized errors. Registration and `getState` start no worker; cancellation and removal await child completion, output draining and managed-range release.
 
+The private reader resolves its worker from the actual source or emitted module URL. Discovery and history share the same optional SDK paging defaults without relaxing worker validation. Each read captures its admitted readonly stdout once for listeners, draining and cleanup; an initially missing stream still refuses.
+
 ### History and recovery
 
 `getState` returns bounded source readiness and mirror metadata without transcript bodies. Explicit selection loads `detail`. Import and refresh preserve stable original event IDs, digests, order, and cursors; repeated reads do not duplicate history. Edited, truncated, reordered, or conflicting native history retains the prior content with an explicit conflict. Refresh clears the conflict only when the source again extends that retained prefix. Removed and disconnected sources leave retained mirrors readable.

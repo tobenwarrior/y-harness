@@ -1,6 +1,5 @@
 /** Explicit original Claude read sources with a separate default-off conversation handoff. */
 import { isAbsolute, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import schema from '@deepseek-ai/schemastery'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -9,6 +8,7 @@ import type {} from './index.ts'
 import { createClaudeSequentialWriter } from './claude-sequential.ts'
 import { z } from 'zod'
 import { createClaudeCodingSessionProvider } from './claude.ts'
+import { normalizeClaudeSourcePage, resolveClaudeSourceWorker } from './claude-source-options.ts'
 import type { ClaudeSessionSdk } from './claude.ts'
 import { codingSessionDigest } from './digest.ts'
 import type { CodingSessionProvider, CodingSessionReadRequest } from './types.ts'
@@ -74,9 +74,7 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
   const source = sourceSchema.parse(input)
   for (const key of ['profileRoot', 'directory', 'shellHome', 'nodePath', 'sdkModulePath', 'sdkManifestPath'] as const) source[key] = resolve(source[key])
   const profileId = `original-sdk:${codingSessionDigest({ id: source.id, root: source.profileRoot, directory: source.directory })}`
-  const workerPath = fileURLToPath(new URL('../lib/types/claude-source-worker.js', import.meta.url))
-  // Emitted modules live beside the worker rather than under src.
-  const executableWorker = import.meta.url.endsWith('/src/claude-source.ts') ? workerPath : fileURLToPath(new URL('./claude-source-worker.js', import.meta.url))
+  const executableWorker = resolveClaudeSourceWorker(import.meta.url)
   let closed = false
   let releaseFailure: ClaudeSourceReleaseError | undefined
   const hasReleaseFailure = (): boolean => releaseFailure !== undefined
@@ -101,6 +99,8 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
       let child: ReturnType<SubprocessRuntime['spawn']>
       try { child = runtime.spawn({ argv: [source.nodePath, executableWorker, String(request.maxBytes)], cwd: source.directory, env: childEnvironment(source), graceMs: source.processGraceMs, signal: controller.signal, stdio: { stdin: { data: body }, stdout: 'pipe', stderr: { maxBytes: 1 } } }) }
       catch (_error) { throw new Error('Claude source worker could not start.') }
+      // Managed owners expose a readonly stream reference, including after disposal.
+      const stdout = child.stdout
       const chunks: Buffer[] = []; let bytes = 0; let failure: Error | undefined
       let finishDrain!: () => void
       const drained = new Promise<void>((resolve) => { finishDrain = resolve })
@@ -118,12 +118,12 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
         chunks.push(chunk)
       }
       const streamError = (_error: Error): void => { failure = new Error('Claude source worker output failed.'); stop(); finishDrain() }
-      const streamClose = (): void => { if (!child.stdout?.readableEnded && !controller.signal.aborted) failure = new Error('Claude source worker output closed before draining.'); finishDrain() }
+      const streamClose = (): void => { if (!stdout?.readableEnded && !controller.signal.aborted) failure = new Error('Claude source worker output closed before draining.'); finishDrain() }
       const abort = (): void => { stop() }
       request.signal.addEventListener('abort', abort, { once: true })
       controller.signal.addEventListener('abort', () => { terminate(); finishDrain() }, { once: true })
-      child.stdout?.on('data', data); child.stdout?.on('error', streamError); child.stdout?.once('end', finishDrain); child.stdout?.once('close', streamClose)
-      if (child.stdout === undefined) { failure = new Error('Claude source worker output is unavailable.'); stop() }
+      stdout?.on('data', data); stdout?.on('error', streamError); stdout?.once('end', finishDrain); stdout?.once('close', streamClose)
+      if (stdout === undefined) { failure = new Error('Claude source worker output is unavailable.'); stop() }
       if (request.signal.aborted) stop()
       const direct = child.done.catch((_error: unknown) => { stop(); throw new Error('Claude source worker failed.') })
       const released = Promise.resolve().then(() => child.waitForExit()).then((value) => {
@@ -135,7 +135,7 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
       const [outcome, range] = await Promise.allSettled([direct, released])
       await drained
       request.signal.removeEventListener('abort', abort)
-      child.stdout?.off('data', data); child.stdout?.off('error', streamError); child.stdout?.off('end', finishDrain); child.stdout?.off('close', streamClose)
+      stdout?.off('data', data); stdout?.off('error', streamError); stdout?.off('end', finishDrain); stdout?.off('close', streamClose)
       if (range.status === 'rejected' || !range.value) throw new ClaudeSourceReleaseError('Claude source worker release could not be established.')
       if (failure !== undefined) throw failure
       request.signal.throwIfAborted()
@@ -147,7 +147,6 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
         const diagnostics = child.collected.stderr?.readFrom(0)
         if (diagnostics === undefined || diagnostics.nextOffset !== 0 || diagnostics.lossy) throw new Error('Claude sequential policy worker reported diagnostics or unknown stderr evidence.')
       }
-      if (child.stdout === undefined) throw new Error('Claude source worker output is unavailable.')
       let reply: z.infer<typeof claudeSourceReplySchema>
       try { reply = claudeSourceReplySchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))) }
       catch (_error) { throw new Error('Claude source worker returned an invalid reply.') }
@@ -167,7 +166,8 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
     let historyBytes = 0
     return Promise.resolve({
       listSessions: async (options) => {
-        const result = await read({ ...scope, operation: 'listSessions', limit: options?.limit ?? request.limit, offset: options?.offset ?? 0 }, request, release)
+        const page = normalizeClaudeSourcePage(request.limit, options)
+        const result = await read({ ...scope, operation: 'listSessions', ...page }, request, release)
         return z.array(claudeSourceInfoSchema).parse(result.value) as Awaited<ReturnType<ClaudeSessionSdk['listSessions']>>
       },
       getSessionInfo: async (sessionId) => {
@@ -175,9 +175,9 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
         return result.value === null ? undefined : claudeSourceInfoSchema.parse(result.value) as Awaited<ReturnType<ClaudeSessionSdk['getSessionInfo']>>
       },
       getSessionMessages: async (sessionId, options) => {
-        const offset = options?.offset ?? 0
+        const { limit, offset } = normalizeClaudeSourcePage(request.limit, options)
         if (offset === 0) historyBytes = 0
-        const result = await read({ ...scope, operation: 'getSessionMessages', sessionId, limit: options?.limit ?? request.limit, offset }, request, release)
+        const result = await read({ ...scope, operation: 'getSessionMessages', sessionId, limit, offset }, request, release)
         historyBytes += result.bytes
         if (historyBytes > request.maxBytes) throw new Error('Claude source complete raw history exceeded the configured byte limit.')
         return claudeSourceMessagesSchema.parse(result.value)
