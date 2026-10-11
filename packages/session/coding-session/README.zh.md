@@ -41,6 +41,8 @@ Claude 顺序写入方注册要求 `sequentialHandoff.knownUnmanagedStartup: tru
 
 显式发现和记录操作启动私有 Node worker，仅在子进程设置 `CLAUDE_CONFIG_DIR` 与 `HOME`；父进程环境保持不变。worker 在导入前验证官方 SDK 清单名称、版本及入口路径，以及配置的模块摘要。记录请求仅接受 `listSessions`、`getSessionInfo` 与 `getSessionMessages`；独立的顺序策略观察使用 `resolveSettings`。完整 UTF8 请求和响应包装字段及原始记录分页受配置的字节限制约束。SDK 与进程失败仅暴露经过清理的错误。注册和 `getState` 不启动 worker；取消及移除会等待子进程完成、输出排空及受管范围释放。
 
+私有读取方依据实际源码或编译模块 URL 定位 worker。发现与记录读取共用可选 SDK 分页默认值，且不会放宽 worker 验证。每次读取只捕获一次已准入的只读 stdout 引用，用于监听、排空和清理；初始流缺失仍会拒绝。
+
 ### 记录与恢复
 
 `getState` 返回有界的来源就绪状态及镜像元数据，不包含会话正文。显式选择通过 `detail` 加载正文。导入和刷新保留稳定的原始事件 ID、摘要、顺序及游标；重复读取不会复制记录。原生记录被编辑、截断、重排或存在冲突时，保留原内容并明确标记冲突。只有来源再次扩展保留的前缀，刷新才清除冲突。来源被移除或断开后，保留镜像仍可阅读。
