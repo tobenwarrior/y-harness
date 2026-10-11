@@ -87,8 +87,10 @@ describe('Codex backend state and refusal paths', () => {
     const adapter = new CodexBackendAdapter(f.runtime)
     expect(adapter.providerInfo('codex-backend')).toEqual({ id: 'codex-backend', name: 'Codex (native backend)', auxiliaryGeneration: 'native' })
     expect(await adapter.listModels('codex-backend')).toEqual([{ provider: 'codex-backend', id: model.id, name: 'Fixture', description: '', inputModalities: ['text'] }])
-    expect(await adapter.resolveModel('codex-backend', model.id)).toMatchObject({ reasoning: { efforts: [] }, serviceTiers: { defaultTier: 'default' } })
-    expect((await adapter.resolveModel('codex-backend', model.id)).reasoning).not.toHaveProperty('defaultEffort')
+    const info = await adapter.resolveModel('codex-backend', model.id)
+    expect(info).toMatchObject({ serviceTiers: { defaultTier: 'default' } })
+    expect(info.reasoning).toBeUndefined()
+    expect(Object.hasOwn(info, 'reasoning')).toBe(false)
   })
 
   it('uses protocol defaults for malformed optional catalog fields without inventing IDs', () => {
