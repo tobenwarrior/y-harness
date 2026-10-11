@@ -3,10 +3,13 @@
 import { hostname } from 'node:os'
 import { resolve } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-config-editor'
 import type {} from '@deepseek-ai/dsh-fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-client-file-upload'
 import { canOpenNativePath, nativeFileManager, nativeFileApplications, openNativeFileApplication, openNativeAssociatedPath, revealNativePath } from '@deepseek-ai/dsh-native-command'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -293,21 +296,41 @@ export class SessionController extends TypertRemoteService {
   }
 
   /**
-   * Select the first available account model after login when no provider API key is configured.
+   * Select the first available account model after login without a saved default or provider API key.
    * @returns after saving the first available model or retaining the existing default.
    */
   @Remote
   async initializeDefaultModel(): Promise<void> {
     const provider = 'deepseek-account'
+    const settings = this.ctx.get('settings')
+    const scope = this.ctx[Context.isolate].agentDefaultModel
+    const ns = this.ctx.get('configEditor')?.entries().find(entry => entry.fiber?.runtime?.callback === AgentDefaultModelConfig
+      && entry.fiber.ctx[Context.isolate].agentDefaultModel === scope)?.options.id
+    if (settings === undefined || ns === undefined) throw new RemoteError('session/default-model-settings-unavailable',
+      'default model settings are unavailable', {})
+    const readDefault = () => {
+      const descriptor = settings.describe({ redactSecrets: true }).find(row => row.ns === ns)
+      if (descriptor === undefined) throw new RemoteError('session/default-model-settings-unavailable',
+        'default model settings are unavailable', {})
+      return descriptor
+    }
+    const isSaved = (user: unknown) => typeof user === 'object' && user !== null && Object.keys(user).length > 0
+    if (isSaved(readDefault().user)) return
     if (await hasProviderApiKey(this.ctx)) return
     const catalog = await buildModelCatalog(this.ctx)
+    if (await hasProviderApiKey(this.ctx)) return
+    const descriptor = readDefault()
+    if (isSaved(descriptor.user)) return
     const model = catalog.groups.find(group => group.id === provider)?.models[0]
     if (model === undefined) throw new RemoteError('session/provider-models-unavailable',
       `provider "${provider}" has no available models`, { provider })
     const selection = { provider, model: model.id,
       ...model.reasoning?.defaultEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(model.reasoning.defaultEffort) },
     }
-    await this.ctx.agentDefaultModel.saveSelection(selection)
+    try { await settings.replace(ns, selection, descriptor.revision) }
+    catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT')) throw error
+    }
   }
 
   /**

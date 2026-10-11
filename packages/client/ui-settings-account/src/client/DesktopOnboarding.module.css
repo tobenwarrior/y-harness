@@ -235,6 +235,7 @@
 }
 
 .navigation button { pointer-events: auto; }
+.navigation button:last-child { margin-left: auto; }
 .navigation button { display: flex; align-items: center; gap: 20px; padding: 0; border: 0; background: transparent; color: var(--yh-alias-label-tertiary); font: inherit; font-size: 16px; font-weight: 300; line-height: 32px; cursor: pointer; }
 .navigation button:focus-visible { outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: 5px; }
 .navigation button:hover:not(:disabled) { color: var(--yh-alias-label-primary); }

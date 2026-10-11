@@ -1,1 +1,1 @@
-当前未登录 Y Harness 账号登录 Y Harness 账号获取专属 API Key登录
+尚未连接 DeepSeek 账号连接 DeepSeek 账号以使用模型，或在 设置 → 模型 中配置其他提供方登录

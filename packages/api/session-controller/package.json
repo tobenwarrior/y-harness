@@ -85,6 +85,7 @@
     "@deepseek-ai/dsh-client-connection": "workspace:*",
     "@deepseek-ai/dsh-client-file-upload": "workspace:*",
     "@deepseek-ai/dsh-commands": "workspace:*",
+    "@deepseek-ai/dsh-config-editor": "workspace:*",
     "@deepseek-ai/dsh-credentials": "workspace:*",
     "@deepseek-ai/dsh-file-reference": "workspace:*",
     "@deepseek-ai/dsh-fs": "workspace:*",
@@ -108,6 +109,9 @@
     "@deepseek-ai/dsh-workspace": "workspace:*"
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-config-editor": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-session-persistence": {
       "optional": true
     },
@@ -132,6 +136,7 @@
     "@deepseek-ai/dsh-client-store": "workspace:*",
     "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
     "@deepseek-ai/dsh-commands": "workspace:*",
+    "@deepseek-ai/dsh-config-editor": "workspace:*",
     "@deepseek-ai/dsh-credentials": "workspace:*",
     "@deepseek-ai/dsh-file-reference": "workspace:*",
     "@deepseek-ai/dsh-fs": "workspace:*",

@@ -26,7 +26,6 @@ import { AccountQuotaNotice, type AccountQuotaNoticeInjected } from './AccountQu
 import { DESKTOP_ONBOARDING_NAMESPACE, type OnboardingSettings } from '../onboarding-settings.ts'
 import { DesktopOnboardingController } from './onboarding-state.ts'
 import { DesktopOnboardingEntry, type DesktopOnboardingInjected } from './DesktopOnboardingEntry.tsx'
-import { readOnboardingApiKeyPresence } from './onboarding-credentials.ts'
 import { refreshAfterReturn } from './account-refresh.ts'
 export type { AccountSectionInjected, AccountSectionProps } from './AccountSection.tsx'
 export type { AccountMenuProps } from './AccountMenu.tsx'
@@ -236,19 +235,9 @@ export function apply(ctx: Context): void {
       ctx.configForms.get<{ transcriptView?: TranscriptViewMode | null; performanceUsage: 'compact' | 'detailed' }>('ui-chat'),
       enabled => ctx.configForms.developerTools.setEnabled(enabled),
       operations.hooks.account,
-      readOnboardingApiKeyPresence,
       ctx.configForms.describe(),
     )
     ctx.effect(() => () => { controller.dispose() }, 'account: desktop onboarding lifetime')
-    ctx.effect(() => {
-      const refreshCredentials = () => { controller.invalidateCredentials() }
-      const disposers = [
-        ctx.remote.$on('credentials/reference-updated', refreshCredentials),
-        ctx.remote.$on('llm/adapters-updated', refreshCredentials),
-        ctx.configForms.describe().subscribe(refreshCredentials),
-      ]
-      return () => { for (const dispose of disposers) dispose() }
-    }, 'account: desktop credential readiness')
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({
       name: 'shell.overlay', id: 'desktop-onboarding', locale: 'settings.account',
       inject: (): DesktopOnboardingInjected => ({
