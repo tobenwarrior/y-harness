@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { open, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import z from '@deepseek-ai/schemastery'
 import { z as schema } from 'zod'
 import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
@@ -132,7 +133,7 @@ export function createConfiguredCodexSessionProvider(
   const pending = new Set<Promise<unknown>>()
   let releaseFailure: CodexSessionSourceReleaseError | undefined
   const identity = `original:${createHash('sha256').update(JSON.stringify([config.id, resolve(config.home)])).digest('hex')}`
-  const profileId = createCodexCodingSessionProvider(identity, config.label, () => undefined).profileId
+  const profileId = brandString<CodingSessionProvider['profileId']>(identity)
   const declaredSequential = config.enableSequentialProjectFiles === true && config.knownNoManagedFeatureOverrides === true
   if (declaredSequential && getAccess === undefined) throw new Error('Sequential Codex file tools require exact live Harness policy authority.')
   const sequential = declaredSequential && getAccess !== undefined

@@ -381,22 +381,21 @@ export class CodexBackendRuntime {
     const peer = await this.ensure(); await this.readAccount(peer)
     if (!this.connected) throw new Error('Sign in to the separate Codex profile before sending a turn.')
     const key = options.purpose === undefined && options.sessionId !== undefined ? `${options.sessionId}/${options.model}` : randomUUID()
-    let cursor = this.cursors.get(key)
-    const markerIndex = cursor === undefined ? -1 : options.messages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
+    const cursor = this.cursors.get(key)
+    const markerIndex = cursor === undefined ? -1 : options.messages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor.marker)
     const prefix = markerIndex < 0 ? '' : JSON.stringify(projectCodexHistory(options.messages.slice(0, markerIndex)))
     const continuing = cursor !== undefined && prefix === cursor.input
       && cursor.instructions === instructions && cursor.access === accessKey
-    if (!continuing) {
+    let activeCursor: ThreadCursor
+    if (cursor === undefined || !continuing) {
       const result = obj(await peer.request('thread/start', { model: options.model, cwd: access.cwd, sandbox: access.sandbox,
         approvalPolicy: access.approvalPolicy, approvalsReviewer: 'user', ephemeral: false, developerInstructions: instructions,
         config: { sandbox_workspace_write: { writable_roots: access.writableRoots, network_access: true,
           exclude_tmpdir_env_var: true, exclude_slash_tmp: true } } }))
       const id = text(obj(result.thread).id)
       if (!id) throw new Error('Codex returned an invalid thread.')
-      cursor = { id, marker: randomUUID(), input: '', instructions, access: accessKey }
-    }
-    if (cursor === undefined) throw new Error('Codex thread was not created.')
-    const activeCursor = cursor
+      activeCursor = { id, marker: randomUUID(), input: '', instructions, access: accessKey }
+    } else activeCursor = cursor
     const activeRequest = { threadId: activeCursor.id, access, turnId: undefined as string | undefined, items: new Map<string, Obj>() }
     const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
     const transcript = suffix.map(({ role, text: entryText }) => ({ role, text: entryText }))
@@ -444,84 +443,85 @@ export class CodexBackendRuntime {
         if (queue.length === 0) await new Promise<void>((resolve) => { wake = resolve; if (options.signal?.aborted) resolve() })
         wake = undefined
         options.signal?.throwIfAborted()
-        const event = queue.shift(); if (event === undefined) continue
-        if (event.method === '__overflow') throw new Error('Codex stream exceeded the pending-event limit.')
-        if (event.method === '__closed') throw new Error('Codex stopped before the turn completed.')
-        const params = event.params
-        if (params.turnId !== undefined && params.turnId !== turnId) continue
-        if ((event.method === 'item/started' || event.method === 'item/completed') && params.turnId === turnId
-          && options.purpose === undefined && this.options.connectionId !== undefined && !evidenceInvalidated) {
-          const phase = event.method === 'item/started' ? 'started' : 'settled'
-          const item = codexNativeItem(
-            this.options.connectionId, activeCursor.id, turnId, phase, params.item,
-            observationProjectRoot, this.options.nativeEvidenceMaxItems ?? 64,
-          )
-          if (item !== undefined && !settledItems.has(item.itemId)) {
-            const start = nativeItems.get(item.itemId)
-            if (phase === 'started' && start === undefined) {
-              if (nativeItems.size >= (this.options.nativeEvidenceMaxItems ?? 64)) {
-                evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
-                try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
-                catch (error) { void error /* Observation failure grants no source-write authority. */ }
-                continue
-              }
-              nativeItems.set(item.itemId, item)
-            } else if (phase === 'settled' && start !== undefined) {
-              if (start.kind !== item.kind || start.name !== item.name || start.skillReadPath !== item.skillReadPath
-                || JSON.stringify(start.procedure) !== JSON.stringify(item.procedure)) {
-                evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
-                try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
-                catch (error) { void error /* Mismatching settlement grants no learning authority. */ }
-                continue
-              }
-              settledItems.add(item.itemId)
-            } else continue
-            try { this.options.observeNativeItem?.(options, item) }
-            catch (error) { void error /* Evidence observers cannot change native result or permission settlement. */ }
+        for (const event of queue.splice(0, 1)) {
+          if (event.method === '__overflow') throw new Error('Codex stream exceeded the pending-event limit.')
+          if (event.method === '__closed') throw new Error('Codex stopped before the turn completed.')
+          const params = event.params
+          if (params.turnId !== undefined && params.turnId !== turnId) continue
+          if ((event.method === 'item/started' || event.method === 'item/completed') && params.turnId === turnId
+            && options.purpose === undefined && this.options.connectionId !== undefined && !evidenceInvalidated) {
+            const phase = event.method === 'item/started' ? 'started' : 'settled'
+            const item = codexNativeItem(
+              this.options.connectionId, activeCursor.id, turnId, phase, params.item,
+              observationProjectRoot, this.options.nativeEvidenceMaxItems ?? 64,
+            )
+            if (item !== undefined && !settledItems.has(item.itemId)) {
+              const start = nativeItems.get(item.itemId)
+              if (phase === 'started' && start === undefined) {
+                if (nativeItems.size >= (this.options.nativeEvidenceMaxItems ?? 64)) {
+                  evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
+                  try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
+                  catch (error) { void error /* Observation failure grants no source-write authority. */ }
+                  continue
+                }
+                nativeItems.set(item.itemId, item)
+              } else if (phase === 'settled' && start !== undefined) {
+                if (start.kind !== item.kind || start.name !== item.name || start.skillReadPath !== item.skillReadPath
+                  || JSON.stringify(start.procedure) !== JSON.stringify(item.procedure)) {
+                  evidenceInvalidated = true; nativeItems.clear(); settledItems.clear()
+                  try { this.options.observeNativeItem?.(options, { ...item, phase: 'invalidated' }) }
+                  catch (error) { void error /* Mismatching settlement grants no learning authority. */ }
+                  continue
+                }
+                settledItems.add(item.itemId)
+              } else continue
+              try { this.options.observeNativeItem?.(options, item) }
+              catch (error) { void error /* Evidence observers cannot change native result or permission settlement. */ }
+            }
           }
-        }
-        if (event.method === 'thread/tokenUsage/updated') {
-          const counts = obj(obj(params.tokenUsage).last)
-          const input = Number(counts.inputTokens)
-          const cached = Number(counts.cachedInputTokens ?? 0)
-          const written = Number(counts.cacheWriteInputTokens ?? 0)
-          const output = Number(counts.outputTokens)
-          if ([input, cached, written, output].every(n => Number.isFinite(n) && n >= 0)) {
-            usage = { inputTokens: Math.max(0, input - cached - written), outputTokens: output,
-              cacheReadTokens: cached, cacheWriteTokens: written }
+          if (event.method === 'thread/tokenUsage/updated') {
+            const counts = obj(obj(params.tokenUsage).last)
+            const input = Number(counts.inputTokens)
+            const cached = Number(counts.cachedInputTokens ?? 0)
+            const written = Number(counts.cacheWriteInputTokens ?? 0)
+            const output = Number(counts.outputTokens)
+            if ([input, cached, written, output].every(n => Number.isFinite(n) && n >= 0)) {
+              usage = { inputTokens: Math.max(0, input - cached - written), outputTokens: output,
+                cacheReadTokens: cached, cacheWriteTokens: written }
+            }
           }
-        }
-        if (event.method === 'item/agentMessage/delta') {
-          const id = text(params.itemId); let block = blocks.get(id)
-          if (block === undefined) {
-            block = { index: blocks.size, text: '', ended: false }
-            blocks.set(id, block)
-            yield { type: 'block-start', index: block.index, blockType: 'text' }
+          if (event.method === 'item/agentMessage/delta') {
+            const id = text(params.itemId); let block = blocks.get(id)
+            if (block === undefined) {
+              block = { index: blocks.size, text: '', ended: false }
+              blocks.set(id, block)
+              yield { type: 'block-start', index: block.index, blockType: 'text' }
+            }
+            const delta = text(params.delta)
+            block.text += delta
+            yield { type: 'text-delta', index: block.index, text: delta }
           }
-          const delta = text(params.delta)
-          block.text += delta
-          yield { type: 'text-delta', index: block.index, text: delta }
-        }
-        if (event.method === 'item/completed' && obj(params.item).type === 'agentMessage') {
-          const item = obj(params.item); const id = text(item.id); let block = blocks.get(id)
-          if (block === undefined) { block = { index: blocks.size, text: text(item.text), ended: false }; blocks.set(id, block); yield { type: 'block-start', index: block.index, blockType: 'text' }; yield { type: 'text-delta', index: block.index, text: block.text } }
-          if (!block.ended) { block.ended = true; yield { type: 'block-end', index: block.index, block: { type: 'text', text: block.text } } }
-        }
-        if (event.method === 'turn/completed') {
-          const turn = obj(params.turn); if (turn.id !== turnId) continue
-          terminal = true
-          for (const block of blocks.values()) if (!block.ended) yield { type: 'block-end', index: block.index, block: { type: 'text', text: block.text } }
-          if (usage !== undefined) yield { type: 'usage', usage }
-          if (turn.status !== 'completed') {
-            yield { type: 'finish', reason: { kind: 'error', failure: { code: 'CODEX_TURN_FAILED', message: turn.status === 'interrupted' ? 'Codex turn was interrupted.' : 'Codex turn failed. Refresh the backend or check account access.' } } }
-          } else {
-            activeCursor.input = JSON.stringify(history); activeCursor.marker = randomUUID(); this.cursors.set(key, activeCursor)
-            yield { type: 'finish', reason: { kind: 'stop' }, replayState: { response: { codexMarker: activeCursor.marker } } }
+          if (event.method === 'item/completed' && obj(params.item).type === 'agentMessage') {
+            const item = obj(params.item); const id = text(item.id); let block = blocks.get(id)
+            if (block === undefined) { block = { index: blocks.size, text: text(item.text), ended: false }; blocks.set(id, block); yield { type: 'block-start', index: block.index, blockType: 'text' }; yield { type: 'text-delta', index: block.index, text: block.text } }
+            if (!block.ended) { block.ended = true; yield { type: 'block-end', index: block.index, block: { type: 'text', text: block.text } } }
+          }
+          if (event.method === 'turn/completed') {
+            const turn = obj(params.turn); if (turn.id !== turnId) continue
+            terminal = true
+            for (const block of blocks.values()) if (!block.ended) yield { type: 'block-end', index: block.index, block: { type: 'text', text: block.text } }
+            if (usage !== undefined) yield { type: 'usage', usage }
+            if (turn.status !== 'completed') {
+              yield { type: 'finish', reason: { kind: 'error', failure: { code: 'CODEX_TURN_FAILED', message: turn.status === 'interrupted' ? 'Codex turn was interrupted.' : 'Codex turn failed. Refresh the backend or check account access.' } } }
+            } else {
+              activeCursor.input = JSON.stringify(history); activeCursor.marker = randomUUID(); this.cursors.set(key, activeCursor)
+              yield { type: 'finish', reason: { kind: 'stop' }, replayState: { response: { codexMarker: activeCursor.marker } } }
+            }
           }
         }
       }
     } finally {
-      if (this.activeRequest === activeRequest) this.activeRequest = undefined
+      this.activeRequest = undefined
       unsubscribe(); options.signal?.removeEventListener('abort', onAbort)
       if (!terminal) { this.cursors.delete(key); onAbort() }
     }
