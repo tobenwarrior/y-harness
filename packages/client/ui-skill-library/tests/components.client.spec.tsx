@@ -10,6 +10,7 @@ import type { SkillLibraryId, SkillLibraryItem, SkillCleanupProposalId, SkillRev
 import { SkillLibraryPage, type SkillLibraryPageProps } from '../src/client/SkillLibraryPage.tsx'
 import { en } from '../src/client/locales.ts'
 import { createNavigationStore } from '../src/client/navigation-store.ts'
+import { learningProposal, learningStatus, evidence } from './learning-fixtures.ts'
 import { createLearningState, type SkillLibraryState } from '../src/client/controller.ts'
 
 afterEach(cleanup)
@@ -350,4 +351,130 @@ describe('skill library panel', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: en.apply }))
     expect(state.applyPreview).toHaveBeenCalledOnce()
   })
+})
+
+describe('skill library recovery and deliberate gestures', () => {
+  it.each(['loading', 'error'] as const)('renders an initial %s inventory without loading source bodies', (status) => {
+    const f = fixture({ status, inventory: null, readError: status === 'error' })
+    expect(f.loadDetail).not.toHaveBeenCalled()
+    if (status === 'loading') expect(screen.getByRole('status', { name: en.loading })).toBeTruthy()
+    else { expect(screen.getByText(en.loadError)).toBeTruthy(); fireEvent.click(screen.getByRole('button', { name: en.retry })); expect(f.refresh).toHaveBeenCalledOnce() }
+  })
+  it('refreshes metadata deliberately and distinguishes an empty library from a filtered result', () => {
+    const f = fixture({ inventory: { items: [], projects: [], providers: [], bodyBudgetBytes: 1000 } })
+    expect(screen.getAllByText(en.empty).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: en.refresh })); expect(f.refresh).toHaveBeenCalledOnce()
+    act(() => { f.data.set({ ...f.data.getSnapshot(), inventory: { items: [item], projects: [], providers: [], bodyBudgetBytes: 1000 } }) })
+    fireEvent.change(screen.getByRole('textbox', { name: en.search }), { target: { value: 'unrelated' } })
+    expect(screen.getByText(en.noResults)).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: en.graph })); expect(screen.getAllByText(en.noResults)).toHaveLength(2)
+    fireEvent.change(screen.getByRole('textbox', { name: en.search }), { target: { value: '' } })
+    act(() => { f.data.set({ ...f.data.getSnapshot(), inventory: { items: [], projects: [], providers: [], bodyBudgetBytes: 1000 } }) })
+    expect(screen.getAllByText(en.empty)).toHaveLength(2)
+  })
+  it('filters status, shared scope and unregistered projects using inventory metadata', () => {
+    const outsider = { ...item, id: 'outside' as SkillLibraryId, name: 'Other project skill', projectIds: ['elsewhere'], status: 'disabled' as const }
+    const f = fixture({ inventory: { items: [item, outsider, { ...item, id: 'shared' as SkillLibraryId, name: 'Shared skill', scope: 'shared', projectIds: [] }], projects: [], providers: [], bodyBudgetBytes: 1000 } })
+    fireEvent.click(screen.getByRole('button', { name: en.project })); fireEvent.click(screen.getByRole('menuitem', { name: en.shared }))
+    expect(screen.queryByRole('button', { name: 'Inspect Release workflow' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Inspect Shared skill' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.project })); fireEvent.click(screen.getByRole('menuitem', { name: 'elsewhere' }))
+    expect(screen.queryByRole('button', { name: 'Inspect Release workflow' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.status })); fireEvent.click(screen.getByRole('menuitem', { name: en.disabled }))
+    expect(screen.getByRole('button', { name: 'Inspect Other project skill' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Inspect Shared skill' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.deletedSkills })); fireEvent.click(screen.getByRole('button', { name: en.deletedSkills }))
+    expect(f.navigation.getSnapshot().status).toBe('all')
+  })
+  it('loads detail on demand, offers retry after body failure, and closes a library selection', () => {
+    const f = fixture({ detailId: id, detailStatus: 'loading' })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    expect(screen.getByRole('status', { name: en.loading })).toBeTruthy()
+    act(() => { f.data.set({ ...f.data.getSnapshot(), detailStatus: 'error' }) })
+    expect(screen.getByText(en.detailError)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.retry })); expect(f.loadDetail).toHaveBeenCalledTimes(2)
+    fireEvent.click(within(screen.getByRole('complementary', { name: en.details })).getByRole('button', { name: en.close }))
+    expect(f.navigation.getSnapshot().selectedId).toBeNull()
+    expect(screen.queryByRole('complementary', { name: en.details })).toBeNull()
+  })
+  it('keeps pin and automatic cleanup bound to the loaded source and shows observed usage limits', () => {
+    const managed = { ...item, ownership: 'y-managed' as const, pinned: true, automaticCleanup: true, shadowed: true, invocation: { modelInvocable: false, userInvocable: false }, bodyBytes: 9000, usage: { coverage: 'recorded-loads' as const, loadCount: 3, lastLoadedAt: '2026-10-09T00:00:00Z' }, capabilities: { ...item.capabilities, adopt: false, cleanup: true, archive: true } }
+    const f = fixture({ detailId: id, detailStatus: 'ready', detail: { item: managed, content: 'Observed body', revisions: [] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    const detail = within(screen.getByRole('complementary', { name: en.details }))
+    expect(detail.getByText(en.shadowed)).toBeTruthy(); expect(detail.getByText(en.overBudget)).toBeTruthy()
+    expect(detail.getAllByText(en.blocked)).toHaveLength(2); expect(detail.getByText(en.usageRecorded)).toBeTruthy()
+    fireEvent.click(detail.getByRole('button', { name: en.unpin })); expect(f.act).toHaveBeenCalledWith('unpin', managed)
+    act(() => { f.data.set({ ...f.data.getSnapshot(), detail: { item: { ...managed, pinned: false }, content: 'Observed body', revisions: [] } }) })
+    fireEvent.click(detail.getByRole('switch', { name: en.automatic })); expect(f.act).toHaveBeenLastCalledWith('automaticOff', { ...managed, pinned: false })
+    act(() => { f.data.set({ ...f.data.getSnapshot(), detail: { item: { ...managed, pinned: false, automaticCleanup: false }, content: 'Observed body', revisions: [] } }) })
+    fireEvent.click(detail.getByRole('switch', { name: en.automatic })); expect(f.act).toHaveBeenLastCalledWith('automaticOn', { ...managed, pinned: false, automaticCleanup: false })
+    fireEvent.click(detail.getByRole('button', { name: en.whitespaceCleanupSelected })); expect(f.preview).toHaveBeenCalledWith([id])
+  })
+  it('follows a currently resolved reference while retaining unresolved and missing references', () => {
+    const relatedId = 'related' as SkillLibraryId
+    const related = { ...item, id: relatedId, name: 'Related source' }
+    const source = { ...item, references: [{ target: 'Read related source', kind: 'skill' as const, resolvedId: relatedId }, { target: 'Unavailable reference', kind: 'skill' as const }, { target: 'Removed reference', kind: 'skill' as const, resolvedId: 'missing' as SkillLibraryId }] }
+    const f = fixture({ inventory: { items: [source, related], projects: [], providers: [], bodyBudgetBytes: 1000 }, detailId: id, detailStatus: 'ready', detail: { item: source, content: 'Body', revisions: [] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    expect(screen.getByText('Unavailable reference')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Removed reference' })); expect(f.loadDetail).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Read related source' })); expect(f.navigation.getSnapshot().selectedId).toBe(relatedId)
+    expect(f.loadDetail).toHaveBeenLastCalledWith(relatedId)
+  })
+  it('cancels adoption and deletion without issuing a source action', () => {
+    const f = fixture(); fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: en.adopt }))
+    let dialog = screen.getByRole('dialog', { name: en.adoptTitle }); fireEvent.click(within(dialog).getByRole('button', { name: en.cancel }))
+    expect(f.act).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: en.adopt })); dialog = screen.getByRole('dialog', { name: en.adoptTitle })
+    fireEvent.click(within(dialog).getByRole('button', { name: en.close })); expect(f.act).not.toHaveBeenCalled()
+  })
+  it('renders cleanup history reasons and only restores the selected revision', () => {
+    const revisions = (['cleanup', 'rollback'] as const).map(reason => ({ id: `revision:${reason}` as SkillRevisionId, createdAt: '2026-10-09T00:00:00Z', reason, beforeHash: 'before', afterHash: 'hash', beforeBytes: 90, afterBytes: 60 }))
+    const f = fixture({ detailId: id, detailStatus: 'ready', detail: { item, content: 'Body', revisions } })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    expect(screen.getByText(en.revisionCleanup)).toBeTruthy(); expect(screen.getByText(en.revisionRollback)).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: en.rollback })[0]!); expect(f.rollback).toHaveBeenCalledWith(item, revisions[0]!.id)
+  })
+  it.each([{ previewLoading: true }, { previewError: true }, { proposal: { id: 'preview' as SkillCleanupProposalId, createdAt: '', changes: [], skipped: [{ id, reason: 'Protected' }] } }])('refuses unreviewed or empty cleanup and permits dismissal %j', (patch) => {
+    const f = fixture({ cleanupOpen: true, ...patch }); const dialog = screen.getByRole('dialog', { name: en.cleanupTitle })
+    expect(within(dialog).getByRole('button', { name: en.apply }).hasAttribute('disabled')).toBe(true)
+    if (patch.previewLoading) expect(within(dialog).getByRole('status', { name: en.loading })).toBeTruthy()
+    if (patch.previewError) expect(within(dialog).getByText(en.loadError)).toBeTruthy()
+    if (patch.proposal) expect(within(dialog).getByText(en.cleanupEmpty)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: en.cancel })); expect(f.closePreview).toHaveBeenCalledOnce(); expect(f.applyPreview).not.toHaveBeenCalled()
+  })
+  it('reviews an over-budget cleanup diff and keeps Cancel unavailable while applying', () => {
+    const f = fixture({ cleanupOpen: true, proposal: { id: 'preview' as SkillCleanupProposalId, createdAt: '', skipped: [{ id, reason: 'Protected' }], changes: [{ id, name: item.name, expectedHash: 'hash', before: 'Old', after: 'New', beforeBytes: 30, afterBytes: 20, overBudget: true }] } })
+    const dialog = screen.getByRole('dialog', { name: en.cleanupTitle }); expect(within(dialog).getByText(en.overBudget)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: en.close })); expect(f.closePreview).toHaveBeenCalledOnce()
+    act(() => { f.data.set({ ...f.data.getSnapshot(), busy: true }) })
+    fireEvent.click(within(dialog).getByRole('button', { name: en.cancel })); expect(f.closePreview).toHaveBeenCalledOnce()
+    expect(within(dialog).getByRole('button', { name: en.apply }).hasAttribute('disabled')).toBe(true)
+  })
+  it('opens retained source history from Review and updates only its navigation selection', () => {
+    const proposal = { ...learningProposal, state: 'applied' as const, appliedIds: [id] }
+    const f = fixture({ learning: { ...createLearningState(), status: 'ready', detail: proposal, detailId: proposal.id, detailStatus: 'ready', evidence: [evidence], providers: learningStatus } })
+    fireEvent.click(screen.getByRole('tab', { name: en.review }))
+    expect(f.navigation.getSnapshot().selectedReviewId).toBe(proposal.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+    expect(f.navigation.getSnapshot()).toMatchObject({ view: 'library', selectedId: id, selectedReviewId: proposal.id })
+    expect(f.loadDetail).toHaveBeenCalledWith(id)
+  })
+})
+
+it('pins an observed unpinned skill and requests a library-wide preview separately', () => {
+  const f = fixture(); fireEvent.click(screen.getByRole('button', { name: 'Inspect Release workflow' }))
+  fireEvent.click(screen.getByRole('button', { name: en.pin })); expect(f.act).toHaveBeenCalledWith('pin', item)
+  fireEvent.click(screen.getByRole('button', { name: en.cleanup })); expect(f.preview).toHaveBeenCalledWith()
+  fireEvent.click(screen.getByRole('button', { name: en.project })); fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+  expect(screen.queryByRole('menu')).toBeNull(); expect(f.navigation.getSnapshot().project).toBe('all')
+})
+it('expands long cleanup instructions without applying the reviewed proposal', () => {
+  const before = Array.from({ length: 80 }, (_, i) => `Old cleanup instruction ${i}`).join('\n')
+  const after = Array.from({ length: 80 }, (_, i) => `New cleanup instruction ${i}`).join('\n')
+  const f = fixture({ cleanupOpen: true, proposal: { id: 'preview' as SkillCleanupProposalId, createdAt: '', skipped: [], changes: [{ id, name: item.name, expectedHash: 'hash', before, after, beforeBytes: 1000, afterBytes: 900, overBudget: false }] } })
+  fireEvent.click(screen.getByRole('button', { name: /Expand.*lines/i }))
+  expect(screen.getByText(/New cleanup instruction 79/)).toBeTruthy(); expect(f.applyPreview).not.toHaveBeenCalled()
 })
