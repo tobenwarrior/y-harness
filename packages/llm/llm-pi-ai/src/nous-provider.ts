@@ -19,8 +19,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Preserve the resolved OAuth bearer and remove stale OpenRouter attribution. */
-function inferenceHeaders(headers: ProviderHeaders | undefined): ProviderHeaders | undefined {
-  return headers === undefined ? undefined : Object.fromEntries(
+function inferenceHeaders(headers: ProviderHeaders): ProviderHeaders {
+  return Object.fromEntries(
     Object.entries(headers).filter(([name]) => !OVERRIDE_HEADERS.has(name.toLowerCase()) && !name.toLowerCase().startsWith('x-openrouter-')),
   )
 }
@@ -56,7 +56,7 @@ function reasoningControl(
       ? { enabled: false }
       : undefined
   }
-  const selected = effort ?? (requested === 'off' ? undefined : requested)
+  const selected = effort ?? requested
   if (selected === undefined) return undefined
   const wire = mapping[selected] ?? Object.entries(efforts).find(([level, value]) => level !== 'off' && value === selected)?.[1]
   if (wire === undefined) throw new Error('This reasoning effort is not advertised for the selected Nous model.')

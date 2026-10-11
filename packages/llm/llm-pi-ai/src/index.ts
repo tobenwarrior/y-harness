@@ -185,9 +185,9 @@ export function apply(ctx: Context, config: Config): void {
     ctx.get('nousConnection')?.assertClientChange(candidate.nousClientId.get())
     assertServiceable(
       { providers: structuredClone(candidate.providers.get()),
-        ...candidate.nousClientId.get() === undefined ? {} : { nousClientId: candidate.nousClientId.get() } } as import('./config.ts').Options,
+        nousClientId: candidate.nousClientId.get() } as import('./config.ts').Options,
       { providers: structuredClone(config.providers.get()),
-        ...config.nousClientId.get() === undefined ? {} : { nousClientId: config.nousClientId.get() } } as import('./config.ts').Options,
+        nousClientId: config.nousClientId.get() } as import('./config.ts').Options,
     )
     return raw
   })
