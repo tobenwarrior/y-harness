@@ -26,7 +26,7 @@
 
 ## 发布语义
 
-运行器选择不改变 PR 事件、按 PR 取消、不可变安装、只恢复的依赖缓存、完整工作区构建、预览打包、sourcemap 删除，以及复制到部署根目录的预览页面。Cloudflare 仅将构建站点上传至 PR 分支别名。受保护镜像检查要求 HTTP 200、无传输内容编码及 gzip 魔数字节；URL 评论保持幂等。Dependabot 与其他 PR 作者仍使用 GitHub 托管机器。
+运行器选择不改变 PR 事件、按 PR 取消、不可变安装、只恢复的依赖缓存、完整工作区构建、预览打包、sourcemap 删除，以及复制到部署根目录的预览页面。每个仓库都以只读构建权限且无需部署凭据，将打包站点保留为七天的 artifact。仅 `deepseek-harness/deepseek-harness` 启动独立的 Cloudflare job；该 job 下载本次运行的同一 artifact，并仅将构建站点上传至 PR 分支别名。派生仓库无需上游 Cloudflare 凭据即可保留有效的预览构建。受保护镜像检查要求 HTTP 200、无传输内容编码及 gzip 魔数字节；URL 评论保持幂等。Dependabot 与其他 PR 作者仍使用 GitHub 托管机器。
 
 <a id="dev-note"></a>
 
