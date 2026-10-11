@@ -5053,6 +5053,20 @@ describe('PythonPtcRuntime — hostile peer', () => {
     expect(result.error?.kind).toBe('output-limit')
   }, 30_000)
 
+  it('meters integer, boolean and null completion members at the exact byte boundary', async () => {
+    const expected = [null, true, false, 0, 42, -42, 2 ** 53]
+    const bytes = Buffer.byteLength(JSON.stringify(expected))
+    const request = { program: 'return [None, True, False, 0, 42, -42, 2**53]', bindings: [] }
+    const admitted = await setup({ maxValueBytes: bytes })
+    const result = await admitted.runtime.run(admitted.runtime.resolve(request))
+    expect(result.error).toBeUndefined()
+    expect(result.value).toEqual(expected)
+    const refused = await setup({ maxValueBytes: bytes - 1 })
+    const over = await refused.runtime.run(refused.runtime.resolve(request))
+    expect(over.value).toBeUndefined()
+    expect(over.error?.kind).toBe('output-limit')
+  })
+
   it('checks and encodes a wide completion value in O(depth), not O(width)', async () => {
     // A wide flat list serializes to ~2 bytes per element but the pre-fix walk
     // enqueued one traversal tuple per element (_check_done_value) and one stack
