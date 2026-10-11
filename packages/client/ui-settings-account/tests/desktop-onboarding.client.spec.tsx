@@ -47,7 +47,15 @@ function mount(step: DesktopOnboardingState['progress']['step'] = 'welcome', bal
   }
 }
 
-it('keeps welcome mandatory and enters credit only through Start', async () => {
+it.each([zh, en])('starts the saved walkthrough at credit with Skip and no Back action', (copy) => {
+  const operations = mount('credit', 'positive', 'ready', copy)
+  expect(screen.getByRole('heading', { name: copy.onboardingCredit })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: copy.onboardingBack })).toBeNull()
+  expect(screen.getByRole('button', { name: copy.onboardingSkip })).toBeTruthy()
+  expect(operations.update).not.toHaveBeenCalled()
+})
+
+it('renders the legacy welcome page Start action without Skip or Back', async () => {
   const operations = mount()
   expect(screen.queryByRole('button', { name: zh.onboardingSkip })).toBeNull()
   expect(screen.queryByRole('button', { name: zh.onboardingBack })).toBeNull()
@@ -196,8 +204,8 @@ it('keeps the recharge request releasable so the flow can still leave credit', a
   expect(operations.openPlatformPage).toHaveBeenCalledWith('top-up', expect.any(Function))
   await act(async () => { operations.back() })
   expect(document.querySelector('[data-desktop-onboarding="credit"]')).toBeTruthy()
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingBack })) })
-  expect(document.querySelector('[data-desktop-onboarding="welcome"]')).toBeTruthy()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingLater })) })
+  expect(document.querySelector('[data-desktop-onboarding="purpose"]')).toBeTruthy()
 })
 
 it('closes skip confirmation when saving fails so the page can show retry', async () => {
@@ -330,8 +338,12 @@ it('does not restore focus to a disconnected confirmation trigger', () => {
 
 it('returns from purpose to credit without dropping the selected purpose', async () => {
   const h = mount('purpose')
+  await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: zh.onboardingOffice })) })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingBack })) })
   expect(h.update).toHaveBeenCalledWith({ step: 'credit' })
+  expect(screen.queryByRole('button', { name: zh.onboardingBack })).toBeNull()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingLater })) })
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: zh.onboardingOffice }).checked).toBe(true)
 })
 
 
