@@ -37,7 +37,7 @@ Codex 来源身份遵循后端的 `DSH_CODEX_HOME`，该目录作为原生 `CODE
 
 Claude 顺序写入方注册要求 `sequentialHandoff.knownUnmanagedStartup: true`；省略或 false 时来源保持只读。该字段默认为 false，由可信部署配置声明所选账户、配置及机器不存在受管、远程、helper 或父进程启动策略。Codex 注册同样要求两个默认 false 的来源字段 `enableSequentialProjectFiles` 与 `knownNoManagedFeatureOverrides` 均为 true；后者声明原生特性要求不存在或全部为 false，且持续保持不变。这些声明独立于用户关于其他写入方已关闭及配置保持不变的确认。
 
-仍须进行新的原生观察。每次 Claude 发送前，所选配置的 worker 调用公开 `resolveSettings({ cwd, settingSources: [] })`，仅在结果受支持且为空时返回指纹及 `noManagedSettingsObserved: true`。生效设置、来源归属或来源列表非空、形状未知、解析抛错、stderr 出现任何字节或缺少完整 stderr 覆盖证据时，在持久发送标记及查询前拒绝。SDK 0.3.263 不提供解析错误列表、跳过 policy helper 执行，也无法证明新的远程策略不存在。Codex 在初始化后观察 `configRequirements/read`，发现强制 true 特性要求时在任何线程操作前拒绝；该观察不能证明此前未发生 Plugin 预热启动。可信声明属于操作假设，不是策略证书，也不绕过受管策略。提供方细节见 [Claude 适配器](../../subagent/subagent-claude-code/README.zh.md)及 [Codex 适配器](../../llm/llm-pi-ai/README.zh.md)。
+仍须进行新的原生观察。每次 Claude 发送前，所选配置的 worker 调用公开 `resolveSettings({ cwd, settingSources: [] })`，仅在结果受支持且为空时返回指纹及 `noManagedSettingsObserved: true`。生效设置、字段来源映射或来源列表非空、形状未知、解析抛错、stderr 出现任何字节或缺少完整 stderr 覆盖证据时，在持久发送标记及查询前拒绝。SDK 0.3.263 不提供解析错误列表、跳过 policy helper 执行，也无法证明新的远程策略不存在。Codex 在初始化后观察 `configRequirements/read`，发现强制 true 特性要求时在任何线程操作前拒绝；该观察不能证明此前未发生 Plugin 预热启动。可信声明属于操作假设，不是策略证书，也不绕过受管策略。提供方细节见 [Claude 适配器](../../subagent/subagent-claude-code/README.zh.md)及 [Codex 适配器](../../llm/llm-pi-ai/README.zh.md)。
 
 显式发现和记录操作启动私有 Node worker，仅在子进程设置 `CLAUDE_CONFIG_DIR` 与 `HOME`；父进程环境保持不变。worker 在导入前验证官方 SDK 清单名称、版本及入口路径，以及配置的模块摘要。记录请求仅接受 `listSessions`、`getSessionInfo` 与 `getSessionMessages`；独立的顺序策略观察使用 `resolveSettings`。完整 UTF8 请求和响应包装字段及原始记录分页受配置的字节限制约束。SDK 与进程失败仅暴露经过清理的错误。注册和 `getState` 不启动 worker；取消及移除会等待子进程完成、输出排空及受管范围释放。
 
