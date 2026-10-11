@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -751,7 +751,10 @@ describe('evidence-backed skill proposals', () => {
       recursive: true }); f.projects.push({ id: 'other', title: 'Other', path: secondProject })
     const consumer = join(secondProject, '.dsh/skills/consumer'); await mkdir(consumer, {
       recursive: true }); await writeFile(join(consumer, 'SKILL.md'),
-      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared](' + source.path + ')\n')
+      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared]('
+      + relative(consumer, source.path).replaceAll('\\', '/') + ')\n')
+    const consumerItem = (await f.library.list({})).items.find(item => item.name === 'consumer')!
+    expect(consumerItem.references).toContainEqual({ kind: 'file', target: source.path, resolvedId: source.id })
     const referenced = await f.learning.propose({ projectId: 'p', operation: 'deduplicate',
       targetIds: [source.id, survivor.id], evidenceIds: [f.evidence.id] })
     await expect(f.learning.apply({ proposalId: referenced.id, mode: 'reviewed' })).rejects.toThrow(/incoming references/)

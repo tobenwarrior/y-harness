@@ -52,7 +52,8 @@ it('requires local-storage consent and commits a completed grant without exposin
   await expect.poll(async () => (await connection.getState()).connected).toBe(true)
   expect(await credentialStoreFrom(ctx).read('nous')).toEqual(grant)
   expect(JSON.stringify(await connection.getState())).not.toMatch(/mock-access|mock-refresh|private-device-code|user_code/)
-  expect((await stat(join(dir, '.credentials.yaml'))).mode & 0o777).toBe(0o600)
+  const stored = await stat(join(dir, '.credentials.yaml')); expect(stored.isFile()).toBe(true)
+  if (process.platform !== 'win32') expect(stored.mode & 0o777).toBe(0o600)
 })
 it('waits for cancellation cleanup and keeps the previous grant when polling returns late', async () => {
   const { ctx, connection } = await app(grant.clientId)
