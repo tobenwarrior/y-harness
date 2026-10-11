@@ -222,3 +222,83 @@ describe('file-backed skill library', () => {
   })
 
 })
+
+it('preserves invalid and missing-source recovery images across all journal families', async () => {
+  for (const family of ['archives', 'revisions', 'creations']) {
+    const f = await fixture(); const dir = await f.skill('project', 'unrelated')
+    const source = await readFile(join(dir, 'SKILL.md'), 'utf8')
+    const pending = join(f.options.historyDirectory, `pending-${family}`); await mkdir(pending, { recursive: true })
+    const record = { retainedArchives: [], pinned: false, automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 }, revisions: [] }
+    const valid = family === 'archives' ? { id: 'recovery', originalPath: join(f.root, 'missing'), archivePath: join(f.root, 'archive-missing'), operation: 'archive', record }
+      : family === 'revisions' ? { id: 'recovery', path: join(f.root, 'missing'), expectedHash: 'before', replacementHash: 'after', record }
+        : { id: 'recovery', path: join(f.root, 'missing'), expectedHash: 'before', record }
+    const invalid: unknown[] = [null, 'text', [], {}, ...Object.keys(valid).filter(key => key !== 'record').map(key => ({ ...valid, [key]: 17 })), { ...valid, record: {} }]
+    for (const [index, image] of invalid.entries()) await writeFile(join(pending, `invalid-${index}.json`), JSON.stringify(image))
+    await writeFile(join(pending, 'malformed.json'), '{')
+    await writeFile(join(pending, 'ignored.txt'), 'not a journal')
+    await writeFile(join(pending, 'missing.json'), JSON.stringify(valid))
+    const restarted = new SkillLibrary(f.options)
+    const inventory = await restarted.list({})
+    expect(inventory.items).toHaveLength(1)
+    expect(inventory.providers).toContainEqual(expect.objectContaining({ provider: 'skill-library-history', state: 'unavailable' }))
+    expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toBe(source)
+    for (const [index] of invalid.entries()) expect(await readFile(join(pending, `invalid-${index}.json`), 'utf8')).toBe(JSON.stringify(invalid[index]))
+    expect(await readFile(join(pending, 'missing.json'), 'utf8')).toBe(JSON.stringify(valid))
+    await restarted.dispose()
+  }
+})
+it.each(['unchanged', 'edited'] as const)('recovers a created source without rewriting its %s current bytes', async (mode) => {
+  const f = await fixture(); const dir = await f.skill('project', 'created')
+  const path = join(dir, 'SKILL.md'); const before = await readFile(path, 'utf8')
+  const item = (await f.library.list({})).items[0]!
+  const { createHash } = await import('node:crypto')
+  const expectedHash = createHash('sha256').update(before).digest('hex')
+  const record = { retainedArchives: [], pinned: false, automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 }, revisions: [], managedHash: expectedHash }
+  const pending = join(f.options.historyDirectory, 'pending-creations'); await mkdir(pending, { recursive: true })
+  const journal = join(pending, 'created.json'); await writeFile(journal, JSON.stringify({ id: item.id, path, expectedHash, record }))
+  const current = mode === 'edited' ? before + '\nManual change.\n' : before; await writeFile(path, current)
+  const restarted = new SkillLibrary(f.options); const recovered = (await restarted.list({})).items[0]!
+  expect(recovered.ownership).toBe(mode === 'edited' ? 'protected' : 'y-managed')
+  expect(await readFile(path, 'utf8')).toBe(current)
+  await expect(readFile(journal)).rejects.toThrow(/ENOENT/)
+  expect(f.rows.get(item.id)?.managedHash).toBe(expectedHash)
+  await restarted.dispose()
+})
+it.each(['before', 'after'] as const)('settles a revision journal at its %s replacement checkpoint', async (mode) => {
+  const f = await fixture(); const dir = await f.skill('project', 'revised')
+  const path = join(dir, 'SKILL.md'); const before = await readFile(path, 'utf8'); const after = before + '\nReplacement.\n'
+  const item = (await f.library.list({})).items[0]!
+  const { createHash } = await import('node:crypto'); const hash = (text: string) => createHash('sha256').update(text).digest('hex')
+  const record = { retainedArchives: [], pinned: true, automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 }, revisions: [], managedHash: hash(after) }
+  const pending = join(f.options.historyDirectory, 'pending-revisions'); await mkdir(pending, { recursive: true })
+  const journal = join(pending, 'revised.json'); await writeFile(journal, JSON.stringify({ id: item.id, path, expectedHash: hash(before), replacementHash: hash(after), record }))
+  await writeFile(path, mode === 'before' ? before : after)
+  const restarted = new SkillLibrary(f.options); await restarted.list({})
+  expect(f.rows.get(item.id)?.pinned).toBe(mode === 'after' ? true : undefined)
+  expect(await readFile(path, 'utf8')).toBe(mode === 'before' ? before : after)
+  await expect(readFile(journal)).rejects.toThrow(/ENOENT/); await restarted.dispose()
+})
+it.each(['archive-moved', 'archive-not-moved', 'restore-copied', 'restore-complete', 'restore-moved'] as const)('recovers archive ownership at %s while preserving both source locations', async (checkpoint) => {
+  const f = await fixture(); const dir = await f.skill('project', 'retained')
+  const item = (await f.library.list({})).items[0]!
+  const originalPath = join(f.root, 'original'); const archivePath = join(f.root, 'archived')
+  const original = checkpoint !== 'archive-moved'; const archived = checkpoint !== 'archive-not-moved' && checkpoint !== 'restore-moved'
+  if (original) await writeFile(originalPath, 'original bytes')
+  if (archived) await writeFile(archivePath, 'archive bytes')
+  const record = { retainedArchives: [], pinned: true, automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 }, revisions: [] }
+  const pending = join(f.options.historyDirectory, 'pending-archives'); await mkdir(pending, { recursive: true })
+  const journal = join(pending, 'archive.json'); const operation = checkpoint.startsWith('archive') ? 'archive' : 'restore'
+  await writeFile(journal, JSON.stringify({ id: item.id, operation, originalPath, archivePath, record }))
+  if (checkpoint === 'restore-complete') await writeFile(journal + '.complete', '')
+  const restarted = new SkillLibrary(f.options); const inventory = await restarted.list({})
+  const committed = ['archive-moved', 'restore-complete', 'restore-moved'].includes(checkpoint)
+  expect(f.rows.get(item.id)?.pinned).toBe(committed ? true : undefined)
+  if (original) expect(await readFile(originalPath, 'utf8')).toBe('original bytes')
+  if (archived) expect(await readFile(archivePath, 'utf8')).toBe('archive bytes')
+  expect(await readFile(join(dir, 'SKILL.md'), 'utf8')).toContain('name: retained')
+  if (checkpoint === 'restore-copied') {
+    expect(inventory.providers).toContainEqual(expect.objectContaining({ provider: 'skill-library-history', state: 'unavailable' }))
+    expect(await readFile(journal, 'utf8')).toContain('restore')
+  } else await expect(readFile(journal)).rejects.toThrow(/ENOENT/)
+  await restarted.dispose()
+})

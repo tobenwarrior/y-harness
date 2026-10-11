@@ -70,6 +70,21 @@ describe('skill library real Loader composition', () => {
     const item = (await context.skillLibrary.list({})).items.find(item => item.name === 'deploy')!
     expect(item).toMatchObject({ ownership: 'protected', automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 } })
     await context.skillLibrary.adopt({ id: item.id, expectedHash: item.contentHash })
+    await context.skillLibrary.setPinned({ id: item.id, pinned: true })
+    expect((await context.skillLibrary.detail({ id: item.id })).item.pinned).toBe(true)
+    await context.skillLibrary.setPinned({ id: item.id, pinned: false })
+    await context.skillLibrary.setAutomaticCleanup({ id: item.id, expectedHash: item.contentHash, enabled: true })
+    await context.skillLibrary.setAutomaticCleanup({ id: item.id, expectedHash: item.contentHash, enabled: false })
+    const unchanged = await context.skillLibrary.previewCleanup({ ids: [item.id] })
+    expect(unchanged.changes).toEqual([])
+    expect((await context.skillLibrary.applyCleanup({ proposalId: unchanged.id })).revised).toEqual([])
+    await context.skillLibrary.recordLoad({ id: item.id, contentHash: item.contentHash, loadedAt: '2026-10-11T00:00:00Z' })
+    expect((await context.skillLibrary.detail({ id: item.id })).item.usage.loadCount).toBe(1)
+    await expect(context.skillLibrary.decisionCapabilities({ provider: 'absent', model: 'model' })).rejects.toThrow(/response-only/)
+    const native = { name: 'fixture-native', list: async () => ({ status: { provider: 'fixture-native', state: 'connected' as const }, entries: [] }) }
+    const stopNative = context.skillLibrary.registerNativeProvider(native)
+    expect(() => context!.skillLibrary.registerNativeProvider(native)).toThrow(/duplicate/)
+    stopNative(); stopNative()
     const durable: unknown = JSON.parse(await readFile(join(root, 'storage', 'skill_library.json'), 'utf8'))
     expect(JSON.stringify(durable)).toContain(item.contentHash)
     expect((await context.skillLibrary.detail({ id: item.id })).content).toBe('\nRun the documented release checks.\n')
@@ -86,6 +101,14 @@ describe('skill library real Loader composition', () => {
     expect(proposal).toMatchObject({ state: 'review', changes: [{
       before: '\nRun the documented release checks.\n', after: 'Run release checks.' }] })
     expect(proposal.uncertainty.join(' ')).toContain('unverified')
+    expect((await context.skillLibrary.detailProposal({ proposalId: proposal.id })).id).toBe(proposal.id)
+    expect((await context.skillLibrary.validateProposal({ proposalId: proposal.id,
+      validatorId: 'instruction-redundancy-validator' })).state).toBe('validated')
+    const rejectable = await context.skillLibrary.proposeLearning({ projectId: item.projectIds[0]!,
+      operation: 'compress', targetIds: [item.id], evidenceIds: [evidence.id], generatorId: 'fixture-generator' })
+    expect((await context.skillLibrary.rejectProposal({ proposalId: rejectable.id })).state).toBe('rejected')
+    expect(context.skillLibrary.learningStatus({ projectId: item.projectIds[0]! }).evidence).toHaveLength(1)
+    expect(await context.skillLibrary.cleanupSemantic({})).toEqual([])
     await context.skillLibrary.applyProposal({ proposalId: proposal.id, mode: 'reviewed' })
     expect((await context.skillLibrary.detail({ id: item.id })).revisions[0]!.reason).toBe('learning')
     const retained = await readFile(join(root, 'storage', 'skill_learning.json'), 'utf8')
@@ -121,6 +144,8 @@ describe('skill library real Loader composition', () => {
     expect(context.skillLibrary.learningStatus({}).optIns.find(consent => consent.id === changed.id)?.enabled).toBe(false)
     await context.skillLibrary.restore({ id: changed.id })
     expect(context.skillLibrary.learningStatus({}).optIns.find(consent => consent.id === changed.id)?.enabled).toBe(false)
+    await context.skillLibrary.revokeLearningPolicy({ policyId: policy.id })
+    expect(context.skillLibrary.learningStatus({}).policies.find(value => value.id === policy.id)?.enabled).toBe(false)
     const entry = [...context.loader.entries()].find(entry => entry.options.name === '@deepseek-ai/dsh-skill-library')!
     const warnings = vi.spyOn(entry.fiber!.ctx.logger, 'warn').mockImplementation(() => undefined)
     const failingConsumer = vi.spyOn(SkillLibrary.prototype,
