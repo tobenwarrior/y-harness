@@ -717,7 +717,7 @@ describe('Web session model selection', () => {
     const { ctx, agent } = await harness({
       provider: 'deepseek-official', model: 'deepseek-chat',
       serviceTier: ServiceTierId('priority'),
-      adapterDefaults: { serviceTier: adapterOwned },
+      ...adapterOwned ? { adapterDefaults: { serviceTier: true } } : {},
     })
     createSessionTestRemote(ctx, {
       defaultModelSelection: () => ({ provider: 'duplicate', model: 'same' }),
