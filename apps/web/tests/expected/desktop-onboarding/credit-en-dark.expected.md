@@ -1,7 +1,6 @@
 - region "Add credits":
   - heading "Add credits" [level=1]
-  - paragraph: Y Harness charges credits based on the tokens used by models and tools. Add credits in advance to keep your tasks running without interruption. Your balance is only used while the agent is working on a task.
+  - paragraph: DeepSeek account models consume available credits based on token usage. Other providers have their own access requirements and billing. Local projects and files do not require account credits.
   - button "Add credits"
   - button "Next"
-  - button "Back"
   - button "Skip"

@@ -10,21 +10,21 @@ Status: implemented
 
 ## 决策
 
-[Electron 欢迎窗口](../../../../apps/desktop/src/welcome-window.ts)负责原生材质和窗口控件。独立打包的 React 渲染器提供入口、账号登录状态和 API Key 表单。它与 Web UI 共用 `StateDot` 加载组件，不启动 Web 插件图。Desktop 构建将本地 JavaScript 和 CSS 输出到 `lib/welcome`，并纳入应用安装包；文档继续使用禁止网络访问的内容安全策略。窄接口 preload 提供强类型桌面文案、仅写密钥操作和跳过操作；IPC 拒绝其他窗口和子 frame。每个沙箱 preload 都独立打包，因为 Electron 受限的 require 无法加载同目录中的拆分模块。Electron 主进程通过共享 Web 启动 URL 认证，并通过现有设置和凭证 RPC 方法解析官方提供方的引用。[Web 薄壳](2026-09-10-desktop-web-wrapper.zh.md)负责 HTTP 服务；引导不增加 Host 端点或子进程 IPC 操作。响应只包含元数据或安全结果，不包含密钥或提供方的私有诊断。
+保留的 [Electron 欢迎窗口](../../../../apps/desktop/src/welcome-window.ts)负责原生材质和窗口控件。独立打包的 React 渲染器提供入口、账号登录状态和 API Key 表单夹具。它与 Web UI 共用 `StateDot` 加载组件，不启动 Web 插件图。Desktop 构建将本地 JavaScript 和 CSS 输出到 `lib/welcome`，并纳入应用安装包；文档继续使用禁止网络访问的内容安全策略。窄接口 preload 提供强类型桌面文案、仅写密钥操作和跳过操作；IPC 拒绝其他窗口和子 frame。每个沙箱 preload 都独立打包，因为 Electron 受限的 require 无法加载同目录中的拆分模块。欢迎后端通过现有设置和凭证 RPC 方法为显式操作解析官方提供方引用。[Web 薄壳](2026-09-10-desktop-web-wrapper.zh.md)负责 HTTP 服务；引导不增加 Host 端点或子进程 IPC 操作。响应只包含元数据或安全结果，不包含密钥或提供方的私有诊断。
 
-冷启动在账号凭证与模型 API Key 均未配置时打开入口。保存会在持久化成功后进入工作区；跳过会直接进入，不保存草稿或凭证入口完成标记。下次进程启动时会重新检查凭证。Desktop preload 标记抑制自动 Web 凭证步骤和欢迎须知；设置与显式 API Key 编辑仍然可用。[Desktop 引导参考](../../../../packages/client/ui-settings-account/README.zh.md)负责账号登录后独立的设备本地介绍流程。其他原生壳可以通过 Models Host 插件注入页面的 `credentialOnboarding` 值仅禁用凭证步骤。模块图传递的是包标识，而不是任意 Host 配置，因此单独配置 Host 行不会配置其 Client 半部。[账号提供方](2026-09-14-deepseek-account-login.zh.md)提供登录与退出登录状态，同时保留独立存储的 API Key。
+[可选的 Desktop 账号访问](2026-10-11-optional-desktop-account.zh.md)现在负责启动，部分取代优先凭据的入口策略。主进程启动打开工作区，不打开原生欢迎窗口或检查凭据。Desktop preload 标记仍抑制自动 Web 凭据配置；设置与显式 API Key 编辑保持可用。[Desktop 引导参考](../../../../packages/client/ui-settings-account/README.zh.md)负责已保存的设备本地介绍进度。其他原生壳可以通过 Models Host 插件注入页面的 `credentialOnboarding` 值仅禁用凭据步骤。模块图传递的是包标识，而不是任意 Host 配置，因此单独配置 Host 行不会配置其 Client 半部。[账号提供方](2026-09-14-deepseek-account-login.zh.md)提供可选登录与退出登录，同时保留独立存储的 API Key。
 
 生成的开发项目沿已声明的 workspace 依赖建立链接，因为单独依赖 pnpm 的提升索引会漏掉配置插件。
 
-Desktop 在打开欢迎窗口前读取共享的 `locale.preference`。Client 在挂载前等待隔离 preload 返回该偏好和同一系统语言顺序，之后将解析后的语言变更通知桌面壳。只有设置中的明确选择会写入偏好；自动检测保持临时状态。桌面壳自带英文和简体中文词典，因此仅在 Client 中提供的语言包会在原生窗口回退到受支持的系统语言。
+Desktop 在打开工作区前读取共享的 `locale.preference`。Client 在挂载前等待隔离 preload 返回该偏好和同一系统语言顺序，之后将解析后的语言变更通知桌面壳。只有设置中的明确选择会写入偏好；自动检测保持临时状态。桌面壳自带英文和简体中文词典，因此仅在 Client 中提供的语言包会在原生窗口回退到受支持的系统语言。
 
-欢迎流程与启动恢复共用 Desktop 后端控制器。Host 启动期间，主窗口在屏幕外加载恢复文档；失败时显示该文档，成功后读取凭证和语言，再选择欢迎窗口或工作区。恢复操作保留控制器的串行重试与等待子进程退出的行为。应用 preload 只向壳文档提供恢复控件，只向应用文档提供语言桥接。
+保留的欢迎后端与启动恢复共用 Desktop 后端控制器。Host 启动期间，主窗口在屏幕外加载恢复文档；失败时显示该文档，成功后读取语言并打开工作区。恢复操作保留控制器的串行重试与等待子进程退出的行为。应用 preload 只向壳文档提供恢复控件，只向应用文档提供语言桥接。
 
 ## 考虑过的替代方案
 
 **仅使用 CSS 背景滤镜。** 它无法模糊其他应用窗口或桌面，因此不能提供所需的原生效果。
 
-**持久化凭证入口完成标记。** 跳过原生凭证入口只对当前进程有效；保留标记会在用户仍无凭证时抑制下次冷启动选择。账号介绍流程的独立完成标记不会绕过此认证判断。
+**持久化凭证入口完成标记。** 原先优先凭据的策略将原生跳过视为仅当前进程有效，使下次启动可再次询问缺失的凭据。[无需账号启动的决策](2026-10-11-optional-desktop-account.zh.md)取代此策略：进入工作区不再依赖凭据或完成标记。
 
 **同时保留原生与 Web 凭证弹窗。** 两者独立的完成状态会在跳过原生引导后再次要求输入密钥。组合将凭证引导交给单一归属方。
 
