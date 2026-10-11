@@ -1,10 +1,11 @@
-/** Account and Session menus share material and keep macOS backings aligned and scoped. */
+/** View options and Session menus share material and keep macOS backings aligned and scoped. */
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { chromium, type Locator } from 'playwright'
 import { expect, it, onTestFinished } from 'vitest'
 import { captureStableAria, compareOrRefreshGolden, launchWebScaffold, seedSession, webSnapshotMode } from './scaffold.ts'
+import { openSettings } from './support.ts'
 
 const expected = fileURLToPath(new URL('./expected/menu-material', import.meta.url))
 const seed = new URL('../../../snapshots/web/seeded-history/session.v3.jsonl', import.meta.url)
@@ -28,8 +29,8 @@ it('shares menu transparency and blur across palettes and follows native menu bo
     Object.defineProperty(globalThis, 'dshDesktop', { value: { protocolVersion: 1 } })
   })
   await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-  const account = page.getByRole('button', { name: 'Account menu', exact: true })
-  await account.waitFor()
+  const viewOptions = page.getByRole('button', { name: 'View options', exact: true })
+  await viewOptions.waitFor()
 
   const results: Record<string, Awaited<ReturnType<typeof material>>> = {}
   const masks: Record<string, { fill: string; blur: string }> = {}
@@ -49,15 +50,15 @@ it('shares menu transparency and blur across palettes and follows native menu bo
       expect(overlayFill).toBe(platform === 'darwin'
         ? dark ? 'rgba(48, 49, 54, 0.94)' : 'rgba(248, 249, 250, 0.94)'
         : dark ? 'rgba(67, 69, 74, 0.45)' : 'rgba(248, 249, 250, 0.58)')
-      await account.click()
-      const menu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Settings', exact: true }) })
+      await viewOptions.click()
+      const menu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'In one list', exact: true }) })
       await menu.waitFor()
       const appearance = await material(menu)
       expect(appearance).toMatchObject({
         fill: dark ? 'rgba(67, 69, 74, 0.45)' : 'rgba(248, 249, 250, 0.58)',
         blur: 'blur(40px) saturate(1.5)',
       })
-      expect(appearance.shadow).toContain(`${dark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.04)'} 0px 0px 0px 0.5px`)
+      expect(appearance.shadow).toContain(`${dark ? 'rgb(49, 49, 49)' : 'rgba(0, 0, 0, 0.04)'} 0px 0px 0px 0.5px`)
       results[`${platform}-${dark ? 'dark' : 'light'}`] = appearance
       const backing = page.locator('[data-menu-backing]')
       if (platform === 'darwin') {
@@ -78,8 +79,8 @@ it('shares menu transparency and blur across palettes and follows native menu bo
       }
       await page.keyboard.press('Escape')
       await expect.poll(() => backing.count()).toBe(0)
-      await account.click()
-      await page.getByRole('menuitem', { name: 'Settings', exact: true }).click()
+      await expect.poll(() => viewOptions.evaluate(node => node === document.activeElement)).toBe(true)
+      await openSettings(page, 'en')
       const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
       await settings.waitFor()
       const mask = await settings.locator('..').locator(':scope > [aria-hidden="true"]').evaluate((node) => {
@@ -90,6 +91,8 @@ it('shares menu transparency and blur across palettes and follows native menu bo
       masks[`${platform}-${dark ? 'dark' : 'light'}`] = mask
       await page.keyboard.press('Escape')
       await settings.waitFor({ state: 'hidden' })
+      await expect.poll(() => page.getByRole('button', { name: 'Settings', exact: true })
+        .evaluate(node => node === document.activeElement)).toBe(true)
     }
   }
   await compareOrRefreshGolden(join(expected, 'materials.expected.json'), JSON.stringify(results, null, 2), webSnapshotMode())

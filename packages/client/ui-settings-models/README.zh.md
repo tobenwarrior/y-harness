@@ -37,7 +37,7 @@ kind: "package-reference"
 
 存在已存储目录错误的提供商仍显示诊断以及编辑、删除入口。添加操作只面向已注册的 settings 命名空间，因此不可用的命名空间不会留下无法打开编辑器的按钮。保存被拒绝时，编辑器保持打开并展示 Host 诊断。
 
-Host 配置 `credentialOnboarding` 默认为 `true`。Electron preload 标记会抑制自动凭证引导和 Web 欢迎须知；模型设置页与显式 API Key 编辑仍然可用。[账号插件](../ui-settings-account/README.zh.md#desktop-onboarding)负责 Desktop 引导。其他原生壳可以通过 `credentialOnboarding: false` 仅禁用凭证步骤。Host 通过 `webserver/index-inject` 发布这个公开的布尔值，Client 在注册弹窗前校验它。它是页面初始化数据，不是持久化的完成标记。
+Host 配置 `credentialOnboarding` 默认为 `true`。Electron preload 标记会抑制自动凭证引导和 Web 欢迎须知；模型设置页与显式 API Key 编辑仍然可用。[账号插件](../ui-settings-account/README.zh.md#use-this-package)在 Desktop 的 Models 页面提供可选的 DeepSeek 连接。其他原生壳可以通过 `credentialOnboarding: false` 仅禁用凭证步骤。Host 通过 `webserver/index-inject` 发布这个公开的布尔值，Client 在注册弹窗前校验它。它是页面初始化数据，不是持久化的完成标记。
 
 ### ChatGPT 订阅
 
@@ -70,6 +70,8 @@ API 密钥输入框初始为空，并通过 `autocomplete="new-password"` 请求
 ### 扩展 slot
 
 本分区为仓库外分发的插件声明两个席位，类型定义在 [`src/client/slot-contract.ts`](src/client/slot-contract.ts) 并从 `./client` 导出。`settings.models.provider-card`（keyed）渲染在每张展示目录行的卡片内部——已保存行的卡片、其首次运行 setup 形态、以及「添加提供商」草稿卡——以 `entryKey = settingsNs` 分发，owner props 携带该行的 `ConfigurableProviderView`、其 configured 状态与已确认的 api-key 凭据状态，因此以某适配器家族的 namespace 注册一次即可收到该家族的全部卡片，含手工声明的路由；手工声明的草稿卡尚无目录行，保存之前不分发。`settings.models.footer`（list）渲染在行列表与新增控件之后。注册方通过 `ctx.slots.inject` 激活，并以 type-only import 引入本包 `/client` 入口；没有注册方时两个席位均不渲染任何内容。
+
+Desktop 账号插件通过页脚提供可选的 DeepSeek 连接卡片，其显示不依赖账号模型目录是否就绪。
 
 Models 页面包含 **DeepSeek 账号**（`deepseek-account`，英文为 **DeepSeek Account**）。其编辑器展示共享的 DeepSeek 模型目录，不提供 API Key 或 Base URL 输入框；目录保存到账号路由自己的设置段（默认为 `llm-deepseek-account`），因此账号侧的编辑不会改写 official 路由读取的 `llm-deepseek` 段。账号可用模型目录为空时隐藏账号行，包括登录前和退登后；账号模型恢复可用时重新显示。
 
@@ -112,7 +114,7 @@ Models 页面包含 **DeepSeek 账号**（`deepseek-account`，英文为 **DeepS
 
 -----
 
-`settings.models.sign-in` 插槽让账号登录在凭证编辑器之前提供选择；没有贡献者时直接显示编辑器。关闭账号选择弹窗会结束整个引导步骤。从账号菜单显式重新打开时，即使已有提供者配置，也会进入同一个编辑器。
+`settings.models.sign-in` 仍是凭据编辑器前的可选扩展。内置 Desktop 账号插件不向其注册：账号连接仅位于模型设置，官方 API Key 配置仍使用现有编辑器。
 
 <a id="model-experience"></a>
 ## 模型体验

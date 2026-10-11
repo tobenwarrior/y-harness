@@ -1,1 +1,1 @@
-Connect DeepSeekSign in to use DeepSeek account models with available credits, or add an API key. Local projects and files stay available without signing in.Add API KeySign in
+Connect DeepSeekSign in to use this provider with your available DeepSeek credits. You can also configure an API key in Models. Local projects and files stay available without connecting.Add API KeyConnect DeepSeek

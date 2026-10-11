@@ -1,1 +1,1 @@
-连接 DeepSeek你可以登录 DeepSeek 账号并使用可用额度调用账号模型，或添加 API Key。不登录也可以使用本地项目和文件。添加 API Key登录
+连接 DeepSeek登录后可使用此提供方及你的 DeepSeek 可用额度，也可以在模型设置中配置 API Key。不连接也可以使用本地项目和文件。添加 API Key连接 DeepSeek

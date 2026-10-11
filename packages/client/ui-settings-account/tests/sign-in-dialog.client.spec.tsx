@@ -21,6 +21,26 @@ function mount(attempt: AccountView['attempt'], copy: typeof en | typeof zh = en
   render(<SignInDialog {...props} />)
   return props
 }
+it('offers cancellation when the provider card has no API-key editor callback', () => {
+  const { useApiKey, ...props } = dialogProps(null)
+  render(<SignInDialog {...props} />)
+  expect(screen.queryByRole('button', { name: en.addApiKey })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+  expect(props.close).toHaveBeenCalledOnce()
+  expect(useApiKey).not.toHaveBeenCalled()
+  expect(props.start).not.toHaveBeenCalled()
+})
+it('keeps the provider dialog open while an external start has no observable attempt id', () => {
+  const { useApiKey: _apiKey, ...props } = dialogProps(null)
+  render(<SignInDialog {...props} account={{ ...props.account, loginVisible: true, loginStarting: true }} />)
+  expect(screen.getByRole('dialog').textContent).toContain(en.initializing)
+  expect(screen.getByRole('button', { name: en.cancel }).hasAttribute('disabled')).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+  fireEvent.click(screen.getByRole('button', { name: en.close }))
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(props.close).not.toHaveBeenCalled()
+  expect(props.cancel).not.toHaveBeenCalled()
+})
 it.each([en, zh])('offers sign in or the existing API key editor', async (copy) => {
   const props = mount(null, copy)
   await expect(`${screen.getByRole('dialog').textContent}\n`).toMatchFileSnapshot(`./expected/login-${copy === en ? 'en' : 'zh'}.txt`)
