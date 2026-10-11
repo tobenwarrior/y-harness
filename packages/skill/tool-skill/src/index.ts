@@ -343,8 +343,8 @@ function taskQuery(agent: Agent, claimed: readonly UserMessage[], maximum: numbe
   for (const message of messages) for (const block of message.content) {
     if (block.type !== 'text') continue
     for (const match of block.text.toLowerCase().matchAll(/(^|[\s"'`(])(?:\/|\$)?([a-z0-9]+(?:-[a-z0-9]+)*)(?=$|[\s"'`.,!?;:)])/g)) {
-      const name = match[2]
-      if (name !== undefined) requestedNames.add(name)
+      // Group 2 is mandatory in this fixed expression; every successful match carries the name.
+      requestedNames.add(match[2] as string)
     }
   }
   for (const message of [...messages].reverse()) {
