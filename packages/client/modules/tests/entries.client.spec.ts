@@ -895,3 +895,153 @@ it('reports every same-runtime fiber before replacement removes the shared regis
   expect(cleanups).toBe(2)
   expect(extra.state).toBe(4)
 })
+
+it.each(['syncing', 'retirement'] as const)('keeps the latest replacement when a %s observer supersedes an older revision', async (boundary) => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects) })
+  let latest: Promise<void> | undefined
+  const supersede = () => {
+    remove()
+    latest = b.modules.entries.sync(graph(row('a', 'r2')))
+  }
+  const remove = boundary === 'syncing'
+    ? b.modules.entries.state.subscribe(() => {
+      if (b.modules.entries.state.getSnapshot().syncing) supersede()
+    })
+    : b.modules.entries.beforeRetire(supersede)
+  await b.modules.entries.reload('a', 'r1')
+  await latest
+  expect(effects).toEqual({ mounted: 2, disposed: 1, hits: 0 })
+  expect(document.querySelectorAll('[data-live=a]')).toHaveLength(1)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it.each(['syncing', 'retirement'] as const)('retains a live entry when a %s observer cancels its removal', async (boundary) => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects) })
+  let latest: Promise<void> | undefined
+  const restore = () => {
+    remove()
+    latest = b.modules.entries.sync(graph(row('a')))
+  }
+  const remove = boundary === 'syncing'
+    ? b.modules.entries.state.subscribe(() => {
+      if (b.modules.entries.state.getSnapshot().syncing) restore()
+    })
+    : b.modules.entries.beforeRetire(restore)
+  await b.modules.entries.sync(graph())
+  await latest
+  expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+  expect(document.querySelectorAll('[data-live=a]')).toHaveLength(1)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('refuses a materialized new entry when a syncing observer removes it before creation', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(), { a: visible('a', effects) })
+  let latest: Promise<void> | undefined
+  const remove = b.modules.entries.state.subscribe(() => {
+    if (!b.modules.entries.state.getSnapshot().syncing) return
+    remove()
+    latest = b.modules.entries.sync(graph())
+  })
+  await b.modules.entries.sync(graph(row('a')))
+  await latest
+  expect(effects.mounted).toBe(0)
+  expect([...b.ctx.loader.entries()]).toEqual([])
+  expect(b.modules.loadCache.has('a')).toBe(false)
+})
+
+it.each(['syncing', 'retirement'] as const)('does not restart a failed entry removed by a %s observer', async (boundary) => {
+  let attempts = 0
+  let broken = true
+  const b = await bench(graph(), { a: () => ({ apply() {
+    attempts++
+    if (broken) throw new Error('initial activation failure')
+  } }) })
+  await b.modules.entries.sync(graph(row('a')))
+  expect(attempts).toBe(1)
+  broken = false
+  let latest: Promise<void> | undefined
+  const cancel = () => {
+    remove()
+    latest = b.modules.entries.sync(graph())
+  }
+  const remove = boundary === 'syncing'
+    ? b.modules.entries.state.subscribe(() => {
+      if (b.modules.entries.state.getSnapshot().syncing) cancel()
+    })
+    : b.modules.entries.beforeRetire(cancel)
+  await b.modules.entries.retry()
+  await latest
+  expect(attempts).toBe(1)
+  expect([...b.ctx.loader.entries()]).toEqual([])
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('skips an obsolete queued descriptor when an earlier download receives its new revision', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(), { a: () => ({ apply() {} }), b: visible('b', effects) })
+  let latest: Promise<void> | undefined
+  b.arrival(async (url) => {
+    if (url === row('a').url) latest = b.modules.entries.reload('b', 'r1')
+  })
+  await b.modules.entries.sync(graph(row('a'), row('b')))
+  await latest
+  expect(b.fetched).toEqual([row('a').url, row('b', 'r1').url])
+  expect(effects.mounted).toBe(1)
+  expect([...b.ctx.loader.entries()].map(entry => entry.options.name)).toEqual(['a', 'b'])
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
+
+it('does not publish an obsolete download failure after activation settlement receives a newer graph', async () => {
+  const b = await bench(graph(), { a: () => ({ apply() {} }) })
+  const observed: string[][] = []
+  const remove = b.modules.entries.state.subscribe(() => {
+    observed.push(b.modules.entries.state.getSnapshot().failures.map(failure => failure.id))
+  })
+  const originalAwait = b.ctx.loader.await.bind(b.ctx.loader)
+  let latest: Promise<void> | undefined
+  let superseded = false
+  vi.spyOn(b.ctx.loader, 'await').mockImplementation(async () => {
+    if (!superseded) {
+      superseded = true
+      latest = b.modules.entries.sync(graph())
+    }
+    await originalAwait()
+  })
+  b.arrival(async () => { throw new Error('obsolete download failure') })
+  await b.modules.entries.sync(graph(row('a')))
+  await latest
+  expect(superseded).toBe(true)
+  expect(observed.every(failures => failures.length === 0)).toBe(true)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+  remove()
+})
+
+it('reports a root fiber through the retirement contract before a newer graph prevents disposal', async () => {
+  const effects = { mounted: 0, disposed: 0, hits: 0 }
+  const b = await bench(graph(row('a')), { a: visible('a', effects) })
+  const root = new Context()
+  contexts.push(root)
+  const entry = [...b.ctx.loader.entries()][0]!
+  const original = entry.fiber
+  if (original === undefined) throw new Error('expected an active owned entry')
+  // Loader's public entry field accepts every Fiber; retirement must preserve
+  // that contract even for a root fiber without a shared plugin runtime.
+  entry.fiber = root.fiber
+  const observed: Fiber[][] = []
+  let latest: Promise<void> | undefined
+  const remove = b.modules.entries.beforeRetire((fibers) => {
+    observed.push([...fibers])
+    entry.fiber = original
+    remove()
+    latest = b.modules.entries.sync(graph(row('a')))
+  })
+  await b.modules.entries.reload('a', 'r1')
+  await latest
+  expect(observed).toEqual([[root.fiber]])
+  expect(effects).toEqual({ mounted: 1, disposed: 0, hits: 0 })
+  expect(entry.fiber).toBe(original)
+  expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
+})
