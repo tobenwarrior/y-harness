@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, type TestContext } from 'vitest'
 import { packVfsImage, type PackOptions } from '../src/pack.ts'
+import { MemoryVfs, WorkerModuleLoader } from '@deepseek-ai/dsh-experimental-webworker-runtime'
 
 const SUBJECT = '@deepseek-ai/dsh-image-export-fixture'
 
@@ -66,4 +67,39 @@ it('rejects an assembly entry that requests a declaration-only export', (test) =
 it('rejects a missing runtime target beside a types condition', (test) => {
   const options = fixture(test, { types: './lib/index.d.ts', default: './lib/missing.js' })
   expect(() => packVfsImage(options)).toThrow('cannot resolve')
+})
+
+function loadedValue(result: ReturnType<typeof packVfsImage>): unknown {
+  const vfs = new MemoryVfs()
+  for (const [name, bytes] of Object.entries(result.files)) {
+    if (name.endsWith('/')) vfs.seedDirectory(`/dsh/${name}`)
+    else vfs.seed(`/dsh/${name}`, bytes)
+  }
+  const loader = new WorkerModuleLoader({ vfs, root: '/dsh', staticModules: {} })
+  return (loader.createRequire('/dsh/')(SUBJECT) as { value: unknown }).value
+}
+
+it('loads a runtime export whose file starts with a shebang', (test) => {
+  const options = fixture(test, { types: './lib/index.d.ts' }, '#!/usr/bin/env node\nexport const value = 3')
+  const result = packVfsImage(options)
+  expect(loadedValue(result)).toBe(3)
+  expect(result.executables).not.toContain(`node_modules/${SUBJECT}/lib/index.js`)
+})
+
+it('loads a shebang module reached by a runtime import', (test) => {
+  const options = fixture(test, { types: './lib/index.d.ts' }, "export { value } from './reader.mjs'")
+  writeFileSync(join(options.resolveFrom, 'lib/reader.mjs'), '#!/usr/bin/env node\nexport const value = 7')
+  const result = packVfsImage(options)
+  expect(loadedValue(result)).toBe(7)
+  expect(result.files[`node_modules/${SUBJECT}/lib/reader.mjs`]).toBeDefined()
+  expect(result.executables).not.toContain(`node_modules/${SUBJECT}/lib/reader.mjs`)
+})
+
+it('omits an unreachable launcher with top-level await', (test) => {
+  const options = fixture(test, { types: './lib/index.d.ts' })
+  writeFileSync(join(options.resolveFrom, 'lib/launcher.mjs'), '#!/usr/bin/env node\nawait Promise.resolve()')
+  const result = packVfsImage(options)
+  expect(loadedValue(result)).toBe(1)
+  expect(result.files[`node_modules/${SUBJECT}/lib/launcher.mjs`]).toBeUndefined()
+  expect(result.executables).toContain(`node_modules/${SUBJECT}/lib/launcher.mjs`)
 })
