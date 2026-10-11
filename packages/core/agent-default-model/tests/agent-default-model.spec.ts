@@ -32,6 +32,16 @@ it('persists complete selections through its owning profile entry', async () => 
   expect(standalone.agentDefaultModel.currentSelection().model).toBe('original')
 })
 
+it('persists an explicit service tier and clears it when the next selection omits speed', async () => {
+  const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
+  const { ServiceTierId } = await import('@deepseek-ai/dsh-llm')
+  const { ctx } = await configurationFixture({ hmr: false })
+  await ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'fast', serviceTier: ServiceTierId('priority') })
+  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'fast', serviceTier: 'priority' })
+  await ctx.agentDefaultModel.saveSelection({ provider: 'test', model: 'standard' })
+  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'standard' })
+})
+
 it('serializes overlapping saves and continues after a rejected write', async () => {
   const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
   const { ctx } = await configurationFixture({ hmr: false })
