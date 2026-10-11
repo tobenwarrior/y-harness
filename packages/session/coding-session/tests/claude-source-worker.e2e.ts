@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
+const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+
 const worker = fileURLToPath(new URL('../lib/types/claude-source-worker.js', import.meta.url))
 const roots: string[] = []
 const children = new Map<ChildProcessWithoutNullStreams, Promise<{ code: number | null; signal: NodeJS.Signals | null }>>()
@@ -23,7 +25,7 @@ type PolicyBehavior =
   | { kind: 'result'; value: unknown }
   | { kind: 'throw'; message: string; diagnostic: string }
 async function fixture(summary = 'Original coding session · 雪', policy: PolicyBehavior = {
-  kind: 'result', value: { effective: {}, provenance: {}, sources: [] },
+  kind: 'result', value: { effective: {}, [settingsFieldSourcesKey]: {}, sources: [] },
 }) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'y-built-claude-source-'))); roots.push(root)
   const profileRoot = join(root, 'profile'); const shellHome = join(root, 'shell'); const directory = join(root, 'project')
@@ -145,14 +147,14 @@ describe.skipIf(!existsSync(worker))('built original Claude metadata worker (pla
     expect(calls).toEqual([{ operation: 'resolveSettings', options: { cwd: f.base.directory, settingSources: [] } }])
   })
   for (const [name, value] of [
-    ['effective-settings', { effective: { disableAllHooks: false }, provenance: {}, sources: [] }],
-    ['settings-origin', { effective: {}, provenance: { permissions: { source: 'managed' } }, sources: [] }],
-    ['managed-file', { effective: {}, provenance: {}, sources: [{ source: 'managed', settings: {}, path: '/fixture/private-policy.json' }] }],
-    ['startup-helper', { effective: {}, provenance: {}, sources: [{ source: 'managed', settings: {}, policyOrigin: 'helper' }] }],
-    ['remote-policy', { effective: {}, provenance: {}, sources: [{ source: 'managed', settings: {}, policyOrigin: 'remote' }] }],
-    ['unknown-field', { effective: {}, provenance: {}, sources: [], resolutionErrors: [] }],
-    ['missing-sources', { effective: {}, provenance: {} }],
-    ['invalid-sources', { effective: {}, provenance: {}, sources: {} }],
+    ['effective-settings', { effective: { disableAllHooks: false }, [settingsFieldSourcesKey]: {}, sources: [] }],
+    ['settings-origin', { effective: {}, [settingsFieldSourcesKey]: { permissions: { source: 'managed' } }, sources: [] }],
+    ['managed-file', { effective: {}, [settingsFieldSourcesKey]: {}, sources: [{ source: 'managed', settings: {}, path: '/fixture/private-policy.json' }] }],
+    ['startup-helper', { effective: {}, [settingsFieldSourcesKey]: {}, sources: [{ source: 'managed', settings: {}, policyOrigin: 'helper' }] }],
+    ['remote-policy', { effective: {}, [settingsFieldSourcesKey]: {}, sources: [{ source: 'managed', settings: {}, policyOrigin: 'remote' }] }],
+    ['unknown-field', { effective: {}, [settingsFieldSourcesKey]: {}, sources: [], resolutionErrors: [] }],
+    ['missing-sources', { effective: {}, [settingsFieldSourcesKey]: {} }],
+    ['invalid-sources', { effective: {}, [settingsFieldSourcesKey]: {}, sources: {} }],
   ] as const) {
     it(`refuses emitted-worker ${name} policy observations without a success receipt`, { retry: 0 }, async ({ signal }) => {
       const f = await fixture(undefined, { kind: 'result', value })

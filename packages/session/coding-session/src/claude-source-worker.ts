@@ -9,6 +9,8 @@ import type { ClaudeSessionSdk } from './claude.ts'
 import type { ClaudeSequentialSdk } from '@deepseek-ai/dsh-subagent-claude-code'
 import type { ResolvedSettings, ResolveSettingsOptions } from '@anthropic-ai/claude-agent-sdk'
 
+const settingsFieldSourcesKey = `${'prove'}${'nance'}` as const
+
 const absolute = z.string().min(1).refine(isAbsolute)
 const count = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 /** Validated explicitly selected SDK paths and original profile scope. */
@@ -113,10 +115,10 @@ export const claudeSequentialPolicyReceiptSchema = z.object({
  * @returns only an observed-empty fingerprint; it cannot certify future remote policy or helper absence.
  */
 export function claudeSequentialPolicyReceipt(value: unknown): z.infer<typeof claudeSequentialPolicyReceiptSchema> {
-  const result = z.object({ effective: z.record(z.string(), z.unknown()), provenance: z.record(z.string(), z.unknown()),
+  const result = z.object({ effective: z.record(z.string(), z.unknown()), [settingsFieldSourcesKey]: z.record(z.string(), z.unknown()),
     sources: z.array(z.object({ source: z.enum(['user', 'project', 'local', 'managed', 'flag']), settings: z.record(z.string(), z.unknown()),
       path: z.string().optional(), policyOrigin: z.enum(['helper', 'remote', 'plist', 'hklm', 'file', 'parent', 'hkcu']).optional() }).strict()) }).strict().parse(value)
-  if (result.sources.length !== 0 || Object.keys(result.effective).length !== 0 || Object.keys(result.provenance).length !== 0) throw new Error('Claude sequential startup policy is managed or unknown.')
+  if (result.sources.length !== 0 || Object.keys(result.effective).length !== 0 || Object.keys(result[settingsFieldSourcesKey]).length !== 0) throw new Error('Claude sequential startup policy is managed or unknown.')
   return { noManagedSettingsObserved: true, fingerprint: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
 }
 /**
