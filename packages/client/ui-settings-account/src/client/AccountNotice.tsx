@@ -91,7 +91,6 @@ export function AccountNoticeCard({ notice, anchor, inline = false, title, close
       const element = cardElement.current
       if (!element || !intersects || element.closest('[inert], [hidden], [aria-hidden="true"]')) return false
       for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
-        if (ancestor.inert) return false
         const style = getComputedStyle(ancestor)
         if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false
       }
