@@ -53,6 +53,10 @@ const snapshot = snapshotJsonValue(input) as JsonValue
 
 Use `assertNever(value, context?)` in the default branch of a closed discriminated union. A newly added variant then fails TypeScript compilation at every exhaustive switch, while a runtime value that escaped its declared type throws with the optional context label.
 
+### Admit native procedure filenames
+
+`isNativeProcedurePath()` from `@deepseek-ai/dsh-util-values/native-procedure-path` checks a reader-normalized project-relative filename. It admits up to 256 characters with a supported source extension, rejecting absolute spellings, hidden components and secret-like names. The pure check performs no filesystem inspection and grants no access. Native providers can share it without requiring the optional Skill library.
+
 -----
 
 <a id="understand-the-implementation"></a>

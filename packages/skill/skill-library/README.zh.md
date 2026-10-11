@@ -77,6 +77,8 @@ Host 捕获的观察记录不可变地保留任务、会话和事件身份。符
 <a id="configuration-and-provider-extension"></a>
 ## 配置与提供方扩展
 
+原生读取方通过无依赖的[值工具库](../../util/values/README.zh.md)共用项目路径词法检查。学习验证器独立检查保留的事实。
+
 `dshHome`、`agentsHome`、`customSkillDirs` 和 `bundledSkillDir` 选择与文件系统提供方相同的根目录。附加根目录配置必须与挂载的调用来源一致。`bodyBudgetBytes`、`retrievalLimit`、`proposalLimit` 和 `automaticMaintenanceIntervalMs` 限制维护与元数据选择范围。原生提供方使用 `registerNativeProvider()`。学习使用 `registerLearningGenerator()`；`registerLearningValidator()` 注册独立检查。每种注册均返回释放函数。`learningMaxInputBytes`、`learningMaxSources`、`learningMaxEvidence`、`learningMaxResourceFiles` 和 `learningMaxResourceBytes` 限制完整提供方输入、提案和资源检查。资源哈希使用实际字节的有界读取与目录条目的有界检查，并拒绝检查时变化的文件。`maintenanceMaxOperations` 限制一次维护的自动变化数量；`learningOperationTimeoutMs` 设置写入准入期限；`automaticProjectSkillLimit` 限制原生创建造成的项目管理技能增长。
 
 <a id="understand-the-implementation"></a>
