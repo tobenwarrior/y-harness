@@ -96,7 +96,7 @@ export function restrictedConfig(base: Obj, servers: CodexDisabledServers): Obj 
  */
 export function sequentialDigest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === 'object' && !Array.isArray(item)
-    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item)).digest('hex')
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => Number(a > b) - Number(a < b))) : item)).digest('hex')
 }
 /**
  * Refuse changed observed source configuration by comparing normalized JSON digests.

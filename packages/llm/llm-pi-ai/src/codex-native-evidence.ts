@@ -20,12 +20,10 @@ function procedure(item: Record<string, unknown>, projectCwd: string | undefined
   const wrapper = /^\/bin\/(?:zsh|bash|sh) -(?:lc|c) '([A-Za-z0-9_./ -]+)'$/.exec(item.command)
   const command = (wrapper?.[1] ?? item.command).trim().replace(/ +/g, ' ')
   if (/^(?:(?:pnpm|npm) run (?:test|lint|typecheck|build)|npm test|pnpm exec vitest run|(?:python -m )?pytest|cargo (?:test|check)|go test \.\/\.\.\.|git diff --check)$/.test(command)) return { kind: 'check', command }
-  const match = /^cat ([A-Za-z0-9_./-]+)$/.exec(command)
-  if (match === null) return undefined
+  if (!/^cat [A-Za-z0-9_./-]+$/.test(command)) return undefined
   const actions = Array.isArray(item.commandActions) ? item.commandActions.map(object) : []
   const action = actions.length === 1 ? actions[0] : undefined
-  const argument = match[1]
-  if (argument === undefined) return undefined
+  const argument = command.slice(4)
   if (action?.type !== 'read' || typeof action.path !== 'string' || resolve(projectCwd, argument) !== resolve(projectCwd, action.path)) return undefined
   const path = relative(resolve(projectCwd), resolve(projectCwd, argument)).replace(/\\/g, '/')
   if (!isNativeProcedurePath(path)) return undefined
