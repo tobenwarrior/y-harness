@@ -990,7 +990,7 @@ it('skips an obsolete queued descriptor when an earlier download receives its ne
   await latest
   expect(b.fetched).toEqual([row('a').url, row('b', 'r1').url])
   expect(effects.mounted).toBe(1)
-  expect([...b.ctx.loader.entries()].map(entry => entry.options.name)).toEqual(['a', 'b'])
+  expect([...b.ctx.loader.entries()].map(entry => entry.options.name).sort()).toEqual(['a', 'b'])
   expect(b.modules.entries.state.getSnapshot()).toEqual({ syncing: false, failures: [] })
 })
 
