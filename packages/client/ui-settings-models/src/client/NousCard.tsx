@@ -87,6 +87,7 @@ export function NousCard(props: {
     return () => {
       stale = true
       const pending = action.current
+      action.current = undefined
       pending?.controller.abort()
       if (pending?.signingIn) void connection.cancel().catch((_error: unknown) => {
         /* Host disposal also owns the active authorization attempt. */
@@ -124,17 +125,24 @@ export function NousCard(props: {
   if (connection === undefined || namespace === undefined) return null
 
   const run = async <T,>(callback: (signal: AbortSignal) => Promise<T>, signingIn = false): Promise<T | undefined> => {
+    // The active action keeps its controller before React publishes the disabled state.
+    if (action.current !== undefined) return undefined
     const pending = { controller: new AbortController(), signingIn }
     action.current = pending
     setBusy(true); setMessage('')
     try { return await callback(pending.controller.signal) }
     catch (error) {
-      if (!pending.controller.signal.aborted) setMessage(error instanceof Error ? error.message : t('nousFailed'))
+      if (action.current === pending && !pending.controller.signal.aborted) {
+        setMessage(error instanceof Error ? error.message : t('nousFailed'))
+      }
       return undefined
     }
     finally {
-      if (action.current === pending) action.current = undefined
-      if (!pending.controller.signal.aborted) { setBusy(false); setVerification(undefined) }
+      // Cleanup retires the owner before aborting, so only active callbacks can settle here.
+      if (action.current === pending) {
+        action.current = undefined
+        setBusy(false); setVerification(undefined)
+      }
     }
   }
   const refreshModels = async (signal: AbortSignal): Promise<void> => {
