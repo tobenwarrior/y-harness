@@ -15,14 +15,17 @@
   en: 0b5a93cac707a55e
   zh: 83a5e5455499d41b
 /skill-library/inventory-and-protection:
-  en: c946f22897221ede
-  zh: 8ec2255a1428a458
+  en: 7f62b18ed46c6885
+  zh: a75323fbfda81986
 /skill-library/maintenance-and-history:
-  en: 13f393724ef45bac
-  zh: 7a6a6c390f919e18
+  en: e6b3ddcc6959ba80
+  zh: ee7fb0a59d5937ff
+/skill-library/maintenance-and-history/managed-markdown-limits:
+  en: 7eda7f4bcd677a1d
+  zh: c4d2868369a6adad
 /skill-library/evidence-and-semantic-proposals:
-  en: bc215cfb12cfb50b
-  zh: 9466e5c4bef9095c
+  en: 4298c6357e2cafd5
+  zh: 0becc974aef7b6ff
 /skill-library/decision-advice:
   en: 99d7bb6b287ab063
   zh: a0808701374b3a81
@@ -30,8 +33,8 @@
   en: 28fc26df979c5c3c
   zh: 398a244c641125be
 /skill-library/understand-the-implementation:
-  en: 6df3715f394e83a0
-  zh: b908d4c34f132a33
+  en: 357557361410656a
+  zh: 199286ac5e1cbff9
 /skill-library/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -48,8 +51,8 @@
   en: 8cfbe94947da33fb
   zh: b4a0ab0761e24fa7
 /skill-library/known-limitations-and-deferred-work:
-  en: 3c85dac5294504ed
-  zh: 4c4e0c16335d4148
+  en: c7cd266287abc4ac
+  zh: e27b6d6c2d025910
 /skill-library/known-limitations-and-deferred-work/dev-note:
   en: 0a1253c6f7b5e8b9
   zh: 9f56528562c7c914

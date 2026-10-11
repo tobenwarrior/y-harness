@@ -7961,7 +7961,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillCleanupChange',
-    declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n}',
+    declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n    readonly markdownGeneration?: {\n        readonly id: string;\n        readonly files: readonly {\n            readonly path: string;\n            readonly content: string;\n        }[];\n    };\n}',
   },
   {
     name: 'SkillCleanupProposal',

@@ -86,7 +86,7 @@ export interface SkillLibraryList {
   readonly providers: readonly SkillLibraryProviderStatus[]
   readonly bodyBudgetBytes: number
 }
-/** Per-item conservative compression proposal, preserving YAML and code blocks. */
+/** Complete root replacement and optional topic resources, preserving source instructions and code blocks. */
 export interface SkillCleanupChange {
   readonly id: SkillLibraryId
   readonly name: string
@@ -96,6 +96,12 @@ export interface SkillCleanupChange {
   readonly beforeBytes: number
   readonly afterBytes: number
   readonly overBudget: boolean
+  /** Complete topic and receipt files; immutable generations publish before the root revision. */
+  readonly markdownGeneration?: {
+    /** SHA256 of the complete original source. */
+    readonly id: string
+    readonly files: readonly { readonly path: string; readonly content: string }[]
+  }
 }
 /** A preview requires explicit application; skipped entries include protected skills. */
 export interface SkillCleanupProposal {

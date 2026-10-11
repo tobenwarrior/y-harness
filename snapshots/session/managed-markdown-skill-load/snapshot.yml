@@ -1,0 +1,11 @@
+version: 1
+scenario: managed-markdown-skill-load
+profile: headless
+composition: managed-markdown-skill-load
+recording: authored
+header:
+  class: managed-markdown-skill-load
+  pin: true
+  systemPromptSource: text-turn
+workspace:
+  final: true
