@@ -8,7 +8,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Contributors can link Issues as context without coupling pull-request validation to Project availability. Resolving references additionally enforce Project Priority. The required `Issue policy` job and the separate lifecycle workflow use trusted default-branch code.
+Contributors can link Issues as context without coupling pull-request validation to Project availability. Resolving references additionally enforce Project Priority. The required `Issue policy` job and the separate lifecycle workflow use trusted default-branch code. Both infrastructure jobs run only in `deepseek-harness/deepseek-harness`, whose Project and App configuration they own. Forks skip them before checkout or token creation. Publishing this guard on `develop` does not change Issue events that still load their workflow from `master`; that path requires a separately reviewed default-branch update.
 
 ## Table of Contents
 
