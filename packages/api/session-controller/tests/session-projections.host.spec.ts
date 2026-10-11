@@ -16,7 +16,7 @@ import { z } from 'zod'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { agentPresetProjectionDefinition } from '@deepseek-ai/dsh-agent-preset-registry'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ServiceTierId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, UserMessage } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -221,6 +221,21 @@ describe('session.history projections block', () => {
       lastUsed: selected,
       next: selected,
     })
+  })
+
+  it('retains the explicit service tier used by a request and consumes matching pending intent', async () => {
+    const { ctx, session } = await harness(true)
+    remote(ctx)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const selected = { provider: 'p', model: 'next', serviceTier: ServiceTierId('priority') }
+    session.append('model/selection', selected)
+    session.append('request/header', { header: { config: selected }, reason: 'initial' })
+    expect(ctx.sessionProjections.snapshot(session).values.modelSelection).toEqual({
+      lastUsed: selected, next: selected,
+    })
+    const state = ctx.sessionProjections.snapshot(session).values.modelSelection
+    session.append('request/header', { header: { config: selected }, reason: 'initial' })
+    expect(ctx.sessionProjections.snapshot(session).values.modelSelection).toEqual(state)
   })
 
   it('serves the unit value on the tail page with asOfSeq = last event seq', async () => {
