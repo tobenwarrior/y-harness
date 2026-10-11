@@ -58,18 +58,3 @@ export type WelcomeApi = DesktopLocale & WelcomeOperations & {
   /** @param listener - safe account snapshot recipient. @returns subscription disposer. */
   onAccountState(listener: (state: AccountView) => void): () => void
 }
-
-/** Authentication facts supplied at cold start or after a completed sign-out. */
-export interface WelcomeAuthentication {
-  readonly loggedIn: boolean
-  readonly hasApiKey: boolean
-}
-
-/**
- * Decide whether a startup or sign-out requires the welcome entry.
- * @param authentication - current account and independently stored API-key facts.
- * @returns true only when neither authentication route is configured.
- */
-export function needsWelcome(authentication: WelcomeAuthentication): boolean {
-  return !authentication.loggedIn && !authentication.hasApiKey
-}

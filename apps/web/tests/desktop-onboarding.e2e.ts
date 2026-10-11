@@ -8,12 +8,13 @@ import { connectDesktopWelcome } from '../../desktop/src/welcome-backend.ts'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterEach, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
 import { credentialKey, credentialRef } from '@deepseek-ai/dsh-credentials'
+import type {} from '@deepseek-ai/dsh-deepseek-account'
 import type {} from '@deepseek-ai/dsh-settings'
 import {
   acknowledgeReloadConnectionLoss, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { REPO_ROOT, saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
+import { openSettings, REPO_ROOT, saveFailureShot, ZH_BROWSER_LOCALE } from './support.ts'
 import { webProductCopy } from './branding.ts'
 
 const MODE = webSnapshotMode()
@@ -33,6 +34,11 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
   let balanceReads = 0
   let walletBalance = '0E-16'
   let bonusBalance = '0'
+  let accountOffline = false
+  let authorizationOffline = false
+  let authorization: { redirect_uri: string; state: string } | undefined
+  let authorizationStarts = 0
+  let authorizationCancels = 0
   let screenshots: string | undefined
 
   beforeEach(async () => {
@@ -40,15 +46,46 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
     balanceReads = 0
     walletBalance = '0E-16'
     bonusBalance = '0'
+    accountOffline = false
+    authorizationOffline = false
+    authorization = undefined
+    authorizationStarts = 0
+    authorizationCancels = 0
     screenshots = undefined
     root = await mkdtemp(join(tmpdir(), 'dsh-desktop-onboarding-'))
     server = createServer((request, response) => {
+      const respond = (value: unknown): void => {
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({ code: 0, data: { biz_code: 0, biz_data: value } }))
+      }
+      if (request.url === '/auth-api/v0/dsh/auth_init') {
+        authorizationStarts++
+        if (authorizationOffline) { response.writeHead(503).end(); return }
+        request.setEncoding('utf8')
+        let body = ''
+        request.on('data', (chunk: string) => { body += chunk })
+        request.on('end', () => {
+          authorization = JSON.parse(body) as { redirect_uri: string; state: string }
+          respond({ authorize_url: `${origin}/dsh/authorize`, authorize_id: 'onboarding-fixture-authorization', expires_in: 600 })
+        })
+        return
+      }
+      if (request.url === '/auth-api/v0/dsh/auth_cancel') {
+        authorizationCancels++
+        respond(null)
+        return
+      }
+      if (request.url === '/auth-api/v0/dsh/auth_exchange') {
+        respond({ token: 'onboarding-fixture-token', authorized_url: `${origin}/dsh/authorized` })
+        return
+      }
       if (request.url !== '/auth-api/v0/users/current' && request.url !== '/api/v0/users/get_user_summary') {
         response.writeHead(404).end()
         return
       }
       const balance = request.url === '/api/v0/users/get_user_summary'
       if (balance) balanceReads++
+      if (accountOffline) { response.writeHead(503).end(); return }
       const value = balance
         ? { bonus_wallets: [{ currency: 'CNY', balance: bonusBalance }], normal_wallets: [{ currency: 'CNY', balance: walletBalance }] }
         : { id: 'onboarding-fixture-user', email: 'f***@example.invalid', id_profile: { name: 'Onboarding Fixture' } }
@@ -97,6 +134,37 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
       } })
     })
     return opened
+  }
+
+  async function saveProgress(step: 'credit' | 'purpose' | 'process'): Promise<void> {
+    await scaffold.ctx.settings.mutate(NS, Object.entries({ ...INITIAL, step })
+      .map(([field, value]) => ({ op: 'set', path: [field], value })))
+  }
+
+  function preferences() {
+    return structuredClone(scaffold.ctx.settings.describe().filter(row =>
+      [NS, 'ui-chat', 'ui-settings', 'ui-theme', 'permission'].includes(row.ns))
+      .map(row => ({ ns: row.ns, value: row.value })))
+  }
+
+  async function profileFiles() {
+    const read = async (path: string): Promise<string | null> => readFile(path, 'utf8').catch((error: unknown) => {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null
+      throw error
+    })
+    return {
+      settings: await read(join(scaffold.harnessHome, 'profiles', 'scaffold', 'cordis.patch.yml')),
+      credentials: await read(join(scaffold.harnessHome, '.credentials.yaml')),
+    }
+  }
+
+  async function accountFreeApp(): Promise<void> {
+    await page.locator('[data-desktop-onboarding]').waitFor({ state: 'detached' })
+    await page.getByText('选择一个工作区开始', { exact: true }).waitFor()
+    expect(await page.locator('[data-desktop-onboarding]').count()).toBe(0)
+    expect(await page.getByRole('dialog').count()).toBe(0)
+    expect(await page.locator('#root').evaluate(element => ({ inert: (element as HTMLElement).inert, opacity: getComputedStyle(element).opacity })))
+      .toEqual({ inert: false, opacity: '1' })
   }
 
   async function snapshot(name: string): Promise<void> {
@@ -194,7 +262,7 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
     await page.setViewportSize({ width: 1280, height: 840 })
   }
 
-  it('keeps Web unchanged, resumes App progress, and returns to credit even when balance refresh fails', async () => {
+  it('keeps Web unchanged, resumes saved App progress, and returns to credit even when balance refresh fails', async () => {
     const web = await browser.newPage({ viewport: { width: 1280, height: 840 }, locale: ZH_BROWSER_LOCALE })
     try {
       await web.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
@@ -203,22 +271,21 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
       expect((scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value as { step: string }).step).toBe('welcome')
     } finally { await web.close() }
 
+    await saveProgress('credit')
     page = await desktopPage()
     tripwire = watchConsole(page)
     onTestFailed(() => saveFailureShot(page, 'desktop-onboarding'))
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-    await page.getByRole('button', { name: '开始设置', exact: true }).waitFor()
-    expect(await page.getByRole('button', { name: '跳过', exact: true }).count()).toBe(0)
+    await page.getByRole('heading', { name: '准备可用额度', exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: '跳过', exact: true }).count()).toBe(1)
+    expect(await page.getByRole('button', { name: '上一步', exact: true }).count()).toBe(0)
     expect(await page.locator('[data-desktop-onboarding]').count()).toBe(1)
-    await snapshot('welcome')
     for (const platform of ['darwin', 'win32']) {
       await page.evaluate((value) => { document.documentElement.dataset.platform = value }, platform)
       expect(await page.locator('[data-desktop-onboarding]').evaluate(element => getComputedStyle(element).getPropertyValue('-webkit-app-region'))).toBe('none')
-      expect(await page.getByRole('button', { name: '开始设置', exact: true }).evaluate(element => getComputedStyle(element).getPropertyValue('-webkit-app-region'))).toBe(platform === 'darwin' ? 'no-drag' : 'none')
+      expect(await page.getByRole('button', { name: '下一步', exact: true }).evaluate(element => getComputedStyle(element).getPropertyValue('-webkit-app-region'))).toBe(platform === 'darwin' ? 'no-drag' : 'none')
     }
     await page.evaluate(() => { delete document.documentElement.dataset.platform })
-    await page.getByRole('button', { name: '开始设置', exact: true }).click()
-    await page.getByRole('heading', { name: '准备可用额度', exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '下一步', exact: true })
       .evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(255, 255, 255)')
     await snapshot('credit')
@@ -372,27 +439,34 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
     const response = page.waitForResponse('**/api/account/getBalance')
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await (await response).finished()
-    await snapshot('welcome-en-dark')
-    await page.getByRole('button', { name: 'Get started', exact: true }).click()
+    await openSettings(page, 'en')
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
+    await settings.getByRole('button', { name: 'Account', exact: true }).click()
+    await settings.getByRole('region', { name: 'Account', exact: true }).getByText('¥12.50', { exact: true }).waitFor()
+    await page.keyboard.press('Escape')
+    await settings.waitFor({ state: 'detached' })
+    await saveProgress('credit')
+    await page.getByRole('heading', { name: 'Add credits', exact: true }).waitFor()
     await snapshot('credit-funded-en-dark')
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     await page.getByRole('checkbox', { name: 'Office & creative work', exact: true }).waitFor()
     await snapshot('purpose-en-dark')
+    expect(await page.locator('[class*="backIcon"]').evaluate(element => getComputedStyle(element).maskImage)).toContain('data:image/svg+xml')
     await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.getByRole('button', { name: 'Continue', exact: true }).waitFor()
-    await page.getByRole('button', { name: 'Back', exact: true }).click()
-    await page.getByRole('button', { name: 'Get started', exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: 'Back', exact: true }).count()).toBe(0)
+    expect(await page.locator('[class*="backIcon"]').count()).toBe(0)
+    expect((scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value as { step: string }).step).toBe('credit')
     expect(scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value).not.toHaveProperty('creditFunded')
     bonusBalance = '0'
     const recheck = page.waitForResponse('**/api/account/getBalance')
     await page.reload({ waitUntil: 'load' })
     await (await recheck).finished()
-    await page.getByRole('button', { name: 'Get started', exact: true }).click()
     await page.getByRole('heading', { name: 'Add credits', exact: true }).waitFor()
     expect(await page.getByRole('button', { name: 'Next', exact: true })
       .evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(72, 73, 76)')
     await snapshot('credit-en-dark')
-    expect(await page.locator('[class*="backIcon"]').evaluate(element => getComputedStyle(element).maskImage)).toContain('data:image/svg+xml')
+    expect(await page.getByRole('button', { name: 'Back', exact: true }).count()).toBe(0)
     await page.getByRole('button', { name: 'Next', exact: true }).click()
     await page.getByRole('button', { name: 'Got it', exact: true }).click()
     await page.getByRole('checkbox', { name: 'Coding & development', exact: true }).locator('..').click()
@@ -402,31 +476,189 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
     await page.close()
   })
 
-  it('applies API-key defaults without opening App onboarding or repeating after account login', async () => {
-    await scaffold.ctx.credentials.deleteRecord(credentialKey('deepseek-account-platform', 'default'))
-    await scaffold.ctx.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'fixture-api-key')
-    await scaffold.ctx.settings.mutate(NS, Object.entries(INITIAL).map(([field, value]) => ({ op: 'set', path: [field], value })))
+  it.each(['signed-out', 'signed-in', 'api-key'] as const)('opens a fresh %s App profile without changing saved preferences or credentials', async (account) => {
+    if (account !== 'signed-in') await scaffold.ctx.credentials.deleteRecord(credentialKey('deepseek-account-platform', 'default'))
+    if (account === 'api-key') await scaffold.ctx.credentials.set(credentialRef('DEEPSEEK_API_KEY'), 'fixture-api-key')
+    await scaffold.ctx.settings.mutate('ui-chat', [
+      { op: 'set', path: ['transcriptView'], value: 'detailed' },
+      { op: 'set', path: ['performanceUsage'], value: 'compact' },
+    ])
+    await scaffold.ctx.settings.mutate('ui-settings', [{ op: 'set', path: ['enabled'], value: true }])
+    await scaffold.ctx.settings.mutate('ui-theme', [{ op: 'set', path: ['preference'], value: 'dark' }])
+    const savedPreferences = preferences()
+    const savedFiles = await profileFiles()
+    for (let launch = 0; launch < 2; launch++) {
+      page = await desktopPage()
+      tripwire = watchConsole(page)
+      onTestFailed(() => saveFailureShot(page, `desktop-onboarding-fresh-${account}`))
+      await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await accountFreeApp()
+      await openSettings(page, 'zh')
+      const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+      const accountTab = dialog.getByRole('button', { name: '账号与余额', exact: true })
+      if (account === 'signed-in') {
+        await accountTab.click()
+        await dialog.getByRole('region', { name: '账号与余额', exact: true })
+          .getByText('Onboarding Fixture', { exact: true }).waitFor()
+      } else {
+        expect(await accountTab.count()).toBe(0)
+      }
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'detached' })
+      if (account !== 'signed-in') {
+        await page.getByRole('button', { name: '账号菜单', exact: true }).click()
+        const signIn = page.getByRole('menuitem', { name: '登录', exact: true })
+        await signIn.waitFor()
+        expect(await signIn.isEnabled()).toBe(true)
+        await page.keyboard.press('Escape')
+        await signIn.waitFor({ state: 'detached' })
+      }
+      await accountFreeApp()
+      expect(await page.locator('[data-desktop-onboarding]').count()).toBe(0)
+      expect(preferences()).toEqual(savedPreferences)
+      expect(await profileFiles()).toEqual(savedFiles)
+      expect(await page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
+      expect(tripwire.pageErrors).toEqual([])
+      expect(authorizationStarts).toBe(0)
+      await page.close()
+    }
+  })
+
+  it('keeps local App navigation available when the account service is offline', async () => {
+    accountOffline = true
+    const savedPreferences = preferences()
+    const savedFiles = await profileFiles()
     page = await desktopPage()
-    // Completion follows client activation, credential metadata, and three ordered Host writes.
-    const completed = page.waitForResponse((response) => {
-      if (!response.url().endsWith('/api/settings/mutate')) return false
-      const request = response.request().postDataJSON() as { payload: { args: { ns: string } } }
-      return request.payload.args.ns === NS
-    })
-    const [response] = await Promise.all([completed, page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })])
-    await response.finished()
-    expect(await response.json()).toMatchObject({ result: { ok: true } })
-    expect((scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value as { step: string }).step).toBe('done')
+    tripwire = watchConsole(page)
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
+    await openSettings(page, 'zh')
+    const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+    await dialog.getByRole('button', { name: '账号与余额', exact: true }).click()
+    await dialog.getByRole('region', { name: '账号与余额', exact: true }).getByText('账号资料暂不可用', { exact: true }).waitFor()
+    await dialog.getByRole('button', { name: '模型', exact: true }).click()
+    await expect.poll(() => dialog.getByRole('button', { name: '添加模型提供商', exact: true }).isEnabled()).toBe(true)
     expect(await page.locator('[data-desktop-onboarding]').count()).toBe(0)
-    expect(scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value).toMatchObject({ completion: 'api-key', process: 'standard', usage: 'detailed', developerTools: true })
-    expect(scaffold.ctx.settings.describe().find(row => row.ns === 'ui-chat')?.value).toMatchObject({ transcriptView: 'standard', performanceUsage: 'detailed' })
-    expect(scaffold.ctx.settings.describe().find(row => row.ns === 'ui-settings')?.value).toMatchObject({ enabled: true })
-    await scaffold.ctx.credentials.modifyRecord(credentialKey('deepseek-account-platform', 'default'), async () => ({
-      kind: 'grant', payload: { version: 1, issuer: origin, token: 'onboarding-fixture-token' },
-    }))
-    await page.reload({ waitUntil: 'load' })
-    await page.getByText('选择一个工作区开始', { exact: true }).waitFor()
-    expect(await page.locator('[data-desktop-onboarding]').count()).toBe(0)
+    expect(preferences()).toEqual(savedPreferences)
+    expect(await profileFiles()).toEqual(savedFiles)
+    expect(tripwire.pageErrors).toEqual([])
+    await page.close()
+  })
+
+  it('opens provider setup only on request and keeps cancellation free of profile writes', async () => {
+    await scaffold.ctx.credentials.deleteRecord(credentialKey('deepseek-account-platform', 'default'))
+    const savedPreferences = preferences()
+    const savedFiles = await profileFiles()
+    page = await desktopPage()
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
+    await openSettings(page, 'zh')
+    const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+    await dialog.getByRole('button', { name: '模型', exact: true }).click()
+    const add = dialog.getByRole('button', { name: '添加模型提供商', exact: true })
+    await expect.poll(() => add.isEnabled()).toBe(true)
+    await add.click()
+    const editor = dialog.getByRole('tabpanel', { name: '第三方模型提供商', exact: true })
+    await editor.getByLabel('提供商', { exact: true }).waitFor()
+    await editor.getByRole('button', { name: '取消', exact: true }).click()
+    await editor.waitFor({ state: 'detached' })
+    expect(await dialog.getByLabel('提供商', { exact: true }).count()).toBe(0)
+    expect(preferences()).toEqual(savedPreferences)
+    expect(await profileFiles()).toEqual(savedFiles)
+    expect(authorizationStarts).toBe(0)
+    await page.close()
+  })
+
+  it('returns from optional sign-in cancellation and a fixture authorization without starting the desktop walkthrough', async () => {
+    await scaffold.ctx.credentials.deleteRecord(credentialKey('deepseek-account-platform', 'default'))
+    const savedPreferences = preferences()
+    const signedOutFiles = await profileFiles()
+    page = await desktopPage()
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
+    const openSignIn = async (): Promise<void> => {
+      await page.getByRole('button', { name: '账号菜单', exact: true }).click()
+      await page.getByRole('menuitem', { name: '登录', exact: true }).click()
+      await page.getByRole('dialog', { name: '等待登录', exact: true }).waitFor()
+      await expect.poll(async () => (await scaffold.ctx.deepseekAccount.getState()).attempt?.phase).toBe('waiting-browser')
+    }
+    await openSignIn()
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+    await expect.poll(() => authorizationCancels).toBe(1)
+    await page.getByRole('dialog').waitFor({ state: 'detached' })
+    await accountFreeApp()
+    expect(preferences()).toEqual(savedPreferences)
+    expect(await profileFiles()).toEqual(signedOutFiles)
+    await openSignIn()
+    const pending = authorization
+    if (pending === undefined) throw new Error('fixture authorization callback unavailable')
+    const callback = new URL(pending.redirect_uri)
+    callback.searchParams.set('code', 'onboarding-fixture-code')
+    callback.searchParams.set('state', pending.state)
+    const initialized = page.waitForResponse('**/api/session/initializeDefaultModel')
+    expect((await fetch(callback, { redirect: 'manual' })).status).toBe(302)
+    await (await initialized).finished()
+    await expect.poll(async () => (await scaffold.ctx.deepseekAccount.getState()).status).toBe('credential-stored')
+    await page.getByRole('dialog').waitFor({ state: 'detached' })
+    await accountFreeApp()
+    expect(preferences()).toEqual(savedPreferences)
+    expect(scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value).toMatchObject({ step: 'welcome' })
+    const signedInFiles = await profileFiles()
+    await page.close()
+    page = await desktopPage()
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
+    await page.getByText('Onboarding Fixture', { exact: true }).waitFor()
+    expect(preferences()).toEqual(savedPreferences)
+    expect(await profileFiles()).toEqual(signedInFiles)
+    expect(authorizationStarts).toBe(2)
+    await page.close()
+  })
+
+  it('offers optional API-key setup after a sign-in failure and returns to the App when it is cancelled', async () => {
+    await scaffold.ctx.credentials.deleteRecord(credentialKey('deepseek-account-platform', 'default'))
+    authorizationOffline = true
+    const savedPreferences = preferences()
+    const savedFiles = await profileFiles()
+    page = await desktopPage()
+    tripwire = watchConsole(page)
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
+    await page.getByRole('button', { name: '账号菜单', exact: true }).click()
+    await page.getByRole('menuitem', { name: '登录', exact: true }).click()
+    const failed = page.getByRole('dialog', { name: '登录失败', exact: true })
+    await failed.waitFor()
+    await failed.getByRole('button', { name: '添加 API Key', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: '添加一个 API Key 开始使用', exact: true })
+    await editor.getByLabel('API 密钥', { exact: true }).waitFor()
+    await editor.getByRole('button', { name: '稍后配置', exact: true }).click()
+    await editor.waitFor({ state: 'detached' })
+    await accountFreeApp()
+    expect(preferences()).toEqual(savedPreferences)
+    expect(await profileFiles()).toEqual(savedFiles)
+    expect(tripwire.pageErrors).toEqual([])
+    await page.close()
+  })
+
+  it('cancels the saved walkthrough skip confirmation and persists an explicit skip across launches', async () => {
+    await saveProgress('credit')
+    page = await desktopPage()
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await page.getByRole('button', { name: '跳过', exact: true }).waitFor()
+    const savedPreferences = preferences()
+    await page.getByRole('button', { name: '跳过', exact: true }).click()
+    await page.getByRole('dialog', { name: '暂时跳过充值？', exact: true }).waitFor()
+    await page.getByRole('button', { name: '关闭', exact: true }).click()
+    expect(preferences()).toEqual(savedPreferences)
+    await page.getByRole('button', { name: '跳过', exact: true }).click()
+    await page.getByRole('button', { name: '我知道了', exact: true }).click()
+    await accountFreeApp()
+    expect(scaffold.ctx.settings.describe().find(row => row.ns === NS)?.value)
+      .toMatchObject({ step: 'done', completion: 'skipped', process: 'standard', usage: 'compact', developerTools: false })
+    await page.close()
+    page = await desktopPage()
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await accountFreeApp()
     await page.close()
   })
 })
