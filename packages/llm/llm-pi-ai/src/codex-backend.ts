@@ -559,7 +559,7 @@ export class CodexBackendAdapter extends LlmAdapter {
    * Publish one catalog model with its effort, tier, and modality metadata.
    * @param provider - registered `codex-backend` route.
    * @param id - catalog model id.
-   * @returns the exact model metadata, or a rejection when the catalog is stale.
+   * @returns exact model metadata; reasoning is omitted without advertised efforts. Rejects stale catalogs.
    */
   override resolveModel(provider: string, id: string): Promise<LlmResolvedModelInfo> {
     const model = this.runtime.models().find(model => model.id === id)
@@ -567,8 +567,10 @@ export class CodexBackendAdapter extends LlmAdapter {
     const preferredTier = this.runtime.view().tiers[model.id]
     return Promise.resolve({
       provider, id, name: model.name, inputModalities: [...model.inputModalities],
-      reasoning: { efforts: model.efforts.map(e => ({ id: ReasoningEffortId(e.id), name: e.id, description: e.description })),
-        ...(model.defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(model.defaultEffort) }) },
+      ...model.efforts.length === 0 ? {} : { reasoning: {
+        efforts: model.efforts.map(e => ({ id: ReasoningEffortId(e.id), name: e.id, description: e.description })),
+        ...(model.defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(model.defaultEffort) }),
+      } },
       // Standard is always offered so a caller can return to it after choosing
       // a native fast tier; the stored per-model preference is the adapter default,
       // and standard is the default of that default.

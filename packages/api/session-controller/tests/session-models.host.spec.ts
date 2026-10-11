@@ -582,6 +582,28 @@ describe('Web session model selection', () => {
     expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
   })
 
+  it('refuses account initialization before optional settings services are mounted', async () => {
+    const { ctx } = await harness()
+    onTestFinished(() => ctx.fiber.dispose())
+    const controller = createSessionTestController(ctx, {
+      defaultModelSelection: () => ({ provider: 'fixture', model: 'unchanged' }), cwd: '/tmp',
+    })
+    const listModels = vi.spyOn(ctx.llm, 'listModels')
+    await expect(controller.initializeDefaultModel()).rejects.toMatchObject({ code: 'session/default-model-settings-unavailable' })
+    expect(listModels).not.toHaveBeenCalled()
+  })
+
+  it('refuses account initialization without a matching default-model deployment entry', async () => {
+    const { ctx, controller, credentials } = await accountDefaultHarness()
+    onTestFinished(() => ctx.fiber.dispose())
+    vi.spyOn(ctx.configEditor, 'entries').mockReturnValue([])
+    const describe = vi.spyOn(ctx.settings, 'describe')
+    await expect(controller.initializeDefaultModel()).rejects.toMatchObject({ code: 'session/default-model-settings-unavailable' })
+    expect(describe).not.toHaveBeenCalled()
+    expect(credentials.describe).not.toHaveBeenCalled()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
+  })
+
   it('does not save an account default when its settings namespace is missing', async () => {
     const { ctx, controller } = await accountDefaultHarness()
     const readSettings = ctx.settings.describe.bind(ctx.settings)
