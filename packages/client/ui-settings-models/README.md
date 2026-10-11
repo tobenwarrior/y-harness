@@ -37,7 +37,7 @@ Open the Models page from the Settings navigation to see every configured provid
 
 A provider with a stored catalog error remains visible with its diagnostic and edit/delete actions. Add actions are offered only for registered settings namespaces, so an unavailable namespace cannot leave a button that opens no editor. A rejected save leaves the editor open and displays the Host diagnostic.
 
-Host configuration `credentialOnboarding` defaults to `true`. The Electron preload marker suppresses automatic credential onboarding and the Web welcome notice; Models settings and explicit API-key editing remain available. The [account plugin](../ui-settings-account/README.md#desktop-onboarding) owns the Desktop introduction. Other native shells can disable only the credential step with `credentialOnboarding: false`. Host publishes this public boolean through `webserver/index-inject`, and Client validates it before registering dialogs. It is page initialization data, not a durable completion marker.
+Host configuration `credentialOnboarding` defaults to `true`. The Electron preload marker suppresses automatic credential onboarding and the Web welcome notice; Models settings and explicit API-key editing remain available. The [account plugin](../ui-settings-account/README.md#use-this-package) supplies the optional DeepSeek connection under Models on Desktop. Other native shells can disable only the credential step with `credentialOnboarding: false`. Host publishes this public boolean through `webserver/index-inject`, and Client validates it before registering dialogs. It is page initialization data, not a durable completion marker.
 
 ### ChatGPT subscription
 
@@ -69,7 +69,7 @@ After the versioned notice step completes, the DeepSeek step projects first-run 
 
 ### Extension slots
 
-The section declares two seats for plugins distributed outside this repository, typed in [`src/client/slot-contract.ts`](src/client/slot-contract.ts) and exported from `./client`. `settings.models.provider-card` (keyed) renders inside every card that shows a directory row — a saved row's card, its first-run setup posture, and the add-provider draft — dispatched with `entryKey = settingsNs` and owner props carrying the row's `ConfigurableProviderView`, its configured state, and its confirmed api-key credential state, so one registration under an adapter family's namespace receives every card of that family, hand-declared routes included; the hand-declared draft card has no directory row yet and dispatches nothing until saved. `settings.models.footer` (list) renders after the rows and the add controls. A registrant activates through `ctx.slots.inject` with a type-only import of this package's `/client` entry; without registrants both seats render nothing.
+The section declares two seats for plugins distributed outside this repository, typed in [`src/client/slot-contract.ts`](src/client/slot-contract.ts) and exported from `./client`. `settings.models.provider-card` (keyed) renders inside every card that shows a directory row — a saved row's card, its first-run setup posture, and the add-provider draft — dispatched with `entryKey = settingsNs` and owner props carrying the row's `ConfigurableProviderView`, its configured state, and its confirmed api-key credential state, so one registration under an adapter family's namespace receives every card of that family, hand-declared routes included; the hand-declared draft card has no directory row yet and dispatches nothing until saved. `settings.models.footer` (list) renders after the rows and the add controls. The Desktop account plugin contributes an optional DeepSeek connection card through the footer, independent of catalog readiness. A registrant activates through `ctx.slots.inject` with a type-only import of this package's `/client` entry; without registrants both seats render nothing.
 
 The Models page includes **DeepSeek Account** (`deepseek-account`, **DeepSeek 账号** in Chinese). Its editor exposes the shared DeepSeek model catalog without API-key or base-URL inputs, and saves that catalog under the account route's own settings section (`llm-deepseek-account` by default), so an account edit never rewrites the `llm-deepseek` section the official route reads. The account row is hidden when its available model catalog is empty, including before sign-in and after sign-out; it returns when account models become available.
 
@@ -112,7 +112,7 @@ These pages cover the settings base, the seams this page joins, and the design r
 
 -----
 
-The `settings.models.sign-in` slot lets account login offer a choice before the credential editor; without a contributor the editor renders directly. Closing the account choice completes the whole onboarding step. Explicit reopening from the account menu enters the same editor even when a provider is already configured.
+The `settings.models.sign-in` slot remains an optional extension before the credential editor. The bundled Desktop account plugin does not contribute to it: account connection is available only under Models, and official API-key setup continues to use the existing editor.
 
 <a id="model-experience"></a>
 ## Model Experience

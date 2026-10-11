@@ -65,7 +65,7 @@ export interface BonusNoticeController {
   /** Stop the lifecycle, drop the displayed notice, and discard pending acknowledgement retries. */
   end(): void
   /**
-   * Read the unnotified bonus once, for one Settings entry.
+   * Read the unnotified bonus once, for one Models provider-card entry.
    * @returns after the read settles, so callers can await the whole entry.
    */
   refresh(): Promise<void>

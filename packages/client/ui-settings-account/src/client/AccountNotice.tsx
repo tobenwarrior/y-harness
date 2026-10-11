@@ -1,8 +1,7 @@
 /**
- * Sidebar bonus notice. The card reports a display once it has a position, the
- * document is visible, and it has painted one frame: that is the whole signal,
- * and the card measures no cover, so a painted card behind the open Settings
- * overlay reports the same way as any other. Closing counts as a display too,
+ * Provider bonus notice, with a legacy sidebar mode. The card reports display
+ * once it is fully visible within Models or has a legacy anchor position, the
+ * document is visible, and it has painted one frame. Closing counts as a display too,
  * because the user acted on it. An award that expired before a render is not
  * drawn at all.
  */
@@ -44,23 +43,23 @@ function afterPaint(run: () => void): () => void {
   }
 }
 
-/** @param props - notice copy and identity, sidebar anchor, and display callbacks.
- * @returns a non-modal notice above the account launcher until closed.
+/** @param props - notice copy, inline presentation or legacy sidebar anchor, and display callbacks.
+ * @returns a non-modal notice within its provider card or above its legacy anchor.
  */
-export function AccountNoticeCard({ notice, anchor, title, closeLabel, onShown, onDismiss }: {
+export function AccountNoticeCard({ notice, anchor, inline = false, title, closeLabel, onShown, onDismiss }: {
   notice: BonusNotice
-  anchor: RefObject<HTMLElement>
   title: string
   closeLabel: string
   /** Called once, after the visible card has passed a presented frame. */
   onShown: (orderId: BonusNotice['orderId']) => void
   /** Called when the user closes the card, which counts as having seen it. */
   onDismiss: (orderId: BonusNotice['orderId']) => void
-}) {
+} & ({ inline: true; anchor?: never } | { inline?: false; anchor: RefObject<HTMLElement> })) {
   const [position, setPosition] = useState<{ left: number; bottom: number }>()
+  const cardElement = useRef<HTMLElement>(null)
   const reported = useRef(false)
   useLayoutEffect(() => {
-    if (!anchor.current || !live(notice.expiresAt)) return
+    if (inline || !anchor?.current || !live(notice.expiresAt)) return
     const element = anchor.current
     const update = () => {
       const rect = element.getBoundingClientRect()
@@ -79,31 +78,71 @@ export function AccountNoticeCard({ notice, anchor, title, closeLabel, onShown, 
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
     }
-  }, [anchor, notice.orderId, notice.expiresAt])
+  }, [anchor, inline, notice.orderId, notice.expiresAt])
   useEffect(() => {
-    if (position === undefined || reported.current || !live(notice.expiresAt)) return
+    if ((!inline && position === undefined) || reported.current || !live(notice.expiresAt)) return
     let cancel: (() => void) | undefined
+    // Inline notices may be mounted below the Models scroll viewport, or under
+    // a native Platform page. Mounting alone is not a display acknowledgment.
+    let intersects = false
+    const visible = () => {
+      if (document.visibilityState === 'hidden') return false
+      if (!inline) return true
+      const element = cardElement.current
+      if (!element || !intersects || element.closest('[inert], [hidden], [aria-hidden="true"]')) return false
+      for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.inert) return false
+        const style = getComputedStyle(ancestor)
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0') return false
+      }
+      for (const dialog of document.querySelectorAll('[aria-modal="true"]')) {
+        if (!dialog.contains(element)) return false
+      }
+      const rect = element.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return false
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      return hit !== null && element.contains(hit)
+    }
     const attempt = () => {
       if (reported.current || cancel !== undefined || !live(notice.expiresAt)) return
-      if (document.visibilityState === 'hidden') return
+      if (!visible()) return
       cancel = afterPaint(() => {
         cancel = undefined
-        if (reported.current || document.visibilityState === 'hidden' || !live(notice.expiresAt)) return
+        if (reported.current || !visible() || !live(notice.expiresAt)) return
         reported.current = true
         onShown(notice.orderId)
       })
     }
+    const intersection = inline && typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => {
+        for (const entry of entries) if (entry.target === cardElement.current) {
+          intersects = entry.isIntersecting && entry.intersectionRatio >= 1
+        }
+        attempt()
+      }, { threshold: 1 }) : undefined
+    if (cardElement.current) intersection?.observe(cardElement.current)
+    const changes = inline ? new MutationObserver(attempt) : undefined
+    changes?.observe(document.body, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['inert', 'hidden', 'aria-hidden', 'aria-modal', 'style', 'class'] })
     attempt()
     document.addEventListener('visibilitychange', attempt)
+    if (inline) {
+      window.addEventListener('scroll', attempt, true)
+      window.addEventListener('resize', attempt)
+    }
     return () => {
       document.removeEventListener('visibilitychange', attempt)
+      window.removeEventListener('scroll', attempt, true)
+      window.removeEventListener('resize', attempt)
+      intersection?.disconnect()
+      changes?.disconnect()
       cancel?.()
     }
-  }, [position, notice.orderId, notice.expiresAt, onShown])
+  }, [position, inline, notice.orderId, notice.expiresAt, onShown])
   // Rendering nothing keeps an expired notice off screen without disturbing the
   // hook order above.
   if (!live(notice.expiresAt)) return null
-  return createPortal(<aside className={css.card} style={position ?? { visibility: 'hidden' }}>
+  const card = <aside ref={cardElement} className={inline ? `${css.card} ${css.inline}` : css.card} style={inline ? undefined : position ?? { visibility: 'hidden' }}>
     <div role="status" className={css.copy}>
       <div className={css.title}><span className={css.icon} aria-hidden="true">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -114,5 +153,6 @@ export function AccountNoticeCard({ notice, anchor, title, closeLabel, onShown, 
       <p>{notice.message}</p>
     </div>
     <button type="button" className={css.close} aria-label={closeLabel} onClick={() => { onDismiss(notice.orderId) }}><IconCloseOutlineRegular size={10} /></button>
-  </aside>, document.body)
+  </aside>
+  return inline ? card : createPortal(card, document.body)
 }

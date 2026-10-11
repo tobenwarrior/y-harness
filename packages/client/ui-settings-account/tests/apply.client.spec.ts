@@ -7,20 +7,16 @@ import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-clie
 import type {
   AccountBonusBatch, AccountBonusOrderId, AccountDetails, AccountUserId, AccountView, SignInAttemptId,
 } from '@deepseek-ai/dsh-deepseek-account/types'
-import type { QuotaNoticeOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { Config as OnboardingConfig } from '../src/index.ts'
 import { ChatSettingsSchema as ChatConfig } from '../../ui-chat/src/chat-settings.ts'
 import { DeveloperToolsSettingsSchema as SettingsConfig } from '../../ui-settings/src/developer-tools-settings.ts'
-import type { DesktopOnboardingInjected } from '../src/client/DesktopOnboardingEntry.tsx'
 import type { AccountSectionInjected } from '../src/client/AccountSection.tsx'
 import { CONTACT_CONFIG_GLOBAL } from '../src/contact-config.ts'
 import { AccountPlatformHost } from '../src/client/AccountPlatformHost.tsx'
 import type { AccountPlatformHostInjected } from '../src/client/AccountPlatformHost.tsx'
 import { AccountQuotaNotice } from '../src/client/AccountQuotaNotice.tsx'
-import type { AccountQuotaNoticeInjected } from '../src/client/AccountQuotaNotice.tsx'
 
 const it = createClientTest({ roster: webApp })
 const SELF = '@deepseek-ai/dsh-client-ui-settings-account'
@@ -41,7 +37,7 @@ function bonus(orderId: string, message = 'Awarded 5.00'): AccountBonusBatch {
   }
 }
 function operations(c: TestClient): AccountSectionInjected {
-  const injected: object = c.ctx.slots.entries('settings.launcher')[0]!.inject!()
+  const injected: object = c.ctx.slots.entries('settings.models.footer').find(entry => entry.options.id === 'deepseek-connection')!.inject!()
   return injected as AccountSectionInjected
 }
 /** The account take-over registered into the Chat-owned frame-wide quota notice chain. */
@@ -71,6 +67,7 @@ it('keeps account UI and account RPC inactive in a plain browser, including afte
     await c.flush()
     expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
     expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
+    expect(c.ctx.slots.entries('settings.models.footer').some(entry => entry.options.id === 'deepseek-connection')).toBe(false)
     expect(c.ctx.slots.entries('settings.section').some(entry => entry.options.id === 'account')).toBe(false)
     expect(quotaNoticeEntry(c)).toBeUndefined()
     expect(platformHostEntry(c)).toBeUndefined()
@@ -79,26 +76,24 @@ it('keeps account UI and account RPC inactive in a plain browser, including afte
   }
 }, 60_000)
 
-it('claims account balance notices from the frame-wide quota chain and declines generic quota', async ({ start }) => {
+it('keeps global identity, tutorial and account quota take-over absent in Desktop', async ({ start }) => {
   vi.stubGlobal('dshDesktop', {})
   const c = await start()
-  const entry = quotaNoticeEntry(c)
-  expect(entry).toBeDefined()
-  const select = entry!.select! as (owner: QuotaNoticeOwnerProps) => QuotaNoticeOwnerProps | null
-  const notice: QuotaNoticeOwnerProps = {
-    code: 'ACCOUNT_QUOTA', message: 'Request quota exhausted.', dismiss: vi.fn(), keepOpen: vi.fn(() => () => {}),
-  }
-  expect(select(notice)).toBe(notice)
-  expect(select({ ...notice, code: 'QUOTA' })).toBeNull()
+  expect(quotaNoticeEntry(c)).toBeUndefined()
+  expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
+  expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
+  expect(c.ctx.slots.entries('settings.section').some(entry => entry.options.id === 'account')).toBe(false)
+  expect(c.ctx.slots.entries('shell.overlay').some(entry => entry.options.id === 'desktop-onboarding')).toBe(false)
+  expect(c.ctx.slots.entries('settings.models.footer').filter(entry => entry.options.id === 'deepseek-connection')).toHaveLength(1)
 }, 60_000)
 
-it('shares account actions across seats, publishes dialog ownership, and opens contextual support', async ({ start }) => {
+it('publishes provider dialog state through the Models footer and opens contextual support', async ({ start }) => {
   vi.stubGlobal(CONTACT_CONFIG_GLOBAL, { contactFormUrl: 'https://example.test/form/?prefill_device_model=old&hide_device_model=1', contactSource: 'harness' })
   const open = vi.spyOn(window, 'open').mockReturnValue(null)
   vi.stubGlobal('dshDesktop', {})
   const c = await start()
   const actions = operations(c)
-  expect(c.ctx.slots.entries('settings.models.sign-in')[0]!.inject!()).toBe(actions)
+  expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
   // The account UI follows the live theme service through the framework hook channel.
   const theme = c.ctx.get('theme') as ThemeRuntime
   const onTheme = vi.fn()
@@ -127,9 +122,8 @@ it('shares account actions across seats, publishes dialog ownership, and opens c
   c.mock.remote.account.getProfile.mockResolvedValue(ok(profile))
   c.mock.streams.push('account/watch', stored)
   await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().details?.profile).toEqual(profile) })
-  const entry = c.ctx.slots.entries('settings.section').find(entry => entry.options.id === 'account')!
-  expect(entry.inject!()).toBe(actions)
-  expect(resolveSlotLabel(entry.options.label)).toBe('Account')
+  expect(c.ctx.slots.entries('settings.models.footer').find(entry => entry.options.id === 'deepseek-connection')!.inject!()).toBe(actions)
+  expect(c.ctx.slots.entries('settings.section').some(entry => entry.options.id === 'account')).toBe(false)
   actions.contactUs()
   const support = new URL(String(open.mock.calls.at(-1)![0]))
   expect(support.searchParams.get('prefill_uid')).toBe('account-user')
@@ -153,6 +147,7 @@ it('shares account actions across seats, publishes dialog ownership, and opens c
   expect(signedOutAgain.searchParams.get('hide_uid')).toBe('1')
   await c.unload(SELF)
   expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
+  expect(c.ctx.slots.entries('settings.models.footer').some(entry => entry.options.id === 'deepseek-connection')).toBe(false)
 }, 60_000)
 
 it('prefills the native device description from the Desktop bridge on every click', async ({ start }) => {
@@ -260,8 +255,194 @@ it('uses the Desktop login carrier and exposes operation errors', async ({ start
   await expect(actions.cancel(id)).rejects.toThrow('account cancel failed')
   mock.remote.account.signOut.mockResolvedValueOnce(ok(view)).mockResolvedValueOnce(failure)
   await actions.signOut()
-  // The launcher renders nothing, so the refused Remote call reaches the caller unchanged.
+  // The provider action preserves the refused Remote call for its caller.
   await expect(actions.signOut()).rejects.toBe(failure.error)
+}, 60_000)
+
+it('publishes pending provider start until an attempt is observable', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const pending = Promise.withResolvers<ReturnType<typeof ok<AccountView>>>()
+  mock.remote.account.startSignIn.mockReturnValueOnce(pending.promise)
+  const started = actions.start()
+  const initializing: AccountView = { ...view, attempt: { id: 'started' as SignInAttemptId, phase: 'initializing' } }
+  try {
+    expect(actions.hooks.account.getSnapshot()).toMatchObject({ loginVisible: true, loginStarting: true })
+    mock.streams.push('account/watch', initializing)
+    await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: initializing, loginStarting: false }) })
+  } finally {
+    pending.resolve(ok(initializing))
+    await started
+  }
+  expect(actions.hooks.account.getSnapshot().loginStarting).toBe(false)
+}, 60_000)
+
+it('admits safe returned start metadata when the watch frame has not arrived', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const initializing: AccountView = { ...view, attempt: { id: 'returned' as SignInAttemptId, phase: 'initializing' } }
+  mock.remote.account.startSignIn.mockResolvedValueOnce(ok(initializing))
+  await actions.start()
+  expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: initializing, loginStarting: false })
+}, 60_000)
+
+it('initializes once from the success stream after a successful start response arrives first', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const succeeded: AccountView = { ...stored, attempt: { id: 'returned-success' as SignInAttemptId, phase: 'succeeded' } }
+  mock.remote.session.initializeDefaultModel.mockResolvedValue(ok(undefined))
+  mock.remote.account.getUnnotifiedBonuses.mockResolvedValue(ok(bonus('returned-success-bonus')))
+  mock.remote.account.startSignIn.mockResolvedValueOnce(ok(succeeded))
+  await actions.start()
+  expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: succeeded, loginStarting: false })
+  expect(mock.remote.session.initializeDefaultModel).not.toHaveBeenCalled()
+  expect(mock.remote.account.getUnnotifiedBonuses).not.toHaveBeenCalled()
+  mock.streams.push('account/watch', succeeded)
+  await vi.waitFor(() => { expect(mock.remote.session.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith() })
+  await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().notice).toMatchObject({ orderId: 'returned-success-bonus' }) })
+  mock.streams.push('account/watch', succeeded)
+  await c.flush()
+  expect(mock.remote.session.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith()
+  expect(mock.remote.account.ackBonusNotified).not.toHaveBeenCalled()
+}, 60_000)
+
+it('admits a returned new attempt after an old terminal watch frame during start', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const old: AccountView = { ...view, attempt: { id: 'previous' as SignInAttemptId, phase: 'cancelled' } }
+  mock.streams.push('account/watch', old)
+  await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().view).toEqual(old) })
+  const pending = Promise.withResolvers<ReturnType<typeof ok<AccountView>>>()
+  mock.remote.account.startSignIn.mockReturnValueOnce(pending.promise)
+  const started = actions.start()
+  const returned: AccountView = { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'initializing' } }
+  try {
+    const terminal: AccountView = { ...old, attempt: { id: 'previous' as SignInAttemptId, phase: 'failed', errorCode: 'network' } }
+    mock.streams.push('account/watch', terminal)
+    await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().view).toEqual(terminal) })
+  } finally {
+    pending.resolve(ok(returned))
+    await started
+  }
+  expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: returned, loginStarting: false })
+}, 60_000)
+
+it('keeps the returned new attempt when an old terminal watch frame arrives afterward', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const old: AccountView = { ...view, attempt: { id: 'previous' as SignInAttemptId, phase: 'cancelled' } }
+  mock.streams.push('account/watch', old)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  expect(actions.hooks.account.getSnapshot().view).toEqual(old)
+  const returned: AccountView = { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'initializing' } }
+  mock.remote.account.startSignIn.mockResolvedValueOnce(ok(returned))
+  await actions.start()
+  expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: returned, loginStarting: false })
+  const delayed: AccountView = { ...old, attempt: { id: 'previous' as SignInAttemptId, phase: 'failed', errorCode: 'network' } }
+  for (const terminal of [old, delayed]) {
+    mock.streams.push('account/watch', terminal)
+    await mock.streams.drained('account/watch')
+    await c.flush()
+    expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: returned, loginStarting: false })
+  }
+  mock.remote.account.cancelSignIn.mockResolvedValueOnce(ok(view))
+  await actions.cancel(returned.attempt!.id)
+  expect(mock.remote.account.cancelSignIn).toHaveBeenCalledExactlyOnceWith(returned.attempt!.id)
+}, 60_000)
+
+const authoritativeFrames: { name: string; next: AccountView }[] = [
+  { name: 'current attempt cancellation', next: { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'cancelled' } } },
+  { name: 'current attempt expiry', next: { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'expired' } } },
+  { name: 'null sign-out', next: view },
+  { name: 'different attempt success', next: { ...stored, attempt: { id: 'authoritative-new' as SignInAttemptId, phase: 'succeeded' } } },
+]
+for (const { name, next } of authoritativeFrames) it(`accepts ${name} after a returned new attempt and delayed old terminal frame`, async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  const old: AccountView = { ...view, attempt: { id: 'previous' as SignInAttemptId, phase: 'cancelled' } }
+  mock.streams.push('account/watch', old)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  const returned: AccountView = { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'initializing' } }
+  mock.remote.account.startSignIn.mockResolvedValueOnce(ok(returned))
+  mock.remote.session.initializeDefaultModel.mockResolvedValue(ok(undefined))
+  await actions.start()
+  mock.streams.push('account/watch', old)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  expect(actions.hooks.account.getSnapshot().view).toEqual(returned)
+  mock.streams.push('account/watch', next)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  expect(actions.hooks.account.getSnapshot().view).toEqual(next)
+  if (next.status === 'credential-stored') {
+    await vi.waitFor(() => { expect(mock.remote.session.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith() })
+    mock.streams.push('account/watch', next)
+    await mock.streams.drained('account/watch')
+    await c.flush()
+    expect(mock.remote.session.initializeDefaultModel).toHaveBeenCalledExactlyOnceWith()
+  } else {
+    expect(actions.hooks.account.getSnapshot().details).toBeUndefined()
+    expect(actions.hooks.account.getSnapshot().notice).toBeUndefined()
+    expect(mock.remote.session.initializeDefaultModel).not.toHaveBeenCalled()
+  }
+}, 60_000)
+
+it('retires the returned attempt fence at a new physical stream baseline', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  let restart: (() => void) | undefined
+  const original = c.ctx.remote.$stream.bind(c.ctx.remote)
+  const capture: typeof c.ctx.remote.$stream = (options) => {
+    const stream = original(options)
+    if (options.name === 'account') restart = () => { stream.restart() }
+    return stream
+  }
+  vi.spyOn(c.ctx.remote, '$stream').mockImplementation(capture)
+  await c.reload(SELF)
+  const actions = operations(c)
+  const old: AccountView = { ...view, attempt: { id: 'previous' as SignInAttemptId, phase: 'cancelled' } }
+  mock.streams.push('account/watch', old)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  const returned: AccountView = { ...view, attempt: { id: 'returned-new' as SignInAttemptId, phase: 'initializing' } }
+  mock.remote.account.startSignIn.mockResolvedValueOnce(ok(returned))
+  await actions.start()
+  expect(actions.hooks.account.getSnapshot().view).toEqual(returned)
+  mock.stream('account/watch', (_args, stream) => { stream.push(old) })
+  const opens = mock.log.streams('account/watch').length
+  expect(restart).toBeDefined()
+  restart?.()
+  await mock.streams.opened('account/watch', opens + 1)
+  await mock.streams.drained('account/watch')
+  await c.flush()
+  expect(actions.hooks.account.getSnapshot().view).toEqual(old)
+}, 60_000)
+
+it('does not replace a newer sign-in completion with an older start response', async ({ start, mock }) => {
+  vi.stubGlobal('dshDesktop', {})
+  const c = await start()
+  const actions = operations(c)
+  mock.remote.session.initializeDefaultModel.mockResolvedValue(ok(undefined))
+  const pending = Promise.withResolvers<ReturnType<typeof ok<AccountView>>>()
+  mock.remote.account.startSignIn.mockReturnValueOnce(pending.promise)
+  const started = actions.start()
+  const succeeded: AccountView = { ...stored, attempt: { id: 'newer' as SignInAttemptId, phase: 'succeeded' } }
+  try {
+    mock.streams.push('account/watch', succeeded)
+    await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().view).toEqual(succeeded) })
+  } finally {
+    pending.resolve(ok({ ...view, attempt: { id: 'older' as SignInAttemptId, phase: 'initializing' } }))
+    await started
+  }
+  expect(actions.hooks.account.getSnapshot()).toMatchObject({ view: succeeded, loginStarting: false })
 }, 60_000)
 
 it('uses the Desktop stream origin and exposes the native platform bridge', async ({ start, mock }) => {
@@ -275,21 +456,16 @@ it('uses the Desktop stream origin and exposes the native platform bridge', asyn
   // The native commands reach the one shared host through the account page channel.
   const host = injectedOf(platformHostEntry(c)!) as AccountPlatformHostInjected
   expect(host.platform).toBe(platform)
-  const notice = injectedOf(quotaNoticeEntry(c)!) as AccountQuotaNoticeInjected
-  // Both surfaces inject the page opener callback, not the channel object; the
-  // read policies each opener applies are asserted in their own cases.
+  // The provider injects the page opener callback, not the channel object.
   expect(typeof actions.openPlatformPage).toBe('function')
-  expect(typeof notice.openPlatformPage).toBe('function')
   expect('platformPages' in actions).toBe(false)
-  expect('platformPages' in notice).toBe(false)
-  expect(notice.hooks.platformPage.getSnapshot()).toBeNull()
+  expect(host.hooks.page.getSnapshot()).toBeNull()
 
   // One surface requests a page; the viewer returning through the host's own
   // close action retires that owner exactly once and clears the observable.
   const owner = vi.fn()
   actions.openPlatformPage!('usage', owner)
   expect(host.hooks.page.getSnapshot()).toEqual({ page: 'usage' })
-  expect(notice.hooks.platformPage.getSnapshot()).toEqual({ page: 'usage' })
   host.closePage()
   expect(host.hooks.page.getSnapshot()).toBeNull()
   expect(owner).toHaveBeenCalledExactlyOnceWith('returned')
@@ -337,53 +513,27 @@ it('re-reads the account when the shared host returns from top-up, and not from 
   expect(mock.remote.account.getProfile).toHaveBeenCalledOnce()
 }, 60_000)
 
-it('re-reads profile and balance but no bonus for the onboarding recharge return, and nothing on supersede or release', async ({ start }) => {
+it('does not refresh when a provider Platform request is superseded or released', async ({ start }) => {
   vi.stubGlobal('dshDesktop', {})
   const c = await start()
   vi.stubGlobal('dshPlatform', { open: vi.fn(), setBounds: vi.fn(), close: vi.fn() })
   await c.reload(SELF)
   const actions = operations(c)
-  const track = vi.fn()
-  c.ctx.provide('productAnalytics', { track } as never)
-  expect(actions).not.toHaveProperty('track')
-  const onboarding = injectedOf(c.ctx.slots.entries('shell.overlay')
-    .find(entry => entry.options.id === 'desktop-onboarding')!) as DesktopOnboardingInjected
-  onboarding.track?.('onboarding_page_view', { page_name: 'onboarding_recharge' })
-  expect(track).toHaveBeenCalledWith('onboarding_page_view', { page_name: 'onboarding_recharge' })
-  const host = injectedOf(platformHostEntry(c)!) as AccountPlatformHostInjected
-  c.mock.remote.account.getProfile.mockResolvedValue(ok(profile))
-  c.mock.remote.account.getBalance.mockResolvedValue(ok(null))
-  c.mock.remote.account.getUnnotifiedBonuses.mockResolvedValue(ok({ accountId: 'account-user' as AccountUserId, bonuses: [] }))
   c.mock.streams.push('account/watch', stored)
   await vi.waitFor(() => { expect(actions.hooks.account.getSnapshot().view).toEqual(stored) })
-  await vi.waitFor(() => { expect(c.mock.remote.account.getUnnotifiedBonuses).toHaveBeenCalled() })
   await c.flush()
-  const bonusesBefore = c.mock.remote.account.getUnnotifiedBonuses.mock.calls.length
-  // The account becoming active already ran the shared refresh; measure only the
-  // reads each later event triggers.
   c.mock.remote.account.getProfile.mockClear()
   c.mock.remote.account.getBalance.mockClear()
-
-  // A superseded page is not a return, so it reads nothing for either caller.
-  onboarding.openPlatformPage!('top-up', () => {})
-  actions.openPlatformPage!('top-up', () => {})
-  await c.flush()
-  expect(c.mock.remote.account.getProfile).not.toHaveBeenCalled()
-
-  // Releasing a request is not a return either.
-  const release = actions.openPlatformPage!('top-up', () => {})
+  c.mock.remote.account.getUnnotifiedBonuses.mockClear()
+  const replaced = vi.fn()
+  actions.openPlatformPage!('top-up', replaced)
+  const release = actions.openPlatformPage!('top-up', vi.fn())
+  expect(replaced).toHaveBeenCalledExactlyOnceWith('superseded')
   release()
   await c.flush()
   expect(c.mock.remote.account.getProfile).not.toHaveBeenCalled()
-
-  // The onboarding return re-reads profile and balance, and never the bonus: an
-  // unseen award must not be acknowledged behind the onboarding surface.
-  onboarding.openPlatformPage!('top-up', () => {})
-  host.closePage()
-  await vi.waitFor(() => { expect(c.mock.remote.account.getProfile).toHaveBeenCalledOnce() })
-  await vi.waitFor(() => { expect(c.mock.remote.account.getBalance).toHaveBeenCalledOnce() })
-  await c.flush()
-  expect(c.mock.remote.account.getUnnotifiedBonuses.mock.calls.length).toBe(bonusesBefore)
+  expect(c.mock.remote.account.getBalance).not.toHaveBeenCalled()
+  expect(c.mock.remote.account.getUnnotifiedBonuses).not.toHaveBeenCalled()
 }, 60_000)
 
 it('waits for an in-flight pre-return read before the post-top-up read', async ({ start }) => {
@@ -508,7 +658,7 @@ it('drops the previous account notice and stops reading after sign-out', async (
   expect(c.mock.remote.account.getUnnotifiedBonuses.mock.calls.length).toBe(reads)
 }, 60_000)
 
-it('refreshes balances and the bonus read on one Settings entry, without polling', async ({ start }) => {
+it('refreshes balances and the bonus read on explicit provider entry, without polling', async ({ start }) => {
   vi.stubGlobal('dshDesktop', {})
   const c = await start()
   const actions = operations(c)
@@ -531,7 +681,7 @@ it('refreshes balances and the bonus read on one Settings entry, without polling
   expect(c.mock.remote.account.getUnnotifiedBonuses).toHaveBeenLastCalledWith(expect.objectContaining({ locale: 'en' }))
 }, 60_000)
 
-it('publishes a failed balance from a Settings entry without dropping the bonus read', async ({ start }) => {
+it('publishes a failed balance from provider entry without dropping the bonus read', async ({ start }) => {
   vi.stubGlobal('dshDesktop', {})
   const c = await start()
   const actions = operations(c)
@@ -627,30 +777,25 @@ it('forwards live account notices and removes their subscriptions', async ({ sta
   expect(expired).toHaveBeenCalledOnce()
   expect(unavailable).toHaveBeenCalledOnce()
 })
-for (const native of [false, true]) it(`exposes desktop progress actions and disposes its subscriptions (native platform: ${native})`, async ({ start, mock }) => {
+for (const native of [false, true]) it(`registers only the provider footer and optional native host (native platform: ${native})`, async ({ start, mock }) => {
   vi.stubGlobal('dshDesktop', {})
-  const platform = { open: vi.fn(), setBounds: vi.fn(), close: vi.fn() }
-  if (native) vi.stubGlobal('dshPlatform', platform)
+  if (native) vi.stubGlobal('dshPlatform', { open: vi.fn(), setBounds: vi.fn(), close: vi.fn() })
   const c = await start()
-  const entry = c.ctx.slots.entries('shell.overlay').find(entry => entry.options.id === 'desktop-onboarding')!
-  const injected = (entry.inject!() as object) as DesktopOnboardingInjected
-  // Onboarding requests the shared native page through the one host; it holds no
-  // bridge of its own.
-  if (native) expect(injected.openPlatformPage).toBeDefined()
-  else expect(injected.openPlatformPage).toBeUndefined()
-  expect(await injected.update({ step: 'credit' })).toBe(false)
-  expect(await injected.complete('skipped')).toBe(false)
-  expect(await injected.retry()).toBe(false)
-  expect(injected.hooks.onboarding.getSnapshot().visible).toBe(false)
-  await c.unload(SELF)
+  const actions = operations(c)
   expect(c.ctx.slots.entries('shell.overlay').some(entry => entry.options.id === 'desktop-onboarding')).toBe(false)
+  expect(Boolean(platformHostEntry(c))).toBe(native)
+  expect(Boolean(actions.openPlatformPage)).toBe(native)
+  await c.unload(SELF)
+  expect(c.ctx.slots.entries('settings.models.footer').some(entry => entry.options.id === 'deepseek-connection')).toBe(false)
+  expect(platformHostEntry(c)).toBeUndefined()
   expect(mock.remote.account.getBalance).not.toHaveBeenCalled()
+  expect(mock.remote.account.signOut).not.toHaveBeenCalled()
 }, 60_000)
 
-for (const configured of [false, true]) it(`keeps fresh desktop settings unchanged without querying API-key presence (key configured: ${configured})`, async ({ start, mock }) => {
+for (const step of ['welcome', 'credit', 'purpose', 'process', 'done'] as const) it(`preserves saved desktop settings without restoring the account tutorial (step: ${step})`, async ({ start, mock }) => {
   vi.stubGlobal('dshDesktop', {})
   const values: Record<string, object> = {
-    'ui-settings-account': { version: 1, step: 'welcome', purpose: null, process: null, completion: null, usage: 'compact', developerTools: false },
+    'ui-settings-account': { version: 1, step, purpose: 'development', process: 'standard', completion: step === 'done' ? 'api-key' : null, usage: 'detailed', developerTools: true },
     'ui-chat': { transcriptView: 'compact', performanceUsage: 'detailed', linkOpening: 'sidebar' },
     'ui-settings': { enabled: false },
   }
@@ -659,7 +804,7 @@ for (const configured of [false, true]) it(`keeps fresh desktop settings unchang
   mock.remote.settings.describe.mockResolvedValue(ok({
     writable: true, hasDocument: true, namespaces: Object.keys(schemas).map(ns => namespace(ns as keyof typeof schemas)),
   }))
-  const hasApiKey = vi.fn(async () => configured)
+  const hasApiKey = vi.fn(async () => true)
   vi.stubGlobal('dshOnboarding', { hasApiKey })
   mock.remote.settings.mutate.mockImplementation(async (ns, ops) => {
     const key = ns as keyof typeof schemas
@@ -669,15 +814,19 @@ for (const configured of [false, true]) it(`keeps fresh desktop settings unchang
     return ok(namespace(key))
   })
   const c = await start()
-  const injected = c.ctx.slots.entries('shell.overlay').find(entry => entry.options.id === 'desktop-onboarding')!.inject!() as object as DesktopOnboardingInjected
-  await vi.waitFor(() => { expect(injected.hooks.onboarding.getSnapshot().status).toBe('ready') })
-  expect(injected.hooks.onboarding.getSnapshot()).toMatchObject({ visible: false, progress: { step: 'welcome', completion: null } })
-  mock.streams.push('account/watch', stored)
-  await vi.waitFor(() => { expect(operations(c).hooks.account.getSnapshot().view?.status).toBe('credential-stored') })
-  expect(injected.hooks.onboarding.getSnapshot()).toMatchObject({ visible: false, progress: { step: 'welcome', completion: null } })
+  for (const reload of [false, true]) {
+    if (reload) await c.reload(SELF)
+    mock.streams.push('account/watch', stored)
+    await vi.waitFor(() => { expect(operations(c).hooks.account.getSnapshot().view?.status).toBe('credential-stored') })
+    expect(c.ctx.slots.entries('shell.overlay').some(entry => entry.options.id === 'desktop-onboarding')).toBe(false)
+    expect(c.ctx.slots.entries('settings.section').some(entry => entry.options.id === 'account')).toBe(false)
+    expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
+    expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
+  }
   expect(hasApiKey).not.toHaveBeenCalled()
   expect(mock.remote.settings.mutate).not.toHaveBeenCalled()
-  expect(values['ui-settings-account']).toEqual({ version: 1, step: 'welcome', purpose: null, process: null, completion: null, usage: 'compact', developerTools: false })
+  expect(values['ui-settings-account']).toEqual({ version: 1, step, purpose: 'development', process: 'standard', completion: step === 'done' ? 'api-key' : null, usage: 'detailed', developerTools: true })
+  expect(mock.remote.account.signOut).not.toHaveBeenCalled()
   expect(values['ui-settings']).toEqual({ enabled: false })
   expect(values['ui-chat']).toEqual({ transcriptView: 'compact', performanceUsage: 'detailed', linkOpening: 'sidebar' })
 }, 60_000)

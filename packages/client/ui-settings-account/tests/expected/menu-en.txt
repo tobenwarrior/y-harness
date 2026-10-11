@@ -1,1 +1,1 @@
-SettingsSign out
+SettingsDisconnect DeepSeek

@@ -8,6 +8,8 @@
   color: var(--yh-alias-label-primary);
 }
 
+.heading { margin: 0; font-size: 14px; line-height: 22px; font-weight: 500; }
+
 .card,
 .balanceCard {
   padding: 12px 16px;
@@ -162,12 +164,12 @@
 .signedOutContent {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  min-height: 60px;
-  padding: 12px 0;
-  gap: 20px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border: 0.5px solid var(--yh-alias-settings-card-stroke);
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-alias-settings-card-fill);
+  gap: 12px;
 }
 
 .signedOutCopy {
@@ -175,7 +177,6 @@
   flex-direction: column;
   gap: 4px;
   width: 100%;
-  text-align: center;
 }
 
 .signedOutTitle {
@@ -200,7 +201,7 @@
   justify-content: flex-end;
   font-size: 18px;
   line-height: 28px;
-  font-weight: 510;
+  font-weight: 500;
 }
 
 .amount > span + span::before {
