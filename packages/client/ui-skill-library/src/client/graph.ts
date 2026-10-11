@@ -31,6 +31,23 @@ export interface GraphLayout {
 /** Local viewport transformation, independent of the skill source. */
 export interface GraphTransform { readonly scale: number; readonly x: number; readonly y: number }
 
+interface GraphSpringOrder {
+  readonly source: { readonly node: Pick<GraphNode, 'id'> }
+  readonly target: { readonly node: Pick<GraphNode, 'id'> }
+  readonly kind: GraphEdge['kind']
+}
+
+/**
+ * Order graph springs by source id, target id, and relationship kind.
+ * @param left - the first spring's endpoint ids and relationship kind.
+ * @param right - the second spring's endpoint ids and relationship kind.
+ * @returns negative, zero, or positive according to the stable drawing order.
+ */
+export function compareGraphSprings(left: GraphSpringOrder, right: GraphSpringOrder): number {
+  return compareIds(left.source.node.id, right.source.node.id)
+    || compareIds(left.target.node.id, right.target.node.id) || compareIds(left.kind, right.kind)
+}
+
 interface LayoutPoint {
   readonly node: Omit<GraphNode, 'x' | 'y'>
   readonly anchorX: number
@@ -148,8 +165,7 @@ export function layoutGraph(input: GraphInput): GraphLayout {
     const source = forward ? first : second
     const target = forward ? second : first
     return { source, target, kind: edge.kind }
-  }).sort((left, right) => compareIds(left.source.node.id, right.source.node.id)
-    || compareIds(left.target.node.id, right.target.node.id) || compareIds(left.kind, right.kind))
+  }).sort(compareGraphSprings)
 
   for (let pass = 0; pass < 36; pass++) {
     const cells = new Map<string, LayoutPoint[]>()
