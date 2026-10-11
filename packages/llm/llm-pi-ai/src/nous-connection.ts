@@ -145,7 +145,7 @@ export class NousConnection extends TypertRemoteService {
         ? 'Nous sign-in cancelled.'
         : 'Nous sign-in could not be completed. Existing credentials were kept; try again.'
       attempt.reject(new Error(this.error))
-    }).finally(() => { if (this.attempt === attempt) this.attempt = undefined })
+    }).finally(() => { this.attempt = undefined })
     return verification.promise
   }
 

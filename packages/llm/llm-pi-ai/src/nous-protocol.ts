@@ -66,38 +66,38 @@ function checkCancelled(signal: AbortSignal): void {
 function checkTimedOut(signal: AbortSignal): void {
   if (signal.aborted) throw new NousProtocolError('request_timeout', true)
 }
-function object(value: unknown, code = 'invalid_response'): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new NousProtocolError(code)
+function object(value: unknown, code = 'invalid_response', reauthenticate = false): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new NousProtocolError(code, false, reauthenticate)
   return value as Record<string, unknown>
 }
-function text(value: unknown, code = 'invalid_response'): string {
-  if (typeof value !== 'string' || value.trim().length === 0 || /[\u0000-\u001f\u007f]/u.test(value)) throw new NousProtocolError(code)
+function text(value: unknown, code = 'invalid_response', reauthenticate = false): string {
+  if (typeof value !== 'string' || value.trim().length === 0 || /[\u0000-\u001f\u007f]/u.test(value)) throw new NousProtocolError(code, false, reauthenticate)
   return value
 }
-function token(value: unknown, code = 'invalid_response'): string {
-  const result = text(value, code)
-  if (/[^\u0021-\u007e]/u.test(result)) throw new NousProtocolError(code)
+function token(value: unknown, code = 'invalid_response', reauthenticate = false): string {
+  const result = text(value, code, reauthenticate)
+  if (/[^\u0021-\u007e]/u.test(result)) throw new NousProtocolError(code, false, reauthenticate)
   return result
 }
-function clientIdentity(value: unknown): string {
-  if (typeof value !== 'string' || value.trim().length === 0) throw new NousProtocolError('invalid_client_id')
-  return text(value.trim(), 'invalid_client_id')
+function clientIdentity(value: unknown, reauthenticate = false): string {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new NousProtocolError('invalid_client_id', false, reauthenticate)
+  return text(value.trim(), 'invalid_client_id', reauthenticate)
 }
-function scope(value: unknown, code = 'invalid_response'): string {
-  const scopes = text(value, code).trim().split(/\s+/u)
-  if (!scopes.includes(INVOKE_SCOPE)) throw new NousProtocolError(code)
+function scope(value: unknown, code = 'invalid_response', reauthenticate = false): string {
+  const scopes = text(value, code, reauthenticate).trim().split(/\s+/u)
+  if (!scopes.includes(INVOKE_SCOPE)) throw new NousProtocolError(code, false, reauthenticate)
   return scopes.join(' ')
 }
-function positiveInteger(value: unknown, code = 'invalid_response'): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw new NousProtocolError(code)
+function positiveInteger(value: unknown, code = 'invalid_response', reauthenticate = false): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw new NousProtocolError(code, false, reauthenticate)
   return value
 }
 function expiryFromLifetime(value: unknown): number {
   const expires = Date.now() + positiveInteger(value) * 1000
   return positiveInteger(expires)
 }
-function inferenceURL(value: unknown): string {
-  const fail = (): never => { throw new NousProtocolError('invalid_inference_url') }
+function inferenceURL(value: unknown, reauthenticate = false): string {
+  const fail = (): never => { throw new NousProtocolError('invalid_inference_url', false, reauthenticate) }
   if (typeof value !== 'string' || /[?#@\\\s]/u.test(value) || !/^[^:]+:\/\/[^/]+\/v1\/?$/u.test(value)) return fail()
   let parsed: URL
   try { parsed = new URL(value) } catch { return fail() }
@@ -122,19 +122,14 @@ function verificationURL(value: unknown): string {
  * @returns a validated grant with its canonical trusted inference address.
  */
 export function validateNousGrant(value: unknown): NousGrant {
-  try {
-    const data = object(value, 'invalid_grant_data')
-    if (data.type !== 'oauth' || data.tokenType !== undefined && text(data.tokenType, 'invalid_grant_data').toLowerCase() !== 'bearer') {
-      throw new NousProtocolError('invalid_grant_data')
-    }
-    return {
-      type: 'oauth', access: token(data.access, 'invalid_grant_data'), refresh: token(data.refresh, 'invalid_grant_data'),
-      expires: positiveInteger(data.expires, 'invalid_grant_data'), clientId: clientIdentity(data.clientId),
-      scope: scope(data.scope, 'invalid_grant_data'), inferenceBaseURL: inferenceURL(data.inferenceBaseURL),
-    }
-  } catch (error) {
-    if (error instanceof NousProtocolError) error.reauthenticate = true
-    throw error
+  const data = object(value, 'invalid_grant_data', true)
+  if (data.type !== 'oauth' || data.tokenType !== undefined && text(data.tokenType, 'invalid_grant_data', true).toLowerCase() !== 'bearer') {
+    throw new NousProtocolError('invalid_grant_data', false, true)
+  }
+  return {
+    type: 'oauth', access: token(data.access, 'invalid_grant_data', true), refresh: token(data.refresh, 'invalid_grant_data', true),
+    expires: positiveInteger(data.expires, 'invalid_grant_data', true), clientId: clientIdentity(data.clientId, true),
+    scope: scope(data.scope, 'invalid_grant_data', true), inferenceBaseURL: inferenceURL(data.inferenceBaseURL, true),
   }
 }
 
@@ -235,7 +230,6 @@ async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
       const timer = setTimeout(finish, Math.min(MAX_TIMER_MS, Math.max(0, deadline - Date.now())))
       const abort = (): void => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(new NousProtocolError('cancelled')) }
       signal.addEventListener('abort', abort, { once: true })
-      if (signal.aborted) abort()
     })
   } while (Date.now() < deadline)
   checkCancelled(signal)
