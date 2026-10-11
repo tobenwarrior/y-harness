@@ -26,7 +26,7 @@ A build-only benchmark does not deploy, access Cloudflare credentials, or post p
 
 ## Publication semantics
 
-Runner selection does not alter pull-request events, per-PR cancellation, immutable installation, restore-only dependency caching, full workspace build, preview packing, sourcemap removal, or the preview page copied to the deployment root. Cloudflare uploads only the built site to the PR branch alias. The protected-image check requires HTTP 200, no transport content encoding, and gzip magic bytes; the URL comment remains idempotent. Dependabot and other PR authors remain on GitHub-hosted machines.
+Runner selection does not alter pull-request events, per-PR cancellation, immutable installation, restore-only dependency caching, full workspace build, preview packing, sourcemap removal, or the preview page copied to the deployment root. Every repository retains the packed site as a seven-day artifact using read-only build permissions and no deployment credentials. Only `deepseek-harness/deepseek-harness` starts the separate Cloudflare job, which downloads this same run’s artifact and uploads only the built site to the PR branch alias. Fork preview builds remain useful without upstream Cloudflare credentials. The protected-image check requires HTTP 200, no transport content encoding, and gzip magic bytes; the URL comment remains idempotent. Dependabot and other PR authors remain on GitHub-hosted machines.
 
 <a id="dev-note"></a>
 

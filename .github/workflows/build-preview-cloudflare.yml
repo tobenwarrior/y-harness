@@ -1,9 +1,8 @@
 name: Build PR preview
 
-# Every push to a pull request publishes that pull request's preview to
-# Cloudflare Pages under its own branch alias, behind Cloudflare Access. The
-# upload carries build products only: the workflow never grants the deployment
-# platform access to this repository's sources.
+# Every pull request builds and packs its preview without credentials. Only the
+# upstream repository deploys to its Cloudflare Pages project behind Access.
+# Forks retain build evidence without requiring upstream service credentials.
 
 on:
   pull_request:
@@ -18,7 +17,6 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   PRIMARY_NODE_VERSION: '24'
@@ -33,7 +31,7 @@ env:
 jobs:
   preview:
     runs-on: ubuntu-24.04
-    name: cloudflare pages preview
+    name: preview build
     steps:
       - uses: actions/checkout@v6
         with:
@@ -86,6 +84,31 @@ jobs:
         run: |
           find apps/web/dist -name '*.map' -delete
           cp apps/web/dist/preview.html apps/web/dist/index.html
+
+      - name: Retain built preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-pr-${{ github.event.pull_request.number }}
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: cloudflare pages preview
+    needs: preview
+    if: github.repository == 'deepseek-harness/deepseek-harness'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-pr-${{ github.event.pull_request.number }}
+          path: apps/web/dist
 
       - name: Upload to Cloudflare Pages
         env:
@@ -153,6 +176,7 @@ jobs:
       - name: Comment the preview URL
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           marker='<!-- dsh-preview-url -->'
