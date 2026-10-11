@@ -647,7 +647,7 @@ for (const native of [false, true]) it(`exposes desktop progress actions and dis
   expect(mock.remote.account.getBalance).not.toHaveBeenCalled()
 }, 60_000)
 
-it('applies API-key defaults through the desktop slot and shared configuration owners', async ({ start, mock }) => {
+for (const configured of [false, true]) it(`keeps fresh desktop settings unchanged without querying API-key presence (key configured: ${configured})`, async ({ start, mock }) => {
   vi.stubGlobal('dshDesktop', {})
   const values: Record<string, object> = {
     'ui-settings-account': { version: 1, step: 'welcome', purpose: null, process: null, completion: null, usage: 'compact', developerTools: false },
@@ -659,7 +659,7 @@ it('applies API-key defaults through the desktop slot and shared configuration o
   mock.remote.settings.describe.mockResolvedValue(ok({
     writable: true, hasDocument: true, namespaces: Object.keys(schemas).map(ns => namespace(ns as keyof typeof schemas)),
   }))
-  const hasApiKey = vi.fn(async () => true)
+  const hasApiKey = vi.fn(async () => configured)
   vi.stubGlobal('dshOnboarding', { hasApiKey })
   mock.remote.settings.mutate.mockImplementation(async (ns, ops) => {
     const key = ns as keyof typeof schemas
@@ -670,8 +670,14 @@ it('applies API-key defaults through the desktop slot and shared configuration o
   })
   const c = await start()
   const injected = c.ctx.slots.entries('shell.overlay').find(entry => entry.options.id === 'desktop-onboarding')!.inject!() as object as DesktopOnboardingInjected
-  await vi.waitFor(() => { expect(injected.hooks.onboarding.getSnapshot().progress.step).toBe('done') })
-  expect(hasApiKey).toHaveBeenCalled()
-  expect(values['ui-settings']).toEqual({ enabled: true })
-  expect(values['ui-chat']).toMatchObject({ transcriptView: 'standard' })
+  await vi.waitFor(() => { expect(injected.hooks.onboarding.getSnapshot().status).toBe('ready') })
+  expect(injected.hooks.onboarding.getSnapshot()).toMatchObject({ visible: false, progress: { step: 'welcome', completion: null } })
+  mock.streams.push('account/watch', stored)
+  await vi.waitFor(() => { expect(operations(c).hooks.account.getSnapshot().view?.status).toBe('credential-stored') })
+  expect(injected.hooks.onboarding.getSnapshot()).toMatchObject({ visible: false, progress: { step: 'welcome', completion: null } })
+  expect(hasApiKey).not.toHaveBeenCalled()
+  expect(mock.remote.settings.mutate).not.toHaveBeenCalled()
+  expect(values['ui-settings-account']).toEqual({ version: 1, step: 'welcome', purpose: null, process: null, completion: null, usage: 'compact', developerTools: false })
+  expect(values['ui-settings']).toEqual({ enabled: false })
+  expect(values['ui-chat']).toEqual({ transcriptView: 'compact', performanceUsage: 'detailed', linkOpening: 'sidebar' })
 }, 60_000)

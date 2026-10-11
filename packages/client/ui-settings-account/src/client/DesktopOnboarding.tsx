@@ -84,7 +84,7 @@ export function DesktopOnboarding({
       : step === 'process' && progress.process !== null ? ({ compact: 'focus_result', standard: 'key_detail', detailed: 'full_process' } as const)[progress.process] : undefined
     track?.('onboarding_page_click', { page_name: pageName, button_name, ...selected_content === undefined ? {} : { selected_content } })
   }
-  const go = (next: 'welcome' | 'credit' | 'purpose' | 'process') => { void update({ step: next }) }
+  const go = (next: 'credit' | 'purpose' | 'process') => { void update({ step: next }) }
   const canRecharge = openPlatformPage !== undefined
   const recharge = () => {
     setDialog(null)
@@ -113,7 +113,7 @@ export function DesktopOnboarding({
           onSelect={(process) => { void update({ process }) }} onComplete={() => { click('next'); void complete('completed') }} />}
         {state.error !== null && <div className={css.status} role="alert">{t('onboardingSaveFailed')}<Button disabled={busy} onClick={() => { void retry() }}>{t('onboardingRetry')}</Button></div>}
         {step !== 'welcome' && <footer className={css.navigation}>
-          <button type="button" disabled={busy} onClick={() => { click('back'); go(step === 'credit' ? 'welcome' : step === 'purpose' ? 'credit' : 'purpose') }}><span className={css.backIcon} style={{ maskImage: `url(${backIcon})` }} aria-hidden="true" />{t('onboardingBack')}</button>
+          {step !== 'credit' && <button type="button" disabled={busy} onClick={() => { click('back'); go(step === 'purpose' ? 'credit' : 'purpose') }}><span className={css.backIcon} style={{ maskImage: `url(${backIcon})` }} aria-hidden="true" />{t('onboardingBack')}</button>}
           <button type="button" disabled={busy} onClick={() => { click('skip'); setDialog(step === 'credit' ? 'credit-skip' : 'skip') }}>{t('onboardingSkip')}</button>
         </footer>}
       </section>

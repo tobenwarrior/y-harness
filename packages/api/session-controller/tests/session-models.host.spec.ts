@@ -6,6 +6,8 @@
  */
 
 import { describe, expect, it, vi, onTestFinished } from 'vitest'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -167,6 +169,30 @@ async function harness(logged?: {
 function expectValue<T>(result: { ok: true; value: T } | { ok: false }): T {
   if (!result.ok) throw new Error('expected successful response')
   return result.value
+}
+
+async function accountDefaultHarness(models: readonly LlmModelInfo[] = [
+  { provider: 'deepseek-account', id: 'first-model', name: 'First' },
+  { provider: 'deepseek-account', id: 'second-model', name: 'Second' },
+], reasoning: LlmModelReasoningInfo | null = REASONING, namespace = 'agent-default-model') {
+  const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
+  const configured = await configurationFixture({ hmr: false })
+  let source = configured.ctx
+  if (namespace !== 'default-model') {
+    await source.fiber.dispose()
+    // Use the shipped namespace while retaining the fixture's real Loader and profile writes.
+    const patch = join(configured.profile.dir, 'node_modules', 'test-bundle', 'cordis.patch.yml')
+    writeFileSync(patch, readFileSync(patch, 'utf8').replace('"default-model"', JSON.stringify(namespace)))
+    source = await configured.start()
+  }
+  const { ctx } = await harness(undefined, source)
+  const credentials = { describe: vi.fn(async () => ({ configured: false, writable: true })) }
+  ctx.provide('credentials', credentials as never)
+  const disposeAccount = ctx.llm.registerAdapter(['deepseek-account'], new CatalogAdapter('Account', models, reasoning ?? undefined))
+  const controller = createSessionTestController(ctx, {
+    defaultModelSelection: () => ctx.agentDefaultModel.currentSelection(), cwd: '/tmp',
+  })
+  return { ctx, controller, disposeAccount, credentials }
 }
 
 function registerTextOnly(ctx: Context): void {
@@ -418,34 +444,151 @@ describe('Web session model selection', () => {
     } finally { await ctx.fiber.dispose() }
   })
 
-  it.each([false, true])('account login replaces a saved default only without another API key: %s', async (configuredKey) => {
-    const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
-    const configured = await configurationFixture({ hmr: false })
-    const { ctx } = await harness(undefined, configured.ctx)
-    ctx.effect(() => ctx.llm.registerAdapter(['deepseek-account'], new CatalogAdapter('Account', [
-      { provider: 'deepseek-account', id: 'first-model', name: 'First' },
-      { provider: 'deepseek-account', id: 'second-model', name: 'Second' },
-    ], REASONING)))
-    const describe = vi.fn(async () => ({ configured: configuredKey, writable: true }))
-    ctx.provide('credentials', { describe } as never)
+  it.each([false, true])('account login initializes an unsaved default only without another API key: %s', async (configuredKey) => {
+    const { ctx, controller, credentials } = await accountDefaultHarness()
+    const describe = credentials.describe.mockResolvedValue({ configured: configuredKey, writable: true })
     ctx.effect(() => ctx.llm.registerConfigurableProviders([
       { provider: 'deepseek-account', displayName: 'Account', settingsNs: 'account', settingsPath: [] },
       { provider: 'removed-model-provider', displayName: 'Custom', settingsNs: 'first', settingsPath: ['providers', 'custom'] },
     ]))
-    vi.spyOn(ctx.settings, 'describe').mockReturnValue([{
-      ns: 'first' as never, autoGenerate: false, schema: {}, revision: 0, applies: 'live',
-      value: { providers: { custom: { apiKeyEnv: 'CUSTOM_API_KEY', models: [] } } },
-    }])
-    await ctx.agentDefaultModel.saveSelection({ provider: 'removed', model: 'saved' })
-    const controller = createSessionTestController(ctx, {
-      defaultModelSelection: () => ctx.agentDefaultModel.currentSelection(), cwd: '/tmp',
-    })
+    const readSettings = ctx.settings.describe.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'describe').mockImplementation(options => readSettings(options).map(row => row.ns === 'first'
+      ? { ...row, value: { providers: { custom: { apiKeyEnv: 'CUSTOM_API_KEY', models: [] } } } }
+      : row))
     await controller.initializeDefaultModel()
     expect(describe).toHaveBeenCalledWith('CUSTOM_API_KEY')
     expect(ctx.agentDefaultModel.currentSelection()).toEqual(configuredKey
-      ? { provider: 'removed', model: 'saved' }
+      ? { provider: 'test', model: 'original' }
       : { provider: 'deepseek-account', model: 'first-model', reasoningEffort: 'high' })
     await ctx.fiber.dispose()
+  })
+
+  it.each([
+    { provider: 'local', model: 'local-model' },
+    { provider: 'oauth', model: 'oauth-model' },
+    { provider: 'keyless', model: 'keyless-model' },
+    { provider: 'removed', model: 'saved' },
+  ])('account login retains the saved $provider default without API keys', async (saved) => {
+    const { ctx, controller, disposeAccount } = await accountDefaultHarness()
+    await ctx.agentDefaultModel.saveSelection(saved)
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(saved)
+    disposeAccount()
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(saved)
+  })
+
+  it('initializes and retains a saved default in an aliased profile entry', async () => {
+    const { ctx, controller } = await accountDefaultHarness(undefined, REASONING, 'default-model')
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'deepseek-account', model: 'first-model', reasoningEffort: 'high' })
+    await ctx.agentDefaultModel.saveSelection({ provider: 'local', model: 'aliased-choice' })
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'local', model: 'aliased-choice' })
+  })
+
+  it('retains an unsaved default when another provider key becomes configured during catalog inspection', async () => {
+    const { ctx, controller, credentials } = await accountDefaultHarness()
+    ctx.effect(() => ctx.llm.registerConfigurableProviders([
+      { provider: 'custom', displayName: 'Custom', settingsNs: 'first', settingsPath: [] },
+    ]))
+    const readSettings = ctx.settings.describe.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'describe').mockImplementation(options => readSettings(options).map(row => row.ns === 'first'
+      ? { ...row, value: { apiKeyEnv: 'CUSTOM_API_KEY' } } : row))
+    const listModels = ctx.llm.listModels.bind(ctx.llm)
+    vi.spyOn(ctx.llm, 'listModels').mockImplementation((provider) => {
+      if (provider === 'deepseek-account') credentials.describe.mockResolvedValue({ configured: true, writable: true })
+      return listModels(provider)
+    })
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
+  })
+
+  it.each(['credentials', 'catalog'] as const)('retains a default explicitly saved during %s inspection', async (pendingRead) => {
+    const { ctx, controller, credentials } = await accountDefaultHarness()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    if (pendingRead === 'credentials') {
+      ctx.effect(() => ctx.llm.registerConfigurableProviders([
+        { provider: 'custom', displayName: 'Custom', settingsNs: 'first', settingsPath: [] },
+      ]))
+      const readSettings = ctx.settings.describe.bind(ctx.settings)
+      vi.spyOn(ctx.settings, 'describe').mockImplementation(options => readSettings(options).map(row => row.ns === 'first'
+        ? { ...row, value: { apiKeyEnv: 'CUSTOM_API_KEY' } } : row))
+      credentials.describe.mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return { configured: false, writable: true }
+      })
+    } else {
+      const listModels = ctx.llm.listModels.bind(ctx.llm)
+      vi.spyOn(ctx.llm, 'listModels').mockImplementation(async (provider) => {
+        if (provider === 'deepseek-account') { entered.resolve(undefined); await release.promise }
+        return listModels(provider)
+      })
+    }
+    const initialized = controller.initializeDefaultModel()
+    await entered.promise
+    await ctx.agentDefaultModel.saveSelection({ provider: 'local', model: 'chosen-during-login' })
+    release.resolve(undefined)
+    await initialized
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'local', model: 'chosen-during-login' })
+  })
+
+  it('retains an explicit default whose save is still queued during initialization', async () => {
+    const { ctx, controller } = await accountDefaultHarness()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const edit = ctx.configEditor.edit.bind(ctx.configEditor)
+    vi.spyOn(ctx.configEditor, 'edit').mockImplementationOnce(async (entry, change) => {
+      entered.resolve(undefined)
+      await release.promise
+      return edit(entry, change)
+    })
+    const explicit = ctx.agentDefaultModel.saveSelection({ provider: 'local', model: 'queued-choice' })
+    await entered.promise
+    const initialized = controller.initializeDefaultModel()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    release.resolve(undefined)
+    await Promise.all([explicit, initialized])
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'local', model: 'queued-choice' })
+  })
+
+  it('retains an explicit default committed after the final metadata read', async () => {
+    const { ctx, controller } = await accountDefaultHarness()
+    const replace = ctx.settings.replace.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'replace').mockImplementationOnce(async (ns, section, revision) => {
+      await ctx.agentDefaultModel.saveSelection({ provider: 'local', model: 'chosen-before-commit' })
+      await replace(ns, section, revision)
+    })
+    await controller.initializeDefaultModel()
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'local', model: 'chosen-before-commit' })
+  })
+
+  it('reports a failed default write instead of suppressing a persistence error', async () => {
+    const { ctx, controller } = await accountDefaultHarness()
+    vi.spyOn(ctx.settings, 'replace').mockRejectedValueOnce(new Error('profile write failed'))
+    await expect(controller.initializeDefaultModel()).rejects.toThrow('profile write failed')
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
+  })
+
+  it.each(['initial', 'final'] as const)('does not save an account default when the %s settings read fails', async (failedRead) => {
+    const { ctx, controller } = await accountDefaultHarness()
+    const readSettings = ctx.settings.describe.bind(ctx.settings)
+    const describe = vi.spyOn(ctx.settings, 'describe')
+    if (failedRead === 'final') describe.mockImplementationOnce(readSettings).mockImplementationOnce(readSettings)
+    describe.mockImplementationOnce(() => { throw new Error('settings metadata unavailable') })
+    await expect(controller.initializeDefaultModel()).rejects.toThrow('settings metadata unavailable')
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
+  })
+
+  it('does not save an account default when its settings namespace is missing', async () => {
+    const { ctx, controller } = await accountDefaultHarness()
+    const readSettings = ctx.settings.describe.bind(ctx.settings)
+    vi.spyOn(ctx.settings, 'describe').mockImplementation(options => readSettings(options)
+      .filter(row => row.ns !== 'agent-default-model'))
+    await expect(controller.initializeDefaultModel()).rejects.toMatchObject({ code: 'session/default-model-settings-unavailable' })
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
   })
 
   it('groups successful providers and leaves an unlisted current selection out of the catalog', async () => {
@@ -992,23 +1135,23 @@ describe('Web session model selection', () => {
   })
 })
 
-it('initializes the account model without reasoning metadata and rejects an empty account catalog', async () => {
-  const { configurationFixture } = await import('../../../settings/settings/tests/configuration-fixture.ts')
-  const configured = await configurationFixture({ hmr: false })
-  const { ctx } = await harness(undefined, configured.ctx)
-  ctx.provide('credentials', { describe: vi.fn() } as never)
-  const dispose = ctx.llm.registerAdapter(['deepseek-account'], new CatalogAdapter('Account', [
+it('initializes the account model without reasoning metadata and retains it on repeat login', async () => {
+  const { ctx, controller, disposeAccount } = await accountDefaultHarness([
     { provider: 'deepseek-account', id: 'basic', name: 'Basic' },
-  ]))
-  const controller = createSessionTestController(ctx, {
-    defaultModelSelection: () => ctx.agentDefaultModel.currentSelection(), cwd: '/tmp',
-  })
+  ], null)
   await controller.initializeDefaultModel()
   expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'deepseek-account', model: 'basic' })
-  dispose()
+  disposeAccount()
+  await controller.initializeDefaultModel()
+  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'deepseek-account', model: 'basic' })
+})
+
+it('rejects an empty account catalog without changing an unsaved default', async () => {
+  const { ctx, controller } = await accountDefaultHarness([])
   await expect(controller.initializeDefaultModel()).rejects.toMatchObject({
     code: 'session/provider-models-unavailable', details: { provider: 'deepseek-account' },
   })
+  expect(ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test', model: 'original' })
 })
 
 it.each([new Error('catalog disconnected'), 'catalog disconnected'])('reports catalog rejection as an unavailable selection: %s', async (failure) => {

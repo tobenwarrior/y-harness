@@ -2183,7 +2183,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote async initializeDefaultModel(): Promise<void>',
-        description: 'Select the first available account model after login when no provider API key is configured.',
+        description: 'Select the first available account model after login without a saved default or provider API key.',
         parameters: [],
         returns: 'after saving the first available model or retaining the existing default.',
       },

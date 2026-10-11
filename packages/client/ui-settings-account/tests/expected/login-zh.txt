@@ -1,1 +1,1 @@
-开始使用登录 DeepSeek 账号，或添加 API Key，即可开始使用。你的项目和文件保存在本地。添加 API Key登录
+连接 DeepSeek你可以登录 DeepSeek 账号并使用可用额度调用账号模型，或添加 API Key。不登录也可以使用本地项目和文件。添加 API Key登录

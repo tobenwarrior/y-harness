@@ -4,7 +4,6 @@ import type { HostObservable, InjectFace, PropsLocale, PropsRuntime } from '@dee
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { AccountSnapshot } from './AccountSection.tsx'
 import type { DesktopOnboardingProps, DesktopOnboardingState } from './onboarding-contract.ts'
-import { OnboardingSurface } from './OnboardingSurface.tsx'
 import { DesktopOnboarding } from './DesktopOnboarding.tsx'
 
 /** Observable sources and actions supplied by the account plugin's apply closure. */
@@ -53,8 +52,7 @@ export function DesktopOnboardingEntry({ useOnboarding, useAccount, ...props }:
   }, [exiting])
 
   const displayed = state.visible ? state : exiting || pendingCompletion ? lastVisible : null
-  if (displayed === null) return state.status === 'loading'
-    ? <OnboardingSurface><div role="status">{props.t('onboardingLoading')}</div></OnboardingSurface> : null
+  if (displayed === null) return null
   return <DesktopOnboarding {...props} locale={locale} state={pendingCompletion ? { ...displayed, status: 'saving' } : displayed}
     account={account} exiting={exiting} />
 }

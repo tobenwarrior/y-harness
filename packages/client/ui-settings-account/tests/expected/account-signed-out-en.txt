@@ -1,1 +1,1 @@
-You are not signed in to Y HarnessSign in to Y Harness to get your dedicated API KeySign in
+DeepSeek account not connectedConnect a DeepSeek account for model access, or configure another provider in Settings → Models.Sign in
