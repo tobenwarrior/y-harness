@@ -1,1 +1,1 @@
-Sign outCould not check running tasks. Signing out may interrupt tasks using this account. Sign out now?CancelSign out
+Disconnect DeepSeekCould not check running tasks. Disconnecting DeepSeek may interrupt tasks using this provider. Disconnect now?CancelDisconnect DeepSeek

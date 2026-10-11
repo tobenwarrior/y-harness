@@ -1,1 +1,1 @@
-DeepSeek account not connectedConnect a DeepSeek account for model access, or configure another provider in Settings → Models.Sign in
+DeepSeek connectionNot connectedOptional: connect your DeepSeek account to use its available credits. Other providers and local features remain available.Connect DeepSeek

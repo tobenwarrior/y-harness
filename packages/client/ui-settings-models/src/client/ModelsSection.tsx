@@ -324,6 +324,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
         <button type="button" className={styles['secondaryButton']} onClick={() => { void controller.load() }}>
           {t('retry')}
         </button>
+        {renderSlot('settings.models.footer', {})}
       </div>
     )
   }

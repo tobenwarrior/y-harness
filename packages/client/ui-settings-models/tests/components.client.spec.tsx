@@ -2,11 +2,12 @@
 /** Section, setup-card, and hand-written editor behavior over a scripted wire face. */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ReactNode } from 'react'
 import Schema from '@deepseek-ai/schemastery'
 import { Context } from '@deepseek-ai/cordis'
 import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type {
-  CredentialInfo, RemoteResult, SettingsNamespaceView,
+  CredentialInfo, LlmConfigurableProvider, RemoteResult, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
@@ -196,7 +197,7 @@ function scriptedFace(overrides: {
         { id: 'deepseek-official', name: 'DeepSeek' },
         { id: 'openai', name: 'openai' },
       ]))),
-      listConfigurableProviders: vi.fn(() => Promise.resolve(remoteOk([
+      listConfigurableProviders: vi.fn((): Promise<RemoteResult<LlmConfigurableProvider[]>> => Promise.resolve(remoteOk([
         { provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: 'llm-deepseek', settingsPath: [], active: true },
         { provider: 'openai', displayName: 'openai', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'openai'], active: true },
         { provider: 'anthropic', displayName: 'anthropic', settingsNs: 'llm-pi-ai', settingsPath: ['providers', 'anthropic'], active: false },
@@ -265,8 +266,8 @@ function operationsWith(face: object): ModelsOperations {
 type RenderSlotCall = [name: string, owner: Record<string, unknown>, opts?: { entryKey?: string }]
 
 /** Child-slot dispatch stub: records every seat occurrence, renders nothing. */
-function stubRenderSlot() {
-  return vi.fn((..._call: RenderSlotCall) => null)
+function stubRenderSlot(footer: ReactNode = null) {
+  return vi.fn((...call: RenderSlotCall) => call[0] === 'settings.models.footer' ? footer : null)
 }
 
 /** The provider-card seat dispatches a stub recorded, as (route id, configured, keyConfigured, entryKey). */
@@ -283,13 +284,13 @@ function cardSeatCalls(
     ])
 }
 
-async function mountFace(scripted: ReturnType<typeof scriptedFace>) {
+async function mountFace(scripted: ReturnType<typeof scriptedFace>, footer: ReactNode = null) {
   const { face, update, mutate, set, unset } = scripted
   const ctx = ctxWith(face)
   const mirror = new SettingsDescribeMirror(ctx)
   const controller = new ModelsSettingsStore(ctx, settingsSchema, mirror)
   await controller.load()
-  const renderSlot = stubRenderSlot()
+  const renderSlot = stubRenderSlot(footer)
   const injected: ModelsSectionProps = {
     controller,
     useSnapshot: bindSnapshotSelector(controller.store),
@@ -331,6 +332,18 @@ async function mountDeepSeekCard(overrides: Parameters<typeof scriptedFace>[0] =
 }
 
 describe('ModelsSection', () => {
+  it('keeps optional provider connections available when model discovery fails', async () => {
+    const scripted = scriptedFace()
+    scripted.face.llm.listConfigurableProviders.mockResolvedValue({
+      ok: false, error: new RemoteError('gateway/internal', 'Provider directory offline', {}),
+    })
+    await mountFace(scripted, <button type="button">Connect optional provider</button>)
+    expect(screen.getByText(`${en.loadFailed}: Provider directory offline`)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.retry })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Connect optional provider' })).toBeTruthy()
+    expect(scripted.face.credentials.set).not.toHaveBeenCalled()
+  })
+
   it('hides the add action when no settings namespace can open an editor', async () => {
     const scripted = scriptedFace()
     scripted.face.settings.describe.mockResolvedValue(remoteOk({ writable: true, hasDocument: false, namespaces: [] }))

@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-11-provider-only-desktop-ui.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-11-provider-only-desktop-ui.md
+/agent-note-provider-only-desktop-account-ui:
+  en: 790e27816def7da0
+  zh: ef69243306623c47
+/agent-note-provider-only-desktop-account-ui/problem:
+  en: 5e952069267e63fb
+  zh: 57fdd352936b0d47
+/agent-note-provider-only-desktop-account-ui/decision:
+  en: c6b272b608402cf5
+  zh: a4538701fc957949
+/agent-note-provider-only-desktop-account-ui/alternatives-considered:
+  en: 1c23f0558fd40fc1
+  zh: 7784a6eaa49d82bf
+/agent-note-provider-only-desktop-account-ui/consequences:
+  en: d7dc427aae5b9fcc
+  zh: c21e45c224b0475f

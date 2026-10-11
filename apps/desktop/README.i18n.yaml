@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write apps/desktop/README.md
 /deepseek-harness-desktop:
-  en: bf80cfc07b84dabb
-  zh: 739b391ede601f66
+  en: 58686e2f7397a0fd
+  zh: 5aeb122f2ea0401a
 /deepseek-harness-desktop/terminal-command:
   en: bef92953c237363f
   zh: d21d6effd21b8c00
@@ -36,8 +36,8 @@
   en: addaae1efad1e479
   zh: 97fad6d09e55362b
 /deepseek-harness-desktop/develop/account-free-startup:
-  en: 5dcf51fafcd916c4
-  zh: 22462c66904be7c8
+  en: 17a69188e28bd9f5
+  zh: faf6efce9c3a49a3
 /deepseek-harness-desktop/develop/legacy-welcome-renderer:
   en: dde08f9b531fdbf2
   zh: d1b252bc9dde393a
@@ -63,20 +63,20 @@
   en: 8efe3498dbe8686d
   zh: a88c16f20a9430f3
 /deepseek-harness-desktop/updates:
-  en: a07218c24559fe7f
-  zh: 1a89f7d90a257c98
+  en: e4af7b05273a028b
+  zh: 134562f7fa55b2c0
 /deepseek-harness-desktop/updates/mandatory-update-policy:
   en: c00a0e7d32056ba9
   zh: a76dae44cb513d6f
 /deepseek-harness-desktop/updates/local-updater-qualification:
-  en: bc50fd8a4d96c227
-  zh: fb0a6ce80c31cda6
+  en: 5323bd4dc09a6c8e
+  zh: b2a7ff2d02b5bb27
 /deepseek-harness-desktop/low-level-development-overrides:
   en: 0b225f914142ef0b
   zh: 9ffd07768d37824e
 /deepseek-harness-desktop/known-limitations:
-  en: e8dc37d64748a8bf
-  zh: 5a8a5a16b1a08841
+  en: fc7f01f6cc88a6e1
+  zh: 6cbef0d23c94bcda
 /deepseek-harness-desktop/dev-note:
   en: 8e26b460ba31f21b
   zh: fbcd0307b3867125
