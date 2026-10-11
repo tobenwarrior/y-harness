@@ -1,4 +1,5 @@
 import { ChildProcess } from 'node:child_process'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startCodexProcess } from '../src/codex-backend-process.ts'
@@ -47,8 +48,8 @@ describe('Codex child process protocol lifetime', () => {
       expect(processBoundary.spawn.mock.calls[0]?.[0]).toBe(options.nodePath)
       expect(processBoundary.spawn.mock.calls[0]?.[2]).toMatchObject({ cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: {
         PATH: '/fixture:/usr/bin:/bin', HOME: options.shellHome, CODEX_HOME: options.home,
-        XDG_CONFIG_HOME: '/fixture/shell/.config', XDG_CACHE_HOME: '/fixture/shell/.cache',
-        ZDOTDIR: options.shellHome, TMPDIR: '/fixture/shell/tmp', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+        XDG_CONFIG_HOME: join(options.shellHome, '.config'), XDG_CACHE_HOME: join(options.shellHome, '.cache'),
+        ZDOTDIR: options.shellHome, TMPDIR: join(options.shellHome, 'tmp'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
       } })
       f.peer.notify('initialized')
       expect(f.frames).toContainEqual({ jsonrpc: '2.0', method: 'initialized' })
