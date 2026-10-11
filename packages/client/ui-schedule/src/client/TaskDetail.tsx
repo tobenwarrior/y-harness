@@ -5,7 +5,7 @@ import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconChevronUpOutlineRegular,
-  IconClockOutlineRegular, IconCloseOutlineRegular,
+  IconCloseOutlineRegular,
   IconEllipsisOutlineRegular, IconTrashOutlineRegular, Modal, Pill, ReferenceIconRegular, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -18,6 +18,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { CatalogFeedback } from './CatalogFeedback.tsx'
 import { IconCalendarOutlineRegular } from './CalendarIcon.tsx'
 import { ClockPicker } from './ClockPicker.tsx'
+import { ClockTrigger } from './ClockTrigger.tsx'
 import { DatePicker } from './DatePicker.tsx'
 import { DeliveryHistory, type DeliveryHistoryInjected } from './DeliveryHistory.tsx'
 import type { CatalogDeleteOutcome, CatalogSnapshot } from './catalog-source.ts'
@@ -1759,22 +1760,10 @@ function RuleCard({
               timeRef.current?.focus()
             })
           }}>
-            <button
-              ref={timeRef}
-              id={rowId('time')}
-              type="button"
-              className={clsx(css.ruleInput, css.ruleControl, css.pickerTrigger)}
-              data-yh-terminal="control"
-              disabled={disabled}
-              aria-label={t('timing.time')}
-              aria-haspopup="dialog"
-              aria-expanded={timeOpen}
-              aria-describedby={clockHint === undefined ? undefined : rowId('time-hint')}
-              onClick={() => { setTimeOpen(open => !open) }}
-            >
-              <span>{secondPrecision(shown.draft.time)}</span>
-              <IconClockOutlineRegular className={css.pickerIcon} />
-            </button>
+            <ClockTrigger buttonRef={timeRef} id={rowId('time')} disabled={disabled}
+              label={t('timing.time')} expanded={timeOpen}
+              descriptionId={clockHint === undefined ? undefined : rowId('time-hint')}
+              value={secondPrecision(shown.draft.time)} onToggle={() => { setTimeOpen(open => !open) }} />
             <ClockPicker
               open={timeOpen}
               anchorRef={timeRef}
@@ -2120,21 +2109,9 @@ function CronRows({ task, disabled, expression, timeZone, hintId, onEditExpressi
           timeRef.current?.focus()
         })
       }}>
-        <button
-          ref={timeRef}
-          id={rowId('time')}
-          type="button"
-          className={clsx(css.ruleInput, css.ruleControl, css.pickerTrigger)}
-          data-yh-terminal="control"
-          disabled={disabled}
-          aria-label={t('timing.time')}
-          aria-haspopup="dialog"
-          aria-expanded={timeOpen}
-          onClick={() => { setTimeOpen(open => !open) }}
-        >
-          <span>{clock}</span>
-          <IconClockOutlineRegular className={css.pickerIcon} />
-        </button>
+        <ClockTrigger buttonRef={timeRef} id={rowId('time')} disabled={disabled}
+          label={t('timing.time')} expanded={timeOpen} value={clock}
+          onToggle={() => { setTimeOpen(open => !open) }} />
         <ClockPicker
           open={timeOpen}
           anchorRef={timeRef}
