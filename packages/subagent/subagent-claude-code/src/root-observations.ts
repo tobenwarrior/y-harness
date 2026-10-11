@@ -1,7 +1,8 @@
 /** Exact direct SDK identities and allowlisted project facts, without native-turn invention. */
-import { isAbsolute, relative, resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { brandString } from '@deepseek-ai/dsh-brand'
+import { isNativeProcedurePath } from '@deepseek-ai/dsh-util-values/native-procedure-path'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId, SkillClaudeMessageId, SkillClaudeToolUseId } from '@deepseek-ai/dsh-skill-library/types'
 
@@ -26,9 +27,7 @@ function procedure(name: string, input: unknown, root?: string): SkillLearningNa
     && /^(?:(?:pnpm|npm) run (?:test|lint|typecheck|build)|npm test|pnpm exec vitest run|(?:python -m )?pytest|cargo (?:test|check)|go test \.\/\.\.\.|git diff --check)$/.test(input.command)) return { kind: 'check', command: input.command }
   if (name !== 'Read' || typeof input.file_path !== 'string' || input.offset !== undefined || input.limit !== undefined) return undefined
   const path = relative(root, resolve(root, input.file_path)).replace(/\\/g, '/')
-  if (isAbsolute(path) || path.length > 256
-    || !/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|py|rs|go|yml|yaml|toml)$/.test(path)
-    || path.split('/').some(part => part.startsWith('.') || /secret|credential|password|token|auth/i.test(part))) return undefined
+  if (!isNativeProcedurePath(path)) return undefined
   return { kind: 'read', path }
 }
 

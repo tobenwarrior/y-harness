@@ -53,6 +53,10 @@ const snapshot = snapshotJsonValue(input) as JsonValue
 
 在封闭可辨识联合类型的 default 分支中使用 `assertNever(value, context?)`。新增变体会让每个穷尽 switch 在 TypeScript 编译时失败；如果某个运行时值逃过了声明类型，该函数会抛出带可选上下文标签的错误。
 
+### 检查原生流程文件名
+
+`@deepseek-ai/dsh-util-values/native-procedure-path` 导出的 `isNativeProcedurePath()` 检查读取方已规范化的项目相对文件名。它接受最多 256 个字符且使用受支持源文件扩展名的路径，拒绝绝对路径形式、隐藏路径分量及类似敏感信息的名称。此纯函数不检查文件系统，也不授予访问权限。原生提供方可以共用它，而无需依赖可选的 Skill library。
+
 -----
 
 <a id="understand-the-implementation"></a>
