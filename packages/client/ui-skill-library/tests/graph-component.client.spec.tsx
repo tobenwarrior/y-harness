@@ -8,7 +8,7 @@ import { SkillGraph } from '../src/client/SkillGraph.tsx'
 import type { SkillLibraryPageProps } from '../src/client/SkillLibraryPage.tsx'
 import { en } from '../src/client/locales.ts'
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 const dictionary = { ...commonEn, ...en }
 const t: SkillLibraryPageProps['t'] = (key, params) => Object.entries(params ?? {}).reduce(
   (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), dictionary[key])
@@ -32,6 +32,22 @@ function fixture(selectedId: SkillLibraryId | null = null) {
   const visibleLabels = () => graph.querySelectorAll('[data-graph-label][data-label-visible="true"]').length
   return { ...result, graph, visibleLabels, onSelect, onProject }
 }
+
+function pointer(target: Element, type: string, pointerId: number, x: number, y: number, button = 0): void {
+  // jsdom does not supply PointerEvent; React reads these pointer fields from the native event.
+  const event = new MouseEvent(type, { bubbles: true, button, clientX: x, clientY: y })
+  Object.defineProperty(event, 'pointerId', { value: pointerId })
+  fireEvent(target, event)
+}
+
+function viewport(graph: Element): [number, number, number] {
+  const value = graph.querySelector('[data-graph-transform]')?.getAttribute('transform')
+  const match = value?.match(/^translate\(([^ ]+) ([^)]+)\) scale\(([^)]+)\)$/)
+  if (match === null || match === undefined) throw new Error('Expected a graph viewport transform')
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+const bounds = { x: 0, y: 0, left: 0, top: 0, right: 360, bottom: 240, width: 360, height: 240, toJSON: () => ({}) }
 
 describe('skill graph canvas', () => {
   it('keeps navigation in a floating overlay and opens the display explanation deliberately', () => {
@@ -167,5 +183,103 @@ describe('skill graph canvas', () => {
     expect(connected).not.toContain('Filter project Project B')
     fireEvent.pointerLeave(screen.getByRole('button', { name: 'Open skill Workflow 0' }))
     expect(state.graph.querySelectorAll('[data-graph-connected="true"]')).toHaveLength(0)
+  })
+
+  it('pans in every keyboard direction and ignores keys belonging to a node', () => {
+    const state = fixture()
+    fireEvent.keyDown(state.graph, { key: 'ArrowLeft' })
+    expect(viewport(state.graph)).toEqual([40, 0, 1])
+    fireEvent.keyDown(state.graph, { key: 'ArrowUp' })
+    expect(viewport(state.graph)).toEqual([40, 40, 1])
+    fireEvent.keyDown(state.graph, { key: 'ArrowDown' })
+    fireEvent.keyDown(state.graph, { key: 'ArrowRight' })
+    expect(viewport(state.graph)).toEqual([0, 0, 1])
+    fireEvent.keyDown(state.graph, { key: 'Tab' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Open skill Workflow 1' }), { key: '+' })
+    expect(viewport(state.graph)).toEqual([0, 0, 1])
+    expect(state.onSelect).not.toHaveBeenCalled()
+    fireEvent.keyDown(state.graph, { key: '=' })
+    expect(viewport(state.graph)[2]).toBe(1.25)
+  })
+
+  it('zooms around the pointer in a letterboxed viewport and ignores unmeasured canvases', () => {
+    const state = fixture()
+    const rectangle = vi.spyOn(state.graph, 'getBoundingClientRect').mockReturnValue({ ...bounds, width: 400, right: 400 })
+    fireEvent.wheel(state.graph, { deltaY: -1, clientX: 200, clientY: 120 })
+    const [x, y, scale] = viewport(state.graph)
+    expect(x).toBeCloseTo(-36)
+    expect(y).toBeCloseTo(-24)
+    expect(scale).toBeCloseTo(1.1)
+    fireEvent.wheel(state.graph, { deltaY: 1, clientX: 200, clientY: 120 })
+    expect(viewport(state.graph)[0]).toBeCloseTo(0)
+    expect(viewport(state.graph)[1]).toBeCloseTo(0)
+    expect(viewport(state.graph)[2]).toBeCloseTo(1)
+    const before = viewport(state.graph)
+    rectangle.mockReturnValue({ ...bounds, width: 0, right: 0 })
+    fireEvent.wheel(state.graph, { deltaY: -1 })
+    rectangle.mockReturnValue({ ...bounds, height: 0, bottom: 0 })
+    fireEvent.wheel(state.graph, { deltaY: -1 })
+    expect(viewport(state.graph)).toEqual(before)
+  })
+
+  it('owns a scaled canvas drag until pointer completion or cancellation', () => {
+    const state = fixture()
+    const capture = vi.fn()
+    Object.defineProperty(state.graph, 'setPointerCapture', { value: capture })
+    const rectangle = vi.spyOn(state.graph, 'getBoundingClientRect').mockReturnValue(bounds)
+    pointer(state.graph, 'pointermove', 7, 20, 30)
+    pointer(state.graph, 'pointerdown', 7, 100, 100, 1)
+    expect(capture).not.toHaveBeenCalled()
+    pointer(state.graph, 'pointerdown', 7, 100, 100)
+    expect(capture).toHaveBeenCalledExactlyOnceWith(7)
+    pointer(state.graph, 'pointermove', 8, 120, 130)
+    expect(viewport(state.graph)).toEqual([0, 0, 1])
+    rectangle.mockReturnValue({ ...bounds, width: 0, right: 0 })
+    pointer(state.graph, 'pointermove', 7, 120, 130)
+    expect(viewport(state.graph)).toEqual([0, 0, 1])
+    rectangle.mockReturnValue(bounds)
+    pointer(state.graph, 'pointermove', 7, 120, 130)
+    expect(viewport(state.graph)).toEqual([40, 60, 1])
+    pointer(state.graph, 'pointercancel', 7, 120, 130)
+    pointer(state.graph, 'pointermove', 7, 200, 200)
+    expect(viewport(state.graph)).toEqual([40, 60, 1])
+    pointer(state.graph, 'pointerdown', 9, 120, 130)
+    pointer(state.graph, 'pointermove', 9, 130, 120)
+    expect(viewport(state.graph)).toEqual([60, 40, 1])
+    pointer(state.graph, 'pointerup', 9, 130, 120)
+    pointer(state.graph, 'pointermove', 9, 200, 200)
+    expect(viewport(state.graph)).toEqual([60, 40, 1])
+  })
+
+  it('shows shared, unknown-project, and unassigned skills without inventing relationships', () => {
+    const onSelect = vi.fn(), onProject = vi.fn()
+    const sample = [
+      { ...items[0]!, scope: 'shared' as const, projectIds: [], references: [{ target: 'unresolved', kind: 'skill' as const }] },
+      { ...items[1]!, projectIds: ['unknown'], references: [] },
+      { ...items[2]!, projectIds: [], references: [] },
+    ]
+    const state = render(<SkillGraph items={sample} projects={projects} selectedId={null}
+      onSelect={onSelect} onProject={onProject} t={t} />)
+    const graph = screen.getByRole('application', { name: en.graphLabel })
+    expect(graph.querySelectorAll('[data-graph-node]')).toHaveLength(5)
+    expect(graph.querySelectorAll('[data-label-visible="true"]')).toHaveLength(5)
+    expect(graph.querySelectorAll('[data-graph-layer="links"] line')).toHaveLength(0)
+    expect(screen.getByRole('button', { name: 'Open skill Workflow 2' }).hasAttribute('data-graph-group')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Filter project Shared skills' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter project unknown' }))
+    expect(onProject.mock.calls).toEqual([['shared'], ['unknown']])
+    fireEvent.click(screen.getByRole('button', { name: 'Open skill Workflow 2' }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('skill:2')
+    fireEvent.keyDown(graph, { key: '+' })
+    state.rerender(<SkillGraph items={sample.slice(0, 2)} projects={projects} selectedId={null}
+      onSelect={onSelect} onProject={onProject} t={t} />)
+    expect(viewport(graph)).toEqual([0, 0, 1])
+  })
+
+  it('highlights both ends of an outgoing explicit link', () => {
+    fixture()
+    fireEvent.pointerEnter(screen.getByRole('button', { name: 'Open skill Workflow 1' }))
+    expect(screen.getByRole('button', { name: 'Open skill Workflow 0' }).getAttribute('data-graph-connected')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Open skill Workflow 2' }).getAttribute('data-graph-connected')).toBe('false')
   })
 })
