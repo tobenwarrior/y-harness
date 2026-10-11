@@ -34,7 +34,20 @@ describe('dsh badge assembled snapshot', () => {
     expect(enabled.stderr).toBe('')
     expect(disabledSnapshot).toMatchInlineSnapshot(`
       {
-        "catalog": null,
+        "catalog": [
+          {
+            "text": "<system-reminder>
+      This task-relevant skill shortlist contains metadata only. It replaces earlier suggestions; additional skills may exist.
+      <available_skills>
+      </available_skills>
+      No task-relevant summary matched this query. This does not mean that no skills exist.
+      Where the Harness \`skill\` tool is available, load full instructions for an applicable skill before acting. An exact user-requested name may be loaded even when omitted from this shortlist.
+      Where the Harness \`search_skills\` tool is available, use a focused metadata query to discover omitted matches.
+      A user-explicit <skill_content> block is already loaded; follow it without loading the same skill again. Native runtimes own their tools and skill catalogs.
+      </system-reminder>",
+            "type": "text",
+          },
+        ],
         "result": {
           "content": [
             {
@@ -55,14 +68,13 @@ describe('dsh badge assembled snapshot', () => {
         "catalog": [
           {
             "text": "<system-reminder>
-      A skill is a reusable set of task-specific instructions. The following skills are available in this session:
-
+      This task-relevant skill shortlist contains metadata only. It replaces earlier suggestions; additional skills may exist.
       <available_skills>
       - \`dsh-badge\`: Add the official “powered by dsh” badge to documents, pull requests, merge requests, and other content produced with Y Harness. Use whenever creating a pull request or merge request. Also use when the user asks for a dsh badge, powered-by-dsh attribution, or a reusable dsh badge asset or snippet.
       </available_skills>
-
-      If the user names a skill, or the task clearly matches a skill's description, call the \`skill\` tool with the exact skill name before taking task actions. Load all applicable skills, then follow their full instructions. This catalog contains summaries only; do not infer or follow a skill's instructions until it has been loaded.
-      A user may also invoke a skill directly; its <skill_content> block then appears in this conversation. Follow it, and do not call the \`skill\` tool again for that skill.
+      Where the Harness \`skill\` tool is available, load full instructions for an applicable skill before acting. An exact user-requested name may be loaded even when omitted from this shortlist.
+      Where the Harness \`search_skills\` tool is available, use a focused metadata query to discover omitted matches.
+      A user-explicit <skill_content> block is already loaded; follow it without loading the same skill again. Native runtimes own their tools and skill catalogs.
       </system-reminder>",
             "type": "text",
           },

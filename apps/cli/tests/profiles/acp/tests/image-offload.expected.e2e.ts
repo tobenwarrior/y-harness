@@ -17,6 +17,17 @@ const AGENT = {
 const IMAGE_OFFLOAD_CONFIG = fileURLToPath(new URL('./fixtures/image-offload.cordis.yml', import.meta.url))
 const SNAPSHOTS_DIR = fileURLToPath(new URL('../../../../../../snapshots/acp/', import.meta.url))
 const READ_IMAGE_WORKSPACE = fileURLToPath(new URL('../../../../../../snapshots/session/read-image/workspace/', import.meta.url))
+const emptySkillCatalog = [
+  '<system-reminder>',
+  'This task-relevant skill shortlist contains metadata only. It replaces earlier suggestions; additional skills may exist.',
+  '<available_skills>',
+  '</available_skills>',
+  'No task-relevant summary matched this query. This does not mean that no skills exist.',
+  'Where the Harness `skill` tool is available, load full instructions for an applicable skill before acting. An exact user-requested name may be loaded even when omitted from this shortlist.',
+  'Where the Harness `search_skills` tool is available, use a focused metadata query to discover omitted matches.',
+  'A user-explicit <skill_content> block is already loaded; follow it without loading the same skill again. Native runtimes own their tools and skill catalogs.',
+  '</system-reminder>',
+].join('\n')
 
 it('pins Messages Files offload and inline fallback in assembled requests', async () => {
   const filesPath = '/v1/files'
@@ -152,6 +163,7 @@ it('pins Messages Files offload and inline fallback in assembled requests', asyn
       fileImage,
       { type: 'text', text: ', then use read_image on red.png and reply with DONE.' },
       { type: 'text', text: runtimeContext },
+      { type: 'text', text: emptySkillCatalog },
     ])
 
     const followup = requests[1]?.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>
@@ -203,6 +215,7 @@ it('pins Messages Files offload and inline fallback in assembled requests', asyn
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } },
       { type: 'text', text: ', then use read_image on red.png and reply with DONE.' },
       { type: 'text', text: runtimeContext },
+      { type: 'text', text: emptySkillCatalog },
     ])
   } finally {
     await new Promise<void>(resolve => server.close(() => { resolve() }))
