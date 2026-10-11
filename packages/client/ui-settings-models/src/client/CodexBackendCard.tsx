@@ -6,6 +6,7 @@ import type { CodexBackendModelView, CodexBackendView } from '@deepseek-ai/dsh-a
 import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
+import { ConnectionSummary } from './ConnectionSummary.tsx'
 export function CodexBackendCard({ operations, readOnly = false, onSaved, t, open = true }: {
   operations: ModelsOperations
   readOnly?: boolean
@@ -76,14 +77,8 @@ export function CodexBackendCard({ operations, readOnly = false, onSaved, t, ope
   const run = async (action: () => Promise<void>): Promise<void> => { setBusy(true); setMessage(''); try { await action() } catch (error) { setMessage(error instanceof Error ? error.message : t('codexFailed')) } finally { setBusy(false) } }
   const refresh = async (): Promise<void> => { setView(await backend.refresh()); const catalog = await backend.models(); setModels(catalog); setModelId(current => catalog.some(model => model.id === current) ? current : catalog[0]?.id ?? ''); onSaved() }
   if (!open) {
-    return <div className={styles['rowCard']}>
-      <div className={styles['rowHead']}>
-        <span className={styles['rowIdentity']}>
-          <span className={styles['rowName']}>{t('codexTitle')}</span>
-          <Tag tone={view.connected ? 'success' : 'outline'}>{t(view.connected ? 'statusConnected' : 'statusSignedOut')}</Tag>
-        </span>
-      </div>
-    </div>
+    return <ConnectionSummary title={t('codexTitle')} connected={view.connected}
+      status={t(view.connected ? 'statusConnected' : 'statusSignedOut')} />
   }
   return <div className={styles['editor']}>
     <div className={styles['editorHeader']}>

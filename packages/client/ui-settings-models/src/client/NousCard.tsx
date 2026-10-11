@@ -9,6 +9,7 @@ import { countCopy, starterModels } from './nous-models.ts'
 import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
+import { ConnectionSummary } from './ConnectionSummary.tsx'
 
 function jsonObject(value: JsonValue | undefined): Record<string, JsonValue> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
@@ -189,14 +190,8 @@ export function NousCard(props: {
   // reachable: a grant cleared locally still owns the models it published.
   const savedCount = savedNousModels(namespace).length
   if (!open) {
-    return <div className={styles['rowCard']}>
-      <div className={styles['rowHead']}>
-        <span className={styles['rowIdentity']}>
-          <span className={styles['rowName']}>{t('nousTitle')}</span>
-          <Tag tone={connected ? 'success' : 'outline'}>{t(connected ? 'statusConnected' : 'statusSignedOut')}</Tag>
-        </span>
-      </div>
-    </div>
+    return <ConnectionSummary title={t('nousTitle')} connected={connected}
+      status={t(connected ? 'statusConnected' : 'statusSignedOut')} />
   }
   return <div className={styles['editor']}>
     <div className={styles['editorHeader']}>
