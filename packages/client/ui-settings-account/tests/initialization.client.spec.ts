@@ -50,7 +50,7 @@ it.each(['accepted', 'refused', 'disconnected', 'pending'] as const)('initialize
       $stream: () => ({
         signal: abort.signal, dispose: () => { abort.abort(); release.resolve(undefined) },
         async *[Symbol.asyncIterator]() {
-          for (const value of frames) yield { value, accept: () => {
+          for (const value of frames) yield { value, generation: 1, accept: () => {
             const snapshot = operations?.hooks.account.getSnapshot()
             observed.push({ status: snapshot?.view?.status, failed: snapshot?.failed })
             if (value.status === 'signed-out') done.resolve(undefined)
