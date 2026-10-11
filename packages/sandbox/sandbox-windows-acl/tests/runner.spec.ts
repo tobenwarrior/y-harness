@@ -556,6 +556,10 @@ function TryOpen([string]$label, [string]$path) {
 }
 TryOpen 'FILE' '${join(granted, 'file.txt')}'
 TryOpen 'NESTED-FILE' '${join(child, 'deep.txt')}'
+'ROOT-DACL: ' + (Get-Acl -LiteralPath '${granted}').Sddl
+'CHILD-DACL: ' + (Get-Acl -LiteralPath '${child}').Sddl
+& whoami.exe /priv
+TryOpen 'ROOT-CONTROL' '${granted}'
 TryOpen 'DIRECTORY' '${child}'
 `
       const result = spawnSync('pwsh', ['-NoLogo', '-NonInteractive', '-NoProfile', '-Command', probe], { encoding: 'utf8', timeout: 60_000 })
