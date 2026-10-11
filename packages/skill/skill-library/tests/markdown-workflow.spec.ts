@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import fs, { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
 import { SkillLibrary, type SkillLibraryStore } from '../src/library.ts'
@@ -95,7 +95,7 @@ describe('managed Markdown workflow', () => {
     const selected = await f.library.learningSource(created.id)
     expect(selected.content).toBe(body)
     expect(selected.raw).toBe(await readFile(created.path, 'utf8'))
-    expect(selected.item.references.some(reference => reference.target.endsWith('/guide.md'))).toBe(true)
+    expect(selected.item.references.some(reference => reference.target === join(dirname(created.path), 'guide.md'))).toBe(true)
     const retrieved = await f.library.retrieve({ query: 'progressive', projectId: 'p' })
     expect(retrieved.every(item => !('content' in item))).toBe(true)
   })
@@ -245,11 +245,11 @@ describe('managed Markdown workflow', () => {
   it('persists verified logical references through schema parsing and restart without loading bodies', async () => {
     const f = await fixture(); const item = (await f.create('durable')).item
     const record = skillLibraryRecord.parse(JSON.parse(JSON.stringify(f.rows.get(item.id))))
-    expect(record.markdownReferences?.references.some(ref => ref.target.endsWith('/guide.md'))).toBe(true)
+    expect(record.markdownReferences?.references.some(ref => ref.target === join(dirname(item.path), 'guide.md'))).toBe(true)
     f.rows.set(item.id, record)
     const restarted = new SkillLibrary(f.options); const opened = vi.spyOn(fs, 'open')
     const inventory = await restarted.list({})
-    expect(inventory.items[0]?.references.some(ref => ref.target.endsWith('/guide.md'))).toBe(true)
+    expect(inventory.items[0]?.references.some(ref => ref.target === join(dirname(item.path), 'guide.md'))).toBe(true)
     expect(opened.mock.calls.filter(([path]) => String(path).includes('.y-topics'))).toEqual([])
     opened.mockRestore()
     await restarted.reviseLearning({ id: item.id, expectedHash: item.contentHash,
@@ -264,11 +264,11 @@ describe('managed Markdown workflow', () => {
     const restarted = new SkillLibrary(f.options)
     const missing = await restarted.list({})
     expect(missing.providers.some(provider => provider.state === 'unavailable')).toBe(true)
-    expect(missing.items[0]?.references.some(ref => ref.target.endsWith('/guide.md'))).toBe(false)
-    expect((await restarted.learningSource(item.id)).item.references.some(ref => ref.target.endsWith('/guide.md'))).toBe(true)
+    expect(missing.items[0]?.references.some(ref => ref.target === join(dirname(item.path), 'guide.md'))).toBe(false)
+    expect((await restarted.learningSource(item.id)).item.references.some(ref => ref.target === join(dirname(item.path), 'guide.md'))).toBe(true)
     expect(f.rows.get(item.id)?.markdownReferences).toBeUndefined()
     await restarted.adopt({ id: item.id, expectedHash: item.contentHash })
-    expect((await restarted.list({})).items[0]?.references.some(ref => ref.target.endsWith('/guide.md'))).toBe(true)
+    expect((await restarted.list({})).items[0]?.references.some(ref => ref.target === join(dirname(item.path), 'guide.md'))).toBe(true)
     const verified = f.rows.get(item.id)!
     f.rows.set(item.id, { ...verified, markdownReferences: { ...verified.markdownReferences!, rootHash: '0'.repeat(64) } })
     expect((await restarted.list({})).providers.some(provider => provider.state === 'unavailable')).toBe(true)

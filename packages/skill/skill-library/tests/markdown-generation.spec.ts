@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ensureMarkdownGeneration, hasMarkdownGenerationLinks, readMarkdownSource } from '../src/markdown-generation.ts'
 import { MARKDOWN_BYTE_CAP, MARKDOWN_SCREEN_CAP } from '../src/markdown-size.ts'
@@ -41,7 +41,7 @@ function reservationName(value: { manifest: { generation: string }; pid: number;
 async function changeReservation(marker: string, update: { pid?: number; owner?: string }) {
   const value = JSON.parse(await fs.readFile(marker, 'utf8')) as { manifest: { generation: string }; pid: number; owner: string; stage: string }
   Object.assign(value, update)
-  const changed = join(marker.slice(0, marker.lastIndexOf('/')), reservationName(value))
+  const changed = join(dirname(marker), reservationName(value))
   await fs.rename(marker, changed)
   await fs.writeFile(changed, `${JSON.stringify(value)}\n`)
   return changed
@@ -518,12 +518,14 @@ describe('immutable Markdown generations', () => {
     const f = await fixture()
     const lstat = fs.lstat.bind(fs)
     let checks = 0
+    let changed = false
     const replace = vi.spyOn(fs, 'lstat').mockImplementation(async (path, options) => {
       const info = await lstat(path, options)
-      if (path === f.store && ++checks === 2) info.ino++
+      if (path === f.store && ++checks === 2) { info.ino = info.ino === 0 ? 1 : 0; changed = true }
       return info
     })
     try { await expect(ensureMarkdownGeneration(f.entry, generation, children)).rejects.toThrow('store changed during publication') } finally { replace.mockRestore() }
+    expect(changed).toBe(true)
     expect(await fs.readdir(f.store)).toEqual([])
     expect(await fs.readFile(f.entry, 'utf8')).toBe(sourceText)
   })
