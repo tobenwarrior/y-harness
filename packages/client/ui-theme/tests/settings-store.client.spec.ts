@@ -1,6 +1,17 @@
 /** Appearance and font-size row stores: snapshot-mirror actions and the revision guards. */
 import { describe, expect, it } from 'vitest'
-import { createAppearanceRowStore, createFontSizeRowStore } from '../src/client/settings-store.ts'
+import { createAppearanceRowStore, createFontSizeRowStore, createStyleRowStore } from '../src/client/settings-store.ts'
+
+it('keeps the latest persisted style when duplicate and older service snapshots arrive', () => {
+  const store = createStyleRowStore().create()
+  store.actions.sync('terminal', 3)
+  expect(store.getSnapshot()).toEqual({ style: 'terminal', revision: 3 })
+  store.actions.sync('default', 2)
+  store.actions.sync('default', 3)
+  expect(store.getSnapshot()).toEqual({ style: 'terminal', revision: 3 })
+  store.actions.sync('default', 4)
+  expect(store.getSnapshot()).toEqual({ style: 'default', revision: 4 })
+})
 
 describe('createAppearanceRowStore', () => {
   it('init shape: system preference with revision at -1', () => {
