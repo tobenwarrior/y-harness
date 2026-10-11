@@ -80,6 +80,23 @@ function surfaceSession(): Session {
   return s
 }
 
+it.each([
+  ['null', null], ['number', 0], ['string', 'invalid'], ['array', []], ['function', () => 0],
+] as const)('rejects %s surface metadata before changing the durable log', (_kind, metadata) => {
+  const session = surfaceSession()
+  const before = session.snapshotEvents()
+  const nextSeq = session.seq
+  const message = replacementMessage('admission fixture')
+  expect(() => {
+    Reflect.apply(session.append.bind(session), session, ['user/message', message, metadata])
+  }).toThrow('carries invalid surface metadata')
+  expect(session.snapshotEvents()).toEqual(before)
+  expect(session.seq).toBe(nextSeq)
+  const accepted = session.append('user/message', message, { surfaceOp: 'append' })
+  expect(accepted.seq).toBe(nextSeq)
+  expect(session.snapshotEvents().at(-1)?.data).toEqual(message)
+})
+
 function sourceEventReferenceEvent(seq: SessionSeq, sourceEventSeqs: unknown): SessionEvent {
   return {
     type: 'user/message',
