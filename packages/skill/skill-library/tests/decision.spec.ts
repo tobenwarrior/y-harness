@@ -6,7 +6,7 @@ import type { GenerateOptions, StreamChunk, LlmProviderInfo } from '@deepseek-ai
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { DecisionAdvisory } from '../src/decision.ts'
-import type { DecisionStore } from '../src/decision.ts'
+import type { DecisionBounds, DecisionStore } from '../src/decision.ts'
 import type { DecisionConfiguration, DecisionRecord } from '../src/decision-types.ts'
 
 const contexts: Context[] = []
@@ -37,7 +37,11 @@ class Adapter extends LlmAdapter {
   }
 }
 const candidates = ['one', 'two'].map(name => ({ id: brandString<SkillLibraryId>(name), name, description: 'Release checks' })) as SkillLibraryItem[]
-async function fixture(mode: 'api' | 'native' = 'api', bounds = {}) {
+const defaultBounds: DecisionBounds = {
+  maxInputBytes: 8000, maxInputTokens: 8000, maxOutputBytes: 4000, maxOutputTokens: 1000,
+  maxOutputChunks: 30, timeoutMs: 100, maxPending: 2, maxRecords: 4,
+}
+async function fixture(mode: 'api' | 'native' = 'api', bounds: Partial<DecisionBounds> = {}) {
   const ctx = new Context(); contexts.push(ctx); await ctx.plugin(LlmRuntime)
   const adapter = new Adapter(mode); const registration = ctx.llm.registerAdapter(['fixture'], adapter)
   let config: DecisionConfiguration = { enabled: false, revision: 0 }
@@ -55,10 +59,7 @@ async function fixture(mode: 'api' | 'native' = 'api', bounds = {}) {
       },
     },
   }
-  const service = new DecisionAdvisory(ctx, store, {
-    maxInputBytes: 8000, maxInputTokens: 8000, maxOutputBytes: 4000, maxOutputTokens: 1000,
-    maxOutputChunks: 30, timeoutMs: 100, maxPending: 2, maxRecords: 4, ...bounds,
-  })
+  const service = new DecisionAdvisory(ctx, store, { ...defaultBounds, ...bounds })
   const run = () => service.select({ query: 'Release', explicitIds: [] }, candidates)
   return { ctx, adapter, registration, records, store, service, run, enable: () => service.configure({ expectedRevision: 0, enabled: true, route: { provider: 'fixture', model: 'small' } }) }
 }
@@ -228,4 +229,141 @@ it('rejects sensitive input, small token admission, excessive chunks, and comple
   output.adapter.chunks = [{ type: 'block-end', index: 1, block: { type: 'reasoning', text: 'Authorization: Bearer synthetic' } }, normalText, normalFinish]
   expect(await output.run()).toEqual(candidates)
   expect([...output.records.values()][0]?.reason).toBe('output-budget'); await output.service.dispose()
+})
+
+it.each(['reasoning', 'tier'] as const)('refuses a newly defaulted $0 control before API dispatch', async (control) => {
+  const f = await fixture(); await f.enable()
+  vi.spyOn(f.adapter, 'resolveModel').mockImplementation(async (provider, model) => ({
+    provider, id: model, name: model,
+    ...(control === 'reasoning'
+      ? { reasoning: { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }], defaultEffort: ReasoningEffortId('low') } }
+      : { serviceTiers: { tiers: [{ id: ServiceTierId('default'), name: 'Default' }], defaultTier: ServiceTierId('default') } }),
+  }))
+  try {
+    expect(await f.run()).toEqual(candidates)
+    expect(f.adapter.calls).toEqual([]); expect(f.records.size).toBe(0)
+  } finally { await f.service.dispose() }
+})
+
+it('reserves requested output tokens within a declared model context window before dispatch', async () => {
+  const f = await fixture(); await f.enable()
+  vi.spyOn(f.adapter, 'resolveModel').mockImplementation(async (provider, model) => ({
+    provider, id: model, name: model, context: { contextWindow: defaultBounds.maxOutputTokens },
+  }))
+  try {
+    expect(await f.run()).toEqual(candidates)
+    expect(f.adapter.calls).toEqual([]); expect(f.records.size).toBe(0)
+  } finally { await f.service.dispose() }
+})
+
+it('refuses a framed input record that exceeds the byte cap even when its request fits', async () => {
+  const probe = await fixture(); await probe.enable()
+  let inputBytes: number
+  try {
+    expect((await probe.run()).map(row => row.id)).toEqual(['two', 'one'])
+    const [record] = probe.records.values(); expect(record).toBeDefined()
+    inputBytes = Buffer.byteLength(record!.input)
+    expect(Buffer.byteLength(JSON.stringify({ id: record!.id, createdAt: record!.createdAt,
+      configurationRevision: record!.configurationRevision, input: record!.input, outcome: 'pending' }))).toBeGreaterThan(inputBytes)
+  } finally { await probe.service.dispose() }
+  const f = await fixture('api', { maxInputBytes: inputBytes }); await f.enable()
+  try {
+    expect(await f.run()).toEqual(candidates)
+    expect(f.adapter.calls).toEqual([]); expect(f.records.size).toBe(0)
+  } finally { await f.service.dispose() }
+})
+
+it('records route replacement after a request is durable and the API stream has started', async () => {
+  const f = await fixture(); await f.enable(); const gate = barrier(); f.adapter.nextDelay = gate.promise
+  try {
+    const result = f.run()
+    await vi.waitFor(() => { expect(f.adapter.calls).toHaveLength(1) })
+    expect([...f.records.values()][0]?.outcome).toBe('pending')
+    f.registration.replace(['fixture'])
+    expect(await result).toEqual(candidates)
+    gate.release(); await f.service.dispose()
+    expect([...f.records.values()][0]).toMatchObject({ outcome: 'abstained', reason: 'route-changed' })
+    expect(f.adapter.closed).toBe(1)
+  } finally { gate.release(); await f.service.dispose() }
+})
+
+it('waits for outstanding catalog lookup to settle before disposal completes', async () => {
+  const f = await fixture(); const entered = barrier(); const gate = barrier()
+  vi.spyOn(f.adapter, 'listModels').mockImplementation(async () => { entered.release(); await gate.promise; return [] })
+  try {
+    const status = f.service.status(); await entered.promise
+    let disposed = false
+    const disposal = f.service.dispose().then(() => { disposed = true })
+    expect((await status).models[0]?.reason).toBe('unavailable')
+    expect(disposed).toBe(false)
+    gate.release(); await disposal; expect(disposed).toBe(true)
+    expect(f.adapter.calls).toEqual([])
+  } finally { gate.release(); await f.service.dispose() }
+})
+
+it('retains deterministic fallback and durable abstention when result storage rejects with a non-Error', async () => {
+  const f = await fixture(); await f.enable()
+  const put = f.store.records.put.bind(f.store.records)
+  vi.spyOn(f.store.records, 'put').mockImplementationOnce(put).mockRejectedValueOnce({ code: 'fixture-storage-unavailable' })
+  try {
+    expect(await f.run()).toEqual(candidates)
+    expect([...f.records.values()][0]).toMatchObject({ outcome: 'abstained', reason: 'unavailable-or-invalid' })
+  } finally { await f.service.dispose() }
+})
+
+it('keeps an already settled record when pending recovery reaches its queued update', async () => {
+  const f = await fixture(); await f.enable(); await f.run(); await f.service.dispose()
+  const [record] = f.records.values(); expect(record).toBeDefined()
+  const pending: DecisionRecord = {
+    id: record!.id, createdAt: record!.createdAt, configurationRevision: record!.configurationRevision,
+    input: record!.input, outcome: 'pending',
+  }
+  await f.store.records.put(pending.id, pending)
+  const entered = barrier(); const gate = barrier(); const update = f.store.records.update.bind(f.store.records)
+  vi.spyOn(f.store.records, 'update').mockImplementation(async (key, transform) => {
+    entered.release(); await gate.promise; return update(key, transform)
+  })
+  const recovered = new DecisionAdvisory(f.ctx, f.store, defaultBounds)
+  try {
+    await entered.promise
+    await f.store.records.put(record!.id, record!)
+    gate.release(); await recovered.status()
+    expect([...f.records.values()]).toEqual([record])
+    expect(f.adapter.calls).toHaveLength(1)
+  } finally { gate.release(); await recovered.dispose() }
+})
+
+it('reports unavailable Decision models when no LLM runtime is registered', async () => {
+  const f = await fixture(); const ctx = new Context(); contexts.push(ctx)
+  const service = new DecisionAdvisory(ctx, f.store, defaultBounds)
+  try {
+    expect(await service.status()).toMatchObject({ configuration: { enabled: false, revision: 0 }, models: [] })
+    expect(f.adapter.calls).toEqual([])
+  } finally { await service.dispose(); await f.service.dispose() }
+})
+
+it('keeps an unacknowledged result pending without advice and recovers abstention on reopening', async () => {
+  const f = await fixture(); await f.enable()
+  const put = f.store.records.put.bind(f.store.records)
+  vi.spyOn(f.store.records, 'put').mockImplementationOnce(put)
+    .mockRejectedValueOnce(new Error('selected result could not be stored'))
+    .mockRejectedValueOnce(new Error('fallback result could not be stored'))
+  try {
+    expect(await f.run()).toEqual(candidates)
+    expect([...f.records.values()][0]?.outcome).toBe('pending')
+  } finally { await f.service.dispose() }
+  const recovered = new DecisionAdvisory(f.ctx, f.store, defaultBounds)
+  try {
+    await recovered.status()
+    expect([...f.records.values()][0]).toMatchObject({ outcome: 'abstained', reason: 'interrupted-before-settlement' })
+    expect(f.adapter.calls).toHaveLength(1)
+  } finally { await recovered.dispose() }
+})
+
+it('ranks admitted candidates when retrieval has no explicit IDs', async () => {
+  const f = await fixture(); await f.enable()
+  try {
+    expect((await f.service.select({ query: 'Release' }, candidates)).map(row => row.id)).toEqual(['two', 'one'])
+    expect([...f.records.values()][0]).toMatchObject({ outcome: 'selected', selectedIds: ['two'] })
+  } finally { await f.service.dispose() }
 })

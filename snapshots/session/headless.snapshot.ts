@@ -1276,7 +1276,9 @@ describe('headless recorded-session snapshots', () => {
         throw new Error(`${scenario.name}: workspace was not captured around the profile run`)
       }
       if (scenario.manifest.workspace?.final === true) {
-        const expectedWorkspace = await captureExpectedWorkspaceSnapshot(join(scenario.dir, 'workspace.expected'))
+        const expectedWorkspace = scenario.name === 'managed-markdown-skill-load'
+          ? await (await import('./managed-markdown-skill-load/expected-world.ts')).readExpectedWorld(captureExpectedWorkspaceSnapshot)
+          : await captureExpectedWorkspaceSnapshot(join(scenario.dir, 'workspace.expected'))
         expect(finalWorkspace, `${scenario.name}: complete final workspace`).toEqual(expectedWorkspace)
       } else {
         expect(finalWorkspace, `${scenario.name}: a changed workspace requires workspace.final`).toEqual(initialWorkspace)

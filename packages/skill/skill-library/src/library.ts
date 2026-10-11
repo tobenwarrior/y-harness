@@ -8,6 +8,10 @@ import type { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
 import type { SkillCandidate } from '@deepseek-ai/dsh-skill'
 import type { RegistryInventory } from './registry-inventory.ts'
 import { skillLibraryRecord, type SkillLibraryRecord } from './record.ts'
+import { markdownWithinLimit } from './markdown-size.ts'
+import { planMarkdownSplit, type MarkdownSplitPlan } from './markdown-split.ts'
+import { ensureMarkdownGeneration, hasMarkdownGenerationLinks, readMarkdownSource } from './markdown-generation.ts'
+import { publishMarkdownCreation } from './markdown-creation.ts'
 import type {
   NativeSkillLibraryProvider, SkillCleanupProposal, SkillLibraryApplyRequest, SkillLibraryApplyValue,
   SkillLibraryAutomaticRequest, SkillLibraryCleanupRequest, SkillLibraryDetail, SkillLibraryHashRequest, SkillLibraryId,
@@ -77,7 +81,7 @@ export class SkillLibrary {
   }
 
   /**
-   * Read metadata only into the returned inventory, including shadowed candidates and archives.
+   * Read entry metadata and root-hash-bound logical links; selected operations verify generated resources.
    * @param request - optional project filter and native refresh request.
    * @returns inventory summaries without instruction bodies.
    */
@@ -108,6 +112,7 @@ export class SkillLibrary {
       }
     }
     const items: SkillLibraryItem[] = []
+    const markdownWarnings: string[] = []
     for (const [id, entry] of candidates) {
       const locator = localLocator(entry.candidate.locator)
       if (locator === undefined || entry.candidate.path === undefined) continue
@@ -116,6 +121,12 @@ export class SkillLibrary {
       const state = this.record(id)
       const currentHash = hash(raw)
       const safe = await isUnlinked(originalPath) && entry.candidate.source !== 'bundled'
+      const cachedReferences = state.markdownReferences?.rootHash === currentHash
+        ? state.markdownReferences.references : undefined
+      const rootReferences = references(raw, dirname(entry.candidate.path), entry.candidate.metadata)
+      if (cachedReferences === undefined && hasMarkdownGenerationLinks(raw)) {
+        markdownWarnings.push(`${entry.candidate.path}: logical references are incomplete; select adoption to verify the generated source and retain its links`)
+      }
       const managed = safe && state.managedHash === currentHash
       const item: SkillLibraryItem = {
         id,
@@ -135,7 +146,7 @@ export class SkillLibrary {
         contentHash: currentHash,
         bodyBytes: Buffer.byteLength(instructionBody(raw)),
         usage: state.usage,
-        references: references(raw, dirname(entry.candidate.path), entry.candidate.metadata),
+        references: uniqueReferences([...(cachedReferences ?? []), ...rootReferences]),
         capabilities: { adopt: safe, archive: safe, restore: false, cleanup: managed && !state.pinned, native: false },
       }
       items.push(item)
@@ -153,6 +164,11 @@ export class SkillLibrary {
       provider: 'skill-library-history',
       state: 'unavailable',
       message: this.recoveryWarnings.join('; '),
+    })
+    if (markdownWarnings.length > 0) providers.push({
+      provider: 'skill-library-markdown',
+      state: 'unavailable',
+      message: markdownWarnings.join('; '),
     })
     if (this.options.registryInventory !== undefined) {
       const registry = await this.options.registryInventory.list(projects)
@@ -296,11 +312,14 @@ export class SkillLibrary {
   adopt(request: SkillLibraryHashRequest): Promise<SkillLibraryItemValue> {
     return this.enqueue(async () => {
       const entry = await this.requireLocal(request.id); await this.assertHash(entry, request.expectedHash)
+      const original = await readMarkdownSource(entry.originalPath, entry.raw)
+      await this.assertHash(entry, request.expectedHash)
       await this.options.store.put(
         request.id,
         {
           ...this.record(request.id),
           managedHash: request.expectedHash,
+          markdownReferences: markdownReferenceCache(entry.raw, original, entry.originalPath),
           automaticCleanup: false,
         },
       )
@@ -317,6 +336,10 @@ export class SkillLibrary {
     return this.enqueue(async () => {
       const entry = await this.requireLocal(request.id); await this.assertHash(entry, request.expectedHash)
       if (!entry.item.capabilities.cleanup) throw new Error('skill is protected from automatic cleanup')
+      if (request.enabled) {
+        await readMarkdownSource(entry.originalPath, entry.raw)
+        await this.assertHash(entry, request.expectedHash)
+      }
       await this.options.store.put(request.id, { ...this.record(request.id), automaticCleanup: request.enabled })
       return { item: await this.requireItem(request.id) }
     })
@@ -332,13 +355,20 @@ export class SkillLibrary {
   }
 
   /**
-   * Recheck semantic dependencies inside the existing source mutation queue.
+   * Recheck semantic dependencies; generated contributors refuse archive without body traversal.
    * @param request - selected managed source hash.
    * @param verify - host-owned constraints, resources and survivor admission.
    * @returns archived item with its complete bundle retained.
    */
   archiveLearning(request: SkillLibraryHashRequest, verify: () => Promise<void>): Promise<SkillLibraryItemValue> {
     return this.enqueue(async () => {
+      const inventory = await this.list({})
+      if (inventory.providers.some(status => status.provider === 'skill-library-markdown' && status.state === 'unavailable')) {
+        throw new Error('Incoming logical references are incomplete; keep the source and use selected adoption to retain verified link metadata. Semantic archive remains unavailable while generated contributors are present; explicit archive retains complete bundles for manual recovery.')
+      }
+      if ([...this.local.values()].some(entry => hasMarkdownGenerationLinks(entry.raw))) {
+        throw new Error('Semantic archive is unavailable while generated contributors are present; incoming child references cannot be established without reading unrelated bodies. Keep the source, or use explicit archive to retain its complete bundle for manual recovery.')
+      }
       await verify()
       return this.archiveSource(request)
     })
@@ -409,7 +439,24 @@ export class SkillLibrary {
       }
       const entry = this.local.get(item.id)
       if (entry === undefined) throw new Error('skill source changed; refresh and preview again')
-      const after = compress(entry.raw)
+      try {
+        if (await readMarkdownSource(entry.originalPath, entry.raw) !== undefined) {
+          skipped.push({ id: item.id, reason: 'generated entry is already bounded; semantic edits use its complete original source' })
+          continue
+        }
+      } catch (error) {
+        skipped.push({ id: item.id, reason: `Generated source requires review: ${String(error)} Restore unchanged resources or use explicit archive or rollback recovery.` })
+        continue
+      }
+      const split: MarkdownSplitPlan = markdownWithinLimit(entry.raw)
+        ? { kind: 'unchanged' } : planMarkdownSplit(entry.raw, basename(entry.originalPath))
+      if (split.kind === 'exception' || split.kind === 'split' && entry.bundlePath === entry.originalPath) {
+        skipped.push({ id: item.id, reason: split.kind === 'exception'
+          ? markdownSplitFailure(split.reason)
+          : markdownSplitFailure('A standalone Markdown skill cannot own topic resources; use a directory containing SKILL.md.') })
+        continue
+      }
+      const after = split.kind === 'split' ? split.after : compress(entry.raw)
       if (after === entry.raw) {
         skipped.push({
           id: item.id,
@@ -425,6 +472,7 @@ export class SkillLibrary {
         after,
         beforeBytes: Buffer.byteLength(entry.raw),
         afterBytes: Buffer.byteLength(after),
+        ...split.kind === 'split' ? { markdownGeneration: { id: split.generation, files: split.files } } : {},
         overBudget: Buffer.byteLength(instructionBody(after)) > this.options.bodyBudgetBytes,
       })
     }
@@ -444,7 +492,7 @@ export class SkillLibrary {
   }
 
   /**
-   * Apply a still-current preview with all admissions checked before the first edit.
+   * Check every source and publish all complete topic generations before revising any entry.
    * @param request - live preview identity.
    * @returns identities revised by the unchanged preview.
    */
@@ -456,6 +504,20 @@ export class SkillLibrary {
         const entry = await this.requireLocal(change.id)
         await this.assertHash(entry, change.expectedHash)
         if (!entry.item.capabilities.cleanup) throw new Error('skill is protected from cleanup')
+        await readMarkdownSource(entry.originalPath, entry.raw)
+        await this.assertHash(entry, change.expectedHash)
+      }
+      for (const change of proposal.changes) {
+        if (change.markdownGeneration === undefined) continue
+        const entry = await this.requireLocal(change.id)
+        await this.assertHash(entry, change.expectedHash)
+        if (!entry.item.capabilities.cleanup) throw new Error('skill is protected from cleanup')
+        const split = admittedMarkdown(entry.raw, basename(entry.originalPath), entry.bundlePath === entry.originalPath)
+        if (split.kind !== 'split' || split.after !== change.after || split.generation !== change.markdownGeneration.id
+          || JSON.stringify(split.files) !== JSON.stringify(change.markdownGeneration.files)) {
+          throw new Error('Markdown cleanup preview changed; preview the complete root and resources again')
+        }
+        await ensureMarkdownGeneration(entry.originalPath, split.generation, split.files)
       }
       const revised: SkillLibraryId[] = []
       for (const change of proposal.changes) {
@@ -468,7 +530,7 @@ export class SkillLibrary {
   }
 
   /**
-   * Restore a historical instruction version as a new recorded revision.
+   * Restore verified historical instructions through a capped root as a new recorded revision.
    * @param request - previous revision and expected current hash.
    * @returns summary after recording a restorable replacement.
    */
@@ -740,7 +802,8 @@ export class SkillLibrary {
   /**
    * Read a current local source for the bounded host learning engine.
    * @param id - selected local identity.
-   * @returns instruction text, original raw bytes and bundle root.
+   * @returns complete verified logical instructions, canonical reference targets,
+   * current root bytes and bundle root; edited receipts reject.
    */
   async learningSource(id: SkillLibraryId): Promise<{
     item: SkillLibraryItem
@@ -750,11 +813,19 @@ export class SkillLibrary {
   }> {
     const entry = await this.requireLocal(id)
     await this.assertHash(entry, entry.item.contentHash)
-    return { item: entry.item, raw: entry.raw, content: instructionBody(entry.raw), bundlePath: entry.bundlePath }
+    const original = await readMarkdownSource(entry.originalPath, entry.raw)
+    await this.assertHash(entry, entry.item.contentHash)
+    const item = { ...entry.item,
+      references: uniqueReferences([
+        ...entry.item.references.map(({ resolvedId: _resolvedId, ...reference }) => reference),
+        ...(original === undefined ? [] : references(original, dirname(entry.originalPath), entry.candidate.metadata)),
+      ]),
+    }
+    return { item, raw: entry.raw, content: instructionBody(original ?? entry.raw), bundlePath: entry.bundlePath }
   }
 
   /**
-   * Apply a reviewed semantic body through the existing serialized revision journal.
+   * Preserve metadata framing and safely split a complete reviewed body through the revision journal.
    * @param request - unchanged managed version and complete replacement body.
    * @param verify - host-owned resource and constraint checks at admission.
    * @returns updated local item.
@@ -768,14 +839,19 @@ export class SkillLibrary {
       await verify()
       const entry = await this.requireLocal(request.id)
       if (entry.item.ownership !== 'y-managed') throw new Error('skill is protected; adopt the current version first')
-      const header = entry.raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? ''
-      await this.revise(request.id, request.expectedHash, header + request.content, 'learning')
+      await this.assertHash(entry, request.expectedHash)
+      if (entry.item.pinned) throw new Error('pinned skill is protected from revision')
+      const header = entry.raw.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0]
+      if (header === undefined) throw new Error('skill source framing is unsupported; source preserved')
+      const newline = header.startsWith('---\r\n') ? '\r\n' : '\n'
+      const framedHeader = header.endsWith('\n') ? header : header + newline
+      await this.revise(request.id, request.expectedHash, framedHeader + request.content, 'learning')
       return { item: await this.requireItem(request.id) }
     })
   }
 
   /**
-   * Create an explicitly reviewed project skill without replacing any existing path.
+   * Stage and publish a complete reviewed project skill without replacing any existing path.
    * @param request - registered project, exact reviewed destination and host-validated new name and body.
    * @param verify - host-owned update-before-create checks at admission.
    * @returns deliberately managed new item with automatic consent granted separately by the coordinator under an explicit project policy.
@@ -805,13 +881,15 @@ export class SkillLibrary {
         && !await isUnlinked(path)) throw new Error('skill destination is protected')
       await verify()
       if (this.options.projects().find(item => item.id === request.projectId)?.path !== projectPath) throw new Error('skill destination changed from the reviewed project path')
+      const complete = '---\nname: ' + request.name + '\ndescription: ' + JSON.stringify(request.description) + '\n---\n' + request.content
+      const split = admittedMarkdown(complete, 'SKILL.md')
+      const raw = split.kind === 'split' ? split.after : complete
       await mkdir(root, { recursive: true })
-      const directory = join(root, request.name); await mkdir(directory, { mode: 0o700 })
-      const path = join(directory, 'SKILL.md')
-      const raw = '---\nname: ' + request.name + '\ndescription: ' + JSON.stringify(request.description) + '\n---\n' + request.content
-      const canonical = join(await realpath(directory), 'SKILL.md')
+      const canonical = join(await realpath(root), request.name, 'SKILL.md')
       const id = identity(this.options.provider.name, canonical)
-      const created = { ...this.record(id), managedHash: hash(raw), automaticCleanup: false }
+      const created = { ...this.record(id), managedHash: hash(raw), automaticCleanup: false,
+        markdownReferences: markdownReferenceCache(raw, split.kind === 'split' ? complete : undefined, canonical),
+      }
       const pending = join(
         this.options.historyDirectory,
         'pending-creations',
@@ -823,21 +901,21 @@ export class SkillLibrary {
           mode: 0o700,
         },
       )
-      const journal = join(pending, randomUUID() + '.json')
-      await writeFile(
-        journal,
-        JSON.stringify({
-          id,
-          path: canonical,
-          expectedHash: hash(raw),
-          record: created,
-        }),
-        {
-          flag: 'wx',
-          mode: 0o600,
-        },
-      )
-      await writeFile(path, raw, { flag: 'wx', mode: 0o600 })
+      const journal = join(pending, hash(`${canonical}\0${raw}`) + '.json')
+      const document = JSON.stringify({ id, path: canonical, expectedHash: hash(raw), record: created })
+      await publishMarkdownCreation(canonical, raw,
+        split.kind === 'split' ? { id: split.generation, files: split.files } : undefined,
+        async () => {
+          if (this.options.projects().find(item => item.id === request.projectId)?.path !== projectPath) {
+            throw new Error('skill destination changed from the reviewed project path')
+          }
+          try { await writeFile(journal, document, { flag: 'wx', mode: 0o600 }) } catch (error) {
+            if (!isExisting(error)) throw error
+            if (!await isUnlinked(journal) || await readFile(journal, 'utf8') !== document) {
+              throw new Error('skill creation journal changed; preserve the staged bundle and review pending creation')
+            }
+          }
+        })
       const item = (await this.list({})).items.find(item => item.path === canonical)
       if (item === undefined) throw new Error('created instructions were not discoverable; source preserved')
       await this.options.store.put(item.id, created)
@@ -868,7 +946,7 @@ export class SkillLibrary {
     if (entry === undefined
       || !item.capabilities.archive
       || !await isUnlinked(entry.originalPath)) throw new Error('skill is protected from source changes')
-    return entry
+    return { ...entry, item }
   }
   private async assertHash(entry: LocalEntry, expected: string): Promise<void> {
     if (hash(await readFile(
@@ -886,6 +964,20 @@ export class SkillLibrary {
     if ((reason === 'cleanup'
       || reason === 'learning')
       && !entry.item.capabilities.cleanup) throw new Error('skill is protected from cleanup')
+    if (reason !== 'rollback') {
+      await readMarkdownSource(entry.originalPath, entry.raw)
+      await this.assertHash(entry, expected)
+    } else await readMarkdownSource(entry.originalPath, replacement)
+    const split = admittedMarkdown(replacement, basename(entry.originalPath), entry.bundlePath === entry.originalPath)
+    if (split.kind === 'split') {
+      if (reason === 'rollback' && await exists(join(dirname(entry.originalPath), '.y-topics', split.generation))) {
+        if (await readMarkdownSource(entry.originalPath, split.after) !== replacement) {
+          throw new Error('Historical split does not retain the exact replacement; restore unchanged historical resources before rollback.')
+        }
+      } else await ensureMarkdownGeneration(entry.originalPath, split.generation, split.files)
+      replacement = split.after
+    }
+    const original = await readMarkdownSource(entry.originalPath, replacement)
     const revisionId = brandString<SkillRevisionId>(randomUUID())
     const directory = join(
       this.options.historyDirectory,
@@ -908,7 +1000,9 @@ export class SkillLibrary {
       await this.assertHash(entry, expected)
       const state = this.record(id)
       const revised: SkillLibraryRecord = {
-        ...state, managedHash: hash(replacement), revisions: [...state.revisions, {
+        ...state, managedHash: hash(replacement),
+        markdownReferences: markdownReferenceCache(replacement, original, entry.originalPath),
+        revisions: [...state.revisions, {
           id: revisionId, createdAt: new Date().toISOString(), reason, beforeHash: expected, afterHash: hash(replacement),
           beforeBytes: Buffer.byteLength(entry.raw), afterBytes: Buffer.byteLength(replacement), backupPath,
         }],
@@ -952,6 +1046,26 @@ export class SkillLibrary {
   }
 }
 
+function markdownReferenceCache(raw: string, original: string | undefined, entryPath: string): SkillLibraryRecord['markdownReferences'] {
+  return original === undefined ? undefined : {
+    rootHash: hash(raw), references: references(original, dirname(entryPath), undefined),
+  }
+}
+function markdownSplitFailure(reason: string): string {
+  return `Managed Markdown must fit 200 screen lines and 25 KiB per complete file. ${reason} Keep a short entry and linked topic files.`
+}
+function admittedMarkdown(raw: string, entryName: string, standalone = false): Exclude<MarkdownSplitPlan, { kind: 'exception' }> {
+  if (markdownWithinLimit(raw)) return { kind: 'unchanged' }
+  const split = planMarkdownSplit(raw, entryName)
+  if (split.kind === 'exception') throw new Error(markdownSplitFailure(split.reason))
+  if (split.kind === 'split' && standalone) {
+    throw new Error(markdownSplitFailure('A standalone Markdown skill cannot own topic resources; use a directory containing SKILL.md.'))
+  }
+  return split
+}
+function isExisting(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'
+}
 function identity(provider: string, path: string): SkillLibraryId {
   return brandString<SkillLibraryId>(hash(`${provider}\0${path}`))
 }
@@ -1004,7 +1118,10 @@ function references(
     if (/^https?:\/\//i.test(value)) result.push({ target: value, kind: 'url' })
     else if (!/^[a-z]+:/i.test(value)) result.push({ target: resolve(directory, value.split('#')[0] ?? ''), kind: 'file' })
   }
-  return result.filter((reference, index) => result.findIndex(other => other.target === reference.target
+  return uniqueReferences(result)
+}
+function uniqueReferences(values: readonly SkillLibraryReference[]): SkillLibraryReference[] {
+  return values.filter((reference, index) => values.findIndex(other => other.target === reference.target
     && other.kind === reference.kind) === index)
 }
 /** Only excess blank lines outside fenced code are removed; instruction wording and YAML stay intact. */
