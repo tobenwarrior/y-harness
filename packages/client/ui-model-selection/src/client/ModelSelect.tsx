@@ -511,6 +511,17 @@ export function ModelSelect(
       else modelRefs.current.set(index, node)
     }
   }
+  const catalogStatus = (
+    <>
+      {state.status === 'loading' && <div className={css.status} role="status">{t('status.loading')}</div>}
+      {state.error !== null && lastActionRef.current === 'load' && (
+        <div className={css.error}>
+          <span>{t('error.action', { message: state.error })}</span>
+          <button type="button" className={css.retry} onClick={reload}>{t('retry')}</button>
+        </div>
+      )}
+    </>
+  )
 
   return (
     <div
@@ -599,13 +610,7 @@ export function ModelSelect(
 
           {pane === 'provider' && (
             <>
-              {state.status === 'loading' && <div className={css.status} role="status">{t('status.loading')}</div>}
-              {state.error !== null && lastActionRef.current === 'load' && (
-                <div className={css.error}>
-                  <span>{t('error.action', { message: state.error })}</span>
-                  <button type="button" className={css.retry} onClick={reload}>{t('retry')}</button>
-                </div>
-              )}
+              {catalogStatus}
               <div className={clsx(css.groups, 'scrollable')}>
                 {providerOptions.map(provider => (
                   <SelectionOption key={provider.id} buttonRef={itemRef()} label={providerLabelFor(provider.id)}
@@ -653,15 +658,7 @@ export function ModelSelect(
                   </button>
                 )}
               </div>}
-              {state.status === 'loading' && (
-                <div className={css.status} role="status">{t('status.loading')}</div>
-              )}
-              {state.error !== null && lastActionRef.current === 'load' && (
-                <div className={css.error}>
-                  <span>{t('error.action', { message: state.error })}</span>
-                  <button type="button" className={css.retry} onClick={reload}>{t('retry')}</button>
-                </div>
-              )}
+              {catalogStatus}
               {selectedFailure !== undefined && (
                 <div className={css.warning}>
                   <span>{t('warning.groupLoad', { name: providerLabel, message: selectedFailure.message })}</span>
