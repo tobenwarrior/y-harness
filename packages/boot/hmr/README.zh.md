@@ -56,6 +56,8 @@ Chokidar 选项（包括轮询）保持原有含义。精确配置监听同时�
 
 `watchConfig()` 注册会被等待的配置处理器。`runExclusive()` 将配置变更、Loader 更新与自动重载串行化，并拒绝嵌套事务。包安装和删除在该队列之外执行。HMR 不获取包操作写锁；manifest 通知仅在有序的 `dsh.profile.bundles` 列表变化时触发重载。profile 与 home patch 变化也会触发重新组合。配置事务期间收到的文件事件在事务结束后处理。 Include 刷新和 profile 重载都通过普通的 Loader 条目更新到达插件；仅 volatile 变化由 Loader 就地提交。
 
+`runOutsideTransaction()` 创建调用方拥有的队列或监听器，而不保留当前事务上下文。它们后续的配置写入仍进入 `runExclusive()`；嵌套事务的拒绝规则保持有效。普通 provider 配置共享使用此边界和可取消的 Settings 写入，确保安全激活、重新挂载和销毁。
+
 App-boot 负责 profile 解析和 patch 优先级规则。HMR 读取启动器提供的纯数据 `profileContext`，在初始化时注册 profile manifest 和两份用户 patch 的监听，并等待应用就绪后处理更改。销毁 HMR 时会关闭监听器并取消等待启动的重载。配置监听器在当前事务上下文之外启动，使后续通知可以进入队列。
 
 `node_modules` 之外的 `package.json` 变化使该包的配置缓存失效。仅作为配置的 manifest 不触发模块重载；作为 JSON 模块导入的 manifest 保留依赖驱动重载，位于宿主依赖图中的 manifest 保留宿主重载。专属配置监听保留原有归属。新包入口在 Loader entry 重启时生效。

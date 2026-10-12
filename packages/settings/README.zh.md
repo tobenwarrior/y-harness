@@ -25,6 +25,7 @@ kind: "package-group"
 | 包 | 用途 | ctx 键 |
 |---|---|---|
 | [`settings`](settings/README.zh.md) | Config 投影及带修订号的表单编辑 | `settings` |
+| [`provider-config-sync`](provider-config-sync/README.zh.md) | 在明确配对的 profile 之间共享普通提供方目录 | `providerConfigSync` |
 
 <a id="related-documentation"></a>
 ## 相关文档

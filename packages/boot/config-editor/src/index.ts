@@ -82,21 +82,32 @@ export class ConfigEditor extends Service {
   /** Validate, persist, and reconcile a plugin's next config; ordinary fields keep normal lifecycle rules.
    * @param entry Current Loader entry, also used to detect replacement during the write.
    * @param change Derive a raw config from the current entry and its inherited layer.
+   * @param signal Optional owner cancellation. Queue and preflight preparation settle early;
+   *   after the caller's change starts, work drains, checks cancellation before the atomic
+   *   commit, and completes after that cutoff.
    * @returns Fulfillment after Loader reconciliation completes.
    */
   async edit(
     entry: Entry,
     change: (current: Record<string, unknown>, inherited: Record<string, unknown>) => Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<void> {
+    signal?.throwIfAborted()
+    let applying = false
     const run = async (): Promise<void> => {
+      signal?.throwIfAborted()
       const path = this.documentPath
       await withFileLock(join(this.ownerContext.profileContext.dir, 'package.json'), async () => {
+        signal?.throwIfAborted()
         if (!this.entries().includes(entry) || entry.fiber === undefined) throw new Error('Configuration entry is no longer available')
         const beforePatches = readProfilePatches('dsh', this.ownerContext.profileContext)
         await reconcileProfilePatches(this.ownerContext.root, beforePatches, 'dsh')
+        // Reconciliation may dispose this edit's owner; its intended apply has not started.
+        signal?.throwIfAborted()
         if (!this.entries().includes(entry)) throw new Error('Configuration entry changed during reload')
         const current = structuredClone((entry.options.config ?? {}) as Record<string, unknown>)
         const inherited = this.inherited(entry, loadProfileDirectory('dsh', this.ownerContext.profileContext.dir, this.ownerContext.profileContext.installAnchor))
+        applying = true
         const next = change(current, inherited)
         const fiber = entry.fiber
         if (fiber.state !== FiberState.ACTIVE) throw new Error('Configuration plugin is no longer active')
@@ -139,6 +150,8 @@ export class ConfigEditor extends Service {
         if (!isDeepStrictEqual(effective?.config ?? {}, next)) {
           throw new Error(`Configuration for "${entry.options.id}" is overridden by a home patch or command-line overlay`)
         }
+        signal?.throwIfAborted()
+        // Once atomic replacement starts, complete reconciliation or its existing rollback.
         await writeFileAtomic(path, String(document), { mode: 0o600 })
         try {
           await reconcileProfilePatches(this.ownerContext.root, patches, 'dsh', [entry.options.id])
@@ -150,7 +163,16 @@ export class ConfigEditor extends Service {
       })
     }
     const hmr = this.ownerContext.get('hmr')
-    await (hmr === undefined ? run() : hmr.runExclusive(run))
+    const pending = hmr === undefined ? run() : hmr.runExclusive(run)
+    if (signal === undefined) { await pending; return }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        if (!applying) void Promise.resolve().then(() => { signal.throwIfAborted() }).then(resolve, reject)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+      void pending.finally(() => { signal.removeEventListener('abort', onAbort) }).then(resolve, reject)
+    })
   }
 }
 

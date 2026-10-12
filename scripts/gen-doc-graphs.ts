@@ -375,8 +375,15 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'settings',
     title: 'Plugin configuration forms',
     mode: 'core',
-    consumers: ['api-settings-controller'],
+    consumers: ['api-settings-controller', 'provider-config-sync'],
     note: 'Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references.',
+  },
+  {
+    key: 'providerConfigSync',
+    pkg: 'provider-config-sync',
+    title: 'Ordinary provider configuration sharing',
+    mode: 'core',
+    note: 'Shares allowlisted provider catalogs between explicitly paired compatible profiles while keeping credentials and session state local.',
   },
   {
     key: 'subagentModelSelection',

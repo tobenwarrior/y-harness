@@ -116,6 +116,7 @@ export const SERVICE_PAGE: Record<string, string> = {
   sessionSkillCatalog: 'skills.md',
   sessions: 'session.md',
   settings: 'settings.md',
+  providerConfigSync: 'settings.md',
   sessionTitle: 'session-title.md',
   skills: 'skills.md',
   skillLibrary: 'skills.md',
@@ -926,6 +927,7 @@ export const FOUNDATION_TYPE_NAMES: ReadonlySet<string> = new Set([
 
 /** Project types deliberately documented outside the subsystems catalog. */
 export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
+  SyncStatus: 'Provider sharing readiness and conflict identities are owned by packages/settings/provider-config-sync/README.md and src/engine.ts',
   SkillLearningCleanupRequest: 'Bounded managed cleanup fields are owned by packages/skill/skill-library/README.md and src/learning-types.ts',
   SkillLearningRevokePolicyRequest: 'Policy revocation fields are owned by packages/skill/skill-library/README.md and src/learning-types.ts',
   ClaudeCodeToolObservation: 'Direct SDK observation metadata is owned by packages/subagent/subagent-claude-code/README.md and src/tool-observations.ts',

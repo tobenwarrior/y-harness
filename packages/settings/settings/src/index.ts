@@ -363,21 +363,23 @@ export class SettingsForms extends Service {
    * @param ns Profile entry id.
    * @param ops Ordered form edits.
    * @param expectedRevision Revision returned by describe.
+   * @param signal Optional Host owner's cancellation, passed through the configuration editor.
    */
-  async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void> {
+  async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number, signal?: AbortSignal): Promise<void> {
     await this.write(ns, (current, base, schema) => ops.reduce((value, op) => {
       if (op.op === 'set') return applyPathOp(value, op, schema)
       const parent = op.path.slice(0, -1).reduce<unknown>((node, key) => member(node, key), value)
       if (Array.isArray(parent)) return applyPathOp(value, op, schema)
       const inherited = op.path.reduce<unknown>((node, key) => member(node, key, true), base)
       return applyPathOp(value, inherited === undefined ? op : { op: 'set', path: op.path, value: inherited }, schema)
-    }, current), expectedRevision, ops.map(op => op.path))
+    }, current), expectedRevision, ops.map(op => op.path), signal)
   }
 
   private async write(
     ns: string,
     change: (current: Record<string, unknown>, base: Record<string, unknown>, schema: z) => Record<string, unknown>,
     expected?: number, paths: readonly (readonly string[])[] = [],
+    signal?: AbortSignal,
   ): Promise<void> {
     const entry = this.ownerContext.configEditor.entries().find(row => row.options.id === ns)
     const schema = entry === undefined ? undefined : this.schema(entry)
@@ -418,7 +420,7 @@ export class SettingsForms extends Service {
         return result
       }
       return mergeLayers(strip(raw, form), next) as Record<string, unknown>
-    })
+    }, signal)
     this.describe()
   }
 

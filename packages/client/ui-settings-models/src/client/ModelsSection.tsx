@@ -366,6 +366,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const catalogEnabled = addable.length > 0
   const customOffered = piAi !== undefined
   const customEnabled = protocols.length > 0
+  const addFeedback = state.status !== 'ready'
+    ? t('addLoading')
+    : !catalogEnabled && !customEnabled
+      ? t('addUnavailable')
+      : undefined
   const bothOffered = catalogOffered && customOffered
   const mode: AddMode = bothOffered ? addMode : customOffered ? 'custom' : 'catalog'
   const mounted = (candidate: AddMode): boolean => mode === candidate || visited.has(candidate)
@@ -684,15 +689,16 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                 : null}
             </div>
           )
-          : catalogOffered || customOffered
-            ? (
-              // One entry for both ways to gain a provider; the card behind it
-              // splits them. Full width, so it lines up with the rows above.
+          : (
+            // One entry for both ways to gain a provider; the card behind it
+            // splits them. Full width, so it lines up with the rows above.
+            <>
               <div className={styles['addActions']}>
                 <button
                   type="button"
                   className={styles['addButton']}
-                  disabled={!state.writable || (!catalogEnabled && !customEnabled)}
+                  disabled={state.status !== 'ready' || !state.writable || (!catalogEnabled && !customEnabled)}
+                  aria-describedby={addFeedback === undefined ? undefined : `${addId}-availability`}
                   onClick={() => {
                     const first = addable[0]
                     const initial: AddMode = catalogEnabled ? 'catalog' : 'custom'
@@ -707,8 +713,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   {t('add')}
                 </button>
               </div>
-            )
-            : null}
+              {addFeedback === undefined
+                ? null
+                : <p id={`${addId}-availability`} className={styles['addAvailability']} aria-live="polite">{addFeedback}</p>}
+            </>
+          )}
       </div>
       {renderSlot('settings.models.footer', {})}
       <Modal
