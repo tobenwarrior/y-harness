@@ -1,7 +1,5 @@
-- group "模型与推理等级":
+- group "提供方、模型、推理等级与速度":
   - searchbox "搜索模型…": ACMLG
   - button "清除搜索"
   - menu "模型":
-    - group "Acme Gateway":
-      - text: Acme Gateway
-      - menuitemradio "Acme Large"
+    - menuitemradio "Acme Large"

@@ -376,6 +376,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 
 | Package | Config | Description |
 |---|---|---|
+| `@deepseek-ai/dsh-provider-config-sync` | yes | Opt-in ordinary provider catalog configuration synchronization |
 | `@deepseek-ai/dsh-settings` | no | Abstract user-settings seam (ctx.settings) for the DeepSeek Harness |
 
 ## shell

@@ -32,6 +32,8 @@ Mount this service in a profile application with Loader and `profileContext`. It
 
 Use [settings](../../settings/settings/README.md) for forms restricted to live fields. Callers that edit complete configuration can use `ctx.configEditor.edit()`; ordinary fields retain Loader’s normal lifecycle.
 
+Host owners may pass an optional `AbortSignal` to `edit()`. Cancellation during queue or preflight preparation settles the caller before its intended change begins, allowing an owner removed by external profile reconciliation to dispose without awaiting itself. Once the change starts, the editor drains and checks cancellation before atomic replacement. After replacement starts it completes reconciliation or the existing rollback rather than reporting a false cancellation. Remote settings APIs keep their existing arguments.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

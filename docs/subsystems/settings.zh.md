@@ -22,6 +22,26 @@
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxproviderconfigsync--providerconfigsync"></a>
+
+### `ctx.providerConfigSync` — `ProviderConfigSync`
+
+Own the refresh queue, settings listener, watcher, and quiescent disposal.
+
+```ts cordis-catalog
+/** Read a detached status without exposing configuration or credentials.
+ * @returns Readiness or conflict identities, without provider values.
+ */
+status(): SyncStatus
+
+/** Queue a refresh; repeated notifications share one lifecycle and never re-enter a lock.
+ * @returns The status after this refresh queue reaches its current commit point.
+ */
+synchronize(): Promise<SyncStatus>
+```
+
+Source: [`packages/settings/provider-config-sync/src/index.ts`](../../packages/settings/provider-config-sync/src/index.ts)
+
 <a id="ctxsettings--settingsforms"></a>
 
 ### `ctx.settings` — `SettingsForms`
@@ -66,8 +86,9 @@ async replace(ns: string, section: object, expectedRevision?: number): Promise<v
  * @param ns Profile entry id.
  * @param ops Ordered form edits.
  * @param expectedRevision Revision returned by describe.
+ * @param signal Optional Host owner's cancellation, passed through the configuration editor.
  */
-async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
+async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number, signal?: AbortSignal): Promise<void>
 ```
 
 Source: [`packages/settings/settings/src/index.ts`](../../packages/settings/settings/src/index.ts)
