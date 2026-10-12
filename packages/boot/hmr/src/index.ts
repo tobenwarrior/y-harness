@@ -269,6 +269,15 @@ class Hmr extends Service {
     return task
   }
 
+  /** Create caller-owned asynchronous effects outside the current transaction context.
+   * The effects still enter `runExclusive` for configuration mutations.
+   * @param operation Effect setup or scheduling that must not retain this transaction.
+   * @returns The caller's result.
+   */
+  runOutsideTransaction<T>(operation: () => T): T {
+    return this.executing.exit(operation)
+  }
+
   private runReload(operation: () => Promise<void>): Promise<void> {
     return this.runExclusive(async () => {
       if (await this.applicationReady) await operation()
