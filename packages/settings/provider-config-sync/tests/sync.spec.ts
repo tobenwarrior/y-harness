@@ -4,8 +4,22 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ProviderSyncEngine, type LocalNamespace } from '../src/engine.ts'
 
+const reads = vi.hoisted(() => ({ deniedPath: undefined as string | undefined, unsafeModePath: undefined as string | undefined }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, lstat: async (...args: Parameters<typeof actual.lstat>) => {
+    if (args[0] === reads.deniedPath) throw Object.assign(new Error('fabricated metadata access denied'), { code: 'EACCES' })
+    const info = await actual.lstat(...args)
+    if (args[0] === reads.unsafeModePath) info.mode = 0o644
+    return info
+  } }
+})
+
 const homes: string[] = []
-afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))) })
+afterEach(async () => {
+  reads.deniedPath = undefined; reads.unsafeModePath = undefined
+  await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true })))
+})
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), 'provider-sync-')); homes.push(home)
@@ -227,8 +241,8 @@ it('refuses removed shared files and schema-incompatible local receipts instead 
   await expect(a.engine.synchronize()).rejects.toThrow('Shared provider configuration is missing')
 })
 
-it('rejects unreadable hierarchy, non-file, oversized and non-owner-only synchronization documents', async () => {
-  const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
+it('rejects non-file, oversized and non-owner-only synchronization documents', async () => {
+  const { sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
   await rm(sharedPath); await mkdir(sharedPath)
   await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
   await rm(sharedPath, { recursive: true }); await writeFile(sharedPath, 'X'.repeat(1024 * 1024 + 1), { mode: 0o600 })
@@ -237,9 +251,47 @@ it('rejects unreadable hierarchy, non-file, oversized and non-owner-only synchro
     await writeFile(sharedPath, '{}'); await chmod(sharedPath, 0o644)
     await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
   }
-  await writeFile(join(home, 'notdir'), 'fixture')
-  const bad = new ProviderSyncEngine({ sharedPath, receiptPath: join(home, 'notdir', 'receipt.json'), read: () => a.local, mutate: async () => {} })
-  await expect(bad.synchronize()).rejects.toMatchObject({ code: 'ENOTDIR' })
+})
+
+it('rejects a receipt parent that is a regular file without changing shared or local configuration', async () => {
+  const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
+  const before = await readFile(sharedPath, 'utf8')
+  const localBefore = structuredClone(a.local)
+  const parent = join(home, 'notdir'); await writeFile(parent, 'fixture')
+  const mutate = vi.fn(async () => {})
+  const bad = new ProviderSyncEngine({ sharedPath, receiptPath: join(parent, 'receipt.json'), read: () => a.local, mutate })
+  // Native lstat/mkdir can report different hierarchy errors on POSIX and Windows.
+  await expect(bad.synchronize()).rejects.toThrow()
+  expect(mutate).not.toHaveBeenCalled()
+  expect(a.local).toEqual(localBefore)
+  expect(await readFile(sharedPath, 'utf8')).toBe(before)
+  expect(await readFile(parent, 'utf8')).toBe('fixture')
+})
+
+it('propagates metadata access failures without treating them as missing receipts', async () => {
+  const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
+  const receiptPath = join(home, 'a.json')
+  const sharedBefore = await readFile(sharedPath, 'utf8'); const receiptBefore = await readFile(receiptPath, 'utf8')
+  reads.deniedPath = receiptPath
+  await expect(a.engine.synchronize()).rejects.toMatchObject({ code: 'EACCES', message: 'fabricated metadata access denied' })
+  expect(a.writes).toBe(0)
+  expect(await readFile(sharedPath, 'utf8')).toBe(sharedBefore)
+  expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)
+})
+
+it('refuses unsafe POSIX permission metadata on any test host without writing either document', async () => {
+  const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
+  const receiptPath = join(home, 'a.json')
+  const sharedBefore = await readFile(sharedPath, 'utf8'); const receiptBefore = await readFile(receiptPath, 'utf8')
+  const original = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor
+  reads.unsafeModePath = receiptPath
+  try {
+    Object.defineProperty(process, 'platform', { ...original, value: 'linux' })
+    await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
+  } finally { Object.defineProperty(process, 'platform', original) }
+  expect(a.writes).toBe(0)
+  expect(await readFile(sharedPath, 'utf8')).toBe(sharedBefore)
+  expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)
 })
 
 it('takes the documented Windows permission-policy branch without changing the shared content', async () => {
