@@ -25,6 +25,7 @@ The package README owns the form behavior; the settings reference documents its 
 | Package | Purpose | ctx key |
 |---|---|---|
 | [`settings`](settings/README.md) | Config projection and revisioned form edits | `settings` |
+| [`provider-config-sync`](provider-config-sync/README.md) | Opt-in ordinary provider catalogs with local authentication and profile restrictions | `providerConfigSync` |
 
 <a id="related-documentation"></a>
 ## Related documentation

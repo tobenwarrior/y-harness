@@ -36,7 +36,7 @@ describe.skipIf(webSnapshotMode() === 'record')('web e2e: DeepSeek Messages sett
 
   it('offers one DeepSeek card and saves Messages settings using the existing credential reference', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-deepseek-messages-settings'))
-    expect(scaffold.ctx.llm.listProviders()).toContainEqual({ id: 'deepseek-official', name: 'DeepSeek' })
+    expect(scaffold.ctx.llm.listProviders()).toContainEqual(expect.objectContaining({ id: 'deepseek-official', name: 'DeepSeek' }))
     expect(scaffold.ctx.llm.listProviders().filter(provider => provider.id === 'deepseek-official')).toHaveLength(1)
     expect(scaffold.ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'deepseek-official', model: 'deepseek-flash' })
     const onboarding = page.getByRole('dialog', { name: '添加一个 API Key 开始使用' })
@@ -80,7 +80,7 @@ describe.skipIf(webSnapshotMode() === 'record')('web e2e: DeepSeek Messages sett
     await page.getByRole('menuitem', { name: /模型/ }).click()
     await page.getByRole('menuitemradio', { name: 'Messages Flash', exact: true }).waitFor()
     await compareOrRefreshGolden(join(EXPECTED, 'picker.expected.md'),
-      await captureStableAria(page, '[role="group"][aria-label="模型与推理等级"]', scaffold.workspaceCwd), webSnapshotMode())
+      await captureStableAria(page, '[role="group"][aria-label="提供方、模型、推理等级与速度"]', scaffold.workspaceCwd), webSnapshotMode())
     await page.keyboard.press('Escape')
     await page.getByRole('menuitem', { name: /推理等级/ }).click()
     const effortWeights = await page.getByRole('menuitemradio').evaluateAll(rows => rows.map(row =>
@@ -96,7 +96,7 @@ describe.skipIf(webSnapshotMode() === 'record')('web e2e: DeepSeek Messages sett
     await scaffold.ctx.agentDefaultModel.saveSelection({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
     await page.reload({ waitUntil: 'load' })
     const input = page.locator('[data-composer-input]').first()
-    const trigger = page.getByRole('button', { name: /^选择模型.*deepseek-official\/deepseek-v4-flash/ })
+    const trigger = page.getByRole('button', { name: /^选择模型.*deepseek-v4-flash/ })
     await trigger.waitFor()
     await expect.poll(() => input.getAttribute('contenteditable')).toBe('true')
     await trigger.click()

@@ -2348,6 +2348,23 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-plugin-package-inventory-deepseek -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-provider-config-sync -->
+<a id="deepseek-aidsh-provider-config-sync"></a>
+
+## `@deepseek-ai/dsh-provider-config-sync`
+
+- `inject`: `settings` · `profileContext`
+- `source`: [`packages/settings/provider-config-sync/src/index.ts:21`](../packages/settings/provider-config-sync/src/index.ts)
+
+```ts config-catalog
+/** Pairing is explicit; no shared location is selected by default. */
+export interface Config {
+  /** Explicit absolute path shared only by approved, schema-compatible local profiles. */
+  sharedPath?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-provider-config-sync -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-ptc-runtime-node -->
 <a id="deepseek-aidsh-ptc-runtime-node"></a>
 
