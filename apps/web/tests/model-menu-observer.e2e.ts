@@ -117,7 +117,6 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     await page.addInitScript(() => {
       window.__modelMenuRectReads = 0
-      // oxlint-disable-next-line typescript/unbound-method -- The wrapper supplies the original Element receiver below.
       const original = Element.prototype.getBoundingClientRect
       Element.prototype.getBoundingClientRect = function (): DOMRect {
         if (this.hasAttribute('data-menu-group') || [...this.children].some(child => child.hasAttribute('data-menu-group'))) {
@@ -141,29 +140,62 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     }
   })
 
+  it('browses one provider at a time and cancels without changing the saved route', async () => {
+    onTestFailed(() => saveFailureShot(page, `web-e2e-provider-first-${engine.name()}`))
+    const trigger = page.getByRole('button', { name: /^选择模型/ })
+    const rootProvider = page.getByRole('menuitem', { name: '提供方', exact: true })
+    const search = page.getByRole('searchbox', { name: '搜索模型…', exact: true })
+    const rows = page.getByRole('menuitemradio')
+    await trigger.click()
+    await page.getByRole('menuitem', { name: /^模型/ }).click()
+    await expect.poll(() => rows.allTextContents()).toEqual(PROVIDERS[0]!.models.map(model => model.name))
+    const viewport = page.getByRole('menu', { name: '模型', exact: true })
+    expect(await viewport.locator('[data-menu-group-heading]').count()).toBe(0)
+    await viewport.evaluate((node) => { node.style.maxHeight = '80px' })
+    const ids = await rows.evaluateAll(nodes => nodes.map(node => node.id))
+    const initial = ids.indexOf(await search.getAttribute('aria-activedescendant') ?? '')
+    for (let step = 1; step <= ids.length + 1; step++) {
+      await search.press('ArrowDown')
+      expect(await search.getAttribute('aria-activedescendant')).toBe(ids[(initial + step) % ids.length])
+      expect(await search.evaluate(node => node === node.ownerDocument.activeElement)).toBe(true)
+      await assertNoRectReads(page)
+    }
+    await search.fill('Quartz')
+    await page.getByText('没有匹配的模型。', { exact: true }).waitFor()
+    await search.press('Escape')
+    await rootProvider.click()
+    await expect.poll(() => rows.allTextContents()).toEqual(['DeepSeek', ...PROVIDERS.map(provider => provider.name)])
+    await page.getByRole('menuitemradio', { name: 'Quartz Gateway', exact: true }).click()
+    await expect.poll(() => rows.allTextContents()).toEqual(PROVIDERS[3]!.models.map(model => model.name))
+    expect(await trigger.textContent()).toContain('Origin Large')
+    expect(scaffold.ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'origin-gateway', model: 'origin-large' })
+    await search.fill('Quartz Model 1')
+    await expect.poll(() => rows.allTextContents()).toEqual(['Quartz Model 1'])
+    await search.press('Escape')
+    expect(await rootProvider.getAttribute('aria-describedby')).not.toBeNull()
+    expect(await rootProvider.textContent()).toContain('Quartz Gateway')
+    await page.keyboard.press('Escape')
+    await trigger.click()
+    expect(await rootProvider.textContent()).toContain('Origin Gateway')
+    await rootProvider.click()
+    await page.getByRole('menuitemradio', { name: 'Amber Gateway', exact: true }).click()
+    await search.press('Escape')
+    await page.keyboard.press('Escape')
+    expect(scaffold.ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'origin-gateway', model: 'origin-large' })
+    expect(tripwire.pageErrors).toEqual([])
+  })
+
   // FIXME: WebKit 26.5 crashes while filtering the grouped model rows in this scenario.
-  it.skipIf(engine === webkit)('keeps both pickers ordered, sticky and keyboard-operable without synchronous group rect reads', async () => {
+  it.skipIf(engine === webkit)('keeps the command picker ordered, sticky and keyboard-operable without synchronous group rect reads', async () => {
     onTestFailed(() => saveFailureShot(page, `web-e2e-model-menu-observer-${engine.name()}`))
-    let buttonMaterial: Awaited<ReturnType<typeof headingMaterial>> | undefined
-    for (const entry of ['button', 'command'] as const) {
+    {
       const composer = page.locator('[data-composer-input]').first()
-      const surface = entry === 'button'
-        ? page.getByRole('group', { name: '模型与推理等级', exact: true })
-        : page.locator('[aria-label="/model 选项"]')
-      const viewport = entry === 'button'
-        ? surface.getByRole('menu', { name: '模型', exact: true })
-        : surface.getByRole('listbox')
-      const search = entry === 'button'
-        ? page.getByRole('searchbox', { name: '搜索模型…', exact: true })
-        : page.getByRole('textbox', { name: '筛选选项', exact: true })
+      const surface = page.locator('[aria-label="/model 选项"]')
+      const viewport = surface.getByRole('listbox')
+      const search = page.getByRole('textbox', { name: '筛选选项', exact: true })
       const open = async (): Promise<void> => {
-        if (entry === 'button') {
-          await page.getByRole('button', { name: /^选择模型/ }).click()
-          await page.getByRole('menuitem', { name: /^模型/ }).click()
-        } else {
-          await page.getByRole('button', { name: '添加文件或调用指令', exact: true }).click()
-          await page.getByRole('option', { name: /^模型/ }).click()
-        }
+        await page.getByRole('button', { name: '添加文件或调用指令', exact: true }).click()
+        await page.getByRole('option', { name: /^模型/ }).click()
         await expect.poll(() => readGroups(viewport)).toEqual(EXPECTED_GROUPS)
         await expect.poll(() => search.evaluate(node => node === node.ownerDocument.activeElement)).toBe(true)
         await assertNoRectReads(page)
@@ -174,7 +206,6 @@ describe.skipIf(webSnapshotMode() === 'record').each([
       const close = async (): Promise<void> => {
         if (crashed || page.isClosed() || await surface.count() === 0) return
         await search.press('Escape')
-        if (entry === 'button') await page.keyboard.press('Escape')
         await surface.waitFor({ state: 'detached' })
         await composer.fill('')
       }
@@ -193,8 +224,6 @@ describe.skipIf(webSnapshotMode() === 'record').each([
         for (const style of material) {
           expect(style).toMatchObject({ position: 'sticky', font: '11px', weight: '500', padding: '4px 7px 2px' })
         }
-        if (entry === 'button') buttonMaterial = material
-        else expect(material).toEqual(buttonMaterial)
 
         for (const index of [2, 4, 1]) {
           await scrollToGroup(viewport, index)
