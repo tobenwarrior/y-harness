@@ -1,6 +1,7 @@
 /** Sanitized native items and allowlisted procedure facts; no raw bodies or inferred verification. */
 import { isAbsolute, relative, resolve } from 'node:path'
 import { brandString } from '@deepseek-ai/dsh-brand'
+import { isNativeProcedurePath } from '@deepseek-ai/dsh-util-values/native-procedure-path'
 import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId } from '@deepseek-ai/dsh-skill-library/types'
 
 function object(value: unknown): Record<string, unknown> {
@@ -19,26 +20,20 @@ function procedure(item: Record<string, unknown>, projectCwd: string | undefined
   const wrapper = /^\/bin\/(?:zsh|bash|sh) -(?:lc|c) '([A-Za-z0-9_./ -]+)'$/.exec(item.command)
   const command = (wrapper?.[1] ?? item.command).trim().replace(/ +/g, ' ')
   if (/^(?:(?:pnpm|npm) run (?:test|lint|typecheck|build)|npm test|pnpm exec vitest run|(?:python -m )?pytest|cargo (?:test|check)|go test \.\/\.\.\.|git diff --check)$/.test(command)) return { kind: 'check', command }
-  const match = /^cat ([A-Za-z0-9_./-]+)$/.exec(command)
-  if (match === null) return undefined
+  if (!/^cat [A-Za-z0-9_./-]+$/.test(command)) return undefined
   const actions = Array.isArray(item.commandActions) ? item.commandActions.map(object) : []
   const action = actions.length === 1 ? actions[0] : undefined
-  const argument = match[1]
-  if (argument === undefined) return undefined
+  const argument = command.slice(4)
   if (action?.type !== 'read' || typeof action.path !== 'string' || resolve(projectCwd, argument) !== resolve(projectCwd, action.path)) return undefined
   const path = relative(resolve(projectCwd), resolve(projectCwd, argument)).replace(/\\/g, '/')
-  if (isAbsolute(path) || path.length > 256
-    || !/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|py|rs|go|yml|yaml|toml)$/.test(path)
-    || path.split('/').some(part => part.startsWith('.') || /secret|credential|password|token|auth/i.test(part))) return undefined
+  if (!isNativeProcedurePath(path)) return undefined
   return { kind: 'read', path }
 }
 
 function projectPath(value: unknown, root: string): string | undefined {
   if (typeof value !== 'string' || value.length === 0 || value.length > 1024 || /[\x00-\x1f\x7f]/u.test(value)) return undefined
   const path = relative(resolve(root), resolve(root, value)).replace(/\\/g, '/')
-  if (isAbsolute(path) || path.length > 256
-    || !/^(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|json|md|py|rs|go|yml|yaml|toml)$/.test(path)
-    || path.split('/').some(part => part.startsWith('.') || /secret|credential|password|token|auth/i.test(part))) return undefined
+  if (!isNativeProcedurePath(path)) return undefined
   return path
 }
 function patchProcedure(

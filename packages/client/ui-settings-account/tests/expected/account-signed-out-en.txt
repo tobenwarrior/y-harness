@@ -1,1 +1,1 @@
-You are not signed in to Y HarnessSign in to Y Harness to get your dedicated API KeySign in
+DeepSeek connectionNot connectedOptional: connect your DeepSeek account to use its available credits. Other providers and local features remain available.Connect DeepSeek

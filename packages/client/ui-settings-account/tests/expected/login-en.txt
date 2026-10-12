@@ -1,1 +1,1 @@
-Get startedSign in to your DeepSeek account or add an API Key to get started. Your projects and files are stored locally.Add API KeySign in
+Connect DeepSeekSign in to use this provider with your available DeepSeek credits. You can also configure an API key in Models. Local projects and files stay available without connecting.Add API KeyConnect DeepSeek

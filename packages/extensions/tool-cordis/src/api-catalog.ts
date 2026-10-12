@@ -2183,7 +2183,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote async initializeDefaultModel(): Promise<void>',
-        description: 'Select the first available account model after login when no provider API key is configured.',
+        description: 'Select the first available account model after login without a saved default or provider API key.',
         parameters: [],
         returns: 'after saving the first available model or retaining the existing default.',
       },
@@ -7961,7 +7961,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SkillCleanupChange',
-    declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n}',
+    declaration: 'export interface SkillCleanupChange {\n    readonly id: SkillLibraryId;\n    readonly name: string;\n    readonly expectedHash: string;\n    readonly before: string;\n    readonly after: string;\n    readonly beforeBytes: number;\n    readonly afterBytes: number;\n    readonly overBudget: boolean;\n    readonly markdownGeneration?: {\n        readonly id: string;\n        readonly files: readonly {\n            readonly path: string;\n            readonly content: string;\n        }[];\n    };\n}',
   },
   {
     name: 'SkillCleanupProposal',

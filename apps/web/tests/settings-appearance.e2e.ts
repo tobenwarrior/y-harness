@@ -1,4 +1,4 @@
-/** Built settings controls share radius and card materials across account, model, and plugin pages. */
+/** Built settings controls share radius and card materials across provider, model, and plugin pages. */
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { chromium, type Locator } from 'playwright'
@@ -6,7 +6,7 @@ import { expect, it, onTestFinished, vi } from 'vitest'
 import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
 import type {} from '@deepseek-ai/dsh-deepseek-account'
 import {
-  captureStableAria, compareOrRefreshGolden, launchWebScaffold, webSnapshotMode,
+  compareOrRefreshGolden, launchWebScaffold, webSnapshotMode,
 } from './scaffold.ts'
 import { openSettings, ZH_BROWSER_LOCALE } from './support.ts'
 
@@ -26,10 +26,6 @@ function appearance(element: Locator) {
 it('shares settings card materials and control sizes in both palettes', async () => {
   const scaffold = await launchWebScaffold({})
   onTestFinished(() => scaffold.close())
-  await scaffold.ctx.settings.mutate('ui-settings-account', [
-    { op: 'set', path: ['step'], value: 'done' },
-    { op: 'set', path: ['completion'], value: 'completed' },
-  ])
   const account = scaffold.ctx.deepseekAccount
   const state: AccountView = {
     status: 'credential-stored', attempt: null,
@@ -59,6 +55,7 @@ it('shares settings card materials and control sizes in both palettes', async ()
   await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
   await openSettings(page, 'zh')
   const dialog = page.getByRole('dialog', { name: '设置', exact: true })
+  expect(await dialog.locator('nav').getByRole('button', { name: '账号与余额', exact: true }).count()).toBe(0)
 
   for (const [palette, label] of [['light', '浅色'], ['dark', '深色']] as const) {
     await dialog.getByRole('button', { name: '外观', exact: true }).click()
@@ -69,23 +66,33 @@ it('shares settings card materials and control sizes in both palettes', async ()
     expect(selector.radius).toBe('12px')
     expect((await appearance(dialog)).radius).toBe('28px')
 
-    await dialog.getByRole('button', { name: '账号与余额', exact: true }).click()
-    const section = dialog.getByRole('region', { name: '账号与余额', exact: true })
+    await dialog.getByRole('button', { name: '模型', exact: true }).click()
+    const section = dialog.getByRole('region', { name: 'DeepSeek 连接', exact: true })
+    await section.getByRole('heading', { name: 'DeepSeek 连接', exact: true }).waitFor()
     await expect.poll(() => section.innerText()).toContain('¥128.50')
-    const cards = section.locator(':scope > div')
-    expect(await cards.count()).toBe(2)
-    const profile = await appearance(cards.nth(0))
-    const balance = await appearance(cards.nth(1))
+    expect(await section.getByText('Radius example', { exact: true }).count()).toBe(1)
+    expect(await section.getByText('¥12.00', { exact: true }).count()).toBe(1)
+    expect(await section.getByRole('button', { name: '连接 DeepSeek', exact: true }).count()).toBe(0)
+    await expect.poll(() => section.getByRole('button', { name: '断开 DeepSeek', exact: true }).isEnabled()).toBe(true)
+    const profileCard = section.locator(':scope > div').filter({ hasText: 'Radius example' })
+    const balanceCard = section.locator(':scope > div').filter({ has: page.getByRole('link', { name: '查询用量', exact: true }) })
+    expect(await profileCard.count()).toBe(1)
+    expect(await balanceCard.count()).toBe(1)
+    expect(await profileCard.getByRole('status').innerText()).toBe('r***@example.com')
+    const profile = await appearance(profileCard)
+    const balance = await appearance(balanceCard)
     const material = { radius: profile.radius, border: profile.border, stroke: profile.stroke, fill: profile.fill }
     expect(material.radius).toBe('20px')
     expect(material.fill).not.toBe('rgba(0, 0, 0, 0)')
     expect(balance).toMatchObject(material)
-    const usage = await appearance(section.getByRole('link', { name: '查询用量', exact: true }))
-    const topUp = await appearance(section.getByRole('link', { name: '充值', exact: true }))
+    const usageLink = section.getByRole('link', { name: '查询用量', exact: true })
+    const topUpLink = section.getByRole('link', { name: '充值', exact: true })
+    expect(await usageLink.getAttribute('href')).toBe('https://platform.deepseek.com/usage')
+    expect(await topUpLink.getAttribute('href')).toBe('https://platform.deepseek.com/top_up')
+    const usage = await appearance(usageLink)
+    const topUp = await appearance(topUpLink)
     expect(usage).toMatchObject({ radius: '12px', height: 36 })
     expect(topUp).toMatchObject({ radius: '12px', height: 36 })
-    await compareOrRefreshGolden(join(EXPECTED, 'account.expected.md'),
-      await captureStableAria(page, 'section[aria-label="账号与余额"]', scaffold.workspaceCwd), webSnapshotMode())
 
     await dialog.getByRole('button', { name: '内置插件', exact: true }).click()
     await dialog.getByRole('button', { name: /^全局/ }).click()

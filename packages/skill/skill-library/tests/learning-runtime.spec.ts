@@ -1,4 +1,5 @@
 /** Live Session facts and a scripted API boundary; no process or real model calls. */
+import { setImmediate } from 'node:timers/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { LlmAdapter, createAssistantMessage, createToolResultMessage, createUserMessage, ReasoningEffortId, ServiceTierId, ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -6,7 +7,7 @@ import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepse
 import SessionStore, { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session, TurnEndReason } from '@deepseek-ai/dsh-session'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
+import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillClaudeSessionId, SkillClaudeSendId, SkillClaudeMessageId, SkillClaudeToolUseId, SkillLearningNativeItem, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningGenerator, SkillLearningProposeRequest, SkillLearningSource } from '../src/learning-types.ts'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { installSkillLearningRuntime } from '../src/learning-runtime.ts'
 import type { SkillLearningRuntimeController, SkillLearningRuntimeOptions } from '../src/learning-runtime.ts'
@@ -38,7 +39,7 @@ class ScriptedAdapter extends LlmAdapter {
 
 async function fixture(options: SkillLearningRuntimeOptions = {}, mode: 'api' | 'native' | 'unknown' = 'api', reply = validReply) {
   const ctx = new Context(); contexts.push(ctx)
-  await ctx.plugin(SessionStore); await ctx.plugin(LlmRuntime)
+  const sessionFiber = await ctx.plugin(SessionStore); await ctx.plugin(LlmRuntime)
   ctx.provide('workspaceRegistry', { list: () => [{ id: 'p', path: '/test/project', title: 'Project' }] } as never)
   const adapter = new ScriptedAdapter(mode, reply)
   const registration = ctx.llm.registerAdapter(['scripted'], adapter)
@@ -71,7 +72,7 @@ async function fixture(options: SkillLearningRuntimeOptions = {}, mode: 'api' | 
   const session = ctx.sessions.create(SessionId('s'), { meta: { cwd: '/test/project' } })
   return {
     ctx, session, adapter, registration, evidence, proposals, generated, availability,
-    generators, sources, flush, stopFlush, order, dispose,
+    generators, sources, flush, stopFlush, order, dispose, sessionFiber,
   }
 }
 
@@ -382,3 +383,186 @@ function ctxDetachedTask() {
   // A seed created off-store never emits live session/event notifications.
   const ctx = new Context(); const store = new SessionStore(ctx); const session = store.prepare(SessionId('seed'), { meta: { cwd: '/test/project' } }); turn(session); return session
 }
+
+
+it.each([0, -1, 1.5, Number.NaN, 2147483648])('refuses an invalid runtime bound %s before mounting listeners', (maxInputBytes) => {
+  const ctx = new Context(); contexts.push(ctx)
+  const controller = { registerLearningGenerator: () => () => {}, setLearningAvailability: () => {}, recordLearningEvidence: async () => { throw new Error('must not admit') }, proposeLearning: async () => {} }
+  expect(() => installSkillLearningRuntime(ctx, controller, { maxInputBytes })).toThrow(/invalid runtime bound/)
+})
+it('pairs Claude messages and refuses native identity changes, duplicate starts and overlong metadata', async () => {
+  for (const control of ['paired', 'identity-change', 'duplicate', 'long-name', 'too-many'] as const) {
+    const f = await fixture({ maxEventRefs: control === 'too-many' ? 2 : 40 }, 'native')
+    f.session.append('turn/start', { turn: 1 })
+    f.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Inspect the current project.' }] }), { surfaceOp: 'append' })
+    const item: SkillLearningNativeItem = { provider: 'claude-code', connectionId: brandString<SkillNativeConnectionId>('profile'), sessionId: brandString<SkillClaudeSessionId>('native'), sendId: brandString<SkillClaudeSendId>('send'),
+      itemId: brandString<SkillClaudeToolUseId>('read'), kind: 'read', name: 'read', phase: 'started', sourceMessageId: brandString<SkillClaudeMessageId>('assistant'), skillReadPath: 'src/source.ts', procedure: { kind: 'read', path: 'src/source.ts' } }
+    for (let n = 0; n < (control === 'too-many' ? 3 : 2); n++) {
+      const current: SkillLearningNativeItem = { ...item, itemId: brandString<SkillClaudeToolUseId>(`item-${n}`), name: control === 'long-name' ? 'x'.repeat(129) : 'read',
+        procedure: { kind: 'read', path: `src/source-${n}.ts` }, ...(control === 'identity-change' && n === 1 ? { sendId: brandString<SkillClaudeSendId>('foreign') } : {}) }
+      f.session.append('skill/native-item', current, { ignorable: true })
+      if (control === 'duplicate') f.session.append('skill/native-item', current, { ignorable: true })
+      f.session.append('skill/native-item', { ...current, phase: 'settled', outcome: 'reported-success', resultMessageId: brandString<SkillClaudeMessageId>('result') }, { ignorable: true })
+    }
+    f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await f.dispose()
+    expect(f.adapter.calls).toEqual([])
+    if (control === 'paired' || control === 'duplicate') {
+      expect(f.evidence).toHaveLength(1)
+      expect(f.evidence[0]?.native).toMatchObject({ provider: 'claude-code', sendId: 'send', actions: [
+        { sourceMessageId: 'assistant', resultMessageId: 'result', skillReadPath: 'src/source.ts' },
+        { sourceMessageId: 'assistant', resultMessageId: 'result', skillReadPath: 'src/source.ts' }] })
+    } else expect(f.evidence).toEqual([])
+  }
+})
+it('bounds live captures, route and completion caches, and forgets disposed sessions', async () => {
+  const f = await fixture({ maxSessions: 1, maxCompletionRefs: 1 })
+  for (let n = 0; n < 3; n++) {
+    const session = n === 0 ? f.session : f.ctx.sessions.create(SessionId(`bounded-${n}`), { meta: { cwd: '/test/project' } })
+    turn(session)
+    await vi.waitFor(() => { expect(f.evidence).toHaveLength(n + 1) })
+  }
+  const generator = f.generators.get('harness-api')!
+  await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: [f.evidence[0]!], catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)).rejects.toThrow(/captured evidence/)
+  const disposable = f.ctx.sessions.prepare(SessionId('disposable'), { meta: { cwd: '/test/project' } })
+  const detach = f.ctx.sessions.enter(disposable); f.ctx.sessions.announce(disposable)
+  disposable.append('turn/start', { turn: 1 }); detach()
+  await f.dispose()
+  expect(f.adapter.calls).toHaveLength(3)
+  expect(f.evidence.every(row => row.checks.length === 0)).toBe(true)
+})
+it('refuses overlong route metadata and ignores roots outside the registered project', async () => {
+  const f = await fixture()
+  const outside = f.ctx.sessions.create(SessionId('outside'), { meta: { cwd: '/different/project' } }); turn(outside)
+  f.session.append('turn/start', { turn: 1 })
+  f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'x'.repeat(257), model: 'model' } } })
+  await f.dispose()
+  expect(f.adapter.calls).toEqual([]); expect(f.evidence).toEqual([])
+  expect(f.availability.get('p')?.reason).toContain('metadata bound')
+})
+it.each([
+  '<skill-learning-json>{"drafts":[{"kind":"update","id":"existing","name":"existing","description":"Existing procedure","content":"Preserve checks."}],"uncertainty":[]}</skill-learning-json>',
+  '<skill-learning-json>{"drafts":[{"kind":"create","name":"new","description":"Authorization: Bearer synthetic","content":"Preserve checks."}],"uncertainty":[]}</skill-learning-json>',
+  '<skill-learning-json>{"drafts":[{"kind":"create","name":"new","description":"New procedure","content":"Preserve checks."}],"uncertainty":["Authorization: Bearer synthetic"]}</skill-learning-json>',
+])('validates draft identities and refuses sensitive generated metadata', async (reply) => {
+  const f = await fixture({}, 'api', reply); turn(f.session); await f.dispose()
+  expect(f.adapter.calls).toHaveLength(1)
+  if (reply.includes('"id":"existing"')) expect(f.generated[0]?.drafts[0]?.id).toBe('existing')
+  else { expect(f.generated).toEqual([]); expect(f.availability.get('p')?.state).toBe('unavailable') }
+})
+
+it.each([
+  { name: 'nonterminal response', chunks: [{ type: 'finish', reason: { kind: 'max-tokens' } }] },
+  { name: 'tool start', chunks: [{ type: 'block-start', index: 0, blockType: 'tool-call' }] },
+  { name: 'tool delta', chunks: [{ type: 'tool-call-delta', index: 0, id: ToolCallId('denied'), name: 'exec', argumentsDelta: '{}' }] },
+  { name: 'completed tool block', chunks: [{ type: 'block-end', index: 0, block: { type: 'tool-call', id: ToolCallId('denied'), name: 'exec', arguments: '{}' } }] },
+] satisfies readonly { name: string; chunks: readonly StreamChunk[] }[])('refuses $name from an auxiliary response before retaining a suggestion', async ({ chunks }) => {
+  const f = await fixture()
+  f.adapter.stream = async function* (options) { this.calls.push(options); yield* chunks }
+  turn(f.session); await f.dispose()
+  expect(f.adapter.calls).toHaveLength(1)
+  expect(f.generated).toEqual([])
+  expect(f.session.snapshotEvents().filter(event => event.type === 'skill/learning-response').map(event => event.data.state)).toEqual(['unavailable'])
+})
+
+it('refuses excessive chunks and complete text above the output cap even without a repeated block-end body', async () => {
+  const chunks = await fixture({ maxOutputChunks: 1 }); turn(chunks.session); await chunks.dispose()
+  expect(chunks.adapter.calls).toHaveLength(1); expect(chunks.generated).toEqual([])
+  const output = await fixture({ maxOutputBytes: Buffer.byteLength(validReply) - 1 })
+  output.adapter.stream = async function* (options) {
+    this.calls.push(options)
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: validReply }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  turn(output.session); await output.dispose()
+  expect(output.adapter.calls).toHaveLength(1); expect(output.generated).toEqual([])
+  expect(output.availability.get('p')?.state).toBe('unavailable')
+})
+
+it('requires the drafted response to reach durable storage before publishing a suggestion', async () => {
+  const f = await fixture()
+  f.ctx.on('session/flush', (session) => {
+    const last = session.snapshotEvents().at(-1)
+    if (last?.type === 'skill/learning-response' && last.data.state === 'drafted') throw new Error('synthetic response storage failure')
+  })
+  turn(f.session); await f.dispose()
+  expect(f.evidence).toHaveLength(1); expect(f.adapter.calls).toHaveLength(1); expect(f.generated).toEqual([])
+  expect(f.session.snapshotEvents().filter(event => event.type === 'skill/learning-response').map(event => event.data.state)).toEqual(['drafted', 'unavailable'])
+})
+
+it('rejects selected source counts and aggregate source bytes before auxiliary dispatch', async () => {
+  const count = await fixture({ maxDrafts: 1 })
+  count.sources.push(sourceFixture('First instructions.'), sourceFixture('Second instructions.'))
+  turn(count.session); await count.dispose()
+  expect(count.adapter.calls).toEqual([]); expect(count.generated).toEqual([])
+  const aggregate = await fixture({ maxInputBytes: 1024 })
+  aggregate.sources.push(sourceFixture('Complete instructions. '.repeat(30)), sourceFixture('Other complete instructions. '.repeat(20)))
+  turn(aggregate.session); await aggregate.dispose()
+  expect(aggregate.sources.every(source => Buffer.byteLength(source.content) < 1024)).toBe(true)
+  expect(aggregate.adapter.calls).toEqual([]); expect(aggregate.generated).toEqual([])
+})
+
+it.each(['adapter', 'sessions'] as const)('refuses retained generator use after its %s owner unloads', async (owner) => {
+  const f = await fixture(); turn(f.session)
+  await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
+  const generator = f.generators.get('harness-api')!
+  if (owner === 'adapter') f.registration()
+  else await f.sessionFiber.dispose()
+  await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: f.evidence, catalog: [], sources: [], bodyBudgetBytes: 2000 }, new AbortController().signal)).rejects.toThrow(owner === 'adapter' ? /project API route/ : /live root evidence/)
+  expect(f.adapter.calls).toHaveLength(1)
+  await f.dispose()
+})
+
+it('cancels retained generation before dispatch when its caller signal is already aborted', async () => {
+  const f = await fixture(); turn(f.session)
+  await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
+  const generator = f.generators.get('harness-api')!
+  const cancellation = new AbortController(); cancellation.abort()
+  await expect(generator.generate({ projectId: 'p', operation: 'learn', evidence: f.evidence, catalog: [], sources: [], bodyBudgetBytes: 2000 }, cancellation.signal)).rejects.toThrow(/suggestion generation/)
+  expect(f.adapter.calls).toHaveLength(1)
+  await f.dispose()
+})
+
+it('settles caller cancellation before a provider ignoring the signal is released, then drains that provider', async () => {
+  const f = await fixture(); turn(f.session)
+  await vi.waitFor(() => { expect(f.generated).toHaveLength(1) })
+  const generator = f.generators.get('harness-api')!
+  const entered = Promise.withResolvers<undefined>(); const release = Promise.withResolvers<undefined>()
+  f.adapter.stream = async function* (options) {
+    this.calls.push(options); entered.resolve(undefined)
+    await release.promise
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const cancellation = new AbortController()
+  const pending = generator.generate({ projectId: 'p', operation: 'learn', evidence: f.evidence, catalog: [], sources: [], bodyBudgetBytes: 2000 }, cancellation.signal)
+  const rejection = expect(pending).rejects.toThrow(/suggestion generation/)
+  try {
+    await entered.promise; cancellation.abort(); await rejection
+    let disposed = false; const disposal = f.dispose().then(() => { disposed = true })
+    await setImmediate(); expect(disposed).toBe(false)
+    expect(f.generators.has('harness-api')).toBe(true)
+    release.resolve(undefined); await disposal
+    expect(f.generators.has('harness-api')).toBe(false)
+    expect(f.adapter.calls).toHaveLength(2)
+    expect(f.generated).toHaveLength(1)
+  } finally { release.resolve(undefined); await f.dispose() }
+})
+
+it('bounds multi-block task and completion text while preserving no reasoning as task observations', async () => {
+  const f = await fixture({ maxTaskBytes: 32 })
+  f.session.append('turn/start', { turn: 1 })
+  f.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'x'.repeat(32) }, { type: 'text', text: 'discarded second block' }] }), { surfaceOp: 'append' })
+  f.session.append('request/header', { reason: 'initial', header: { config: { provider: 'scripted', model: 'model' } } })
+  for (let n = 0; n < 2; n++) {
+    const callId = ToolCallId(`bounded-text-${n}`)
+    f.session.append('tool/call', { turn: 1, step: 1, name: 'exec', callId, arguments: '{}' })
+    f.session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({ callId, isError: false, content: [] }) }, { surfaceOp: 'append' })
+  }
+  f.session.append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({ source: { provider: 'scripted', model: 'model' }, content: [{ type: 'reasoning', text: 'private reasoning block' }, { type: 'text', text: 'y'.repeat(32) }, { type: 'text', text: 'discarded final block' }] }), stream: [] }, { surfaceOp: 'append' })
+  f.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } }); await f.dispose()
+  expect(f.evidence).toHaveLength(1)
+  expect(f.evidence[0]?.task).toBe('x'.repeat(32))
+  expect(f.evidence[0]?.observations.at(-1)).toBe(`Assistant completion claim (unverified): ${'y'.repeat(32)}`)
+  expect(JSON.stringify(f.evidence)).not.toMatch(/private reasoning|discarded/)
+})

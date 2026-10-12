@@ -1,1 +1,1 @@
-当前未登录 Y Harness 账号登录 Y Harness 账号获取专属 API Key登录
+DeepSeek 连接尚未连接可选连接你的 DeepSeek 账号，以使用其可用额度。其他提供方和本地功能仍可使用。连接 DeepSeek

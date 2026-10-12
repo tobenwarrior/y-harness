@@ -1,7 +1,8 @@
 /** Real idle Y root and persistence composition; only native SDK and process enforcement are substituted. */
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PassThrough } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
@@ -70,7 +71,7 @@ async function* normalFrames(input: SDKUserMessage, options: Options): AsyncGene
   yield { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: frameIds.idle, session_id }
 }
 async function fixture(script: Script = normalFrames, diagnostics = '') {
-  const root = await realpath(await mkdtemp('/tmp/dsh-sequential-claude-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-sequential-claude-')))
   const ctx = new Context()
   const owner: { fixtureHome?: string; executor?: ClaudeSequentialExecutor } = {}
   let stop = () => {}; let detach = () => {}
@@ -310,10 +311,17 @@ it.each(['container', 'context-management', 'server-tool-usage', 'malformed-text
   expect(f.terminate).toHaveBeenCalled()
 })
 
-it('matches pinned long native project path encoding and NFC normalization', () => {
-  const directory = `/fixture/${'é'.repeat(210)}`; const normalized = process.platform === 'darwin' ? directory.normalize('NFC') : directory
-  let hash = 0; for (const char of normalized) hash = (hash << 5) - hash + char.charCodeAt(0) | 0
+it.each([
+  { label: 'BMP unicode', segment: 'é'.repeat(210), suffix: 'jm2je3' },
+  { label: 'surrogate-pair unicode', segment: '🚀'.repeat(110), suffix: 'wvhr27' },
+])('matches pinned long native project path encoding and NFC normalization for $label', ({ segment, suffix }) => {
+  const directory = `/fixture/${segment}`; const resolved = resolve(directory)
+  const normalized = process.platform === 'darwin' ? resolved.normalize('NFC') : resolved
+  let hash = 0; for (let index = 0; index < normalized.length; index++) hash = (hash << 5) - hash + normalized.charCodeAt(index) | 0
   const expected = `${normalized.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 200)}-${Math.abs(hash).toString(36)}`
-  expect(claudeSequentialProjectDirectory('/fixture/profile', directory)).toBe(join('/fixture/profile', 'projects', expected))
-  if (process.platform === 'darwin') expect(claudeSequentialProjectDirectory('/fixture/profile', directory.normalize('NFD'))).toBe(claudeSequentialProjectDirectory('/fixture/profile', directory))
+  const profileRoot = resolve('/fixture/profile').normalize('NFC')
+  const actual = claudeSequentialProjectDirectory(profileRoot, directory)
+  expect(actual).toBe(join(profileRoot, 'projects', expected))
+  if (process.platform !== 'win32') expect(actual).toBe(join(profileRoot, 'projects', `-fixture${'-'.repeat(192)}-${suffix}`))
+  if (process.platform === 'darwin') expect(claudeSequentialProjectDirectory(profileRoot, directory.normalize('NFD'))).toBe(actual)
 })

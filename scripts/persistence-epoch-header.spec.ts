@@ -6,6 +6,10 @@ import { extractPersistenceSchema } from './persistence-schema.ts'
 import { classifyPersistenceChange } from './persistence-changes.ts'
 import { canonicalizeSchema, schemaDigest } from './persistence-schema-model.ts'
 import type { SchemaNode } from './persistence-schema-model.ts'
+import { COVERAGE_TEST_TIMEOUT_ENV, parseCoverageTestTimeout } from './coverage-partitions.ts'
+
+// Full-repository compiler extraction retains the lane budget under coverage contention.
+const schemaTestTimeout = Math.max(60_000, parseCoverageTestTimeout(process.env[COVERAGE_TEST_TIMEOUT_ENV]) ?? 0)
 
 function property(nodes: readonly SchemaNode[], index: number, name: string): number {
   const node = nodes[index]
@@ -15,7 +19,7 @@ function property(nodes: readonly SchemaNode[], index: number, name: string): nu
   return field.type
 }
 
-it('requires a version bump before request headers can carry retired system text', { timeout: 60_000 }, () => {
+it('requires a version bump before request headers can carry retired system text', { timeout: schemaTestTimeout }, () => {
   const inventory = extractPersistenceSchema(resolve(import.meta.dirname, '..'))
   const before = inventory.roots.find(root => root.key === 'event:request/header')
   if (before === undefined) throw new Error('generated schema omits request/header')

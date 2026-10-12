@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -479,15 +479,17 @@ describe('evidence-backed skill proposals', () => {
   it('expires provider admission and ignores a late generated proposal', async () => {
     const f = await fixture(); const item = await f.skill(); await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
     const learning = new SkillLearning({ ...f.options, operationTimeoutMs: 5 })
-    let release: () => void = () => {}; let providerSignal: AbortSignal | undefined
+    let release: () => void = () => {}; let entered: () => void = () => {}; let providerSignal: AbortSignal | undefined
     const gate = new Promise<void>((resolve) => { release = resolve })
+    const admission = new Promise<void>((resolve) => { entered = resolve })
     learning.registerGenerator({ id: 'late', generate: async (_input, signal) => {
-      providerSignal = signal; await gate; return { drafts: [{ kind: 'compress', id: item.id,
+      providerSignal = signal; entered(); await gate; return { drafts: [{ kind: 'compress', id: item.id,
         name: item.name, description: item.description,
         content: 'You MUST request deployment approval.\n\n[Checklist](reference.txt)' }], uncertainty: [] } } })
     const result = learning.propose({ projectId: 'p', operation: 'compress', targetIds: [item.id],
       evidenceIds: [f.evidence.id] }).catch((error: unknown) => String(error))
-    const outcome = await Promise.race([result, new Promise<string>((resolve) => { setTimeout(() => { resolve('still running') }, 50) })])
+    await admission
+    const outcome = await result
     let disposed = false; const disposal = learning.dispose().then(() => { disposed = true })
     try {
       await new Promise<void>((resolve) => { setTimeout(resolve, 0) }); expect(disposed).toBe(false)
@@ -751,7 +753,10 @@ describe('evidence-backed skill proposals', () => {
       recursive: true }); f.projects.push({ id: 'other', title: 'Other', path: secondProject })
     const consumer = join(secondProject, '.dsh/skills/consumer'); await mkdir(consumer, {
       recursive: true }); await writeFile(join(consumer, 'SKILL.md'),
-      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared](' + source.path + ')\n')
+      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared]('
+      + relative(await realpath(consumer), source.path).replaceAll('\\', '/') + ')\n')
+    const consumerItem = (await f.library.list({})).items.find(item => item.name === 'consumer')!
+    expect(consumerItem.references).toContainEqual({ kind: 'file', target: source.path, resolvedId: source.id })
     const referenced = await f.learning.propose({ projectId: 'p', operation: 'deduplicate',
       targetIds: [source.id, survivor.id], evidenceIds: [f.evidence.id] })
     await expect(f.learning.apply({ proposalId: referenced.id, mode: 'reviewed' })).rejects.toThrow(/incoming references/)
@@ -890,4 +895,163 @@ describe('evidence-backed skill proposals', () => {
     expect((await f.library.detail({ id: item.id })).revisions).toHaveLength(0)
   })
 
+})
+
+it('refuses unavailable proposal identities, duplicate providers, unsupported policies and unpaired evidence', async () => {
+  const f = await fixture(); const missing = brandString<SkillLearningProposal['id']>('missing')
+  await expect(f.learning.detail({ proposalId: missing })).rejects.toThrow(/not found|unknown|unavailable/)
+  await expect(f.learning.reject({ proposalId: missing })).rejects.toThrow()
+  const generator = { id: 'fixture', generate: async () => ({ drafts: [], uncertainty: [] }) }
+  const stop = f.learning.registerGenerator(generator)
+  expect(() => f.learning.registerGenerator(generator)).toThrow(/duplicate/); stop(); stop()
+  const validator = { id: 'fixture-validator', trusted: true, validate: async () => ({ constraintsPreserved: true, resourcesPreserved: true, referenceImpactChecked: true, survivorEquivalent: false, findings: [] }) }
+  const stopValidator = f.learning.registerValidator(validator)
+  expect(() => f.learning.registerValidator(validator)).toThrow(/duplicate/)
+  await expect(f.learning.approvePolicy({ validatorId: validator.id, operations: [] })).rejects.toThrow(/trusted/)
+  await expect(f.learning.approvePolicy({ validatorId: validator.id, operations: ['create'] })).rejects.toThrow(/explicit project/)
+  await expect(f.learning.approvePolicy({ validatorId: validator.id, operations: ['update'], projectId: 'unregistered' })).rejects.toThrow(/registered/)
+  stopValidator(); stopValidator()
+  await expect(f.learning.approvePolicy({ validatorId: validator.id, operations: ['update'] })).rejects.toThrow(/trusted/)
+  await expect(f.learning.revokePolicy({ policyId: brandString<SkillLearningPolicy['id']>('missing') })).rejects.toThrow()
+  await expect(f.learning.setAutomatic({ id: brandString<SkillLibraryId>('missing'), expectedHash: '', policyId: brandString<SkillLearningPolicy['id']>('missing'), enabled: false })).rejects.toThrow(/no semantic/)
+  await expect(f.learning.recordEvidence({ ...f.evidence, sessionId: 'different', eventRefs: ['different:1'], checks: [{ kind: 'test', result: 'passed', eventRef: 'absent:1', summary: 'Synthetic test' }] })).rejects.toThrow(/observed source/)
+  const native = nativeObservations()
+  for (const actions of [[native.actions[0]!, native.actions[0]!], native.actions]) {
+    await expect(f.learning.recordEvidence({ ...f.evidence, eventRefs: ['s:1'], native: { ...native, actions } })).rejects.toThrow(/unique paired/)
+  }
+  await f.learning.dispose(); await f.library.dispose()
+})
+it('rejects incomplete, foreign and oversized proposal selections before changing a source', async () => {
+  const f = await fixture(); const item = await f.skill(); const path = item.path; const original = await readFile(path, 'utf8')
+  await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
+  const request = { projectId: 'p', operation: 'compress' as const, targetIds: [item.id], evidenceIds: [f.evidence.id], generatorId: 'mock-generator' }
+  await expect(f.learning.propose(request)).rejects.toThrow(/no learning generator/)
+  f.learning.registerGenerator(f.generator(item.id, 'Short instructions.'))
+  for (const [change, error] of [
+    [{ evidenceIds: [] }, /bounded/],
+    [{ evidenceIds: Array(5).fill(f.evidence.id) }, /bounded/],
+    [{ evidenceIds: [brandString<SkillLearningEvidence['id']>('missing')] }, /substantial/],
+    [{ targetIds: Array.from({ length: 5 }, (_, n) => brandString<SkillLibraryId>(`missing-${n}`)) }, /source count/],
+    [{ targetIds: [brandString<SkillLibraryId>('missing')] }, /loading scope/],
+    [{ projectId: 'foreign' }, /substantial/],
+  ] as const) await expect(f.learning.propose({ ...request, ...change })).rejects.toThrow(error)
+  for (const fields of [{ completed: false }, { substantial: false }, { observations: [] }]) {
+    await f.options.evidence.put(f.evidence.id, { ...f.evidence, ...fields })
+    await expect(f.learning.propose(request)).rejects.toThrow(/substantial/)
+  }
+  await f.options.evidence.put(f.evidence.id, f.evidence)
+  f.projects.splice(0)
+  await expect(f.learning.propose(request)).rejects.toThrow(/registered/)
+  expect(await readFile(path, 'utf8')).toBe(original)
+  expect(f.learning.list({})).toEqual([]); await f.learning.dispose(); await f.library.dispose()
+})
+it('rejects generator operation, source, metadata, duplicate destinations and missing survivor claims', async () => {
+  const f = await fixture(); const item = await f.skill(); await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
+  const before = await readFile(item.path, 'utf8')
+  const base = { kind: 'compress' as const, id: item.id, name: item.name, description: item.description, content: 'Short instructions.' }
+  const request = { projectId: 'p', operation: 'compress' as const, targetIds: [item.id], evidenceIds: [f.evidence.id], generatorId: 'matrix' }
+  const cases = [
+    { operation: 'compress' as const, drafts: [{ ...base, kind: 'update' as const }], error: /operation/ },
+    { operation: 'compress' as const, drafts: [{ ...base, id: brandString<SkillLibraryId>('unselected') }], error: /unselected/ },
+    { operation: 'compress' as const, drafts: [{ ...base, name: 'different' }], error: /metadata/ },
+    { operation: 'compress' as const, drafts: [{ ...base, description: 'different' }], error: /metadata/ },
+    { operation: 'compress' as const, drafts: [{ ...base, content: (await f.library.learningSource(item.id)).content.repeat(2) }], error: /reduce/ },
+    { operation: 'compress' as const, drafts: [base, base], error: /more than once/ },
+    { operation: 'deduplicate' as const, drafts: [{ ...base, kind: 'archive' as const, content: '' }], error: /survivor/ },
+    { operation: 'deduplicate' as const, drafts: [{ ...base, kind: 'archive' as const, content: '', survivorId: item.id }], error: /survivor/ },
+    { operation: 'learn' as const, drafts: [{ kind: 'create' as const, name: 'Invalid Name', description: 'New', content: 'Body' }], error: /invalid new/ },
+    { operation: 'learn' as const, drafts: [{ kind: 'create' as const, name: item.name, description: item.description, content: 'Body' }], error: /existing relevant/ },
+  ]
+  for (const value of cases) {
+    const dispose = f.learning.registerGenerator({ id: 'matrix', generate: async () => ({ drafts: value.drafts, uncertainty: [] }) })
+    await expect(f.learning.propose({ ...request, operation: value.operation })).rejects.toThrow(value.error)
+    dispose()
+  }
+  expect(await readFile(item.path, 'utf8')).toBe(before)
+  expect(f.learning.list({})).toEqual([]); await f.learning.dispose(); await f.library.dispose()
+})
+
+it('refuses complete evidence and selected input above their byte budgets before provider admission', async () => {
+  const f = await fixture()
+  const bounded = new SkillLearning({ ...f.options, maxInputBytes: 100 })
+  let calls = 0
+  bounded.registerGenerator({ id: 'bounded', generate: async () => {
+    calls++; return { drafts: [], uncertainty: [] }
+  } })
+  try {
+    await expect(bounded.recordEvidence({ ...f.evidence, sessionId: 'larger', task: 'Observed action '.repeat(20) })).rejects.toThrow(/evidence exceeds/)
+    await expect(bounded.propose({ projectId: 'p', operation: 'learn', evidenceIds: [f.evidence.id], generatorId: 'bounded' })).rejects.toThrow(/input exceeds/)
+    expect(calls).toBe(0)
+    expect(bounded.listEvidence({})).toEqual([f.evidence])
+    expect(bounded.list({})).toEqual([])
+  } finally { await bounded.dispose() }
+})
+
+it.each(['source-count', 'byte-count'] as const)('refuses oversized generator %s without retaining a partial proposal', async (control) => {
+  const f = await fixture()
+  const bounded = new SkillLearning({ ...f.options, maxSources: 1, maxInputBytes: 2000 })
+  bounded.registerGenerator({ id: 'bounded', generate: async () => ({
+    drafts: (control === 'source-count' ? ['first', 'second'] : ['first']).map(name => ({
+      kind: 'create', name, description: 'New review instructions', content: 'Review the complete result.',
+    })),
+    uncertainty: control === 'byte-count' ? ['Unverified '.repeat(300)] : [],
+  }) })
+  try {
+    await expect(bounded.propose({ projectId: 'p', operation: 'learn', evidenceIds: [f.evidence.id], generatorId: 'bounded' })).rejects.toThrow(/output exceeds/)
+    expect(bounded.list({})).toEqual([])
+    expect((await f.library.list({})).items).toEqual([])
+  } finally { await bounded.dispose() }
+})
+
+it('applies the proposal byte cap to evidence, diffs and retained review metadata together', async () => {
+  const f = await fixture()
+  let inputBytes = 0
+  const output = { drafts: [{ kind: 'create' as const, name: 'bounded-review', description: 'Review instructions', content: 'Review results. '.repeat(30) }], uncertainty: [] }
+  const generator: SkillLearningGenerator = { id: 'size-calibration', generate: async (input) => {
+    inputBytes = Buffer.byteLength(JSON.stringify(input)); return output
+  } }
+  f.learning.registerGenerator(generator)
+  const request = { projectId: 'p', operation: 'learn' as const, evidenceIds: [f.evidence.id], generatorId: generator.id }
+  const calibration = await f.learning.propose(request)
+  const budget = Math.max(inputBytes, Buffer.byteLength(JSON.stringify(output))) + 1
+  expect(Buffer.byteLength(JSON.stringify(calibration))).toBeGreaterThan(budget)
+  const bounded = new SkillLearning({ ...f.options, maxInputBytes: budget })
+  bounded.registerGenerator(generator)
+  try {
+    await expect(bounded.propose(request)).rejects.toThrow(/complete proposal exceeds/)
+    expect(bounded.list({}).map(value => value.id)).toEqual([calibration.id])
+    expect((await f.library.list({})).items).toEqual([])
+  } finally { await bounded.dispose() }
+})
+
+it('refuses unavailable independent validation and oversized complete validation without changing the durable proposal', async () => {
+  const f = await fixture()
+  f.learning.registerGenerator({ id: 'review-only', generate: async () => ({ drafts: [{ kind: 'create', name: 'review-only', description: 'Review instructions', content: 'Inspect results.' }], uncertainty: [] }) })
+  const proposal = await f.learning.propose({ projectId: 'p', operation: 'learn', evidenceIds: [f.evidence.id] })
+  await expect(f.learning.validate({ proposalId: proposal.id })).rejects.toThrow(/no independent/)
+  const bounded = new SkillLearning({ ...f.options, maxInputBytes: 2000 })
+  bounded.registerValidator({ id: 'large-findings', trusted: false, validate: async () => ({
+    constraintsPreserved: true, resourcesPreserved: true, referenceImpactChecked: true,
+    survivorEquivalent: false, findings: ['Unverified result '.repeat(300)],
+  }) })
+  try {
+    await expect(bounded.validate({ proposalId: proposal.id, validatorId: 'large-findings' })).rejects.toThrow(/complete validated proposal exceeds/)
+    expect(await bounded.detail({ proposalId: proposal.id })).toEqual(proposal)
+    expect((await f.library.list({})).items).toEqual([])
+  } finally { await bounded.dispose() }
+})
+
+it('bounds automatic application and selected cleanup before source mutation', async () => {
+  const f = await fixture()
+  f.learning.registerGenerator({ id: 'review-only', generate: async () => ({ drafts: ['first-review', 'second-review'].map(name => ({
+    kind: 'create', name, description: 'Review instructions', content: 'Inspect results.',
+  })), uncertainty: [] }) })
+  const proposal = await f.learning.propose({ projectId: 'p', operation: 'learn', evidenceIds: [f.evidence.id] })
+  const bounded = new SkillLearning({ ...f.options, maintenanceMaxOperations: 1 })
+  try {
+    await expect(bounded.apply({ proposalId: proposal.id, mode: 'automatic' })).rejects.toThrow(/operation budget/)
+    await expect(bounded.cleanup({ ids: [brandString<SkillLibraryId>('first'), brandString<SkillLibraryId>('second')], force: true })).rejects.toThrow(/selection exceeds/)
+    expect(await bounded.detail({ proposalId: proposal.id })).toEqual(proposal)
+    expect((await f.library.list({})).items).toEqual([])
+  } finally { await bounded.dispose() }
 })

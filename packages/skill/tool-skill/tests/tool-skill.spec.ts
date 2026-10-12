@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -186,6 +186,60 @@ async function mintAgentScope(ctx: Context, subject: string | Agent): Promise<{ 
 }
 
 describe('dsh-tool-skill', () => {
+  it('refuses a runtime-invalid catalog mode before registering another tool', async () => {
+    const home = await tempDir('catalog-mode-refusal')
+    const ctx = await setup(home)
+    const before = ctx.tools.schemas()
+    expect(() => {
+      Reflect.apply(toolSkill.apply, undefined, [ctx, { catalogMode: 'future' }])
+    }).toThrow('catalogMode must be all or relevant')
+    expect(ctx.tools.schemas()).toEqual(before)
+  })
+
+  it('refuses metadata search when the calling scope shadows the skill loader', async () => {
+    const home = await tempDir('search-loader-refusal')
+    const ctx = await setup(home, { catalogMode: 'relevant' })
+    const { agent, scope } = await mintAgentScope(ctx, '/workspace')
+    scope.ctx.tools.restrict({ deny: ['skill'] })
+    const result = await ctx.tools.execute({
+      name: 'search_skills', arguments: { query: 'database' }, agent,
+      signal: testToolSignal, callId: ToolCallId('scope-search-refusal'),
+    })
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('Harness skill loader is unavailable in this scope')
+    await scope.dispose()
+  })
+
+  it('retains only the newest bounded text task and excludes empty non-text messages', async () => {
+    const home = await tempDir('query-suffix')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogQueryMaxChars: 5 })
+    const retrieve = vi.spyOn(ctx.skills, 'retrieve')
+    const older = createUserMessage({ content: [{ type: 'text', text: 'older' }], source: { kind: 'user' } })
+    const latest = createUserMessage({ content: [{ type: 'text', text: 'latest' }], source: { kind: 'user' } })
+    const empty = createUserMessage({ content: [{ type: 'reasoning', text: 'excluded from the metadata query' }], source: { kind: 'user' } })
+    const decision = await proposeStep(ctx, agentForCwd('/workspace'), [older, latest, empty])
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    expect(retrieve.mock.calls[0]?.[0]?.query).toBe('atest')
+    const source = decision.messages.find(message => message.source.kind === 'skill-catalog')?.source as toolSkill.SkillCatalogSource | undefined
+    expect(source?.queryMessageIds).toEqual([latest.id])
+  })
+
+  it('reuses a relevance catalog while preserving multi-message task order', async () => {
+    const home = await tempDir('query-order')
+    const ctx = await setup(home, { catalogMode: 'relevant', catalogQueryMaxChars: 32 })
+    const retrieve = vi.spyOn(ctx.skills, 'retrieve')
+    const first = createUserMessage({ content: [{ type: 'text', text: 'alpha' }], source: { kind: 'user' } })
+    const second = createUserMessage({ content: [{ type: 'text', text: 'beta' }], source: { kind: 'user' } })
+    const agent = agentForCwd('/workspace')
+    const decision = await proposeStep(ctx, agent, [first, second])
+    if (decision.kind !== 'enter') throw new Error('expected admission')
+    expect(retrieve.mock.calls[0]?.[0]?.query).toBe('alpha\nbeta')
+    const catalog = decision.messages.find(message => message.source.kind === 'skill-catalog')!
+    expect(catalog.source).toMatchObject({ mode: 'relevance', queryMessageIds: [first.id, second.id] })
+    const repeated = await proposeStep(ctx, agent, decision.messages)
+    expect(repeated).toEqual(decision)
+  })
+
   it('publishes bounded task metadata with source message identities, without loading bodies', async () => {
     const home = await tempDir('relevant-catalog')
     const ctx = await setup(home, { catalogMode: 'relevant', catalogLimit: 1, catalogMaxBytes: 90 })

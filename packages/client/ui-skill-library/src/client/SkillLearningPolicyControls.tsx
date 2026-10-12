@@ -5,6 +5,7 @@ import type { SkillLibraryId, SkillLibraryItem, SkillLibraryProject, SkillLearni
   SkillLearningPolicyRequest } from '@deepseek-ai/dsh-skill-library/types'
 import type { SkillLearningUiState } from './controller.ts'
 import type { SkillLibraryPageProps } from './SkillLibraryPage.tsx'
+import { createPolicyActionHandlers, createProjectPolicyActionHandlers } from './policy-actions.ts'
 import css from './SkillLibraryPage.module.css'
 
 /** Deliberate policy and consent callbacks with observed metadata and provider state. */
@@ -69,12 +70,10 @@ export function SkillProjectLearningControls({ projects, selectedProjectId, stat
     setSelection({ projectId: projects.some(candidate => candidate.id === selectedProjectId) ? selectedProjectId : '', allowed: false })
     setOpen(true)
   }
-  const approve = (): void => {
-    if (!canApprove) return
-    approvePolicy({ validatorId: 'native-observation-validator', generatorId: 'native-observation',
-      projectId: project.id, operations: ['create', 'update'] })
-    setOpen(false)
-  }
+  const { approve, setAllowed } = createProjectPolicyActionHandlers(canApprove
+    ? { canApprove: true, project } : { canApprove: false, project }, {
+    approvePolicy, closeApproval: () => { setOpen(false) }, setConsent: setSelection,
+  })
   return <>
     <Button size="sm" variant="outline" disabled={busy || projects.length === 0} onClick={openDialog}>{t('projectLearning')}</Button>
     <Modal open={open} title={t('projectLearning')} description={t('nativeProjectApprovalHint')} closeLabel={t('close')}
@@ -88,7 +87,7 @@ export function SkillProjectLearningControls({ projects, selectedProjectId, stat
       <div className={css.detailSection}>
         <Checkbox label={t('nativeProjectConsent')} checked={projectAllowed}
           disabled={busy || project === undefined || !nativeAvailable || nativePolicy !== undefined}
-          onChange={(allowed) => { if (project !== undefined) setSelection({ projectId: project.id, allowed }) }} />
+          onChange={setAllowed} />
         {nativePolicy !== undefined && <Button size="sm" variant="outline" disabled={busy} onClick={
           () => { revokePolicy(nativePolicy.id) }}>{t('revokeProjectLearning')}</Button>}
       </div>
@@ -130,30 +129,17 @@ export function SkillLearningPolicyControls({
   const policyLabel = (policy: typeof policies[number]): string => t('policySummary', {
     validator: policy.validatorId, operations: policy.operations.map(operation => t(operationKeys[operation])).join(', '),
   })
-  const revoke = (): void => {
-    if (!busy && optIn?.enabled === true) setLearningAutomatic(item, optIn.policyId, false)
-  }
+  const { revoke, submit, runCleanup, setAutomatic } = createPolicyActionHandlers({
+    item, busy, canApprove, validatorId, allowed, optIn, canCleanup, selectedPolicy,
+  }, { approvePolicy, setLearningAutomatic, cleanupSemantic, closeApproval: () => { setDialogOpen(false) } })
   const openApproval = (): void => {
     setValidatorId(null); setAllowed([]); setDialogOpen(true)
-  }
-  const submit = (): void => {
-    if (!canApprove || validatorId === null) return
-    approvePolicy({ validatorId, operations: allowed })
-    setDialogOpen(false)
-  }
-  const runCleanup = (force: boolean): void => {
-    if (!canCleanup) return
-    const projectId = item.projectIds[0]
-    cleanupSemantic({ ...projectId === undefined ? {} : { projectId }, ids: [item.id], force })
   }
   return <section className={css.detailSection}>
     <div className={css.sectionHeading}>
       <h3>{t('semanticMaintenance')}</h3>
       {eligible && <Switch label={t('automaticLearning')} checked={checked} disabled={busy || !checked && selectedPolicy === undefined}
-        onChange={(enabled) => {
-          if (!enabled) revoke()
-          else if (!busy && selectedPolicy !== undefined) setLearningAutomatic(item, selectedPolicy.id, true)
-        }} />}
+        onChange={setAutomatic} />}
     </div>
     <p className={css.secondary}>{t('semanticExtensionStatus')}</p>
     <p className={css.secondary}>{t('semanticHint')}</p>

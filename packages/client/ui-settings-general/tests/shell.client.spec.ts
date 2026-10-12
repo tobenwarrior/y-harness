@@ -7,6 +7,7 @@
  */
 import { describe, expect, onTestFinished, vi } from 'vitest'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { inject } from '../src/client/index.ts'
 import type { SettingsRootInjected } from '../src/client/shell-contract.ts'
@@ -109,21 +110,26 @@ describe('ui-settings-general shell', () => {
     off()
   })
 
-  it('shows Account first in Desktop while signed in and removes it on sign-out', async ({ start }) => {
+  it('keeps Desktop settings neutral through repeated provider connection changes', async ({ start }) => {
     vi.stubGlobal('dshDesktop', {})
     onTestFinished(() => { vi.unstubAllGlobals() })
     const c = await start()
     const { sections } = injectedOf(c).hooks
     await c.mock.streams.opened('account/watch', 1)
-    expect(sections.getSnapshot().map(row => row.id)).toEqual(PRODUCT_SECTIONS)
-    c.mock.streams.push('account/watch', { status: 'credential-stored', attempt: null })
-    await vi.waitFor(() => {
-      expect(sections.getSnapshot().map(row => row.id)).toEqual(['account', ...PRODUCT_SECTIONS])
-    })
-    c.mock.streams.push('account/watch', { status: 'credential-stored', attempt: null })
-    await vi.waitFor(() => { expect(sections.getSnapshot().filter(row => row.id === 'account')).toHaveLength(1) })
-    c.mock.streams.push('account/watch', { status: 'signed-out', attempt: null })
-    await vi.waitFor(() => { expect(sections.getSnapshot().map(row => row.id)).toEqual(PRODUCT_SECTIONS) })
+    const footer = c.ctx.slots.entries('settings.models.footer').filter(row => row.options.id === 'deepseek-connection')
+    expect(footer).toHaveLength(1)
+    const injected: object = footer[0]!.inject!()
+    const account = (injected as { hooks: { account: HostObservable<{ view: { status: string } | undefined }> } }).hooks.account
+    for (const status of ['signed-out', 'credential-stored', 'credential-stored', 'signed-out'] as const) {
+      c.mock.streams.push('account/watch', { status, attempt: null })
+      await vi.waitFor(() => { expect(account.getSnapshot().view?.status).toBe(status) })
+      await c.flush()
+      expect(sections.getSnapshot().map(row => row.id)).toEqual(PRODUCT_SECTIONS)
+      expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
+      expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
+      expect(c.ctx.slots.entries('shell.overlay').filter(row => row.options.id === 'desktop-onboarding')).toHaveLength(0)
+      expect(c.ctx.slots.entries('settings.models.footer').filter(row => row.options.id === 'deepseek-connection')).toHaveLength(1)
+    }
   })
 
   it('projects the roster Connection control without copying its state; reconnect opens a new $events generation', async ({ start }) => {

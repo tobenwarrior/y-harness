@@ -8,13 +8,14 @@ import type { SkillLearningGenerator, SkillLearningProposal, SkillLearningValida
  */
 export function reduceInstructionRedundancy(content: string): string {
   if (/^[ \t]/m.test(content) || /<!--|<\/?[a-z][^>]*>/i.test(content)) return content
-  const lines = content.match(/[^\n]*(?:\n|$)/g)?.filter(line => line !== '') ?? []
+  const lines = Array.from(content.matchAll(/[^\n]*(?:\n|$)/g), match => match[0]).filter(line => line !== '')
   const kept: string[] = []
   let fence: { marker: string; length: number } | undefined
   const referenceEntry = /^[-*+] \[[^[\]\\`]+\]\([^\s()\\`]+\)$/
   const textOf = (line: string) => line.replace(/\r?\n$/, '')
+  // Parsing and filtering produce dense strings; both scan indexes stay below lines.length.
   for (let index = 0; index < lines.length; index++) {
-    const line = lines[index] ?? ''; const text = textOf(line)
+    const line = lines[index] as string; const text = textOf(line)
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(text)?.[1]
     if (fence !== undefined) {
       kept.push(line)
@@ -25,7 +26,7 @@ export function reduceInstructionRedundancy(content: string): string {
     kept.push(line)
     if (!/^#{1,6} References$/.test(text)) continue
     let end = index + 1
-    while (end < lines.length && !/^#{1,6} /.test(textOf(lines[end] ?? ''))) end++
+    while (end < lines.length && !/^#{1,6} /.test(textOf(lines[end] as string))) end++
     const list = lines.slice(index + 1, end)
     // Continuation text can attach meaning to any preceding entry in this list.
     if (!list.every(entry => textOf(entry) === '' || referenceEntry.test(textOf(entry)))) continue

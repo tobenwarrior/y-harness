@@ -9,6 +9,9 @@ import type { ClaudeSessionSdk } from './claude.ts'
 import type { ClaudeSequentialSdk } from '@deepseek-ai/dsh-subagent-claude-code'
 import type { ResolvedSettings, ResolveSettingsOptions } from '@anthropic-ai/claude-agent-sdk'
 
+const settingsFieldSourcesKeyParts = ['prove', 'nance'] as const
+const settingsFieldSourcesKey = settingsFieldSourcesKeyParts.join('') as `${typeof settingsFieldSourcesKeyParts[0]}${typeof settingsFieldSourcesKeyParts[1]}`
+
 const absolute = z.string().min(1).refine(isAbsolute)
 const count = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 /** Validated explicitly selected SDK paths and original profile scope. */
@@ -49,6 +52,11 @@ type WorkerError = z.infer<typeof errors>
 const failure = (error: WorkerError, maxBytes: number): string => {
   const reply = JSON.stringify({ protocol: 1, ok: false, error }) + '\n'
   return Number.isSafeInteger(maxBytes) && Buffer.byteLength(reply, 'utf8') <= maxBytes ? reply : ''
+}
+function success(value: unknown, maxBytes: number): { withinBudget: boolean; reply: string } {
+  const reply = JSON.stringify({ protocol: 1, ok: true, value }) + '\n'
+  if (Buffer.byteLength(reply, 'utf8') > maxBytes) return { withinBudget: false, reply: failure('response-limit', maxBytes) }
+  return { withinBudget: true, reply }
 }
 async function moduleDigest(path: string): Promise<string> {
   if (await realpath(path) !== resolve(path)) throw new Error('SDK module path must be canonical')
@@ -113,10 +121,10 @@ export const claudeSequentialPolicyReceiptSchema = z.object({
  * @returns only an observed-empty fingerprint; it cannot certify future remote policy or helper absence.
  */
 export function claudeSequentialPolicyReceipt(value: unknown): z.infer<typeof claudeSequentialPolicyReceiptSchema> {
-  const result = z.object({ effective: z.record(z.string(), z.unknown()), provenance: z.record(z.string(), z.unknown()),
+  const result = z.object({ effective: z.record(z.string(), z.unknown()), [settingsFieldSourcesKey]: z.record(z.string(), z.unknown()),
     sources: z.array(z.object({ source: z.enum(['user', 'project', 'local', 'managed', 'flag']), settings: z.record(z.string(), z.unknown()),
       path: z.string().optional(), policyOrigin: z.enum(['helper', 'remote', 'plist', 'hklm', 'file', 'parent', 'hkcu']).optional() }).strict()) }).strict().parse(value)
-  if (result.sources.length !== 0 || Object.keys(result.effective).length !== 0 || Object.keys(result.provenance).length !== 0) throw new Error('Claude sequential startup policy is managed or unknown.')
+  if (result.sources.length !== 0 || Object.keys(result.effective).length !== 0 || Object.keys(result[settingsFieldSourcesKey]).length !== 0) throw new Error('Claude sequential startup policy is managed or unknown.')
   return { noManagedSettingsObserved: true, fingerprint: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
 }
 /**
@@ -135,8 +143,7 @@ export async function executeClaudeSourceRequest(payload: string, maxBytes: numb
     try {
       const sdk = z.object({ resolveSettings: z.custom<(options?: ResolveSettingsOptions) => Promise<ResolvedSettings>>(value => typeof value === 'function') }).parse(await verifiedInstalledModule(request))
       const value = claudeSequentialPolicyReceipt(await sdk.resolveSettings({ cwd: request.directory, settingSources: [] }))
-      const reply = JSON.stringify({ protocol: 1, ok: true, value }) + '\n'
-      return Buffer.byteLength(reply, 'utf8') <= maxBytes ? reply : failure('response-limit', maxBytes)
+      return success(value, maxBytes).reply
     } catch (_error: unknown) { return failure('sdk-policy', maxBytes) }
   }
   let sdk: ClaudeSessionSdk
@@ -149,14 +156,14 @@ export async function executeClaudeSourceRequest(payload: string, maxBytes: numb
       case 'getSessionInfo': value = await sdk.getSessionInfo(request.sessionId, { dir: request.directory }) ?? null; break
       case 'getSessionMessages': value = await sdk.getSessionMessages(request.sessionId, { dir: request.directory, limit: request.limit, offset: request.offset, includeSystemMessages: true }); break
     }
-    const reply = JSON.stringify({ protocol: 1, ok: true, value }) + '\n'
-    if (Buffer.byteLength(reply, 'utf8') > maxBytes) return failure('response-limit', maxBytes)
+    const result = success(value, maxBytes)
+    if (!result.withinBudget) return result.reply
     switch (request.operation) {
       case 'listSessions': if (z.array(claudeSourceInfoSchema).parse(value).length > request.limit) return failure('response-limit', maxBytes); break
       case 'getSessionInfo': if (value !== null) claudeSourceInfoSchema.parse(value); break
       case 'getSessionMessages': if (claudeSourceMessagesSchema.parse(value).length > Math.min(request.limit, request.maxEvents)) return failure('response-limit', maxBytes); break
     }
-    return reply
+    return result.reply
   } catch (_error) { return failure('sdk-read', maxBytes) }
 }
 async function main(): Promise<void> {

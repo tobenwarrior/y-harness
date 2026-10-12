@@ -16,7 +16,7 @@ export function codingSessionDigest(value: unknown): string {
 function encodeNativeJson(value: unknown): string | undefined {
   return JSON.stringify(value, (_key: string, item: unknown) => {
     if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
-      return Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+      return Object.fromEntries(Object.entries(item).sort(([a], [b]) => Number(a > b) - Number(a < b)))
     }
     return item
   })

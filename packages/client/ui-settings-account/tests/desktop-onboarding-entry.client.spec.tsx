@@ -9,6 +9,21 @@ import { zh, type AccountKey } from '../src/client/locales.ts'
 
 let appRoot: HTMLDivElement
 
+it('shows resumed credit without a Back action that could hide unfinished progress', () => {
+  mount()
+  expect(screen.getByRole('heading', { name: zh.onboardingCredit })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: zh.onboardingBack })).toBeNull()
+  expect(screen.getByRole('button', { name: zh.onboardingSkip })).toBeTruthy()
+  expect(appRoot.inert).toBe(true)
+})
+
+it.each([false, true])('leaves the workspace interactive while invisible onboarding loads (completed=%s)', (done) => {
+  mount(done, true)
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(appRoot.inert).toBe(false)
+  expect(appRoot.style.opacity).toBe('')
+})
+
 it.each([false, true])('resizes only after eligibility resolves (completed=%s)', (done) => {
   const setActive = vi.fn()
   vi.stubGlobal('dshOnboarding', { setActive })
@@ -43,7 +58,7 @@ function mount(initiallyDone = false, initiallyLoading = false) {
   let state: DesktopOnboardingState = {
     creditFunded: false,
     visible: !initiallyDone && !initiallyLoading, status: initiallyLoading ? 'loading' : 'ready', error: null,
-    progress: { version: 1, step: initiallyDone ? 'done' : 'welcome', purpose: null, process: null,
+    progress: { version: 1, step: initiallyDone ? 'done' : 'credit', purpose: null, process: null,
       completion: initiallyDone ? 'completed' : null, usage: 'compact', developerTools: false },
   }
   let account: AccountSnapshot = {
@@ -84,7 +99,7 @@ it('retains the last page while successful completion reveals the workspace', ()
   const view = mount()
   expect(appRoot.style.opacity).toBe('0')
   view.finish()
-  expect(screen.getByRole('heading', { name: `${zh.onboardingWelcome} ${zh.onboardingBrand}` })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: zh.onboardingCredit })).toBeTruthy()
   expect(document.querySelector('[data-exiting]')).not.toBeNull()
   expect(appRoot.style.opacity).toBe('')
   expect(appRoot.inert).toBe(true)
@@ -99,7 +114,7 @@ it('keeps a failed completion visible and the workspace hidden', () => {
   const view = mount()
   view.fail()
   act(() => { vi.advanceTimersByTime(200) })
-  expect(screen.getByRole('heading', { name: `${zh.onboardingWelcome} ${zh.onboardingBrand}` })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: zh.onboardingCredit })).toBeTruthy()
   expect(document.querySelector('[data-exiting]')).toBeNull()
   expect(appRoot.inert).toBe(true)
   expect(appRoot.style.opacity).toBe('0')
@@ -109,7 +124,7 @@ it('waits for completion confirmation after the settings stream first reports do
   const view = mount()
   view.finish('saving')
   expect(screen.getByRole('heading')).toBeTruthy()
-  expect(screen.getByRole('button', { name: zh.onboardingStart }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: zh.onboardingLater }).hasAttribute('disabled')).toBe(true)
   expect(document.querySelector('[data-exiting]')).toBeNull()
   expect(appRoot.style.opacity).toBe('0')
   act(() => { vi.advanceTimersByTime(200) })
@@ -157,13 +172,13 @@ it('cancels pending completion teardown when the entry unmounts', () => {
   expect(appRoot.style.opacity).toBe('')
 })
 
-it.each([false, true])('covers the workspace until initial onboarding eligibility resolves (completed=%s)', (done) => {
+it.each([false, true])('shows an eligible saved introduction only after loading resolves (completed=%s)', (done) => {
   const view = mount(done, true)
-  expect(appRoot.inert).toBe(true)
-  expect(appRoot.style.opacity).toBe('0')
-  expect(screen.getByRole('status').textContent).toBe(zh.onboardingLoading)
+  expect(appRoot.inert).toBe(false)
+  expect(appRoot.style.opacity).toBe('')
+  expect(screen.queryByRole('status')).toBeNull()
   view.resolve()
   expect(screen.queryByRole('status')).toBeNull()
   expect(appRoot.inert).toBe(!done)
-  if (!done) expect(screen.getByRole('button', { name: zh.onboardingStart })).toBeTruthy()
+  if (!done) expect(screen.getByRole('button', { name: zh.onboardingLater })).toBeTruthy()
 })

@@ -82,7 +82,9 @@ Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以
 
 当 `connection`、`fs` 与 `attachments` 均被组合时，`SessionMediaReferences` 在鉴权 `connection.fetch` 通道上挂载 `GET|HEAD /api/file?path=<绝对路径>`。它通过 `ctx.fs` 读取普通文件，包括已注册工作区之外的临时路径与远程提供方中的文件。目录包含关系与 MIME 类别均不限制访问；`mime-types` 提供响应类型，未知扩展名使用 `application/octet-stream`。GET 复用 `readBytes` 执行读取前及读取中的字节限制；HEAD 只读取元数据。所有文件均使用 `ctx.attachments.imageLimits.maxImageBytes`（通常为 20 MiB）；超过此上限返回 413。响应包含完整文件，忽略 Range，并携带 `private, no-store`、`nosniff` 与沙箱 CSP，使直接打开的 HTML/SVG 无法以 API 源身份执行脚本。客户端重写位于 `ui-chat`（`AssistantMarkdown`）；音视频文件响应已可用，Markdown 音视频播放器节点仍是独立工作。
 
-GUI 模型选择要求确切提供方／模型对出现在可用目录中；不可用的选择以 `session/model-unavailable` 拒绝。提示词准入保留已保存的路由，不按目录可用性阻断发送，由请求执行报告凭据缺失或模型不可用。`initializeDefaultModel()` 在账号登录后、其他提供方均未配置 API key 时，将第一个可用账号模型保存为默认模型；凭据检查使用已配置的引用，不依赖模型是否可用。提供方没有可用模型时，初始化以 `session/provider-models-unavailable` 拒绝。可用性变化不会替换模型或改写会话选择。
+GUI 模型选择要求确切提供方／模型对出现在可用目录中；不可用的选择以 `session/model-unavailable` 拒绝。提示词准入保留已保存的路由，不按目录可用性阻断发送，由请求执行报告凭据缺失或模型不可用。可用性变化不会替换模型或改写会话选择。
+
+`initializeDefaultModel()` 保留所属默认模型条目中所有非空用户覆盖，包括不可用、本地和无需 key 的路由。没有已保存的覆盖、且其他提供方均未配置 API key 时，它在账号登录后将第一个可用账号模型保存为默认模型。凭据检查使用已配置的引用，不依赖模型是否可用。初始化在目录查询后重新检查凭据和已保存设置；带版本校验的写入会保留并发的默认模型变更。默认模型元数据缺失时，以 `session/default-model-settings-unavailable` 拒绝；其他元数据及写入错误向调用方传播。账号提供方没有可用模型时，初始化以 `session/provider-models-unavailable` 拒绝。
 
 `selectModel` 成功返回表示会话级模型选择已生效，不等待默认 profile 设置保存。默认设置在后台按提交顺序保存；保存失败会记录警告，并保留会话选择。新会话读取最近一次成功保存的默认值。
 
@@ -120,6 +122,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 - 文件引用补全使用共享 Agent lookup，因此可能恢复冷 Session；`skills/list` 目录是不激活 Agent 的 skill 元数据读取路径。
 - 受理/运行的展示记忆只存在于客户端内存，页面重载后即丢失。
 - 该记忆不在 tab 之间共享：同一会话可能在一个 tab 中已转正，在另一个 tab 中仍显示为 `New Session`。
+- 与继承的部署值相同的选择不会生成用户覆盖；账号初始化无法将该显式选择与未保存的默认值区分。
 
 
 <a id="dev-note"></a>

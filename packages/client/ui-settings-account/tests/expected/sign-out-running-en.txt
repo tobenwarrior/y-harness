@@ -1,1 +1,1 @@
-Sign outTasks are currently running. Signing out will interrupt them. Sign out now?CancelSign out
+Disconnect DeepSeekTasks using DeepSeek account models are running. Disconnecting this provider may interrupt them. Disconnect now?CancelDisconnect DeepSeek

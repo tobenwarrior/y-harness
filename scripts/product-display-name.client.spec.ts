@@ -24,12 +24,24 @@ function productCopy(value: Awaited<ReturnType<typeof dictionaries>>): string[] 
       copy.nousHint, copy.nousModelsHint, copy.nousHermesDisclosure, copy.welcomeBody,
     ]),
     ...[value.account.en, value.account.zh].flatMap(copy => [
-      copy.backToHarness, copy.settingsSignedOutTitle, copy.settingsSignedOutDescription, copy.quotaDescription,
+      copy.backToHarness,
     ]),
     ...[value.office.en, value.office.zh].flatMap(copy => [copy.unavailable]),
     ...[value.onboarding.onboardingCopy, value.onboarding.onboardingEnglishCopy].flatMap(copy => [
-      copy.onboardingBrand, copy.onboardingIntroduction, copy.onboardingCreditDescription,
-      copy.onboardingProcessDescription, copy.onboardingNoCreditDescription,
+      copy.onboardingBrand, copy.onboardingIntroduction, copy.onboardingProcessDescription,
+    ]),
+  ]
+}
+
+function providerCopy(value: Awaited<ReturnType<typeof dictionaries>>): string[] {
+  return [
+    ...[value.account.en, value.account.zh].flatMap(copy => [
+      copy.nav, copy.settingsSignedOutTitle, copy.settingsSignedOutDescription, copy.signInDescription, copy.signedIn,
+      copy.quotaDescription,
+    ]),
+    ...[value.models.en, value.models.zh].flatMap(copy => [copy.deepSeekAccount, copy.onboardingDescription]),
+    ...[value.onboarding.onboardingCopy, value.onboarding.onboardingEnglishCopy].flatMap(copy => [
+      copy.onboardingCreditDescription, copy.onboardingNoCreditDescription,
     ]),
   ]
 }
@@ -50,17 +62,25 @@ describe('feature product labels', () => {
   })
 
   it.each(['Y Harness', 'Atlas', '星图 $&'])('projects %s without altering provider copy', async (displayName) => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', undefined)
+    const originalProviders = providerCopy(await dictionaries())
+    vi.resetModules()
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
     const value = await dictionaries()
     for (const copy of productCopy(value)) expect(copy).toContain(displayName)
+    expect(providerCopy(value)).toEqual(originalProviders)
     if (displayName !== 'Y Harness') {
       for (const copy of productCopy(value)) expect(copy).not.toMatch(/Y Harness|DeepSeek Harness/)
     }
-    expect(value.account.en.signInDescription).toBe('Use your DeepSeek account to get started.')
-    expect(value.account.en.signedIn).toBe('Signed in to DeepSeek')
+    expect(value.account.en.signInDescription).toBe('Optional sign-in for DeepSeek account models.')
+    expect(value.account.en.settingsSignedOutTitle).toBe('Not connected')
+    expect(value.account.zh.settingsSignedOutTitle).toBe('尚未连接')
+    expect(value.account.en.settingsSignedOutDescription).toBe('Optional: connect your DeepSeek account to use its available credits. Other providers and local features remain available.')
+    expect(value.account.zh.settingsSignedOutDescription).toBe('可选连接你的 DeepSeek 账号，以使用其可用额度。其他提供方和本地功能仍可使用。')
+    expect(value.account.en.signedIn).toBe('Connected to DeepSeek')
     expect(value.models.en.deepSeekAccount).toBe('DeepSeek Account')
-    expect(value.models.en.onboardingDescription).toBe('Configure the official DeepSeek provider to start building.')
-    expect(value.models.zh.onboardingDescription).toBe('配置 DeepSeek 官方模型，即可开始使用。')
+    expect(value.models.en.onboardingDescription).toBe('Add your API key to use this optional provider. You can configure other providers in Models.')
+    expect(value.models.zh.onboardingDescription).toBe('添加你的 API Key 以使用此可选提供方，也可以在模型设置中配置其他提供方。')
     expect(value.models.en.nousHint).toContain('Connect your Nous Portal account in the browser')
     expect(value.models.zh.nousHint).toContain('在浏览器中连接 Nous Portal 账户')
     expect(value.models.en.nousHermesDisclosure).toContain('public hermes-cli client ID')

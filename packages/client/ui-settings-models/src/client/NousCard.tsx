@@ -9,6 +9,7 @@ import { countCopy, starterModels } from './nous-models.ts'
 import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
+import { ConnectionSummary } from './ConnectionSummary.tsx'
 
 function jsonObject(value: JsonValue | undefined): Record<string, JsonValue> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
@@ -86,6 +87,7 @@ export function NousCard(props: {
     return () => {
       stale = true
       const pending = action.current
+      action.current = undefined
       pending?.controller.abort()
       if (pending?.signingIn) void connection.cancel().catch((_error: unknown) => {
         /* Host disposal also owns the active authorization attempt. */
@@ -123,17 +125,24 @@ export function NousCard(props: {
   if (connection === undefined || namespace === undefined) return null
 
   const run = async <T,>(callback: (signal: AbortSignal) => Promise<T>, signingIn = false): Promise<T | undefined> => {
+    // The active action keeps its controller before React publishes the disabled state.
+    if (action.current !== undefined) return undefined
     const pending = { controller: new AbortController(), signingIn }
     action.current = pending
     setBusy(true); setMessage('')
     try { return await callback(pending.controller.signal) }
     catch (error) {
-      if (!pending.controller.signal.aborted) setMessage(error instanceof Error ? error.message : t('nousFailed'))
+      if (action.current === pending && !pending.controller.signal.aborted) {
+        setMessage(error instanceof Error ? error.message : t('nousFailed'))
+      }
       return undefined
     }
     finally {
-      if (action.current === pending) action.current = undefined
-      if (!pending.controller.signal.aborted) { setBusy(false); setVerification(undefined) }
+      // Cleanup retires the owner before aborting, so only active callbacks can settle here.
+      if (action.current === pending) {
+        action.current = undefined
+        setBusy(false); setVerification(undefined)
+      }
     }
   }
   const refreshModels = async (signal: AbortSignal): Promise<void> => {
@@ -189,14 +198,8 @@ export function NousCard(props: {
   // reachable: a grant cleared locally still owns the models it published.
   const savedCount = savedNousModels(namespace).length
   if (!open) {
-    return <div className={styles['rowCard']}>
-      <div className={styles['rowHead']}>
-        <span className={styles['rowIdentity']}>
-          <span className={styles['rowName']}>{t('nousTitle')}</span>
-          <Tag tone={connected ? 'success' : 'outline'}>{t(connected ? 'statusConnected' : 'statusSignedOut')}</Tag>
-        </span>
-      </div>
-    </div>
+    return <ConnectionSummary title={t('nousTitle')} connected={connected}
+      status={t(connected ? 'statusConnected' : 'statusSignedOut')} />
   }
   return <div className={styles['editor']}>
     <div className={styles['editorHeader']}>

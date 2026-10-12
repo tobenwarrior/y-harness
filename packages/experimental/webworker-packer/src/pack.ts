@@ -485,24 +485,17 @@ function sweepImage(
 }
 
 /**
- * Drop executable scripts from the image.
- *
- * A shebang says "program", not "module": nothing in a browser can spawn one and no
- * consumer reads their bytes (the packages that expose a launcher path are replaced
- * by stubs that answer with a string). They are also the one place top-level `await`
- * appears in the closure, which a CommonJS body cannot express.
- * @param files - Image entries, mutated.
- * @returns The dropped entry names.
+ * Identify shebang files without removing runtime module targets.
+ * @param files - Materialized image entries.
+ * @returns Shebang entry names; the reachability sweep decides which are omitted.
  */
-function dropExecutables(files: ImageFiles): string[] {
+function executableEntries(files: ImageFiles): string[] {
   const decoder = new TextDecoder()
   const dropped: string[] = []
   for (const [name, bytes] of Object.entries(files)) {
     if (!/\.[cm]?js$/.test(name)) continue
     if (decoder.decode(bytes.subarray(0, 2)) !== '#!') continue
     dropped.push(name)
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- the image is a plain path map
-    delete files[name]
   }
   return dropped
 }
@@ -618,10 +611,11 @@ export function packVfsImage(options: PackOptions): PackResult {
   files[CONFIG_PATH] = encoder.encode(options.config)
   for (const tree of configTrees) collectTree(tree.directory, files, tree.mount, relativePath => !excluded(relativePath))
 
-  const executables = dropExecutables(files)
+  const programs = executableEntries(files)
   const rootPackages = [...packages.keys()].filter(name => options.workspaces.has(name))
   const { swept, transform, javascriptEntries, droppedJavascriptEntries, unresolvedExternalRequests } =
     sweepImage(files, options, rootPackages, root)
+  const executables = programs.filter(name => swept[name] === undefined)
 
   swept[MANIFEST_PATH] = encoder.encode(`${JSON.stringify({
     root,

@@ -53,6 +53,11 @@ const revision = z.object({
 export const skillLibraryRecord = z.object({
   pinned: z.boolean().default(false),
   managedHash: z.string().optional(),
+  /** Selected verification retains logical targets; matching root bytes do not verify child resources. */
+  markdownReferences: z.object({
+    rootHash: z.string().regex(/^[0-9a-f]{64}$/),
+    references: z.array(reference.omit({ resolvedId: true })),
+  }).optional(),
   automaticCleanup: z.boolean().default(false),
   retainedArchives: z.array(z.string()).default([]),
   usage: usage.default({ coverage: 'unknown', loadCount: 0 }),
