@@ -32,6 +32,8 @@ kind: "package-reference"
 
 使用 [settings](../../settings/settings/README.zh.md) 提供只编辑即时字段的表单。编辑完整配置的调用方可使用 `ctx.configEditor.edit()`；普通字段保留 Loader 的正常生命周期。
 
+Host 所有者可向 `edit()` 传入可选的 `AbortSignal`。在排队或预检准备期间取消会在预期更改开始前结束调用方，使外部 profile 协调移除的所有者能销毁自身而不等待自身。更改开始后，编辑器等待操作结束，并在原子替换前检查取消。替换开始后，它会完成协调或已有回滚，而不会错误地报告已取消。Remote 设置 API 保留现有参数。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

@@ -50,6 +50,8 @@ flowchart LR
   cfg --> plugin_dsh_base_config_editor
   plugin_dsh_base_settings["settings<br/>@deepseek-ai/dsh-settings"]
   cfg --> plugin_dsh_base_settings
+  plugin_dsh_base_provider_config_sync["provider-config-sync<br/>@deepseek-ai/dsh-provider-config-sync"]
+  cfg --> plugin_dsh_base_provider_config_sync
   plugin_dsh_base_authorization["authorization<br/>@deepseek-ai/dsh-authorization"]
   cfg --> plugin_dsh_base_authorization
   plugin_dsh_base_deepseek_account["deepseek-account<br/>@deepseek-ai/dsh-deepseek-account-platform"]
@@ -221,6 +223,7 @@ flowchart LR
 | `llm-retry` | `@deepseek-ai/dsh-llm-retry` |
 | `config-editor` | `@deepseek-ai/dsh-config-editor` |
 | `settings` | `@deepseek-ai/dsh-settings` |
+| `provider-config-sync` | `@deepseek-ai/dsh-provider-config-sync` |
 | `authorization` | `@deepseek-ai/dsh-authorization` |
 | `deepseek-account` | `@deepseek-ai/dsh-deepseek-account-platform` |
 | `credentials` | `@deepseek-ai/dsh-credentials-local` |

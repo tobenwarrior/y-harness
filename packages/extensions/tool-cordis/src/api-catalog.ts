@@ -907,9 +907,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Detached layer values alongside their Loader entries.',
       },
       {
-        signature: 'async edit( entry: Entry, change: (current: Record<string, unknown>, inherited: Record<string, unknown>) => Record<string, unknown>, ): Promise<void>',
+        signature: 'async edit( entry: Entry, change: (current: Record<string, unknown>, inherited: Record<string, unknown>) => Record<string, unknown>, signal?: AbortSignal, ): Promise<void>',
         description: 'Validate, persist, and reconcile a plugin\'s next config; ordinary fields keep normal lifecycle rules.',
-        parameters: [{ name: 'entry', description: 'Current Loader entry, also used to detect replacement during the write.' }, { name: 'change', description: 'Derive a raw config from the current entry and its inherited layer.' }],
+        parameters: [{ name: 'entry', description: 'Current Loader entry, also used to detect replacement during the write.' }, { name: 'change', description: 'Derive a raw config from the current entry and its inherited layer.' }, { name: 'signal', description: 'Optional owner cancellation. Queue and preflight preparation settle early; after the caller\'s change starts, work drains, checks cancellation before the atomic commit, and completes after that cutoff.' }],
         returns: 'Fulfillment after Loader reconciliation completes.',
       },
     ],
@@ -1428,6 +1428,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Serialize a caller-owned mutation with all automatic reload paths.',
         parameters: [{ name: 'operation', description: 'Work that must not overlap module or configuration replacement.' }],
         returns: 'The operation result after its asynchronous work completes.',
+      },
+      {
+        signature: 'runOutsideTransaction<T>(operation: () => T): T',
+        description: 'Create caller-owned asynchronous effects outside the current transaction context. The effects still enter `runExclusive` for configuration mutations.',
+        parameters: [{ name: 'operation', description: 'Effect setup or scheduling that must not retain this transaction.' }],
+        returns: 'The caller\'s result.',
       },
       {
         signature: 'async watchConfig(filename: string, refresh: () => Promise<void>): Promise<() => Promise<void>>',
@@ -2021,6 +2027,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'readonly telemetryDisabledEnv: string | undefined',
         description: 'Launch-time DSH_TELEMETRY_DISABLED value; any non-empty value opts out.',
         parameters: [],
+      },
+    ],
+  },
+  {
+    key: 'providerConfigSync',
+    summary: 'Own the refresh queue, settings listener, watcher, and quiescent disposal.',
+    description: 'Own the refresh queue, settings listener, watcher, and quiescent disposal.',
+    methods: [
+      {
+        signature: 'status(): SyncStatus',
+        description: 'Read a detached status without exposing configuration or credentials.',
+        parameters: [],
+        returns: 'Readiness or conflict identities, without provider values.',
+      },
+      {
+        signature: 'synchronize(): Promise<SyncStatus>',
+        description: 'Queue a refresh; repeated notifications share one lifecycle and never re-enter a lock.',
+        parameters: [],
+        returns: 'The status after this refresh queue reaches its current commit point.',
       },
     ],
   },
@@ -2763,9 +2788,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'ns', description: 'Profile entry id.' }, { name: 'section', description: 'Complete form values.' }, { name: 'expectedRevision', description: 'Revision returned by describe.' }],
       },
       {
-        signature: 'async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>',
+        signature: 'async mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number, signal?: AbortSignal): Promise<void>',
         description: 'Apply field edits without restating redacted secrets; unsetting an array index removes its element.',
-        parameters: [{ name: 'ns', description: 'Profile entry id.' }, { name: 'ops', description: 'Ordered form edits.' }, { name: 'expectedRevision', description: 'Revision returned by describe.' }],
+        parameters: [{ name: 'ns', description: 'Profile entry id.' }, { name: 'ops', description: 'Ordered form edits.' }, { name: 'expectedRevision', description: 'Revision returned by describe.' }, { name: 'signal', description: 'Optional Host owner\'s cancellation, passed through the configuration editor.' }],
       },
     ],
   },
@@ -8574,6 +8599,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SurfaceSnapshot',
     declaration: 'export interface SurfaceSnapshot {\n    readonly generation: number;\n    readonly tree: readonly SerializedNode[] | null;\n}',
+  },
+  {
+    name: 'SyncStatus',
+    declaration: 'export interface SyncStatus {\n    state: \'ready\' | \'pending\' | \'conflict\' | \'unconfigured\' | \'error\';\n    conflicts: string[];\n}',
   },
   {
     name: 'SystemMessage',
