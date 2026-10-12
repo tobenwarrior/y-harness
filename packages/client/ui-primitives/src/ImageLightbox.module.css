@@ -1,0 +1,46 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+}
+
+/* Shared dimming mask below the preview and its controls. */
+.mask {
+  position: absolute;
+  inset: 0;
+  background: var(--yh-alias-bg-mask-1);
+  backdrop-filter: var(--yh-mask-blur);
+}
+
+.image {
+  position: relative;
+  max-width: min(100%, 1600px);
+  max-height: calc(100vh - 80px);
+  object-fit: contain;
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-specific-input-major);
+  border: 0;
+  box-shadow: var(--yh-elevation-prominent);
+}
+
+.close {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0.5px solid var(--yh-alias-border-l2-darkmode-thin);
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--yh-specific-input-major);
+  color: var(--yh-alias-label-primary);
+  cursor: pointer;
+}
+
+.close:focus-visible { outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: 3px; }

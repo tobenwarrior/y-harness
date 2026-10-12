@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for web-styling.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/web-styling.md
+/web-ui-style-reference:
+  en: aab8007f4e9287d7
+  zh: 158960e753f32a91
+/web-ui-style-reference/ownership:
+  en: 4bab66969eb92c35
+  zh: 711214d8d5fda13e
+/web-ui-style-reference/component-rules:
+  en: 8d6b6a3f7e085c56
+  zh: c80a6e775293ed67
+/web-ui-style-reference/corner-radii-and-settings-cards:
+  en: 118972f6c2bd6ce4
+  zh: 85f8416b03e4dd8b
+/web-ui-style-reference/changing-the-system:
+  en: 71501119492a3ad4
+  zh: 87bf6c9406d0d9ed

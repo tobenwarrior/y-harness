@@ -1,0 +1,206 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.title,
+.label {
+  font-size: var(--yh-font-s-14-font-size);
+  font-weight: var(--yh-font-s-14-font-weight);
+  line-height: var(--yh-font-s-14-line-height);
+  color: var(--yh-alias-label-primary);
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-settings-card-stroke);
+  border-radius: var(--yh-radius-xl);
+  background: var(--yh-alias-settings-card-fill);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card:hover:not(.selected) {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.card:focus-visible {
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.selected {
+  border-color: var(--yh-alias-state-business-primary);
+  background: var(--yh-alias-bg-module-platform);
+}
+
+.selected .label {
+  color: var(--yh-alias-state-business-primary);
+  font-weight: 500;
+}
+
+.description {
+  font-size: var(--yh-font-xs-13-font-size);
+  line-height: var(--yh-font-xs-13-line-height);
+  color: var(--yh-alias-label-secondary);
+}
+
+.preview {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-width: 0;
+  height: 160px;
+  overflow: hidden;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-base);
+  color: var(--yh-alias-label-primary);
+  font-family: var(--yh-font-family);
+  font-size: 9px;
+  line-height: 13px;
+  pointer-events: none;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 8px;
+  border-right: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-specific-sidebar-fill);
+}
+
+.workspace,
+.header {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace {
+  font-weight: 500;
+}
+
+.navLine,
+.textLine {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--yh-alias-border-l2);
+}
+
+.navLine:last-child {
+  width: 70%;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.header {
+  padding: 9px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.textLine {
+  width: 90%;
+}
+
+.textLine:nth-child(2) {
+  width: 66%;
+}
+
+.tool {
+  padding: 3px 7px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-xs);
+  background: var(--yh-alias-bg-module-platform);
+  color: var(--yh-alias-label-secondary);
+}
+
+.composer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  color: var(--yh-alias-label-secondary);
+}
+
+.composer > :first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.send {
+  flex: 0 0 10px;
+  height: 10px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--yh-alias-state-business-primary);
+}
+
+.terminal {
+  border-radius: 3px;
+  font-family: var(--ds-font-family-code);
+}
+
+.terminal .tool,
+.terminal .composer,
+.terminal .send {
+  border-radius: 3px;
+}
+
+.terminal .header {
+  background: var(--yh-terminal-chrome-fill, var(--yh-specific-sidebar-fill));
+  color: var(--yh-terminal-accent, var(--yh-alias-brand-primary-new-colorprimary-new-color));
+}
+
+.terminal .composer {
+  background: var(--yh-terminal-surface-fill, var(--yh-alias-bg-layer-2));
+  font-family: var(--yh-font-family);
+}
+
+.terminal .tool {
+  background: var(--yh-terminal-surface-fill, var(--yh-alias-bg-layer-2));
+}
+
+.terminal .send {
+  background: var(--yh-terminal-accent, var(--yh-alias-brand-primary-new-colorprimary-new-color));
+}

@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-06-model-service-tier.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-06-model-service-tier.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-06-model-service-tier:
+  en: bfd5fb7f20f300be
+  zh: baf5f61832d84f80
+/2026-10-06-model-service-tier/summary:
+  en: d2b47b4656e007a4
+  zh: b7f50c2d22401b64
+/2026-10-06-model-service-tier/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-06-model-service-tier/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-06-model-service-tier/compatibility:
+  en: 8446bcb1a3814d8f
+  zh: 3606c79f92d7f49c
+/2026-10-06-model-service-tier/verification:
+  en: 3b0458e2a77755a7
+  zh: dbfa74f0f3b819d3
+/2026-10-06-model-service-tier/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

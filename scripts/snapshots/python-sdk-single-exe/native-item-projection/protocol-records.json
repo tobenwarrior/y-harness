@@ -1,0 +1,60 @@
+[
+  {
+    "type": "claude-code/root-protocol",
+    "data": {
+      "provider": "claude-code",
+      "connectionId": "native-projection-claude-connection",
+      "sessionId": "native-projection-claude-session",
+      "sendId": "native-projection-claude-send",
+      "profile": {
+        "home": "/fixture/native-projection-home",
+        "configDirectory": "/fixture/native-projection-config"
+      },
+      "phase": "request",
+      "system": "native-projection-protocol-system-only",
+      "message": {
+        "type": "user",
+        "uuid": "native-projection-claude-send",
+        "session_id": "native-projection-claude-session",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "user",
+          "content": "native-projection-protocol-request-only"
+        }
+      }
+    },
+    "ignorable": true
+  },
+  {
+    "type": "claude-code/root-protocol",
+    "data": {
+      "provider": "claude-code",
+      "connectionId": "native-projection-claude-connection",
+      "sessionId": "native-projection-claude-session",
+      "sendId": "native-projection-claude-send",
+      "profile": {
+        "home": "/fixture/native-projection-home",
+        "configDirectory": "/fixture/native-projection-config"
+      },
+      "phase": "frame",
+      "message": {
+        "type": "user",
+        "uuid": "native-projection-claude-result",
+        "session_id": "native-projection-claude-session",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "native-projection-claude-tool-use",
+              "is_error": false,
+              "content": "native-projection-private-tool-output-only"
+            }
+          ]
+        }
+      }
+    },
+    "ignorable": true
+  }
+]

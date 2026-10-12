@@ -1,0 +1,8 @@
+Y harness
+Y harness
+Add an API key to get started
+Configure official DeepSeek models to start using Y Harness
+Enter API key [password]
+Save and continue [disabled]
+Set up later
+Back to sign in

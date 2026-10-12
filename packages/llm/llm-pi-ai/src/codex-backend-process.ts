@@ -1,0 +1,84 @@
+/** Stdio-only native Codex child with a deployment-owned binary and clean homes. */
+import { spawn } from 'node:child_process'
+import { dirname, isAbsolute, join } from 'node:path'
+import { Transform } from 'node:stream'
+import { JsonRpcLineTransport, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
+import type { CodexPeer } from './codex-backend.ts'
+/** Absolute deployment-owned paths one Codex child is launched with. */
+export interface CodexProcessOptions { binary: string; home: string; shellHome: string; cwd: string; nodePath: string }
+/**
+ * Preserve unsupported-method information without exposing native diagnostics or error data.
+ * @param method - native operation that failed.
+ * @param error - transport rejection, deliberately not rendered.
+ * @returns a display-safe failure with only the method-not-found protocol code retained.
+ */
+export function codexRequestFailure(method: string, error: unknown): Error {
+  const message = `Codex ${method} did not complete. Try refreshing the backend.`
+  return error instanceof JsonRpcResponseError && error.code === -32601
+    ? new JsonRpcResponseError(-32601, message)
+    : new Error(message)
+}
+/**
+ * Native app-server config is explicit; no inherited secrets or global home.
+ * @param options - validated launch paths whose shell home the child inherits.
+ * @returns the argv passed to the pinned Codex binary.
+ */
+export function codexProcessArguments(options: CodexProcessOptions): string[] {
+  return ['app-server', '--listen', 'stdio://',
+    '-c', 'analytics.enabled=false', '-c', 'feedback.enabled=false', '-c', 'history.persistence="none"',
+    '-c', 'shell_environment_policy.inherit="none"', '-c', `shell_environment_policy.set={HOME=${JSON.stringify(options.shellHome)},PATH="/usr/bin:/bin"}`]
+}
+/**
+ * Fail the stream before the generic line transport buffers an oversized frame.
+ * @param maximum - largest accepted protocol line in bytes.
+ * @returns the byte-counting pass-through stream.
+ */
+export function boundedCodexInput(maximum = 4 * 1024 * 1024): Transform {
+  let lineBytes = 0
+  return new Transform({ transform(chunk: Buffer, _encoding, callback) {
+    for (const byte of chunk) { if (byte === 10) lineBytes = 0; else lineBytes++; if (lineBytes > maximum) { callback(new Error('Codex protocol frame exceeded the size limit.')); return } }
+    callback(null, chunk)
+  } })
+}
+
+/**
+ * Launch the pinned native Codex app server over stdio with a cleared environment.
+ * @param options - absolute binary, home, shell-home, cwd, and Node paths.
+ * @param handleRequest - routes native requests to the owning Harness turn.
+ * @returns the connected peer; closing it terminates the child.
+ * @throws when any launch path is not absolute.
+ */
+export function startCodexProcess(
+  options: CodexProcessOptions,
+  handleRequest: (method: string, params: Record<string, unknown>) => Promise<unknown>,
+): CodexPeer {
+  if (![options.binary, options.home, options.shellHome, options.cwd, options.nodePath].every(isAbsolute)) throw new Error('Configure absolute local Codex paths before using this backend.')
+  const child = spawn(options.nodePath, [options.binary, ...codexProcessArguments(options)], { cwd: options.cwd, env: {
+    PATH: `${dirname(options.nodePath)}:/usr/bin:/bin`, HOME: options.shellHome, CODEX_HOME: options.home,
+    XDG_CONFIG_HOME: join(options.shellHome, '.config'), XDG_CACHE_HOME: join(options.shellHome, '.cache'),
+    ZDOTDIR: options.shellHome, TMPDIR: join(options.shellHome, 'tmp'), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  }, stdio: ['pipe', 'pipe', 'pipe'] })
+  const bounded = boundedCodexInput()
+  const transport = new JsonRpcLineTransport(bounded, child.stdin)
+  const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
+  let closed = false
+  const close = (): void => {
+    if (closed) return
+    closed = true; transport.close(); child.stdin.end(); child.kill('SIGTERM')
+    const timer = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 2000); timer.unref()
+    child.once('exit', () => { clearTimeout(timer) })
+    for (const callback of listeners) callback('__closed', {})
+    listeners.clear()
+  }
+  transport.onRequest(handleRequest)
+  transport.onNotification((method, params) => { for (const callback of listeners) callback(method, params) })
+  bounded.on('error', close); child.on('error', close); child.once('exit', close); child.stdin.on('error', close)
+  // Native diagnostics can contain sign-in details; never relay stderr to logs or the renderer.
+  child.stderr.resume(); child.stdout.pipe(bounded); transport.start()
+  return { request: async (method, params) => {
+    if (closed) throw new Error('Codex backend is closed.')
+    try { return await transport.request(method, params, AbortSignal.timeout(25_000)) }
+    catch (error) { if (method === 'initialize') close(); throw codexRequestFailure(method, error) }
+  }, notify: (method) => { transport.notify(method) },
+  subscribe: (callback) => { listeners.add(callback); return () => { listeners.delete(callback) } }, close }
+}

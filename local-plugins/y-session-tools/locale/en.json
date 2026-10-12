@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session tools",
+    "description": "Adds Copy session ID / reference / path and a permanent Delete session action to every session row's menu."
+  }
+}

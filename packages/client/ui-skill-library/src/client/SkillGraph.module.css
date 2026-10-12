@@ -1,0 +1,40 @@
+.graphWrap { position: relative; height: 100%; min-height: 350px; overflow: hidden; background: var(--yh-alias-graph-bg, var(--yh-alias-bg-module-platform)); }
+.graphCanvas { display: block; width: 100%; height: 100%; min-height: 350px; touch-action: none; cursor: grab; background: var(--yh-alias-graph-bg, var(--yh-alias-bg-module-platform)); }
+.graphCanvas:active { cursor: grabbing; }
+.graphCanvas:focus-visible { outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: -2px; }
+.graphOverlay { position: absolute; z-index: 2; top: 12px; left: 12px; display: flex; align-items: center; gap: 2px; padding: 3px; background: color-mix(in srgb, var(--yh-alias-graph-bg, var(--yh-alias-bg-base)) 94%, transparent); border: 0.5px solid var(--yh-alias-border-l2); border-radius: var(--yh-radius-sm); }
+.canvasAction { width: 28px; padding: 0; color: var(--yh-alias-graph-ink, var(--yh-alias-label-primary)); }
+.actionSeparator { width: 0.5px; height: 16px; margin: 0 3px; background: var(--yh-alias-border-l2); }
+.graphControls { position: absolute; z-index: 2; left: 12px; top: 54px; width: 246px; max-width: calc(100% - 48px); box-sizing: border-box; padding: 12px 14px; background: var(--yh-alias-bg-layer-1); color: var(--yh-alias-label-secondary); border: 0.5px solid var(--yh-alias-border-l2); border-radius: var(--yh-radius-sm); font-size: 11px; line-height: 18px; }
+.graphControls h3 { margin: 0 0 8px; font-size: 12px; font-weight: 500; color: var(--yh-alias-label-primary); }
+.graphControls p { margin: 8px 0 0; }
+.graphLegend { display: flex; flex-direction: column; gap: 3px; margin: 10px 0; }
+.graphLegend > span { display: flex; align-items: center; gap: 8px; }
+.membershipKey, .linkKey { width: 18px; height: 1px; }
+.membershipKey { background: var(--yh-alias-graph-edge, var(--yh-alias-border-l4)); }
+.linkKey { background: var(--yh-alias-graph-accent, var(--yh-alias-link)); }
+.groupLegend { padding: 0; margin: 12px 0; list-style: none; }
+.groupLegend li { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.groupSwatch { display: inline-block; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; corner-shape: round; background: var(--graph-group-color); }
+.graphHint { position: absolute; bottom: 10px; left: 14px; right: 14px; font-size: 10px; line-height: 16px; color: var(--yh-alias-graph-muted, var(--yh-alias-label-secondary)); pointer-events: none; }
+.graphMembership { stroke: var(--yh-alias-graph-edge, var(--yh-alias-border-l4)); stroke-width: 0.7px; stroke-opacity: 0.28; vector-effect: non-scaling-stroke; }
+.graphLink { stroke: var(--yh-alias-graph-accent, var(--yh-alias-link)); stroke-width: 0.9px; stroke-opacity: 0.43; vector-effect: non-scaling-stroke; }
+.graphActiveEdge { stroke-opacity: 0.9; stroke-width: 1.3px; }
+.graphHit { cursor: pointer; }
+.graphNode { cursor: pointer; outline: none; }
+.graphNode circle { fill: var(--graph-group-color, var(--yh-alias-graph-muted, var(--yh-alias-label-secondary))); fill-opacity: 0.88; stroke: var(--yh-alias-graph-bg, var(--yh-alias-bg-base)); stroke-width: 1.5px; }
+.graphNode text { fill: var(--yh-alias-graph-muted, var(--yh-alias-label-secondary)); font-family: inherit; font-size: 12px; stroke: var(--yh-alias-graph-bg, var(--yh-alias-bg-base)); stroke-width: 3px; paint-order: stroke; stroke-linejoin: round; }
+.graphGroup circle { fill-opacity: 1; }
+.graphGroup text { fill: var(--yh-alias-graph-ink, var(--yh-alias-label-primary)); font-size: 12px; font-weight: 500; }
+.graphSelected circle, .graphNode:hover circle, .graphNode:focus-visible circle { fill-opacity: 1; stroke: var(--yh-alias-graph-accent, var(--yh-alias-link)); stroke-width: 2.5px; }
+.graphNode:focus-visible text, .graphSelected text, .graphNode:hover text { fill: var(--yh-alias-graph-ink, var(--yh-alias-label-primary)); font-weight: 500; }
+.graphConnected { opacity: 1; }
+.graphDimmed { opacity: 0.38; }
+.groupColor0 { --graph-group-color: color-mix(in srgb, #8b9fb8 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor1 { --graph-group-color: color-mix(in srgb, #84a38d 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor2 { --graph-group-color: color-mix(in srgb, #a493b2 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor3 { --graph-group-color: color-mix(in srgb, #b4a078 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor4 { --graph-group-color: color-mix(in srgb, #81a7ad 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor5 { --graph-group-color: color-mix(in srgb, #b29290 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+.groupColor6 { --graph-group-color: color-mix(in srgb, #99a17c 76%, var(--yh-alias-graph-ink, var(--yh-alias-label-primary))); }
+@media (max-width: 720px) { .graphWrap, .graphCanvas { min-height: 440px; } .graphHint { font-size: 9px; } }
