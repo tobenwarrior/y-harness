@@ -1,4 +1,4 @@
-/** Effort and processing-tier radio rows share selection and pending feedback. */
+/** Provider, effort, and processing-tier radio rows share selection and pending feedback. */
 import type { ReactNode, Ref } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -17,7 +17,7 @@ export function SelectionOption({ buttonRef, label, selected, pending, disabled,
   disabled: boolean
   onChoose: () => void
 }): ReactNode {
-  return <button ref={buttonRef} type="button" role="menuitemradio" aria-checked={selected}
+  return <button ref={buttonRef} type="button" role="menuitemradio" aria-checked={selected} title={label}
     className={clsx(css.option, selected && css.selected)} disabled={disabled} onClick={onChoose}>
     <span className={css.optionCopy}><span className={css.modelName}>{label}</span></span>
     <span className={css.check}>

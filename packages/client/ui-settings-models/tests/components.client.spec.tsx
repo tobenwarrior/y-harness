@@ -300,7 +300,7 @@ async function mountFace(scripted: ReturnType<typeof scriptedFace>, footer: Reac
     renderSlot: renderSlot as unknown as ModelsSectionProps['renderSlot'],
   }
   const view = render(<ModelsSection {...injected} />)
-  return { view, ctx, face, update, mutate, set, unset, controller, mirror, renderSlot }
+  return { view, ctx, face, update, mutate, set, unset, controller, mirror, renderSlot, injected }
 }
 
 async function mountSection(overrides: Parameters<typeof scriptedFace>[0] = {}) {
@@ -341,14 +341,67 @@ describe('ModelsSection', () => {
     expect(screen.getByText(`${en.loadFailed}: Provider directory offline`)).toBeTruthy()
     expect(screen.getByRole('button', { name: en.retry })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Connect optional provider' })).toBeTruthy()
+    expect(screen.queryByText(en.addUnavailable)).toBeNull()
     expect(scripted.face.credentials.set).not.toHaveBeenCalled()
   })
 
-  it('hides the add action when no settings namespace can open an editor', async () => {
+  it('explains the disabled add action when the current profile has no provider setup', async () => {
     const scripted = scriptedFace()
     scripted.face.settings.describe.mockResolvedValue(remoteOk({ writable: true, hasDocument: false, namespaces: [] }))
+    const { view, injected } = await mountFace(scripted)
+    const add = screen.getByRole<HTMLButtonElement>('button', { name: en.add })
+    const reason = screen.getByText(en.addUnavailable)
+    expect(add.disabled).toBe(true)
+    expect(add.getAttribute('aria-describedby')).toBe(reason.id)
+    fireEvent.click(add)
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: en.customRoute })).toBeNull()
+    expect(scripted.mutate).not.toHaveBeenCalled()
+    expect(scripted.set).not.toHaveBeenCalled()
+    expect(scripted.unset).not.toHaveBeenCalled()
+
+    view.rerender(<ModelsSection {...injected} t={key => zh[key]} />)
+    expect(screen.getByText(zh.addUnavailable)).toBeTruthy()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: zh.add }).disabled).toBe(true)
+  })
+
+  it('explains unavailable additions while configured built-in providers remain editable', async () => {
+    const scripted = scriptedFace()
+    scripted.face.llm.listConfigurableProviders.mockResolvedValue(remoteOk([
+      { provider: 'deepseek-official', displayName: 'DeepSeek', settingsNs: 'llm-deepseek', settingsPath: [] },
+    ]))
+    scripted.face.settings.describe.mockResolvedValue(remoteOk({
+      writable: true, hasDocument: false,
+      namespaces: wireNamespaces().filter(view => view.ns === 'llm-deepseek'),
+    }))
+    scripted.face.credentials.describe.mockImplementation(refs => Promise.resolve(remoteOk(
+      Object.fromEntries(refs.map(ref => [ref, { configured: true, source: 'file', writable: true }])),
+    )))
     await mountFace(scripted)
-    expect(screen.queryByRole('button', { name: en.add })).toBeNull()
+    const add = screen.getByRole<HTMLButtonElement>('button', { name: en.add })
+    expect(add.disabled).toBe(true)
+    const reason = screen.getByText(en.addUnavailable)
+    expect(add.getAttribute('aria-describedby')).toBe(reason.id)
+    expect(screen.getByRole('button', { name: deepSeekCopy(en.editProvider) })).toBeTruthy()
+    expect(scripted.mutate).not.toHaveBeenCalled()
+    expect(scripted.set).not.toHaveBeenCalled()
+  })
+
+  it('distinguishes a pending load from unavailable provider setup and keeps add disabled', async () => {
+    const { controller } = await mountSection()
+    const add = screen.getByRole<HTMLButtonElement>('button', { name: en.add })
+    expect(add.disabled).toBe(false)
+    expect(add.hasAttribute('aria-describedby')).toBe(false)
+    act(() => { controller.store.update((state) => { state.status = 'loading' }) })
+    const loading = screen.getByText('Loading provider settings…')
+    expect(add.disabled).toBe(true)
+    expect(add.getAttribute('aria-describedby')).toBe(loading.id)
+    expect(screen.queryByText(en.addUnavailable)).toBeNull()
+    fireEvent.click(add)
+    expect(screen.queryByRole('tablist')).toBeNull()
+    act(() => { controller.store.update((state) => { state.status = 'ready' }) })
+    expect(add.disabled).toBe(false)
+    expect(screen.queryByText('Loading provider settings…')).toBeNull()
   })
 
   it('offers only providers whose settings namespace can open an editor', async () => {
