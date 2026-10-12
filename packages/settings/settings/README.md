@@ -36,6 +36,8 @@ Once the Loader has settled every entry after Settings starts, a `settings.yaml`
 
 Reset restores the value beneath the profile override, including schema defaults. Home patches and command-line overlays take precedence; a form write that they would override is refused.
 
+Host owners can pass an optional cancellation signal to `mutate()`; [Configuration editor](../../boot/config-editor/README.md) owns the queue, preflight, and atomic-commit cutoffs. Remote clients retain the three existing mutation arguments. Optional [ordinary provider sharing](../provider-config-sync/README.md) uses this Host cancellation route while preserving local authentication and profile restrictions.
+
 Each form reports `autoGenerate`, enabled by default, for clients that build pages from the schema; no shipped client does so yet. A plugin that ships its own page registers `configure({ auto: false }, ctx.fiber)` as an effect inside an optional `ctx.inject(['settings'], ...)` child from `apply`: the child names the plugin fiber the policy belongs to, a late-loading or replaced Settings service picks the policy up, and the business plugin runs without Settings. The policy does not remove configuration reads or writes.
 
 <a id="understand-the-implementation"></a>

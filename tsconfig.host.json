@@ -316,6 +316,7 @@
     { "path": "./packages/session-query/session-query-sqlite" },
     { "path": "./packages/session-query/session-log-export/tsconfig.host.json" },
     { "path": "./packages/settings/settings" },
+    { "path": "./packages/settings/provider-config-sync" },
     { "path": "./packages/credentials/credentials" },
     { "path": "./packages/credentials/credentials-local" },
     { "path": "./packages/credentials/authorization" },

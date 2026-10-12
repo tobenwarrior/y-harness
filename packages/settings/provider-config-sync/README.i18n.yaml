@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/settings/provider-config-sync/README.md
+/:
+  en: 664881e65fcfe91f
+  zh: d782610fa2de5a21
+/deepseek-ai-dsh-provider-config-sync:
+  en: 4b7a5488e8cb55db
+  zh: b6fa797cb7ab8b0b
+/deepseek-ai-dsh-provider-config-sync/summary:
+  en: 5761fed8812ebf01
+  zh: f8c5d2d3bff198a3
+/deepseek-ai-dsh-provider-config-sync/table-of-contents:
+  en: 23386452a66b2fbd
+  zh: 70bba862b949b652
+/deepseek-ai-dsh-provider-config-sync/use-this-package:
+  en: d9ec6c08f9e9456d
+  zh: 932367e68586970c
+/deepseek-ai-dsh-provider-config-sync/use-this-package/authentication-consent:
+  en: a03ade28fff7454a
+  zh: 91d7c40f3e02e1ec
+/deepseek-ai-dsh-provider-config-sync/understand-the-implementation:
+  en: 4b3daccd19a598f7
+  zh: b41ae3b82d3266c5
+/deepseek-ai-dsh-provider-config-sync/further-exploration:
+  en: 6da9909d1e65f9cd
+  zh: d51d6f841be67c24
+/deepseek-ai-dsh-provider-config-sync/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-provider-config-sync/model-experience/provider-catalog-selection:
+  en: 0a050af383169c34
+  zh: 1251c7247311ecf4
+/deepseek-ai-dsh-provider-config-sync/model-experience/provider-catalog-selection/what-the-model-sees:
+  en: 3d27a6534c666213
+  zh: b86ffbf086512502
+/deepseek-ai-dsh-provider-config-sync/model-experience/provider-catalog-selection/token-effect:
+  en: aa259d44b8cdeaba
+  zh: 3316cd71f3fbd681
+/deepseek-ai-dsh-provider-config-sync/model-experience/provider-catalog-selection/kv-cache-effect:
+  en: 972a454c256226b0
+  zh: 2204214fc3375675
+/deepseek-ai-dsh-provider-config-sync/known-limitations-and-deferred-work:
+  en: 895ff1e89ea6befa
+  zh: 404d21dd855efaf1
+/deepseek-ai-dsh-provider-config-sync/known-limitations-and-deferred-work/dev-note:
+  en: 282657f2f4f278f9
+  zh: aaa47fa2ad0c1d45

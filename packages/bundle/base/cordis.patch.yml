@@ -102,6 +102,11 @@
       name: '@deepseek-ai/dsh-settings'
       disabled: !!js "!ctx.get('profileContext')"
 
+    # Shares ordinary catalog configuration only when sharedPath is explicit.
+    - id: provider-config-sync
+      name: '@deepseek-ai/dsh-provider-config-sync'
+      disabled: !!js "!ctx.get('profileContext')"
+
     # Credential sources: inherited environment over the managed
     # `$DSH_HOME/.credentials.yaml`, with project and user `.env` fallbacks.
     # Adapters resolve references per request; the Models page writes only the
