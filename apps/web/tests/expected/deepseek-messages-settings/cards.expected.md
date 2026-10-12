@@ -2,13 +2,19 @@
   - navigation:
     - text: 设置
     - button "通用设置"
+    - button "外观"
     - button "模型"
     - button "内置插件"
+    - button "编程会话"
     - button "Agent 预设"
   - button "打开配置文件"
   - button "关闭"
   - heading "模型" [level=2]
   - paragraph: 填入各提供商的 API 密钥即可使用其模型。
+  - text: ChatGPT 订阅
+  - button "编辑 ChatGPT 订阅": 编辑
+  - text: Nous Portal
+  - button "编辑 Nous Portal": 编辑
   - list:
     - listitem:
       - text: DeepSeek
@@ -44,3 +50,22 @@
       - button "取消"
       - button "保存"
   - button "添加模型提供商"
+  - region "Decision 建议":
+    - heading "Decision 建议" [level=3]
+    - paragraph: 单独选择仅返回响应的 API，用于排列范围内的技能候选。默认关闭，不改变聊天模型、权限、验证或维护权限。
+    - paragraph: 原生 Codex 路由（包括 gpt-6-luna）提供原生工具，无法用于 Decision。没有配置新账户或凭据。
+    - switch "启用技能候选建议"
+    - text: 启用技能候选建议 Decision 模型
+    - combobox "Decision 模型":
+      - option "请选择" [selected]
+      - option "DeepSeek-V41-Flash · deepseek-official"
+      - option "DeepSeek-V4-Pro · deepseek-official"
+    - paragraph: 每次最多 1 个请求 · 输入预算 16000 · 输出 512 token · 10 秒超时
+    - button "保存 Decision 设置"
+    - text: 项目
+    - combobox "预览项目":
+      - option "选择项目" [selected]
+      - option "messages-settings-e2e"
+    - textbox "输入技能候选查询"
+    - button "预览候选顺序" [disabled]
+    - button "刷新"

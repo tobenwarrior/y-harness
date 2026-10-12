@@ -1,4 +1,4 @@
-- menu "模型与推理等级":
+- menu "提供方、模型、推理等级与速度":
   - menuitemradio "Default" [checked]
   - menuitemradio "Off"
   - menuitemradio "High"
