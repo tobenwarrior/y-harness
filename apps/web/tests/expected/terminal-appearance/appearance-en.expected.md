@@ -1,0 +1,22 @@
+- dialog "Settings":
+  - navigation:
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - text: Style
+  - group "Style":
+    - button "Default" [pressed]
+    - button "Terminal"
+  - text: Terminal uses compact controls and monospace labels. Conversation text keeps its current font. Color mode
+  - button "Light" [pressed]
+  - button "Dark"
+  - button "System"
+  - text: Font size Only affects conversation content 14
+  - button "Increase font size"
+  - button "Decrease font size"
+  - text: px

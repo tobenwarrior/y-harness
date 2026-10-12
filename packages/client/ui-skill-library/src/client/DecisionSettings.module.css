@@ -1,0 +1,8 @@
+.card { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 0.5px solid var(--yh-alias-settings-card-stroke); border-radius: var(--yh-radius-xl); background: var(--yh-alias-settings-card-fill); color: var(--yh-alias-label-primary); }
+.title { margin: 0; font-size: 16px; font-weight: 500; }
+.hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--yh-alias-label-secondary); }
+.error { margin: 0; font-size: 13px; color: var(--yh-alias-state-warn-label); }
+.row { display: flex; align-items: center; gap: 8px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.field select { min-width: 0; width: 100%; padding: 8px; border: 0.5px solid var(--yh-alias-settings-card-stroke); border-radius: var(--yh-radius-md); color: var(--yh-alias-label-primary); background: var(--yh-alias-settings-card-fill); font: inherit; }
+.loading { display: flex; min-height: 80px; align-items: center; justify-content: center; color: var(--yh-alias-label-secondary); }

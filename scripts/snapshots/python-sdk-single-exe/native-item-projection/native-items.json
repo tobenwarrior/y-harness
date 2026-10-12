@@ -1,0 +1,42 @@
+[
+  {
+    "type": "skill/native-item",
+    "data": {
+      "provider": "codex",
+      "connectionId": "native-projection-codex-connection",
+      "sessionId": "native-projection-codex-session",
+      "turnId": "native-projection-codex-turn",
+      "itemId": "native-projection-codex-item",
+      "kind": "read",
+      "name": "read",
+      "phase": "settled",
+      "outcome": "reported-success",
+      "procedure": {
+        "kind": "read",
+        "path": "native-projection-codex-only.txt"
+      }
+    },
+    "ignorable": true
+  },
+  {
+    "type": "skill/native-item",
+    "data": {
+      "provider": "claude-code",
+      "connectionId": "native-projection-claude-connection",
+      "sessionId": "native-projection-claude-session",
+      "sendId": "native-projection-claude-send",
+      "itemId": "native-projection-claude-tool-use",
+      "sourceMessageId": "native-projection-claude-assistant",
+      "resultMessageId": "native-projection-claude-result",
+      "kind": "read",
+      "name": "Read",
+      "phase": "settled",
+      "outcome": "reported-success",
+      "procedure": {
+        "kind": "read",
+        "path": "native-projection-claude-only.txt"
+      }
+    },
+    "ignorable": true
+  }
+]
