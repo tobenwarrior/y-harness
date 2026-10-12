@@ -311,6 +311,13 @@
   display: flex;
 }
 
+.addAvailability {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--yh-alias-label-secondary);
+}
+
 .addButton {
   /* Overrides the shared button base above: this is not a pill sitting in a
      footer but the last slot of the provider list, so it fills the row and

@@ -14,7 +14,9 @@ import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'provider.account': 'DeepSeek 账号',
+  'provider.select': '请选择提供方',
   'provider.route': '{name} ({id})',
+  'model.route': '{name} ({id})',
   'command.label': '模型',
   'command.description': '选择本会话使用的模型',
   'option.loadError': '目录加载失败：{message}',
@@ -40,6 +42,8 @@ export const zh = {
   'search.clear': '清除搜索',
   'search.empty': '没有匹配的模型。',
   'empty.models': '没有可用的模型。',
+  'empty.providers': '没有已配置的提供方。',
+  'empty.provider': '当前提供方未配置。',
   'empty.efforts': '当前模型未提供推理等级。',
   'empty.tiers': '当前模型未提供速度选项。',
 } satisfies Record<string, string>
@@ -50,7 +54,9 @@ export type ModelKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'provider.account': 'DeepSeek Account',
+  'provider.select': 'Select provider',
   'provider.route': '{name} ({id})',
+  'model.route': '{name} ({id})',
   'command.label': 'Model',
   'command.description': 'Select the model for this conversation',
   'option.loadError': 'Catalog failed to load: {message}',
@@ -76,6 +82,8 @@ export const en = {
   'search.clear': 'Clear search',
   'search.empty': 'No matching models.',
   'empty.models': 'No models available.',
+  'empty.providers': 'No providers configured.',
+  'empty.provider': 'This provider is not configured.',
   'empty.efforts': 'This model provides no reasoning effort levels.',
   'empty.tiers': 'This model provides no speed choices.',
 } satisfies Record<ModelKey, string>

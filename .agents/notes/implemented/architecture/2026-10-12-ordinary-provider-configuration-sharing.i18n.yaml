@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-12-ordinary-provider-configuration-sharing.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-12-ordinary-provider-configuration-sharing.md
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization:
+  en: 8a6503800321ae12
+  zh: ee948e765aca9d5d
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization/problem:
+  en: b2b7c6b0e29a39ad
+  zh: 38059ac35f445a7c
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization/decision:
+  en: eb3cb76ea061ab31
+  zh: c711f511aacdda29
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization/alternatives-considered:
+  en: 964aaa315d94a028
+  zh: 72ec584df33eb754
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization/verification:
+  en: 0dcf7b3ef9a58068
+  zh: 45a526dc30b314bf
+/agent-note-ordinary-provider-configuration-sharing-with-local-authorization/consequences:
+  en: 2d50c44de76a133a
+  zh: f4787e7dc9ae9c21
