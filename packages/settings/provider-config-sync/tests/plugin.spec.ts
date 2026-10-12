@@ -25,8 +25,10 @@ it('imports automatically after activation inside a real HMR configuration trans
   await a.ctx.providerConfigSync.synchronize()
   const b = await fixture('test-hmr', undefined, {}, false, true)
   await enable(b.ctx)
-  await vi.waitFor(() =>{  expect(b.values()?.providers?.example).toMatchObject({ displayName: 'Initial' }) })
-  expect(b.ctx.providerConfigSync.status().state).toBe('ready')
+  await vi.waitFor(() => {
+    expect(b.values()?.providers?.example).toMatchObject({ displayName: 'Initial' })
+    expect(b.ctx.providerConfigSync.status().state).toBe('ready')
+  })
 })
 
 it('cancels a queued configuration write without waiting on its enclosing HMR transaction', async () => {
@@ -81,8 +83,10 @@ it('keeps local profiles through hot disable and resumes missed ordinary changes
   await a.ctx.providerConfigSync.synchronize()
   expect(b.values()?.providers?.example).toMatchObject({ displayName: 'Original' })
   await configure(b.ctx, { sharedPath: shared })
-  await vi.waitFor(() =>{  expect(b.values()?.providers?.example).toMatchObject({ displayName: 'During pause' }) })
-  expect(b.ctx.providerConfigSync.status().state).toBe('ready')
+  await vi.waitFor(() => {
+    expect(b.values()?.providers?.example).toMatchObject({ displayName: 'During pause' })
+    expect(b.ctx.providerConfigSync.status().state).toBe('ready')
+  })
 })
 
 it('cancels its own import when preflight reconciliation observes an externally disabled sync owner', async () => {
