@@ -117,8 +117,11 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     await page.addInitScript(() => {
       window.__modelMenuRectReads = 0
-      const original = Element.prototype.getBoundingClientRect
-      Element.prototype.getBoundingClientRect = function (): DOMRect {
+      const descriptor: TypedPropertyDescriptor<(this: Element) => DOMRect> | undefined =
+        Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect')
+      const original = descriptor?.value
+      if (original === undefined) throw new Error('Element.getBoundingClientRect descriptor is missing')
+      Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
         if (this.hasAttribute('data-menu-group') || [...this.children].some(child => child.hasAttribute('data-menu-group'))) {
           window.__modelMenuRectReads++
         }
