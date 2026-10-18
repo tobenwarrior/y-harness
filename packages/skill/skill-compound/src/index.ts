@@ -7,9 +7,11 @@ import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import z from '@deepseek-ai/schemastery'
 import { BUNDLED_SKILL_RANK, type SkillCandidate, type SkillProvider } from '@deepseek-ai/dsh-skill'
 import { parse as parseYaml } from 'yaml'
+import { MapServiceBridge, registerMapRoutes } from './map-service.ts'
 import { registerUpdateRoute, UpstreamReleaseTracker } from './upstream.ts'
 
 /** Vendored skill directories, each carrying its own `SKILL.md` and resources. */
@@ -28,12 +30,15 @@ export interface Config {
   assetRoot?: string
   /** Absolute Python 3.11+ interpreter; defaults to the newest qualifying interpreter on `PATH`. */
   python?: string
+  /** Absolute cache directory for the code-map service; defaults outside the mapped repository. */
+  mapStateDir?: string
 }
 
 /** Validated resource configuration. */
 export const Config: z<Config> = z.object({
   assetRoot: z.string().min(1),
   python: z.string().min(1),
+  mapStateDir: z.string().min(1),
 })
 
 /** Cordis plugin identity. */
@@ -174,6 +179,14 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.skills.registerProvider(() => provider)
   const tracker = new UpstreamReleaseTracker()
   // Optional: a composition without the shared API channel still gets the
-  // skills, it just cannot report upstream releases to a browser half.
-  ctx.inject(['connection'], (scope) => { registerUpdateRoute(scope, tracker) })
+  // skills, it just cannot report upstream releases or serve the code map.
+  ctx.inject(['connection'], (scope) => {
+    registerUpdateRoute(scope, tracker)
+    registerMapRoutes(scope, new MapServiceBridge({
+      python,
+      assetRoot,
+      workspaceRoot: ctx.get('sandboxPolicy')?.workspaceRoot ?? process.cwd(),
+      ...(config.mapStateDir === undefined ? {} : { stateDir: config.mapStateDir }),
+    }))
+  })
 }

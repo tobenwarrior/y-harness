@@ -274,6 +274,8 @@
       "@deepseek-ai/dsh-client-ui-agent-preset": ["./packages/client/ui-agent-preset/src"],
       "@deepseek-ai/dsh-client-ui-permission-presets": ["./packages/client/ui-permission-presets/src"],
       "@deepseek-ai/dsh-client-ui-skill": ["./packages/client/ui-skill/src"],
+      "@deepseek-ai/dsh-client-ui-compound-update": ["./packages/client/ui-compound-update/src"],
+      "@deepseek-ai/dsh-client-ui-compound-update/client": ["./packages/client/ui-compound-update/src/client"],
       "@deepseek-ai/dsh-client-ui-skill-library": ["./packages/client/ui-skill-library/src"],
       "@deepseek-ai/dsh-skill-library/types": ["./packages/skill/skill-library/src/types.ts"],
       "@deepseek-ai/dsh-coding-session/types": ["./packages/session/coding-session/src/types.ts"],
