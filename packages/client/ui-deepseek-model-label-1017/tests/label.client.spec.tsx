@@ -30,7 +30,7 @@ const placements = ['trigger', 'menu', 'option'] as const
 const targets = ['deepseek-official', 'deepseek-account'].flatMap(provider => placements.map(placement => ({ provider, placement })))
 it.each(targets)('shows the badge for $provider at $placement without rewriting its catalog entry', async ({ provider, placement }) => {
   const { host, session } = await runtime()
-  await host.declare({ [SLOT]: { kind: 'single', scope: 'session', inline: true } })
+  await host.declare({ [SLOT]: { kind: 'single', scope: 'session' } })
   await host.mount(LabelPlugin)
   const input = owner(provider, NAME, 'deepseek-flash', placement)
   const view = host.renderSlot(SLOT, input, { session, fallback: input.model.name })
@@ -47,7 +47,7 @@ it.each([
   { label: 'a later release name', value: owner('deepseek-official', `${NAME}-1024`) },
 ])('preserves $label', async ({ value }) => {
   const { host, session } = await runtime()
-  await host.declare({ [SLOT]: { kind: 'single', scope: 'session', inline: true } })
+  await host.declare({ [SLOT]: { kind: 'single', scope: 'session' } })
   await host.mount(LabelPlugin)
   const view = host.renderSlot(SLOT, value, { session, fallback: value.model.name })
   expect(view.container.textContent).toBe(value.model.name)
@@ -58,7 +58,7 @@ it('waits for the label declaration, follows changed model props, and restores t
   const { host, session } = await runtime()
   const plugin = await host.mount(LabelPlugin)
   expect(host.slots.entries(SLOT)).toHaveLength(0)
-  await host.declare({ [SLOT]: { kind: 'single', scope: 'session', inline: true } })
+  await host.declare({ [SLOT]: { kind: 'single', scope: 'session' } })
   const input = owner('deepseek-official')
   const view = host.renderSlot(SLOT, input, { session, fallback: NAME })
   expect(view.container.textContent).toBe(`${NAME} 1017`)
