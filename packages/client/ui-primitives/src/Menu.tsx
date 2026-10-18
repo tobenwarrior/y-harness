@@ -23,6 +23,8 @@ export interface MenuItem {
   icon?: ReactNode
   /** Destructive row: error-colored text/icon and danger hover fill. */
   danger?: boolean
+  /** Second line under the label; kept out of the row's accessible name. */
+  description?: string
   /** Nested card opened to the right on hover/focus. */
   submenu?: readonly MenuItem[]
 }
@@ -38,6 +40,16 @@ export interface MenuLabel {
   type: 'label'
   id: string
   text: string
+}
+
+/** DOM id naming one row's label cell. */
+function rowLabelId(id: string): string {
+  return `menu-item-${id}-label`
+}
+
+/** DOM id naming one row's description cell. */
+function rowDescriptionId(id: string): string {
+  return `menu-item-${id}-description`
 }
 
 /** One primary-menu entry: a row, a separator, or a heading label. */
@@ -459,6 +471,8 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
           className={clsx(css.item, selected && (selection === 'fill' ? css.selectedFill : css.selected), entry.danger === true && css.danger)}
           disabled={entry.disabled}
           aria-keyshortcuts={entry.shortcut?.aria}
+          aria-labelledby={entry.description === undefined ? undefined : rowLabelId(entry.id)}
+          aria-describedby={entry.description === undefined ? undefined : rowDescriptionId(entry.id)}
           aria-haspopup={hasSub ? 'menu' : undefined}
           aria-expanded={hasSub ? subOpen : undefined}
           onFocus={hasSub ? () => { setOpenSubmenuId(entry.id) } : undefined}
@@ -471,7 +485,14 @@ export function Menu({ open, anchor, items = [], children, selectedId, selectedI
           }}
         >
           {entry.icon !== undefined && <span className={css.itemIcon}>{entry.icon}</span>}
-          <span className={css.itemLabel}>{entry.label}</span>
+          {entry.description === undefined
+            ? <span className={css.itemLabel}>{entry.label}</span>
+            : (
+              <span className={css.itemCell}>
+                <span id={rowLabelId(entry.id)} className={css.itemLabel}>{entry.label}</span>
+                <span id={rowDescriptionId(entry.id)} className={css.itemDescription}>{entry.description}</span>
+              </span>
+            )}
           {entry.shortcut !== undefined && <span aria-hidden="true" className={css.shortcut}><ShortcutKeys keys={entry.shortcut.keys} className={css.shortcutKeys} /></span>}
           {/* Selection marker is a trailing check (figma .Menu_cell) unless the fill mode carries it. */}
           {selected && selection === 'check' && <IconCheckOutlineRegular className={css.check} />}

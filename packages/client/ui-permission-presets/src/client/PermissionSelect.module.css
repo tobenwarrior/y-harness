@@ -51,11 +51,29 @@
 }
 
 .optionLabel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.optionLabelText {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
   min-width: 0;
   max-width: 100%;
+}
+
+.optionDescription {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--dsh-color-text-secondary);
+  white-space: normal;
 }
 
 .optionLabelText {

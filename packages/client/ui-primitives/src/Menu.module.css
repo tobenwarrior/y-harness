@@ -187,6 +187,25 @@
   height: 12px;
 }
 
+.itemCell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.itemDescription {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--dsh-color-text-secondary);
+}
+
 .itemLabel {
   flex: 1;
   min-width: 0;

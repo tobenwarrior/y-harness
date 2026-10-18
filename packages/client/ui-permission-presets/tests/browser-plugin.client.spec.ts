@@ -27,7 +27,7 @@ import {
 import { PermissionSelect } from '../src/client/PermissionSelect.tsx'
 import type { PermissionSelectInjected } from '../src/client/PermissionSelect.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { accessEn, accessZh } from '../src/client/locales.ts'
+import { accessEn, accessZh, en, zh } from '../src/client/locales.ts'
 
 const sid = (k: string): SessionId => k as SessionId
 
@@ -205,7 +205,7 @@ describe('ui-permission browser plugin', () => {
     expect(again.find(option => option.id === 'auto')?.detail)
       .toBe('Run without a sandbox after an experimental same-model review of every native tool call and PTC inner call.')
     // English built-ins use product labels; other kebab-case names title-case.
-    expect(again.map(option => option.label)).toEqual(['Read Only', 'Workspace Write', 'Full access', 'Auto review'])
+    expect(again.map(option => option.label)).toEqual([en['preset.readOnly'], en['preset.workspaceWrite'], en['preset.fullAccess'], accessEn['auto.label']])
     expect(again.find(option => option.id === 'danger-full-access')?.confirmation).toEqual({
       title: 'Enable Full access?',
       description: accessEn['confirm.description'],
@@ -225,7 +225,7 @@ describe('ui-permission browser plugin', () => {
     })
     b.locale.setLocale('zh')
     const localized = await b.popup().options(proj, new AbortController().signal)
-    expect(localized.map(option => option.label)).toEqual(['仅可查看', '工作区内修改', '完全权限', 'Auto review'])
+    expect(localized.map(option => option.label)).toEqual([zh['preset.readOnly'], zh['preset.workspaceWrite'], zh['preset.fullAccess'], accessZh['auto.label']])
     expect(localized.find(option => option.id === 'danger-full-access')?.confirmation).toEqual({
       title: '确认启用完全权限？',
       description: accessZh['confirm.description'],

@@ -259,16 +259,26 @@
         # start with the sandbox open and no approval prompts. The composer selector and
         # the /permission command still switch a single session.
         defaultPreset: danger-full-access
+        # Descriptions are the selector's second line. `ask` prompts only for actions the
+        # sandbox would refuse, and `never` refuses them outright, so the middle preset
+        # trades an interruption for a denial rather than asking about "unsafe" actions.
         presets:
           read-only:
             sandbox: read-only
             approval: ask
+            description: Read-only inspection; every change and command needs approval.
           workspace-write:
             sandbox: workspace-write
             approval: ask
+            description: Ask before editing files outside the workspace or using the internet.
+          approve-for-me:
+            sandbox: workspace-write
+            approval: never
+            description: Work freely inside the workspace without prompts; anything outside it is refused.
           danger-full-access:
             sandbox: danger-full-access
             approval: never
+            description: Unrestricted access to the internet and any file on your computer.
 
     - id: shell-env
       name: '@deepseek-ai/dsh-shell-env'

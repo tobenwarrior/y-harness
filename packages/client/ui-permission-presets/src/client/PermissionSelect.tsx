@@ -28,6 +28,7 @@ import css from './PermissionSelect.module.css'
 const permissionGlyphs = new Map<string, ReactNode>([
   ['read-only', <PermissionIconReadOnlyRegular />],
   ['workspace-write', <PermissionIconWorkspaceWriteRegular />],
+  ['approve-for-me', <PermissionIconWorkspaceWriteRegular />],
   [FULL_ACCESS, <PermissionIconFullAccessRegular />],
 ])
 
@@ -105,17 +106,20 @@ export function PermissionSelect({
     const icon = permissionGlyph(option.value)
     const label = permissionLabel(option.value, option.name, t)
     const badge = optionBadge(option.value, t)
+    const description = optionDescription(option, t)
+    const text = badge === undefined
+      ? label
+      : (
+        <span className={css.optionLabelText} aria-label={`${label} ${badge}`}>
+          {label}<sup className={css.badge}>{badge}</sup>
+        </span>
+      )
     return {
       id: option.value,
-      label: badge === undefined
-        ? label
-        : (
-          <span className={css.optionLabel} aria-label={`${label} ${badge}`}>
-            <span className={css.optionLabelText}>{label}</span>
-            <sup className={css.badge}>{badge}</sup>
-          </span>
-        ),
+      label: text,
+      ...description === undefined ? {} : { description },
       ...icon === undefined ? {} : { icon },
+      ...option.value === FULL_ACCESS ? { danger: true } : {},
     }
   })
 

@@ -10,17 +10,20 @@ export const AUTO_REVIEW_PRESET = 'auto'
 export type PermissionPresetLabelKey =
   | 'preset.readOnly'
   | 'preset.workspaceWrite'
+  | 'preset.approveForMe'
   | 'preset.fullAccess'
 
 const PRESET_LABEL_KEYS = new Map<string, PermissionPresetLabelKey>([
   ['read-only', 'preset.readOnly'],
   ['workspace-write', 'preset.workspaceWrite'],
+  ['approve-for-me', 'preset.approveForMe'],
   [FULL_ACCESS_PRESET, 'preset.fullAccess'],
 ])
 
 const DEFAULT_PRESET_LABELS: Record<PermissionPresetLabelKey, string> = {
   'preset.readOnly': en['preset.readOnly'],
   'preset.workspaceWrite': en['preset.workspaceWrite'],
+  'preset.approveForMe': en['preset.approveForMe'],
   'preset.fullAccess': en['preset.fullAccess'],
 }
 

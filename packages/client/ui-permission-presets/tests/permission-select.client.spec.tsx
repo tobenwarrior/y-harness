@@ -10,7 +10,7 @@ import {
   PermissionSelect, type PermissionSelectProps,
 } from '../src/client/PermissionSelect.tsx'
 import type { PermissionCatalogState } from '../src/client/catalog.ts'
-import { accessZh } from '../src/client/locales.ts'
+import { accessZh, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
@@ -60,6 +60,11 @@ function trigger(): HTMLButtonElement {
   return screen.getByRole('button', { name: /^访问模式/ }) as HTMLButtonElement
 }
 
+/** Title line of every menu row, excluding the description line beneath it. */
+function menuTitles(): (string | null | undefined)[] {
+  return screen.getAllByRole('menuitem').map(item => item.querySelector('[id$="-label"]')?.textContent ?? item.textContent)
+}
+
 describe('PermissionSelect', () => {
   it('renders only when both the Session selection and process catalog exist', () => {
     const missingSelection = setup({ selection: undefined })
@@ -80,12 +85,12 @@ describe('PermissionSelect', () => {
       .every(icon => icon.closest('[aria-hidden="true"]') !== null)).toBe(true)
 
     fireEvent.click(trigger())
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent))
-      .toEqual(['仅可查看', '工作区内修改', '完全权限', 'Auto reviewEXP'])
-    fireEvent.click(screen.getByRole('menuitem', { name: '工作区内修改' }))
+    expect(menuTitles())
+      .toEqual(['仅可查看', zh['preset.workspaceWrite'], '完全权限', 'Auto reviewEXP'])
+    fireEvent.click(screen.getByRole('menuitem', { name: zh['preset.workspaceWrite'] }))
 
     expect(select).toHaveBeenCalledExactlyOnceWith('workspace-write')
-    expect(trigger().textContent).toBe('工作区内修改')
+    expect(trigger().textContent).toBe(zh['preset.workspaceWrite'])
     expect(trigger().disabled).toBe(true)
     submitted.resolve(true)
     await act(async () => { await submitted.promise })
@@ -105,7 +110,7 @@ describe('PermissionSelect', () => {
     const { select } = setup({ catalog })
     expect(trigger().textContent).toBe('Project Files')
     fireEvent.click(trigger())
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent))
+    expect(menuTitles())
       .toEqual(['Project Files', 'Operator Mode', 'Custom Mode', '__proto__'])
     fireEvent.click(screen.getByRole('menuitem', { name: 'Project Files' }))
     expect(select).not.toHaveBeenCalled()
@@ -225,11 +230,11 @@ describe('PermissionSelect', () => {
     expect(trigger().querySelectorAll('svg')).toHaveLength(1)
 
     fireEvent.click(trigger())
-    fireEvent.click(screen.getByRole('menuitem', { name: '工作区内修改' }))
-    expect(trigger().textContent).toBe('工作区内修改')
+    fireEvent.click(screen.getByRole('menuitem', { name: zh['preset.workspaceWrite'] }))
+    expect(trigger().textContent).toBe(zh['preset.workspaceWrite'])
     await act(async () => {})
     expect(trigger().textContent).toBe('Custom')
     act(() => { selection.set({ value: { currentValue: 'workspace-write' } }) })
-    expect(trigger().textContent).toBe('工作区内修改')
+    expect(trigger().textContent).toBe(zh['preset.workspaceWrite'])
   })
 })
