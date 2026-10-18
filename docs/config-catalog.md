@@ -2936,7 +2936,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-skill-compound`
 
 - `inject`: `skills`
-- `source`: [`packages/skill/skill-compound/src/index.ts:26`](../packages/skill/skill-compound/src/index.ts)
+- `source`: [`packages/skill/skill-compound/src/index.ts:28`](../packages/skill/skill-compound/src/index.ts)
 
 ```ts config-catalog
 /** Compound skill resource location. */
@@ -2945,6 +2945,8 @@ export interface Config {
   assetRoot?: string
   /** Absolute Python 3.11+ interpreter; defaults to the newest qualifying interpreter on `PATH`. */
   python?: string
+  /** Absolute cache directory for the code-map service; defaults outside the mapped repository. */
+  mapStateDir?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-compound -->
@@ -4592,6 +4594,8 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-client-ui-brand-official` | — | [`packages/client/ui-brand-official/src/index.ts`](../packages/client/ui-brand-official/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-chat` | — | [`packages/client/ui-chat/src/index.ts`](../packages/client/ui-chat/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-commands` | — | [`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-compound-map` | — | [`packages/client/ui-compound-map/src/index.ts`](../packages/client/ui-compound-map/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-compound-update` | — | [`packages/client/ui-compound-update/src/index.ts`](../packages/client/ui-compound-update/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-conversation` | — | [`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-cordis` | — | [`packages/extensions/ui-cordis/src/index.ts`](../packages/extensions/ui-cordis/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-deepseek-model-label-1017` | — | [`packages/client/ui-deepseek-model-label-1017/src/index.ts`](../packages/client/ui-deepseek-model-label-1017/src/index.ts) |
