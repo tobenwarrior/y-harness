@@ -1,0 +1,16 @@
+.root {
+  pointer-events: auto; position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.mask { position: absolute; inset: 0; backdrop-filter: var(--yh-mask-blur); background: var(--yh-alias-bg-mask-1); }
+.card {
+  position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px;
+  box-sizing: border-box; width: min(460px, 100%); padding: 20px 22px 18px;
+  border-radius: var(--yh-radius-panel); background: var(--yh-alias-bg-layer-2);
+  box-shadow: var(--yh-elevation-prominent);
+}
+.title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--yh-alias-label-primary); }
+.subtitle { margin: 4px 0 0; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--yh-alias-label-secondary); }
+.body { margin: 0; font-size: 14px; line-height: 22px; color: var(--yh-alias-label-primary); }
+.link { color: var(--yh-alias-state-info-primary); }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
