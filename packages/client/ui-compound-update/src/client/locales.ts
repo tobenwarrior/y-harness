@@ -23,6 +23,7 @@ export const en = {
 /** Keys owned by the indicator's dictionary. */
 export type CompoundUpdateKey = keyof typeof en
 
+/** Simplified Chinese dictionary for every key this namespace declares. */
 export const zh: Record<CompoundUpdateKey, string> = {
   badge: 'Compound 技能有可用更新',
   badgeShort: '有可用更新',

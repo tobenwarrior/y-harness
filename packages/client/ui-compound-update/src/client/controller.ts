@@ -54,7 +54,11 @@ interface ApplyOutcome {
   readonly error: string | null
 }
 
-/** Validate one apply response before the indicator renders it. */
+/**
+ * Validate one apply response before the indicator renders it.
+ * @param value - parsed response body.
+ * @returns whether the body is a complete apply outcome.
+ */
 export function isApplyOutcome(value: unknown): value is ApplyOutcome {
   if (typeof value !== 'object' || value === null) return false
   const outcome = value as Partial<Record<keyof ApplyOutcome, unknown>>

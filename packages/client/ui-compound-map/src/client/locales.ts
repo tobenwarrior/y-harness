@@ -12,6 +12,7 @@ export const en = {
 /** Keys owned by the code-map dictionary. */
 export type CompoundMapKey = keyof typeof en
 
+/** Simplified Chinese dictionary for every key this namespace declares. */
 export const zh: Record<CompoundMapKey, string> = {
   panel: '代码地图',
   title: 'Compound 代码地图',
