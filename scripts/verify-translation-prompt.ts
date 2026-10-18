@@ -1,6 +1,7 @@
 /** Verify that the committed translation prompt renders and parses as documented. */
 
 import { readFileSync } from 'node:fs'
+import { englishOnlyReason } from './translation-pairing.ts'
 import { join, resolve } from 'node:path'
 import {
   consumeTranslationResponse,
@@ -14,6 +15,11 @@ import {
 } from './translation-prompt.ts'
 
 const root = resolve(import.meta.dirname, '..')
+// The prompt renders a Chinese target; an English-only checkout does not translate.
+if (englishOnlyReason(root) !== undefined) {
+  console.log('verify-translation-prompt: English-only checkout; the translation prompt is not used')
+  process.exit(0)
+}
 
 function read(path: string): string {
   return readFileSync(join(root, path), 'utf8')

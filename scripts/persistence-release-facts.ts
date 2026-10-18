@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderPersistencePair } from './persistence-artifacts.ts'
+import { pairedDocsEnabled } from './translation-pairing.ts'
 import type { PersistenceArtifact } from './persistence-artifacts.ts'
 import type { PersistenceReleaseEntry, PersistenceReleases } from './persistence-releases.ts'
 import { canonicalizeSchema, schemaDigest } from './persistence-schema-model.ts'
@@ -76,6 +77,22 @@ export function persistenceReleaseFactArtifacts(root: string, archive: Persisten
       return `| [${tag}](${tag}${language === 'zh' ? '.zh' : ''}.md) | ${date} | ${entry.release.sessionFormatVersion} | ${entry.roots.size} / ${typeCounts[index]} | ${entry.record.changes.length} |`
     })
     return '\n\n' + [heading, '|---|---|---|---|---|', ...rows].join('\n') + '\n\n'
+  }
+  // English-only: one artifact per page, with no translated sibling or record.
+  if (!pairedDocsEnabled(root)) {
+    const artifacts: PersistenceArtifact[] = [
+      { path: `${directory}/README.md`, content: replaceFacts(read('README.md'), 'index', index('en'), 'README.md') },
+    ]
+    for (const [order, entry] of archive.entries.entries()) {
+      const path = `${entry.release.tag}.md`
+      const inventory = `${count(entry.roots.size, 'root')} / ${count(typeCounts[order] as number, 'type')}`
+      artifacts.push({
+        path: `${directory}/${path}`,
+        content: replaceFacts(replaceFacts(read(path), 'inventory', inventory, path),
+          'changes', '\n\n' + structuralChanges(entry, 'en') + '\n\n', path),
+      })
+    }
+    return artifacts
   }
   const artifacts = renderPersistencePair(root, `${directory}/README.md`,
     replaceFacts(read('README.md'), 'index', index('en'), 'README.md'),

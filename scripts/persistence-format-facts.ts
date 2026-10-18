@@ -1,6 +1,7 @@
 /** Render historical format references from complete, validated in-tree schemas. */
 
 import { readFileSync } from 'node:fs'
+import { pairedDocsEnabled } from './translation-pairing.ts'
 import { basename, join, posix } from 'node:path'
 import { renderPersistencePair, type PersistenceArtifact } from './persistence-artifacts.ts'
 import type { PersistenceFormatEntry, PersistenceFormats } from './persistence-formats.ts'
@@ -61,17 +62,26 @@ function formatIndex(formats: PersistenceFormats, language: Language): string {
  */
 export function persistenceFormatFactArtifacts(root: string, formats: PersistenceFormats): PersistenceArtifact[] {
   const artifacts: PersistenceArtifact[] = []
+  // English-only: one artifact per reference, with no translated sibling or record.
+  const paired = pairedDocsEnabled(root)
   for (const entry of formats.entries.filter(entry => entry.version < formats.currentVersion)) {
-    const render = (language: Language): string => {
-      const path = language === 'en' ? entry.document : entry.document.replace(/\.md$/u, '.zh.md')
-      return replaceRegion(readFileSync(join(root, path), 'utf8'), 'schema', historicalSchema(entry, language), path)
+    const english = replaceRegion(readFileSync(join(root, entry.document), 'utf8'), 'schema', historicalSchema(entry, 'en'), entry.document)
+    if (!paired) {
+      artifacts.push({ path: entry.document, content: english })
+      continue
     }
-    artifacts.push(...renderPersistencePair(root, entry.document, render('en'), render('zh')))
+    const chinese = replaceRegion(readFileSync(join(root, entry.document.replace(/\.md$/u, '.zh.md')), 'utf8'),
+      'schema', historicalSchema(entry, 'zh'), entry.document.replace(/\.md$/u, '.zh.md'))
+    artifacts.push(...renderPersistencePair(root, entry.document, english, chinese))
   }
   const index = 'docs/persistence-changes/historical-formats/README.md'
   const renderIndex = (language: Language): string => {
     const path = language === 'en' ? index : index.replace(/\.md$/u, '.zh.md')
     return replaceRegion(readFileSync(join(root, path), 'utf8'), 'index', formatIndex(formats, language), path)
+  }
+  if (!paired) {
+    artifacts.push({ path: index, content: renderIndex('en') })
+    return artifacts
   }
   artifacts.push(...renderPersistencePair(root, index, renderIndex('en'), renderIndex('zh')))
   return artifacts

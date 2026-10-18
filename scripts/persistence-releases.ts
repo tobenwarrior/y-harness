@@ -1,5 +1,6 @@
 /** Verify the pinned prerelease archive without Git, network access, or source extraction. */
 
+import { pairedDocsEnabled } from './translation-pairing.ts'
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -203,8 +204,11 @@ export function loadPersistenceReleases(root: string): PersistenceReleases {
   for (const release of manifest.releases) {
     const read = (suffix: string): string => readFileSync(join(directory, release.tag + suffix), 'utf8').replaceAll('\r\n', '\n')
     const english = machineBlock(read('.md'), `${release.tag}.md`)
-    const chinese = machineBlock(read('.zh.md'), `${release.tag}.zh.md`)
-    if (english !== chinese) throw new Error(`${release.tag}: bilingual machine records differ`)
+    // English-only: no translated record to compare the machine block against.
+    if (pairedDocsEnabled(root)) {
+      const chinese = machineBlock(read('.zh.md'), `${release.tag}.zh.md`)
+      if (english !== chinese) throw new Error(`${release.tag}: bilingual machine records differ`)
+    }
     const record = parseRecord(english, release, entries.at(-1)?.release.tag ?? null)
     const snapshot = parseHistoricalPersistenceSnapshot(JSON.parse(read('.schema.json')))
     validateTypes(snapshot, release.tag)

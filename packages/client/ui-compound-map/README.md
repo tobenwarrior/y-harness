@@ -57,3 +57,7 @@ None. The panel is browser chrome: it adds no prompt section, no tool, and no se
 - The frame loads the viewer for the workspace the Host mapped at startup; choosing another registered project happens inside the viewer's own project picker.
 - A deployment without Python 3.11+ cannot start the service, and the viewer's own error overlay reports it.
 - The panel holds no state beyond the reload generation: switching panels and returning reloads the frame.
+
+## Dev Note
+
+The viewer is a vendored asset served through the Host proxy; the package itself adds no build step beyond the shared client bundle.
