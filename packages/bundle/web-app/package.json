@@ -184,6 +184,7 @@
     "@deepseek-ai/dsh-client-ui-settings-session-log": "workspace:*",
     "@deepseek-ai/dsh-skill-library": "workspace:*",
     "@deepseek-ai/dsh-client-ui-skill-library": "workspace:*",
+    "@deepseek-ai/dsh-client-ui-compound-update": "workspace:*",
     "@deepseek-ai/dsh-coding-session": "workspace:*",
     "@deepseek-ai/dsh-client-ui-settings-coding-sessions": "workspace:*"
   },

@@ -322,6 +322,11 @@
     - id: ui-skill-library
       name: '@deepseek-ai/dsh-client-ui-skill-library'
 
+    # The Compound skills ship with the Host; this row renders the sidebar
+    # badge and steps panel that report a newer upstream release.
+    - id: ui-compound-update
+      name: '@deepseek-ai/dsh-client-ui-compound-update'
+
     - id: ui-settings-coding-sessions
       name: '@deepseek-ai/dsh-client-ui-settings-coding-sessions'
 
