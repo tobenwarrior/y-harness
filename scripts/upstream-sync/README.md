@@ -51,6 +51,26 @@ conflict surface against the fork's own edits. New packages appear in the report
 under `newPackages` — they usually also need bundle rows, because
 `packages/bundle/**` is deliberately not synced (fork wiring is hand-maintained).
 
+## Prerequisites
+
+A synced package often needs an entry from a manifest this fork does not sync. Upstream
+moves dependency entries between manifests — a shared utility, the workspace root — and
+the synced package then imports something the fork's tree never installs. Nothing in the
+patch shows it; it appears later as a failing typecheck, or as two copies of one library
+whose types no longer match.
+
+`prerequisites.manifests` names those manifests. The tool merges **only** their dependency
+sections (`dependencies`, `devDependencies`, `peerDependencies`): entries upstream adds or
+re-ranges are applied, entries this fork declares alone are kept, and every other changed
+field — `version`, `scripts`, `engines` — is reported under `untouchedFields` instead of
+applied. A changed dependency then also clears the package-level `tsbuildinfo` caches and
+refreshes the lockfile, because `tsc -b` otherwise keeps reporting the module identity it
+resolved before the change.
+
+`prerequisites.sources` is for prerequisite source trees. It is empty today:
+`packages/client/ui-slots` is the slot runtime every UI package shares, so taking it is a
+reviewed change rather than a path entry.
+
 ## Scheduled runs
 
 [`.github/workflows/upstream-scoped-sync.yml`](../../.github/workflows/upstream-scoped-sync.yml)

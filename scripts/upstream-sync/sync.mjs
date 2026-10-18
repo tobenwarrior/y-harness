@@ -19,7 +19,7 @@
  * @module scripts/upstream-sync/sync
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -109,6 +109,148 @@ function toPosix(path) {
   return sep === '/' ? path : path.split(sep).join('/')
 }
 
+/** Manifest sections a prerequisite merge may update; every other field is only reported. */
+export const MANIFEST_DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies']
+
+/**
+ * Select the files that match a prerequisite pattern and no exclusion.
+ * @param changedPaths Repository-relative paths changed between the two revisions.
+ * @param patterns Glob patterns of the declared prerequisite files.
+ * @param excludeMatchers Matchers that must never be selected.
+ * @returns The selected paths, in the order given.
+ */
+export function selectPrerequisites(changedPaths, patterns, excludeMatchers = []) {
+  const matchers = patterns.map(globMatcher)
+  return changedPaths.filter(path =>
+    matchers.some(match => match.test(path)) && !excludeMatchers.some(match => match.test(path)))
+}
+
+/**
+ * Whether accepting an upstream range would move a dependency backwards.
+ * @param theirs Upstream's declared range.
+ * @param ours This fork's declared range.
+ * @returns True when both name a concrete version and upstream's is lower.
+ */
+export function movesBackwards(theirs, ours) {
+  const base = spec => {
+    if (typeof spec !== 'string') return undefined
+    const match = /(\d+)\.(\d+)\.(\d+)/.exec(spec)
+    return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])]
+  }
+  const next = base(theirs)
+  const current = base(ours)
+  if (next === undefined || current === undefined) return false
+  for (let index = 0; index < 3; index += 1) {
+    if (next[index] !== current[index]) return next[index] < current[index]
+  }
+  return false
+}
+
+/**
+ * Merge upstream dependency entries into this fork's manifest.
+ *
+ * Upstream moves dependency entries between manifests that this fork does not own — the
+ * workspace root, shared utilities — and a synced package then fails to resolve what it
+ * imports. Only the dependency sections merge: a version field belongs to the release
+ * alignment step, and an entry this fork added stays even when upstream drops it. A range
+ * that would move a dependency backwards is reported instead of applied, because a fork
+ * may pin ahead of upstream deliberately.
+ * @param ours This fork's manifest object.
+ * @param theirs Upstream's manifest object at the target revision.
+ * @param fields Dependency sections to merge.
+ * @returns The merged manifest, the entries it changed, the entries it kept as they were,
+ *   entries kept against upstream, and the changed top-level fields it leaves alone.
+ */
+export function mergeManifestFields(ours, theirs, fields = MANIFEST_DEPENDENCY_FIELDS) {
+  const merged = { ...ours }
+  const changes = []
+  const skipped = []
+  const kept = []
+  const untouchedFields = []
+  for (const field of fields) {
+    const upstreamBlock = theirs?.[field]
+    if (upstreamBlock === undefined || typeof upstreamBlock !== 'object' || upstreamBlock === null) continue
+    const currentBlock = { ...(merged[field] ?? {}) }
+    for (const [name, spec] of Object.entries(upstreamBlock)) {
+      if (currentBlock[name] === spec) continue
+      // A fork may pin ahead of upstream on purpose; taking a lower range back would undo it.
+      if (movesBackwards(spec, currentBlock[name])) {
+        skipped.push({ field, name, from: currentBlock[name], to: spec })
+        continue
+      }
+      changes.push({ field, name, from: currentBlock[name], to: spec })
+      currentBlock[name] = spec
+    }
+    for (const name of Object.keys(currentBlock)) {
+      if (Object.hasOwn(upstreamBlock, name)) continue
+      kept.push({ field, name, spec: currentBlock[name] })
+    }
+    merged[field] = currentBlock
+  }
+  for (const key of new Set([...Object.keys(theirs ?? {}), ...Object.keys(ours)])) {
+    if (key === 'version' || fields.includes(key)) continue
+    if (JSON.stringify(ours[key]) === JSON.stringify(theirs?.[key])) continue
+    untouchedFields.push(key)
+  }
+  return { merged, changes, skipped, kept, untouchedFields }
+}
+
+/**
+ * Remove the incremental build state that caches module resolution.
+ *
+ * `tsc -b` records each package's resolved module identities. A sync that changes a
+ * dependency version leaves those records pointing at the old copy, and since no source
+ * changed the compiler keeps reporting the stale type. The caches rebuild on the next
+ * compile, so removing them is safe.
+ * @param repoRoot Repository root.
+ * @returns The removed cache paths, repository-relative with `/` separators.
+ */
+export function clearBuildStateCaches(repoRoot) {
+  const cleared = []
+  const stack = [join(repoRoot, 'packages'), join(repoRoot, 'apps')]
+  while (stack.length > 0) {
+    const directory = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(directory, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules') stack.push(path)
+      } else if (entry.name.endsWith('.tsbuildinfo')) {
+        rmSync(path, { force: true })
+        cleared.push(relative(repoRoot, path))
+      }
+    }
+  }
+  for (const name of ['tsconfig.host.tsbuildinfo', 'tsconfig.client.tsbuildinfo']) {
+    const path = join(repoRoot, name)
+    if (!existsSync(path)) continue
+    rmSync(path, { force: true })
+    cleared.push(name)
+  }
+  return cleared.map(toPosix)
+}
+
+/**
+ * Read a manifest object at one revision, or undefined when unreadable.
+ * @param revision Revision to read from.
+ * @param path Repository-relative manifest path.
+ * @returns The parsed manifest, or undefined.
+ */
+function manifestAt(revision, path) {
+  const result = run('git', ['show', `${revision}:${path}`], { allowFailure: true })
+  if (result.status !== 0) return undefined
+  try {
+    return JSON.parse(result.stdout)
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Read `name` from a repository-relative manifest at one upstream revision.
  * @param target Upstream revision.
@@ -123,6 +265,33 @@ function packageNameAt(target, path) {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Write the merged dependency entries into this fork's prerequisite manifests.
+ * @param entries Report entries produced for the selected prerequisite manifests.
+ * @param target Upstream revision holding the entries to merge.
+ * @returns Repository-relative paths whose content changed.
+ */
+function applyPrerequisiteManifests(entries, target) {
+  const written = []
+  for (const entry of entries) {
+    if (!entry.readable) continue
+    const path = join(root(), entry.path)
+    let ours
+    try {
+      ours = JSON.parse(readFileSync(path, 'utf8'))
+    } catch {
+      continue
+    }
+    const theirs = manifestAt(target, entry.path)
+    if (theirs === undefined) continue
+    const { merged, changes } = mergeManifestFields(ours, theirs)
+    if (changes.length === 0) continue
+    writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`)
+    written.push(entry.path)
+  }
+  return written
 }
 
 /**
@@ -244,6 +413,41 @@ function main() {
   report.commits = commits
   report.excluded = excluded
 
+  // Prerequisites: files a synced package depends on but does not contain. The patch never
+  // carries them, so a missing dependency entry only surfaces as a failing typecheck later.
+  const prerequisitePatterns = config.prerequisites?.manifests ?? []
+  const prerequisiteCandidates = prerequisitePatterns.length === 0 ? [] : run('git',
+    ['diff', '--name-only', `${baselineSha}..${target}`, '--', ...prerequisitePatterns]).stdout
+  const prerequisitePaths = selectPrerequisites(
+    prerequisiteCandidates.split('\n').map(line => line.trim()).filter(Boolean).map(toPosix)
+      .filter(path => !files.includes(path)),
+    prerequisitePatterns,
+    excludeMatchers,
+  )
+  const prerequisiteEvaluations = prerequisitePaths.map(path => {
+    const theirs = manifestAt(target, path)
+    let ours
+    try {
+      ours = JSON.parse(readFileSync(join(root(), path), 'utf8'))
+    } catch {
+      ours = undefined
+    }
+    if (ours === undefined || theirs === undefined) return { path, readable: false, changes: [], skipped: [], kept: [], untouchedFields: [] }
+    const { changes, skipped, kept, untouchedFields } = mergeManifestFields(ours, theirs)
+    return { path, readable: true, changes, skipped, kept, untouchedFields }
+  })
+  // Every manifest touches a release bump, so only entries with work behind them are listed.
+  const applicablePrerequisites = prerequisiteEvaluations.filter(entry => entry.changes.length > 0)
+  report.prerequisites = {
+    evaluated: prerequisiteEvaluations.length,
+    applicable: applicablePrerequisites,
+    skipped: prerequisiteEvaluations.filter(entry => entry.skipped.length > 0).map(entry => ({ path: entry.path, skipped: entry.skipped })),
+    reported: prerequisiteEvaluations
+      .filter(entry => entry.changes.length === 0 && entry.skipped.length === 0 && entry.untouchedFields.length > 0)
+      .map(entry => ({ path: entry.path, fields: entry.untouchedFields })),
+  }
+
+
   const nameStatus = run('git', ['diff', '--name-status', `${baselineSha}..${target}`, '--', ...files]).stdout
   for (const line of nameStatus.split('\n').filter(Boolean)) {
     const [status, ...rest] = line.split('\t')
@@ -257,7 +461,7 @@ function main() {
     .map(path => ({ path, name: packageNameAt(target, path) }))
     .filter(entry => entry.name !== undefined)
 
-  if (files.length === 0) {
+  if (files.length === 0 && applicablePrerequisites.length === 0) {
     report.upToDate = true
     writeReport(report, values.json)
     console.log(`upstream sync: no in-scope changes between ${baselineSha.slice(0, 10)} and ${target.slice(0, 10)}`)
@@ -267,7 +471,7 @@ function main() {
   const artifactDir = join(root(), '.artifacts/upstream-sync')
   mkdirSync(artifactDir, { recursive: true })
   const patchPath = join(artifactDir, `${baselineSha.slice(0, 10)}-${target.slice(0, 10)}.patch`)
-  const patch = run('git', ['diff', '--binary', `${baselineSha}..${target}`, '--', ...files]).stdout
+  const patch = files.length === 0 ? '' : run('git', ['diff', '--binary', `${baselineSha}..${target}`, '--', ...files]).stdout
   writeFileSync(patchPath, patch)
   report.patch = relative(root(), patchPath)
 
@@ -276,6 +480,22 @@ function main() {
   console.log(`  files: ${report.files.added.length} added, ${report.files.modified.length} modified, ${report.files.deleted.length} deleted, ${excluded.length} excluded`)
   console.log(`  patch: ${report.patch}`)
   for (const entry of report.newPackages) console.log(`  new package: ${entry.name} (${entry.path})`)
+  if (report.prerequisites.evaluated > 0) {
+    console.log(`  prerequisites: ${report.prerequisites.evaluated} manifest(s) changed upstream, ${report.prerequisites.applicable.length} with dependency entries to apply`)
+  }
+  for (const entry of report.prerequisites.applicable) {
+    console.log(`  prerequisite: ${entry.path} — ${entry.changes.length} dependency change(s)`)
+    for (const change of entry.changes) console.log(`    ${change.field}.${change.name}: ${change.from ?? '(absent)'} -> ${change.to}`)
+    for (const keep of entry.kept) console.log(`    kept ${keep.field}.${keep.name} (upstream no longer lists it)`)
+  }
+  for (const entry of report.prerequisites.skipped) {
+    for (const skip of entry.skipped) {
+      console.log(`  prerequisite kept ${skip.field}.${skip.name} at ${skip.from} (upstream lists ${skip.to}; a lower range is not applied)`)
+    }
+  }
+  for (const entry of report.prerequisites.reported) {
+    console.log(`  prerequisite fields changed upstream, not applied: ${entry.path} (${entry.fields.join(', ')})`)
+  }
 
   if (values.apply !== true) {
     writeReport(report, values.json)
@@ -290,7 +510,10 @@ function main() {
 
   const branch = values.branch ?? `upstream-sync/${target.slice(0, 10)}`
   run('git', ['switch', '-C', branch])
-  const applied = run('git', ['apply', '--3way', '--index', '--whitespace=nowarn', patchPath], { allowFailure: true })
+  let applied = { status: 0, stdout: '', stderr: '' }
+  if (files.length > 0) {
+    applied = run('git', ['apply', '--3way', '--index', '--whitespace=nowarn', patchPath], { allowFailure: true })
+  }
   const conflicts = run('git', ['diff', '--name-only', '--diff-filter=U'], { allowFailure: true }).stdout
     .split('\n').map(line => line.trim()).filter(Boolean).map(toPosix)
   report.applied = true
@@ -298,6 +521,24 @@ function main() {
   report.conflicts = conflicts
   if (applied.status !== 0 && conflicts.length === 0) {
     throw new Error(`git apply failed without conflicts:\n${applied.stdout}${applied.stderr}`)
+  }
+
+  const writtenManifests = applyPrerequisiteManifests(report.prerequisites.applicable, target)
+  if (writtenManifests.length > 0) {
+    const install = run(pnpm, ['install', '--lockfile-only', '--no-frozen-lockfile'], { allowFailure: true })
+    report.prerequisiteInstall = {
+      status: install.status === 0 ? 'updated' : 'failed',
+      output: `${install.stdout}${install.stderr}`.slice(-2000),
+    }
+    console.log(`  prerequisite manifests: ${writtenManifests.join(', ')} — lockfile ${report.prerequisiteInstall.status}`)
+    if (install.status !== 0) console.log(report.prerequisiteInstall.output)
+  }
+  const dependencyChanged = writtenManifests.length > 0
+    || [...report.files.added, ...report.files.modified, ...report.files.deleted].includes('pnpm-lock.yaml')
+    || [...report.files.added, ...report.files.modified].some(path => path.endsWith('package.json'))
+  if (dependencyChanged) {
+    report.buildStateCleared = clearBuildStateCaches(root())
+    console.log(`  cleared ${report.buildStateCleared.length} incremental build-state cache(s)`)
   }
 
   config.baseline = target

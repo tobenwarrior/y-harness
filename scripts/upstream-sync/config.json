@@ -3,7 +3,14 @@
     "Scoped upstream sync policy for the Y Harness fork. Read scripts/upstream-sync/README.md.",
     "`baseline` is the upstream commit whose content this fork has already ingested for",
     "`include`. Advance it only through a merged sync PR: sync.mjs rewrites it in the branch",
-    "it prepares, so merging that branch is what moves the marker."
+    "it prepares, so merging that branch is what moves the marker.",
+    "`prerequisites` cover what a synced package needs but does not own: upstream moves",
+    "dependency entries between manifests (the root, shared utilities) without touching the",
+    "packages this fork follows, and a missing entry only shows up as a failing typecheck.",
+    "Manifests merge dependency sections only; other changed fields are reported, never applied.",
+    "`sources` is for prerequisite source trees; it lists nothing today because",
+    "packages/client/ui-slots is the slot runtime every UI package shares, and taking it",
+    "needs its own review rather than a path entry."
   ],
   "remote": "upstream",
   "target": "upstream/master",
@@ -18,6 +25,13 @@
     "packages/client/ui-settings-web-search/",
     "packages/client/ui-deepseek-model-label-1017/"
   ],
+  "prerequisites": {
+    "manifests": [
+      "package.json",
+      "packages/util/**/package.json"
+    ],
+    "sources": []
+  },
   "exclude": [
     "**/lib/**",
     "**/dist/**",
@@ -26,6 +40,6 @@
   ],
   "alignVersion": true,
   "checks": [
-    "pnpm exec vitest run --maxWorkers=2 packages/llm/llm-deepseek packages/llm/llm-deepseek-account packages/web packages/client/ui-model-selection packages/client/ui-settings-web-search"
+    "pnpm exec vitest run --maxWorkers=2 packages/llm/llm-deepseek packages/llm/llm-deepseek-account packages/llm/llm-deepseek-api-key packages/web packages/client/ui-model-selection packages/client/ui-settings-web-search packages/client/ui-deepseek-model-label-1017"
   ]
 }
