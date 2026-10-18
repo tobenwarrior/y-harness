@@ -46,9 +46,10 @@ Each loaded skill body ends with a `Compound runtime` section naming the absolut
 
 | File | Responsibility |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Provider registration, frontmatter parsing, interpreter resolution, and the appended runtime section. |
+| [`src/index.ts`](src/index.ts) | Provider registration, frontmatter parsing, interpreter resolution, and the appended runtime sections. |
 | [`assets/`](assets/) | Byte-identical copy of upstream `skills/`; see [UPSTREAM.md](UPSTREAM.md). |
 | [`UPSTREAM.md`](UPSTREAM.md) | Vendored version, upstream commit, and the re-sync procedure. |
+| [`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`SOURCES.md`](SOURCES.md) | The vendored content's MIT license, the pstack notice its workflows were adapted from, and its provenance record. |
 
 The provider reads `SKILL.md` frontmatter from each vendored directory at load and serves bodies on request; nothing is copied into `lib/`, so `assets/` must ship in the package `files` list.
 

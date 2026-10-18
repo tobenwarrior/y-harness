@@ -6,9 +6,11 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
 import { BUNDLED_SKILL_RANK, type SkillCandidate, type SkillProvider } from '@deepseek-ai/dsh-skill'
 import { parse as parseYaml } from 'yaml'
+import { registerUpdateRoute, UpstreamReleaseTracker } from './upstream.ts'
 
 /** Vendored skill directories, each carrying its own `SKILL.md` and resources. */
 const SKILL_NAMES = ['compound', 'map', 'setup', 'setup-global', 'status-global'] as const
@@ -170,4 +172,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   }
   ctx.skills.registerProvider(() => provider)
+  const tracker = new UpstreamReleaseTracker()
+  // Optional: a composition without the shared API channel still gets the
+  // skills, it just cannot report upstream releases to a browser half.
+  ctx.inject(['connection'], (scope) => { registerUpdateRoute(scope, tracker) })
 }
