@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-The sidebar foot shows a small badge as soon as the released Compound skills version is newer than the one this Y Harness build ships. Opening it explains the difference and the steps that bring it in: update the checkout, rebuild, restart. The panel never touches the tree itself, and it stays silent while the released version matches, cannot be read, or the deployment has no Host route to ask.
+The sidebar foot shows a small badge as soon as the released Compound skills version is newer than the one this Y Harness build ships. Opening it explains the difference and offers one button that applies it: the Host re-syncs the vendored tree, records the release, runs the package tests, and commits only when they pass, then asks the on-quit updater to rebuild and reopen the app. A failed attempt leaves the checkout untouched and reports why. The badge stays silent while the released version matches, cannot be read, or the deployment has no Host route to ask.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ The sidebar foot shows a small badge as soon as the released Compound skills ver
 <a id="use this package"></a>
 ## Use this package
 
-Mount beside `@deepseek-ai/dsh-skill-compound`, which registers the `api/skill-compound.update` route this package reads.
+Mount beside `@deepseek-ai/dsh-skill-compound`, which registers the `api/skill-compound.update` reading route and the `api/skill-compound.update.apply` route the button posts to.
 
 ```yaml
 - name: '@deepseek-ai/dsh-client-ui-compound-update'
@@ -32,7 +32,7 @@ The badge registers into `sidebar.footer.action` and the steps panel into `shell
 
 | Reading | What the user sees |
 |---|---|
-| Released version is newer | Badge with the released version; the panel names both versions, the upstream repository, and the update steps. |
+| Released version is newer | Badge with the released version; the panel names both versions and the upstream repository, and offers the update button. |
 | Released version matches | No badge; the panel reports that this build already ships it. |
 | Upstream unreadable | No badge; the panel reports why the check failed and offers another attempt. |
 
