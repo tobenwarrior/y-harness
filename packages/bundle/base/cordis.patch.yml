@@ -493,6 +493,14 @@
       config:
         apiKeyEnv: DEEPSEEK_API_KEY
 
+    # Direct Search and Fetch API routes, registered as deepseek-search-api and
+    # deepseek-fetch-api. They stay unselected until the Web search settings
+    # switch points web.searchProvider and web.fetchProvider at them.
+    - id: web-deepseek-api
+      name: '@deepseek-ai/dsh-web-deepseek-api'
+      config:
+        apiKeyEnv: DEEPSEEK_API_KEY
+
     - id: web-fetch-http
       name: '@deepseek-ai/dsh-web-fetch-http'
 

@@ -16,8 +16,8 @@ import {
   IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular,
   IconDataOutlineRegular, IconWarningOutlineRegular, Input, rankByName, StateDot, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ModelSelectInjected } from './slots.ts'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'
 import { SelectionOption } from './SelectionOption.tsx'
@@ -49,8 +49,9 @@ const MEASURE_STYLE: CSSProperties = { visibility: 'hidden', left: 0, top: 0 }
  * @returns the trigger and, while open, the two-level menu.
  */
 export function ModelSelect(
-  { locked, available, directory, load, select, t }:
-  ModelSelectInjected & { locked: boolean } & PropsLocale<'model'>,
+  { locked, available, directory, load, select, t, renderSlot }:
+  ModelSelectInjected & Pick<PropsRuntime<'conversation.input.model'>, 'locked'> & PropsLocale<'model'>
+    & Omit<PropsRenderSlots<'conversation.input.model.label'>, 'SessionProvider'>,
 ) {
   const state = useSyncExternalStore(
     fn => directory.subscribe(fn),
@@ -80,7 +81,14 @@ export function ModelSelect(
   const modelRefs = useRef(new Map<number, HTMLButtonElement>())
   const id = useId()
 
-  const groups = useMemo(() => orderModelProviders(state.groups), [state.groups])
+  const accountProviderName = t('provider.account')
+  const groups = useMemo(() => orderModelProviders(state.groups).map(group => ({
+    ...group,
+    provider: {
+      id: group.id,
+      name: group.id === 'deepseek-account' ? accountProviderName : group.name,
+    },
+  })), [state.groups, accountProviderName])
   const choices = useMemo(() => groups.flatMap(group =>
     group.models.map(model => ({
       group,
@@ -230,15 +238,10 @@ export function ModelSelect(
     }
   }, [open, pane, activeModelIndex, visibleModels])
 
-  // Portaled placement (the Menu primitive's portal rules: fixed from the
-  // anchor rect, measured before paint, clamped inside the viewport): above
-  // the trigger, right edges aligned. Depends on pane and directory state
-  // because pane switches and async catalog loads resize the card.
-  /* jscpd:ignore-start -- deliberate mirror of ui-primitives useAnchoredPosition:
-     that hook only places from the anchor's LEFT edge, while this card aligns
-     right edges (x = rect.right - width), so the measure-and-clamp plumbing repeats. */
+  // The portal needs viewport coordinates from the trigger and the menu's
+  // measured size before paint. Slot content can resize without parent renders.
   useLayoutEffect(() => {
-    if (!open) { setMenuPos(null); return }
+    if (!available || !open) { setMenuPos(null); return }
     const place = (): void => {
       /* v8 ignore next 2 -- the trigger ref is attached whenever the menu is open. */
       const rect = triggerRef.current?.getBoundingClientRect()
@@ -252,17 +255,20 @@ export function ModelSelect(
       if (lh > 0) y = Math.min(Math.max(y, MARGIN), window.innerHeight - lh - MARGIN)
       setMenuPos({ left: x, top: y })
     }
-    // First run measures the hidden pre-render (same commit as `open`), so
-    // the card lands placed before anything paints.
     place()
     window.addEventListener('scroll', place, true)
     window.addEventListener('resize', place)
+    const menu = menuRef.current
+    const observer = typeof ResizeObserver !== 'undefined' && menu !== null
+      ? new ResizeObserver(place)
+      : null
+    if (menu !== null) observer?.observe(menu)
     return () => {
+      observer?.disconnect()
       window.removeEventListener('scroll', place, true)
       window.removeEventListener('resize', place)
     }
-  }, [open, pane, state, query])
-  /* jscpd:ignore-end */
+  }, [available, open, pane, state, query])
 
   if (!available) return null
 
@@ -497,6 +503,16 @@ export function ModelSelect(
           : effortLabel !== undefined
             ? t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
             : t('trigger.aria', { model: modelLabel })
+  const renderModelLabel = (
+    provider: ModelLabelOwner['provider'], model: ModelLabelOwner['model'],
+    placement: ModelLabelOwner['placement'], selected: boolean, fallback: string,
+  ) => (
+    <span data-provider-id={provider.id} data-model-id={model.id}>
+      {renderSlot('conversation.input.model.label', {
+        provider, model, placement, selected,
+      }, { fallback })}
+    </span>
+  )
   let itemIndex = 0
   const itemRef = () => {
     const at = itemIndex++
@@ -556,7 +572,11 @@ export function ModelSelect(
         }}
       >
         <IconDataOutlineRegular className={css.triggerIcon} size={16} />
-        <span className={css.triggerLabel}>{modelLabel}</span>
+        <span className={css.triggerLabel}>
+          {currentChoice === undefined
+            ? modelLabel
+            : renderModelLabel(currentChoice.group, currentChoice.model, 'trigger', true, modelLabel)}
+        </span>
         {caption !== '' && <span className={css.triggerEffort}>{caption}</span>}
         {busy
           ? <StateDot state="ongoing" />
@@ -588,7 +608,11 @@ export function ModelSelect(
               </button>
               <button ref={itemRef()} type="button" role="menuitem" className={css.cell} data-model-pane="model" onClick={() => { drill('model') }}>
                 <span className={css.cellLabel}>{t('menu.model')}</span>
-                <span className={css.cellValue}>{compatibleProvider ? rootModelLabel : t('trigger.fallback')}</span>
+                <span className={css.cellValue}>
+                  {compatibleProvider && currentChoice !== undefined
+                    ? renderModelLabel(currentChoice.group, currentChoice.model, 'menu', true, rootModelLabel)
+                    : compatibleProvider ? rootModelLabel : t('trigger.fallback')}
+                </span>
                 <IconChevronRightOutlineRegular className={css.cellChevron} />
               </button>
               {compatibleProvider && reasoning !== undefined && (
@@ -685,7 +709,12 @@ export function ModelSelect(
                       }}
                       key={model.id} title={label} disabled={busy}
                       onClick={() => { choose({ provider: model.provider, model: model.id }) }}>
-                      <span className={css.optionCopy}><span className={css.modelName}>{label}</span></span>
+                      <span className={css.optionCopy}><span className={css.modelName}>
+                        {renderModelLabel(
+                          { id: model.provider, name: selectedGroup?.name ?? model.provider },
+                          model, 'option', selected, label,
+                        )}
+                      </span></span>
                       <span className={css.check}>
                         {pending !== null && pending.provider === model.provider && pending.model === model.id
                           ? <StateDot state="ongoing" /> : selected ? <IconCheckOutlineRegular /> : null}

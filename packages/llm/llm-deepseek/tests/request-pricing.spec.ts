@@ -3,7 +3,7 @@ import { offloadedImageText, requestImageHandleText, textOnlyImageText } from '@
 import type { ImageBlock } from '@deepseek-ai/dsh-llm'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { deepSeekImageRequestPricing } from '../src/request-pricing.ts'
+import { deepSeekImageRequestPricing, resolveRequestImageTarget } from '../src/request-pricing.ts'
 import { resolveAdapterOptions } from '../src/index.ts'
 import type { Options as Config } from '../src/index.ts'
 
@@ -133,4 +133,13 @@ describe('DeepSeek request-image pricing', () => {
     ).priceImages([block(oversized)])
     expect(prices.map(price => price.visualTokens)).toEqual([422])
   })
+})
+
+// This fork resolves the projected image through `resolveRequestImageTarget`
+// inside `images.ts`, which owns DeepSeek request preparation; its `LlmAdapter`
+// exposes no `imageRequestTarget` query for other consumers.
+it('resolves the image dimensions and byte budget DeepSeek request preparation sends', () => {
+  const model = { ...VISION_MODEL, imagePixelBudget: 10_000, imageMaxBytes: 50_000 }
+  const source = ref('screenshot', 1000, 1000, 60_000)
+  expect(resolveRequestImageTarget(model, source)).toEqual({ width: 100, height: 100, maxBytes: 50_000 })
 })

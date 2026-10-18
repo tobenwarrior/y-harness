@@ -69,6 +69,15 @@ describe('maintained repository reference policy', () => {
     expect(scanRepositoryReferences(fixture.root)).toHaveLength(4)
   })
 
+  it('exempts only the scoped upstream sync state file', () => {
+    const commit = 'a'.repeat(40)
+    expect(findRepositoryReferences('scripts/upstream-sync/config.json', commit, new Set([commit]))).toEqual([])
+    expect(findRepositoryReferences('scripts/upstream-sync/sync.mjs', commit, new Set([commit])))
+      .toEqual([{ file: 'scripts/upstream-sync/sync.mjs', line: 1, kind: 'commit-hash' }])
+    expect(findRepositoryReferences('scripts/upstream-sync/config.json.bak', commit, new Set([commit])))
+      .toEqual([{ file: 'scripts/upstream-sync/config.json.bak', line: 1, kind: 'commit-hash' }])
+  })
+
   it('checks available unreachable commits without requiring a branch or network', (test) => {
     const fixture = repository(test)
     const unreachable = fixture.git(['commit-tree', fixture.tree, '-m', 'unreachable fixture'])

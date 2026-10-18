@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-provider-config-sync",
   "description": "Opt-in ordinary provider catalog configuration synchronization",
-  "version": "0.2.1-alpha.1",
+  "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },

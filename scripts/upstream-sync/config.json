@@ -7,19 +7,16 @@
   ],
   "remote": "upstream",
   "target": "upstream/master",
-  "baseline": "6d48506ef11e875fec0d9616cd0dcf66ae248f17",
+  "baseline": "687f282e8625c6b8d11ff58211a90524be2e4317",
   "include": [
-    "packages/llm/llm/",
     "packages/llm/llm-deepseek/",
     "packages/llm/llm-deepseek-account/",
+    "packages/llm/llm-deepseek-api-key/",
     "packages/llm/deepseek-llm-api-extensions/",
     "packages/web/",
     "packages/client/ui-model-selection/",
     "packages/client/ui-settings-web-search/",
-    "packages/client/ui-deepseek-model-label-1017/",
-    "tsconfig.base.json",
-    "tsconfig.client.json",
-    "tsconfig.host.json"
+    "packages/client/ui-deepseek-model-label-1017/"
   ],
   "exclude": [
     "**/lib/**",

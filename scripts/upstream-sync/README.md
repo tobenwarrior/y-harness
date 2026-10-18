@@ -1,5 +1,7 @@
 # Scoped upstream sync
 
+English | [中文](README.zh.md)
+
 Y Harness tracks the official [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
 fork-first: the paths named in [`config.json`](config.json) follow upstream, and
 everything else is this fork's own work (providers, branding, launcher, bundles).

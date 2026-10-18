@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-coding-session",
   "description": "Source-labelled native coding-session discovery, durable mirrors, and explicit sequential handoff",
-  "version": "0.2.1-alpha.1",
+  "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
