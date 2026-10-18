@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { RemoteError, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -1329,46 +1329,64 @@ it('restores the account model name after login without changing the saved route
 })
 
 describe('ModelSelect model label slot', () => {
-  function withLabelSlot() {
-    const calls: { placement: string; provider: string; model: string; selected: boolean }[] = []
-    const renderSlot: ComponentProps<typeof ModelSelect>['renderSlot'] = (_name, owner, options) => {
-      if (owner === undefined) return options?.fallback ?? null
-      calls.push({
-        placement: owner.placement,
-        provider: owner.provider.id,
-        model: owner.model.id,
-        selected: owner.selected,
-      })
-      return <span data-testid="contributed-label">{owner.provider.id}:{owner.model.name}</span>
-    }
-    return { calls, renderSlot }
-  }
-
-  it('offers the selected model to the trigger, the menu value, and every option', () => {
+  async function mountWithLabel({ register, current, status }: {
+    register: boolean
+    current?: { provider: string; model: string } | null
+    status?: ModelDirectoryState['status']
+  }) {
+    const runtime = await SlotTestRuntime.create()
+    onTestFinished(() => runtime.dispose())
+    const sessionId = SessionId('model-label')
+    await runtime.sessions.add({ id: sessionId })
+    const session = runtime.sessions.retainFor(runtime.ctx, sessionId)
     const groups = ['trusted', 'external'].map(id => ({
       id, name: `${id} gateway`, models: [{ id: 'same-model', name: 'Same model' }],
     }))
-    const { calls, renderSlot } = withLabelSlot()
-    render(<ModelSelect renderSlot={renderSlot} locked={false} available
-      directory={createSnapshotStore(state({ groups, current: { provider: 'trusted', model: 'same-model' } }))}
-      load={vi.fn()} select={vi.fn()} t={t} />)
-    const trigger = screen.getByRole('button', { name: '选择模型，当前 Same model' })
-    expect(trigger.textContent).toBe('trusted:Same model')
-    expect(trigger.querySelector('[data-provider-id="trusted"][data-model-id="same-model"]')).toBeTruthy()
-    expect(calls).toEqual([{ placement: 'trigger', provider: 'trusted', model: 'same-model', selected: true }])
+    const directory = createSnapshotStore(state({
+      groups,
+      ...current === undefined ? { current: { provider: 'trusted', model: 'same-model' } } : { current },
+      ...status === undefined ? {} : { status },
+    }))
+    await runtime.root.declare(
+      { 'conversation.input.model.label': { kind: 'single', scope: 'session', inline: true } },
+      ({ renderSlot, SessionProvider }) => <SessionProvider session={session}>
+        <ModelSelect renderSlot={renderSlot} locked={false} available directory={directory} load={vi.fn()} select={vi.fn()} t={t} />
+      </SessionProvider>,
+    )
+    if (register) {
+      await runtime.mount({ inject: ['slots'], apply(ctx) {
+        ctx.slots.inject('conversation.input.model.label', () => ctx.slots.register(
+          { name: 'conversation.input.model.label' },
+          ({ provider, model, placement, selected }) => (
+            <span data-testid={`${placement}-label`}>{provider.id}:{model.name}:{String(selected)}</span>
+          ),
+        ))
+      } })
+    }
+    runtime.renderRoot()
+    return runtime
+  }
 
+  it('offers the selected model to the trigger, the menu value, and every option', async () => {
+    await mountWithLabel({ register: true })
+    const trigger = screen.getByRole('button', { name: '选择模型，当前 Same model' })
+    expect(screen.getByTestId('trigger-label').textContent).toBe('trusted:Same model:true')
+    expect(trigger.querySelector('[data-provider-id="trusted"][data-model-id="same-model"]')).toBeTruthy()
     fireEvent.click(trigger)
-    expect(calls).toContainEqual({ placement: 'menu', provider: 'trusted', model: 'same-model', selected: true })
+    expect(screen.getByTestId('menu-label').textContent).toBe('trusted:Same model:true')
     fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
-    expect(calls).toContainEqual({ placement: 'option', provider: 'trusted', model: 'same-model', selected: true })
-    expect(screen.getByRole('menuitemradio', { name: 'trusted:Same model' })).toBeTruthy()
+    expect(screen.getByTestId('option-label').textContent).toBe('trusted:Same model:true')
   })
 
-  it('keeps the catalog name when no contribution renders and never decorates a missing selection', () => {
-    const directory = createSnapshotStore<ModelDirectoryState>(state({ groups: [], status: 'loading' }))
-    const renderSlot = vi.fn(renderLabel)
-    render(<ModelSelect renderSlot={renderSlot} locked={false} available directory={directory} load={vi.fn()} select={vi.fn()} t={t} />)
-    expect(renderSlot).not.toHaveBeenCalled()
+  it('keeps the catalog name without a contribution and never decorates a missing selection', async () => {
+    await mountWithLabel({ register: false })
+    expect(screen.getByRole('button', { name: '选择模型，当前 Same model' }).textContent).toBe('Same model')
+  })
+
+  it('leaves a loading catalog and an unset selection undecorated', async () => {
+    await mountWithLabel({ register: true, current: null, status: 'loading' })
+    expect(screen.getByRole('button', { name: zh['trigger.loading'] }).textContent).toBe(zh['trigger.loading'])
     expect(document.querySelector('[data-provider-id]')).toBeNull()
+    expect(screen.queryByTestId('trigger-label')).toBeNull()
   })
 })
