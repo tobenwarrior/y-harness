@@ -176,13 +176,13 @@ describe('bundled Compound skills', () => {
         ['@deepseek-ai/dsh-skill', SkillRegistry],
         ['@deepseek-ai/dsh-skill-compound', SkillCompound],
       ])
-      const internal: NonNullable<typeof ctx.loader.internal> = {
+      const internal = {
         version: 'v2',
         async import(specifier: string) {
           if (!modules.has(specifier)) throw new Error(`Unexpected Loader import: ${specifier}`)
           return modules.get(specifier)
         },
-      } as NonNullable<typeof ctx.loader.internal>
+      } as unknown as NonNullable<typeof ctx.loader.internal>
       ctx.loader.internal = internal
       await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
       await ctx.loader.await()
