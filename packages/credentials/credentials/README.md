@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-credentials
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-credentials` keeps secret values out of configuration by letting settings and `cordis.yml` refer to key names such as `DEEPSEEK_API_KEY`. It also stores durable per-plugin credential records, including authorization grants and provider environment values. A rotated stored key applies to the next request without a restart or configuration edit. Configuration UIs can report whether a key or record is set, its source, and whether it is writable without exposing values. Empty key values count as absent, while an empty record remains a deliberate stored credential.
@@ -168,7 +166,6 @@ No direct invalidation; resolved values never enter a request prefix.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when this package is a poor fit or needs special care. They are current package constraints, not a task backlog.
 

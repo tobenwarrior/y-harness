@@ -20,6 +20,7 @@ import {
 } from './translation-pairing-record.ts'
 import {
   languageSwitcherTargets,
+  pairedDocsEnabled,
   parseTranslationPairingManifest,
   renderGeneratedRegion,
   translationPairSourcePredicate,
@@ -1035,6 +1036,7 @@ export function computeConfigCatalogOutputs(scanRoot: string = root): ReadonlyMa
     )),
   }
   const en = render(entries, 'en')
+  if (!pairedDocsEnabled(scanRoot)) return new Map([[PATHS.source, en]])
   const zh = rewriteTranslationLinkLocales(
     render(entries, 'zh'),
     { ...context, sourcePath: PATHS.zh },

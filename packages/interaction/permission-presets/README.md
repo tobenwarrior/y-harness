@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-permission-presets
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Offer named permission modes that set sandbox and approval together while each enforcement service keeps its own value. Configured presets supply future-session defaults; an explicitly loaded Auto review integration can add one current-session-only option. Clients read selectable entries from a process catalog and the current choice from the Session projection. Unmatched knob combinations appear as `custom`, which users can leave but cannot select. This package owns selection and defaults; the sandbox, approval, and Auto integration own execution.
@@ -126,7 +124,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the preset service does not offer. They are current package constraints, not a permission-system comparison.
 

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-webhook
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-webhook` provides the Host `ctx.webhookRuntime`: a registry for trusted programmatic webhook rules plus the one built-in action, creating an ordinary root Session inside a Web Workspace. The interface stays at `register(rule)` and `dispatch(delivery)`; provider authentication belongs to adapter packages. Use it when a trusted rule must turn an external event into a new agent Session.
@@ -73,7 +71,6 @@ The initial prompt begins a new Session, so it establishes rather than invalidat
 - **No completion result** — HTTP acceptance and rule settlement do not report Agent success, idle, or output.
 - **Trusted callbacks must cooperate with cancellation** — runtime teardown aborts and awaits them but cannot terminate arbitrary same-process code.
 - **Workspace creation may outlive a failed Session attempt** — an empty Workspace is retained because another concurrent caller may already use it.
-
 
 <a id="dev-note"></a>
 ### Dev Note

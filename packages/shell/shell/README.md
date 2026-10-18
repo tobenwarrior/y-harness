@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-shell
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `ctx.shell` to run shell commands with bounded output or keep them running as background work. One execution handle supports foreground results and background reads. A profile can select local or sandboxed Bash or PowerShell execution without changing callers. Resolve requests before execution to make the working directory, timeout, and output limits explicit. Command exits, timeouts, and caller aborts return results; only infrastructure failures reject, while the `bash` and `pwsh` tools own model-visible rendering and sandbox guidance.
@@ -128,7 +126,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the seam does not provide. They are current package constraints, not a roadmap.
 

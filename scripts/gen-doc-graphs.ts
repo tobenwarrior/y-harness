@@ -1691,8 +1691,11 @@ function renderDocs(): GraphDoc[] {
     { rel: 'docs/tool-execution-pipeline.md', content: renderToolPipeline() },
   ]
   docs.unshift({ rel: 'docs/graph-atlas.md', content: renderIndex(docs) })
+  // English-only: a translated counterpart is not maintained, so there is nothing to splice.
   const events = docs.find(doc => doc.rel === 'docs/event-producer-consumer.md')
-  if (events !== undefined) docs.push(spliceChineseRegions(events))
+  if (events !== undefined && existsSync(resolve(root, events.rel.replace(/\.md$/, '.zh.md')))) {
+    docs.push(spliceChineseRegions(events))
+  }
   return docs
 }
 

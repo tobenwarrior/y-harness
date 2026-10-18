@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-tool
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-client-ui-tool` is the client Tool presentation plugin of the dsh web client: it renders every tool call in the conversation. `ui-conversation` dispatches each ordered `tool-call` Conversation Node through the matching key of `conversation.chat.node`; this package renders its root and PTC dispatch children, then dispatches every atomic call through the keyed `tool.call.toolview` slot. Unregistered Tool names use the generic card. Business UI packages register only their wire Tool names and atomic views — they do not pair Session events, rebuild the transcript, or own root/subcall topology, because the Runtime remains authoritative for call/result pairing, lifecycle, and recursive `subCalls` projection.
@@ -73,11 +71,9 @@ The package realizes one dispatch rule: atomic Tool views are keyed by wire Tool
 
 Tool owner props forward Chat's stable `useDisclosure` Hook through root and nested calls. Rows invoke it where they own their expanded bodies; intermediate renderers do not subscribe. Each invocation has independent open state that resets when the enclosing Turn collapses, without replacing React identity. Presentation-mode switches preserve it.
 
-
 Tool Definitions own the [lazy argument view](../../util/values/README.md). Rows choose their fields and update granularity through its readers, without a separate subscription or registration. Deltas append without scanning; frame-batched publication refreshes observed answers and replaces the block only when an answer changes. Card models that need dispatched arguments continue to read `argsRaw`.
 
 ### Cards
-
 
 Every card is read in place in the call tree; there is no second, full-height presentation of a selected call. Row renderers share one pure card model for each terminal, read, diff, search, and web card, and the image card's gallery renders through the tool-owned `tool.call.images` slot. These models validate raw call arguments, result content, failure state, persisted metadata, PTC dispatch `parentCallId`, and Session path facts. Unsupported or malformed inputs use flattened Tool result text. A file-path summary opens the file through the owner's `openFile`, which the chat view routes to the right Sidebar's text preview; `inspect` opens the trajectory view and is absent when that View is unavailable; cards then omit Inspect. Card-specific limits and fallback rules for the terminal, diff, read, search, and web cards remain in [the ui-primitives README](../ui-primitives/README.md); the image card's model in this package carries its own fallback rules.
 
@@ -126,7 +122,6 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define the dispatch depth and the view ownership; they are current package constraints.
 

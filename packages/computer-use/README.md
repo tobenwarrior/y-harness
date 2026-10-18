@@ -5,8 +5,6 @@ kind: "package-group"
 
 # packages/computer-use
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Computer-use providers let models observe and operate a desktop. This group owns exclusive provider registration. Each provider owns its operations, tools, and platform requirements; the experimental Cua Driver providers live in the experimental group.

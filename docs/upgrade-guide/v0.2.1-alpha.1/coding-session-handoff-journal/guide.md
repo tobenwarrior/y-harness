@@ -5,8 +5,6 @@ description: "Coding-session ownership journals use version 2 and refuse version
 
 # Coding-session ownership journal
 
-English | [中文](guide.zh.md)
-
 ## Change
 
 The `coding_session_handoffs` ownership journal uses version 2 to retain restart recovery checkpoints and unresolved native admissions. Existing version-1 journals refuse activation. Predecessor readers refuse version-2 journals rather than discard recovery fields. Native histories and the separate `coding_sessions` mirror domain retain their existing formats.

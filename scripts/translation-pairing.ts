@@ -6,7 +6,8 @@
  * gate and the region-injecting generators.
  */
 
-import { basename } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { fromMarkdown } from 'mdast-util-from-markdown'
 import { gfmFromMarkdown } from 'mdast-util-gfm'
 import { gfm } from 'micromark-extension-gfm'
@@ -103,6 +104,11 @@ export function spliceGeneratedRegion(content: string, region: string): string {
 
 /** Validated fields of `scripts/translation-pairing.manifest.json`. */
 export interface TranslationPairingManifest {
+  /**
+   * Why this checkout keeps English documentation only. When set, no pair is expected
+   * and a Chinese artifact in scope is a violation instead of a missing counterpart.
+   */
+  englishOnly?: string
   /** Source documents exempt from pairing because they are generated, instructional, or bilingual by construction. */
   excluded: string[]
 }
@@ -187,11 +193,35 @@ export function parseTranslationPairingManifest(content: string): TranslationPai
     throw new Error('translation-pairing.manifest.json: expected an object')
   }
   const record = value as Record<string, unknown>
-  const unsupported = Object.keys(record).filter(field => field !== 'excluded')
+  const unsupported = Object.keys(record).filter(field => field !== 'excluded' && field !== 'englishOnly')
   if (unsupported.length > 0) {
     throw new Error(`translation-pairing.manifest.json: unsupported field(s): ${unsupported.join(', ')}; every in-scope document is required`)
   }
-  return { excluded: excludedField(record) }
+  const englishOnly = record.englishOnly
+  if (englishOnly !== undefined && (typeof englishOnly !== 'string' || englishOnly.trim() === '')) {
+    throw new Error('translation-pairing.manifest.json: englishOnly must be a non-empty reason')
+  }
+  return { ...englishOnly === undefined ? {} : { englishOnly }, excluded: excludedField(record) }
+}
+
+/**
+ * Whether generated documentation is written as a translated pair.
+ * @param repoRoot - repository root holding the manifest.
+ * @returns false when the checkout declares English-only documentation.
+ */
+export function pairedDocsEnabled(repoRoot: string): boolean {
+  return englishOnlyReason(repoRoot) === undefined
+}
+
+/**
+ * Read the checked-in English-only declaration, if this checkout has one.
+ * @param repoRoot - repository root holding the manifest.
+ * @returns the recorded reason, or undefined for a bilingual checkout.
+ */
+export function englishOnlyReason(repoRoot: string): string | undefined {
+  const path = resolve(repoRoot, 'scripts/translation-pairing.manifest.json')
+  if (!existsSync(path)) return undefined
+  return parseTranslationPairingManifest(readFileSync(path, 'utf8')).englishOnly
 }
 
 /** Whether a manifest entry excludes one exact file or a directory subtree. */

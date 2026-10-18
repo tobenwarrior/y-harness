@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-deepseek-model-label-1017
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 This package shows `1017` beside `DeepSeek-V4.1-Flash` in the composer model selector. It covers the official API-key and account routes while preserving their catalog names and request IDs. Disable it to restore plain model names.

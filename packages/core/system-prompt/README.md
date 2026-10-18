@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-system-prompt
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-system-prompt` lets agents receive one ordered system prompt and the available tool schemas for each model step. Use it to add prompt sections, dynamic runtime facts, reusable variables, or tool schemas, or to control the fixed harness identity, deployment persona, runtime context, and model-facing tool order. Agent-scoped contributions override same-named global defaults without affecting other agents. Invalid complete-prompt combinations and unresolved variables fail assembly instead of sending a malformed prompt.
@@ -167,13 +165,11 @@ Prefix-stable while the visible schema set, rendering, and order are unchanged. 
 
 <a id="known-limitations-and-deferred-work"></a>
 
-
 These limits define when prompt assembly needs special care. They are current package constraints, not a task backlog.
 
 - **Deployment-authored prompt text is config/composition only** — this plugin owns the global persona prefix and suffix defaults, creator plugins may register agent-scoped shadows, and other sections come from the plugin that owns the fact; there is no end-user prompt-editing API.
 - **No inline escape syntax in interpolated text** — use `interpolate: false` when a whole section must preserve literal braces.
 - **`toolOrder` misconfiguration surfaces at prompt assembly (the first turn), not at boot** — only shape violations throw at config load.
-
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-agent-default-model
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Give newly created agents a shared default provider and model when their sessions do not specify one. Provider, model, and reasoning effort are live Config fields. Saved selections update the active profile patch and apply to subsequent reads; per-session selection remains owned by the entry point.
@@ -108,7 +106,6 @@ Changing the default affects only agents that subsequently resolve from it. An e
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define the service's scope. They are current package constraints, not a task backlog.
 

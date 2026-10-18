@@ -2,8 +2,6 @@
 
 <img src="assets/y-harness-logo.jpg" alt="Y harness" width="120">
 
-English | [中文](README.zh.md)
-
 **Y harness** is a personal agent harness built on **DeepSeek Harness** (`dsh`), the open-source agent harness developed by [DeepSeek AI](https://deepseek.com) and released under the MIT License.
 
 This repository is a fork. `origin` is this repository and `upstream` is [`deepseek-ai/deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness), so upstream changes merge with `git fetch upstream && git merge upstream/master`. The packages, the `dsh` CLI, and the architecture described below are upstream's; this fork keeps the upstream history and adds local work in progress: the ChatGPT subscription provider in `packages/llm/llm-pi-ai`, which runs through the official Codex app, and the Nous Portal provider, with their settings UI in `packages/client/ui-settings-models`.

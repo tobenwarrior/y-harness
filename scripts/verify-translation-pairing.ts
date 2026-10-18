@@ -126,6 +126,23 @@ const translations = [...files].filter(f => f.endsWith('.zh.md')).sort()
 const metas = [...files].filter(f => f.endsWith('.i18n.yaml')).sort()
 const sources = [...files].filter(f => f.endsWith('.md') && !f.endsWith('.zh.md')).sort()
 
+// An English-only checkout expects no counterpart, so the invariant inverts: a Chinese
+// artifact left in scope is the violation, and every source document is complete alone.
+if (manifest.englishOnly !== undefined && request.scope === 'corpus') {
+  const leftovers = [...translations, ...metas].sort()
+  if (listMode) {
+    console.log(`verify-translation-pairing: English-only (${manifest.englishOnly}); ${sources.length} document(s), ${leftovers.length} Chinese artifact(s)`)
+    process.exit(0)
+  }
+  if (leftovers.length > 0) {
+    console.error('verify-translation-pairing: English-only checkout (see docs/i18n/README.md):')
+    for (const file of leftovers) console.error(`  ${file}: Chinese artifact; no translation may be added back`)
+    process.exit(1)
+  }
+  console.log(`verify-translation-pairing: ${sources.length} English document(s); translations are not maintained (${manifest.englishOnly})`)
+  process.exit(0)
+}
+
 if (request.scope === 'pairs') {
   const rejected = request.anchors.filter(anchor => !isTranslationScopeFile(anchor) || isExcluded(anchor))
   const absent = request.anchors.filter((anchor) => {

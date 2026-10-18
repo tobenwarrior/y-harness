@@ -5,8 +5,6 @@ kind: "package-library"
 
 # dsh-util-code-language
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 The repository's one file-extension to syntax-highlighting language table, shared by the Client's document Code preview and diff review, and by the Host read tool's persisted `lang` hint. `languageForPath` maps a path to a canonical grammar id case-insensitively; `CODE_HIGHLIGHT_EXTENSIONS` lists every suffix a preview registry can claim. `readLangHintForPath` projects the read card's short ids over the same table, so a suffix a recorded session already holds keeps its persisted value and every other suffix takes its language's short name. The package is browser-safe, stateless, and leaves tokenization to the Client highlighter.
@@ -35,7 +33,6 @@ The set is curated for common source, config, script, data, and markup extension
 - **Extension-only matching** — `languageForPath` reads a suffix, so names recognized without one (`Dockerfile`, `Makefile`, `.gitignore`, `.editorconfig`) stay unlisted. Filename rules are deferred.
 - **No content sniffing** — a file with an absent or unknown extension stays plain text even when its bytes are unambiguous; the table never inspects content.
 - **Curated, not exhaustive** — the table is smaller than Shiki's grammar catalog and GitHub linguist; adding a language means adding both the extension entry and the Client grammar registration.
-
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -2,8 +2,6 @@
 
 Status: implemented
 
-English | [中文](2026-09-16-host-schedule-storage.zh.md)
-
 ## Problem
 
 Scheduled messages must remain discoverable after restart without loading every Session. A timer attached to a live Agent cannot dispatch a task whose Session remains cold. Users also need to inspect pending and delivered tasks without activating their conversation; removing a task after delivery loses that management record.

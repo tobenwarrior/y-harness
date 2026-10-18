@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-shell-env
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-shell-env` provides the trusted `DSH_*` environment that every model shell call — bash or pwsh — runs with: built-in facts such as `DSH_HOME`, `DSH_SHELL=1`, the agent's `DSH_SESSION_ID`, and the launched profile's `DSH_PROFILE` and `DSH_PROFILE_DIR`. Plugin authors can register their own facts with declared keys, collected per execution and disposed with their plugin; duplicate ownership or undeclared runtime keys fail loudly instead of silently overwriting. The registry changes nothing else the model sees — the shell tools own their own schemas and prompts. Choose it in any composition that mounts a model shell tool; configuration only picks the Harness home directory.
@@ -122,7 +120,6 @@ The managed environment never enters the request prefix, so it does not invalida
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the registry is a poor fit or needs care. They are current package constraints, not a task backlog.
 

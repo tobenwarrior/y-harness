@@ -188,10 +188,10 @@ export function loadPersistenceReleases(root: string): PersistenceReleases {
   const directory = join(root, ARCHIVE_DIRECTORY)
   const manifest = parseManifest(JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8')))
   const files = new Set(readdirSync(directory))
-  const expected = new Set(['manifest.json', 'README.md', 'README.zh.md', 'README.i18n.yaml'])
+  const expected = new Set(['manifest.json', 'README.md'])
   for (const filename of expected) if (!files.has(filename)) throw new Error(`missing release artifact ${filename}`)
   for (const release of manifest.releases) {
-    for (const suffix of ['.md', '.zh.md', '.i18n.yaml', '.schema.json']) {
+    for (const suffix of ['.md', '.schema.json']) {
       const filename = release.tag + suffix
       expected.add(filename)
       if (!files.has(filename)) throw new Error(`${release.tag}: missing release artifact ${filename}`)

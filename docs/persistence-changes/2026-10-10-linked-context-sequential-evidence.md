@@ -5,8 +5,6 @@ kind: persistence-change
 
 # 2026-10-10-linked-context-sequential-evidence
 
-English | [中文](2026-10-10-linked-context-sequential-evidence.zh.md)
-
 ## Summary
 
 Ordinary-Y linked imports add an attribution-only historical context source and a log-only initializer ownership receipt. Sequential native continuations add start, native-turn, sanitized native-item, and end records tied to one admitted current Y task. Native patch observations retain bounded add/update/delete/move facts for independently verified learning proposals. These records preserve original provider/profile/session/turn identities and distinguish dispatch admissions from task correctness.

@@ -1,4 +1,5 @@
 {
+  "englishOnly": "This fork maintains English documentation only; the upstream bilingual pair is not translated here, so no doc carries a .zh.md or a record.",
   "excluded": [
     ".agents/notes/AGENTS.md",
     ".agents/notes/implemented/AGENTS.md",

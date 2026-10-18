@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-cordis-client-runner
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-cordis-client-runner` runs the browser half of process-local dynamic packages for programmatic callers and existing browser controls. It loads a definition after an approved request or explicit user gesture, and removes it when the Host retracts the run. Page refresh does not restore definitions. Creator UI plugins use installed Client modules through Plugin Manager.
@@ -125,7 +123,6 @@ None of its own. Reports travel over RPC and are stored, not appended to the con
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define where the browser half needs special care. They are current package constraints, not a task backlog.
 

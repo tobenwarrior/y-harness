@@ -4,8 +4,6 @@ description: "Find the complete declared persistence types for every Session for
 
 # Session persistence formats
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use this reference to inspect a stored Session generation’s headers, event envelopes, and payload types. Every format below the checkout writer has a bilingual document and a complete schema snapshot. The current format uses the generated persistence catalog. The [version authority](../../session-format-status.md) owns the writer constant and release status.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-settings-web-search
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Open **Plugins** in the sidebar and select **Web search** in the Official group to switch between DeepSeek Messages search and the DeepSeek Search and Fetch APIs, and to set the selected API's key, endpoint, and per-search limit. The page stages what is typed and writes it only on save; the key is written through the credentials domain rather than the settings document, so its literal never rides a response. The page exists while the Host serves the `web-search-deepseek` namespace.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-tool-pwsh-persistent
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-tool-pwsh-persistent` gives each agent a `pwsh` tool that preserves its current directory, environment variables, functions, and background jobs across calls. Commands for one agent run sequentially, while different agents keep separate shell state. Choose it for multi-step PowerShell work; use `dsh-tool-pwsh` when every command should start clean, and use a terminal tool when commands require interactive stdin. Configure a pwsh-capable backend and per-command timeout; timeout or explicit `exit` discards the shell, so the next call starts fresh.
@@ -140,7 +138,6 @@ Append-only tool results follow the reusable request prefix.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the tool is a poor fit or needs special care. They are current package constraints, not a task backlog.
 

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-tool-schedule
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `dsh-tool-schedule` to let an agent create, list, edit, and delete durable Host reminders through `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`. The package registers the four tools in the preset or Agent scope that mounts it, so the composition decides which agents receive them; `minimal` keeps none. Each call acts on the calling Agent's Session and only manages stored reminders — the Host `@deepseek-ai/dsh-schedule` service owns storage, scheduling, and delivery. Failures return one structured error code instead of storage details.

@@ -15,6 +15,7 @@ import {
 } from './persistence-catalog-source.ts'
 import { extractPersistenceSchema } from './persistence-schema.ts'
 import { persistenceCatalogText, type PersistenceCatalogLocale } from './persistence-catalog-text.ts'
+import { pairedDocsEnabled } from './translation-pairing.ts'
 import { renderPersistencePair, type PersistenceArtifact } from './persistence-artifacts.ts'
 
 export { annotateSurface, collectEventEnvelopeTypes, collectLogEvents, collectSurfaceEventTypes } from './persistence-catalog-source.ts'
@@ -175,8 +176,16 @@ export function renderKnownEventTypes(events: AnnotatedLogEventEntry[]): string 
 export function persistenceCatalogArtifacts(scanRoot: string, schema: PersistenceSchemaInventory): PersistenceArtifact[] {
   const events = annotateSurface(collectLogEvents(scanRoot), collectSurfaceEventTypes(scanRoot))
   const envelope = collectEventEnvelopeTypes(scanRoot)
+  const english = render(events, envelope, schema)
+  if (!pairedDocsEnabled(scanRoot)) {
+    return [
+      { path: OUT, content: english },
+      { path: OUT_RUNTIME_TYPES, content: renderKnownEventTypes(events) },
+      { path: OUT_SCHEMA, content: `${JSON.stringify(persistenceSchemaSnapshot(schema), null, 2)}\n` },
+    ]
+  }
   return [
-    ...renderPersistencePair(scanRoot, OUT, render(events, envelope, schema), render(events, envelope, schema, 'zh')),
+    ...renderPersistencePair(scanRoot, OUT, english, render(events, envelope, schema, 'zh')),
     { path: OUT_RUNTIME_TYPES, content: renderKnownEventTypes(events) },
     { path: OUT_SCHEMA, content: `${JSON.stringify(persistenceSchemaSnapshot(schema), null, 2)}\n` },
   ]

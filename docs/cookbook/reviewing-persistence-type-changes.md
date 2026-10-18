@@ -4,8 +4,6 @@ description: "Generate, acknowledge, and verify Session persistence-type changes
 
 # Cookbook: reviewing persistence-type changes
 
-English | [中文](reviewing-persistence-type-changes.zh.md)
-
 ## Summary
 
 Use this tutorial after changing a declared Session persistence type in a contributor checkout with dependencies installed. Supply a bilingual compatibility explanation, then let one command classify the change and generate its records. The [record reference](../persistence-changes/README.md) explains the files and automatic rules. All comparison inputs live in the checkout; no base branch or network access is required.

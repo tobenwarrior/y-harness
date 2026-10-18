@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-conversation
 
-English | [中文](README.zh.md)
-
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 
 ## Summary
@@ -169,7 +167,6 @@ None; Conversation assembly and browser input state do not alter provider-side p
 
 - **Only registered targets can render** — the shell deliberately has no implicit fallback target beyond the registered `chat` preference.
 - **Factory occurrences inherit their render-position Session** — `conversation.content` does not accept an independently addressed Session; that requires a separate Session-provider capability.
-
 
 <a id="dev-note"></a>
 ### Dev Note

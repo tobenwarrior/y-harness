@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-settings-account
 
-English | [中文](README.zh.md)
-
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded. Workspace login dialogs emit no authentication events; native welcome owns authentication analytics.
 
 Server-expired account credentials clear the displayed account details and emit a localized sign-in reminder toast once; account snapshot replay does not repeat it.
@@ -80,7 +78,6 @@ Account login uses a dismissible dialog before the model onboarding credential e
 A terminal account-state stream failure appears in the sign-in dialog or Account settings. Plugin unload suppresses late failure reports.
 
 The balance card shows recharge funds and bonus credit in separate rows. While signed in, the bonus row appears during loading, after a failed wallet read, and when a wallet holds positive bonus credit; a successful read without positive bonus credit omits the row. A failed wallet read shows the existing unavailable copy as a link to Platform — the same destination and behavior as the Usage action, so the embedded page opens on Desktop and a new tab elsewhere — while the loading state stays plain text. Currencies retain their own amounts, and a notice date is rendered only inside the server’s own message.
-
 
 A successful login selects the first available `deepseek-account` model as the default when no other provider has a configured API key, even if a previous default was saved. Configured keys preserve the existing default even when their provider has no available models. Session-specific selections remain unchanged.
 

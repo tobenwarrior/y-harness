@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-api-gateway
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Two-sided Typert RPC endpoint for Host and Client Cordis environments. The Host entry provides `ctx.typertGateway`, while `@deepseek-ai/dsh-api-gateway/client` provides `ctx.remote`; both consume the same generated `InvocationDescriptor` contract and leave business selection to API Remotes. Connection carries unary request correlation, trust, and response envelopes, while Gateway owns multiplexed Remote streams, each carrying a Client-to-Host uplink on the same logical stream.
@@ -88,7 +86,6 @@ No direct effect; invoked business Services own any model-visible result.
 - Forwarded events reach `$on` without business-payload projection or redaction. Ordinary notifications are not replayed after reconnect; Agent-scoped waterfalls project only the top-level Agent identity needed to select the Client Context and carry their own pending lifetime.
 - `websocketHeartbeatIntervalMs` is both the Ping cadence and the Pong deadline. The Host terminates a peer that does not answer before the next interval, so a deployment whose event loop or network can stall longer than this interval must raise it.
 - Uplinks have no flow control beyond the bounded Host inbox: a Client that sends faster than the method reads, or that sends to a method never taking its uplink, fails its stream with `gateway/uplink-overflow`, and no uplink item is replayed across carrier generations; a domain that must resume an uplink carries its own acknowledgement cursor in the reopened request.
-
 
 <a id="dev-note"></a>
 ### Dev Note

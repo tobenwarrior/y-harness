@@ -5,8 +5,6 @@ kind: "package-library"
 
 # @deepseek-ai/dsh-client-test-runtime
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `SlotTestRuntime.create()` lets Vitest suites drive production slots, stores, typed Session and Workspace fixtures, and local DOM assertions in jsdom. `createClientTest` boots the web profile's bundle roster with endpoint-named Remote mocks for activation, reload, reconnect, and cleanup without a business Host; missing services and unstubbed calls fail explicitly. The whole-client fixture owns startup and disposal; local disposal is idempotent, and client tests consume this non-product package through `devDependencies`.
@@ -169,7 +167,6 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define how the bench is consumed. They are current package constraints, not a task backlog.
 

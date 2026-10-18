@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-schedule
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Schedule delivers one-shot, fixed-rate, daily, weekly, and cron wall-clock reminders as follow-up messages in their original Session. Tasks remain available after Host restart, and each recurring task contributes only its latest missed occurrence. The Host restores a cold Session when delivery is due. Active and inactive tasks remain inspectable until explicit deletion, and deletion removes the task row together with its saved delivery records.

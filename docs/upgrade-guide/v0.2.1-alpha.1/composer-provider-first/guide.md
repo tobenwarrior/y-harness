@@ -5,8 +5,6 @@ description: The composer model menu now requires a provider choice before brows
 
 # Choose the provider before its model
 
-English | [中文](guide.zh.md)
-
 ## Change
 
 The composer replaces its informational Provider row and grouped Model list with an interactive Provider row followed by a Model list for that route. An unset selection opens the provider list first. Model search appears only when the selected provider has more than four models. The `/model` command retains its searchable catalog grouped by provider.

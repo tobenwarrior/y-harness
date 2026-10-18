@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-ptc-runtime-node
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Execute model-written TypeScript under the same platform sandbox policy as Bash, with host-provided functions available as async bindings. Each call starts a fresh Node process and returns captured logs, an exact JSON value, or a structured failure. Direct Node APIs remain available within the selected restrictions. Elapsed deadlines, output bounds and a V8 heap limit constrain execution; cancellation and completion terminate the managed process range. A requested restricted mode fails when its sandbox backend is unavailable.

@@ -5,8 +5,6 @@ kind: persistence-change
 
 # 2026-10-06-model-service-tier
 
-English | [中文](2026-10-06-model-service-tier.zh.md)
-
 ## Summary
 
 Adds an optional service tier (processing speed) to the durable model selection and to the logged request header config and adapter defaults.

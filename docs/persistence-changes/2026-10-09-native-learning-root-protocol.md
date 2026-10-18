@@ -5,8 +5,6 @@ kind: persistence-change
 
 # 2026-10-09-native-learning-root-protocol
 
-English | [中文](2026-10-09-native-learning-root-protocol.zh.md)
-
 ## Summary
 
 Two new ignorable Session events retain bounded native evidence without changing Session format V4. skill/native-item stores provider-specific original identities, sanitized action metadata and optional safe procedure facts. claude-code/root-protocol separately stores bounded owned Claude root inputs, system text and public context frames, including native home and configuration path metadata.

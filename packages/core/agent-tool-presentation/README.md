@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-agent-tool-presentation
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `dsh-agent-tool-presentation` in an [agent preset](../../preset/agent-preset-registry/README.md) to fix whether models see every native tool schema, only `run_code` with a generated SDK, or both forms. Each preset can choose independently, so native and PTC agents can share one process without sharing tool catalogs. Selecting `ptc` or `both` requires a compatible PTC runtime; a deployment without one rejects the preset at mount time before its first prompt. The `mode` field is required when this package is present, while omitting the package keeps the deployment default.
@@ -102,7 +100,6 @@ No direct invalidation; the presentation is fixed when the agent is composed, so
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when this row needs special care. They are current package constraints, not a task backlog.
 

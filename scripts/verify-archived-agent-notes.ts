@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { AGENT_NOTE_CLASSES, agentNoteRoot } from './agent-note-tree.ts'
+import { englishOnlyReason } from './translation-pairing.ts'
 import {
   extendArchiveManifest,
   parseArchiveManifest,
@@ -56,7 +57,7 @@ for (const entry of readdirSync(archiveRoot, { withFileTypes: true })) {
 for (const kind of AGENT_NOTE_CLASSES) {
   if (!kinds.has(kind)) errors.push(`archived/${kind}/: required kind directory is missing`)
 }
-errors.push(...validateArchiveArtifacts(artifacts))
+errors.push(...validateArchiveArtifacts(artifacts, englishOnlyReason(resolve(import.meta.dirname, '..'))))
 
 function runGit(args: string[]): string {
   const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' })

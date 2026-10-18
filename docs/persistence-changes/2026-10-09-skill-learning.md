@@ -5,8 +5,6 @@ kind: persistence-change
 
 # 2026-10-09-skill-learning
 
-English | [中文](2026-10-09-skill-learning.zh.md)
-
 ## Summary
 
 Adds log-only bounded skill-learning request and response records, attribution for auxiliary learning messages, and optional relevance metadata on skill catalogs. Auxiliary request traces preserve optional captured reasoning effort and processing tier.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-user-questions
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 The Web client shows an agent's question beside the chat input. Users choose options, enter text, skip questions, and submit one answer batch. A timed card counts down; focus pauses it, editing or `Take time` holds it, and expiry lets the agent continue while the question stays answerable. Closing a card linked to a tool call hides it; its tool row reopens it and later shows recorded answers. The Host preserves the question across restart, while this browser preserves unfinished input across reload.
@@ -110,7 +108,6 @@ No direct invalidation; `dsh-tool-ask-user` owns the model-visible tool call and
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define question-card ownership and cross-client behavior; they are current package constraints.
 

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-file-reference-local
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Agents and host UIs can complete `@file` mentions with ranked paths from each agent's local workspace, with bounded discovery that stays responsive in large repositories. Results refresh after tool activity without blocking completion, and directory symlinks are never followed. When `read` is available, the model also receives stable guidance for interpreting referenced paths. Choose this package when `read` uses the Harness host filesystem; remote or virtual namespaces need matching discovery.
@@ -118,7 +116,6 @@ The stable sentence joins the system-prompt prefix. Mounting or removing this pr
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the provider is a poor fit. They are current package constraints.
 

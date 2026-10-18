@@ -1,7 +1,5 @@
 # Host-wide Schedule
 
-English | [中文](schedule.zh.md)
-
 Schedule stores reminders independently of Session activation and delivers them to their original Session. This page records the durable and model-facing types from [`types.ts`](../../packages/schedule/schedule/src/types.ts); the [package README](../../packages/schedule/schedule/README.md) owns composition and reminder framing.
 
 ## Durable records

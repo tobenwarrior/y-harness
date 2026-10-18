@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-skill-office
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Agents can load Word, PowerPoint, and Excel workflows that use the bundled Python environment by default and respect explicit user or AGENTS.md environment choices. The skills cover creation, focused edits, structural checks, and file delivery. When supplied by the environment, the LibreOffice Kit CLI directly renders selected pages or worksheet ranges, converts requested PDFs, and recalculates workbooks into new files. Visual QA requires image input support, reuses unchanged-source previews, and ends when applicable checks pass; ordinary delivery does not require installing a renderer.

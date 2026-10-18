@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-webhook-github
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-webhook-github` registers one exact HTTP route on the injected `ctx.webServer`. It bounds and verifies GitHub's raw JSON body, projects a provider-neutral delivery, calls `ctx.webhookRuntime.dispatch()`, and returns `202` without waiting for rules or Sessions. Use it when a deployment needs authenticated GitHub ingress for the generic webhook runtime.
@@ -73,7 +71,6 @@ Independent. Authentication and HTTP dispatch do not touch a model request; any 
 - **Generic payload validation only** — rules own validation of the GitHub event fields they consume.
 - **No provider acknowledgement of downstream work** — `202` precedes arbitrary rule calls and Session creation.
 - **No form encoding** — GitHub must send `application/json`; `application/x-www-form-urlencoded` is rejected.
-
 
 <a id="dev-note"></a>
 ### Dev Note

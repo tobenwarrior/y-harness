@@ -2,8 +2,6 @@
 
 Status: implemented
 
-English | [中文](2026-09-22-schedule-hard-delete-and-bounded-history.zh.md)
-
 ## Problem
 
 The Schedule domain is one whole-unit JSON document that the backend rewrites on every mutation, so every retained byte in a task row grows every write. Saved delivery records were unbounded: each acknowledgment appended to the array, and a deleted task kept its row and records so the open detail could still read them. The document's size therefore followed a task's delivery count, and deletion added a state every reader had to skip.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-cordis
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-client-ui-cordis` renders historical generated-plugin cards and a control panel for process-local definitions. Users can operate definitions supplied by programmatic consumers; persisted cards remain readable after restart without recreating those definitions. New Creator plugins use Plugin Manager.
@@ -103,7 +101,6 @@ None directly: this package owns rendering; runner-originated steering changes t
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define where the surfaces need special care. They are current package constraints, not a task backlog.
 

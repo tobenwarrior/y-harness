@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-tool-bash
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-tool-bash` runs Bash commands and returns stdout, stderr, and exit markers. Each call uses a fresh shell; cwd, variables, and functions do not persist. With a job registry composed, every command is a job from its start: `run_in_background` returns the id at once, a foreground command that outlives its timeout returns the same id, and `job_output`/`job_kill` collect and stop it. Commands receive the managed `DSH_*` environment; sandbox denials can be retried once with wider `sandbox_permissions`, a `justification`, and user approval. Nonzero exits are results for the agent to interpret. Mount an executor such as `dsh-bash-local` or `dsh-bash-sandbox` with `dsh-shell-env`.
@@ -205,7 +203,6 @@ Append-only; newly visible content follows the reusable request prefix and does 
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the tool is a poor fit or needs special care. They are current package constraints, not a task backlog.
 

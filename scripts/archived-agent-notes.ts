@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { basename } from 'node:path'
 import { AGENT_NOTE_CLASSES } from './agent-note-tree.ts'
 
+
 /** Versioned fields in the frozen-content manifest. */
 export interface ArchiveManifest {
   version: 1
@@ -129,8 +130,15 @@ function validateMetadata(path: string, content: Buffer, sourceBase: string): { 
   return { errors, date: archived }
 }
 
-/** Validate the closed kind tree, implemented/archive metadata, and complete bilingual triplets. */
-export function validateArchiveArtifacts(artifacts: ReadonlyMap<string, Buffer>): string[] {
+/**
+ * Validate the closed kind tree, implemented/archive metadata, and completeness.
+ *
+ * @param artifacts - archived note files by repository-relative path.
+ * @param englishOnly - reason this checkout keeps no translation; the sealed note then
+ *   stands alone instead of needing a Chinese counterpart and its record.
+ * @returns the violations found.
+ */
+export function validateArchiveArtifacts(artifacts: ReadonlyMap<string, Buffer>, englishOnly?: string): string[] {
   const errors: string[] = []
   const triplets = new Map<string, Triplet>()
   for (const [path, content] of artifacts) {
@@ -161,14 +169,17 @@ export function validateArchiveArtifacts(artifacts: ReadonlyMap<string, Buffer>)
       zh === undefined ? zhPath : undefined,
       meta === undefined ? metaPath : undefined,
     ].filter((path): path is string => path !== undefined)
-    if (source === undefined || zh === undefined || meta === undefined) {
+    // An English-only checkout keeps the sealed note alone, so only its own file must exist.
+    if (source === undefined || (englishOnly === undefined && (zh === undefined || meta === undefined))) {
       errors.push(`${key}: incomplete archived triplet; missing ${missing.join(', ')}`)
       continue
     }
     const sourceBase = basename(key)
     const { errors: sourceErrors, date: sourceDate } = validateMetadata(sourcePath, source, sourceBase)
+    errors.push(...sourceErrors)
+    if (zh === undefined || meta === undefined) continue
     const { errors: zhErrors, date: zhDate } = validateMetadata(zhPath, zh, sourceBase)
-    errors.push(...sourceErrors, ...zhErrors)
+    errors.push(...zhErrors)
     if (sourceDate !== undefined && zhDate !== undefined && sourceDate !== zhDate) {
       errors.push(`${key}: English and Chinese archive dates differ (${sourceDate} vs ${zhDate})`)
     }

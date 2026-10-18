@@ -14,6 +14,7 @@ import {
   translationPairPaths,
 } from './translation-pairing-record.ts'
 import {
+  pairedDocsEnabled,
   parseTranslationPairingManifest,
   renderGeneratedRegion,
   translationPairSourcePredicate,
@@ -126,14 +127,14 @@ export function renderModuleGraph(pkgs: readonly Pkg[], locale: Locale): string 
  */
 export function computeModuleGraphOutputs(scanRoot: string = root): ReadonlyMap<string, string> {
   const packages = collectPackageGraph(scanRoot, GROUP_ORDER, 'gen-module-graph')
-  return new Map([
-    [PATHS.source, renderModuleGraph(packages, 'en')],
-    [PATHS.zh, renderModuleGraph(packages, 'zh')],
-  ])
+  const english = new Map([[PATHS.source, renderModuleGraph(packages, 'en')]])
+  if (!pairedDocsEnabled(scanRoot)) return english
+  return new Map([...english, [PATHS.zh, renderModuleGraph(packages, 'zh')]])
 }
 
 /** Render the consistency record for the two computed graph documents. */
-function moduleGraphRecord(scanRoot: string, outputs: ReadonlyMap<string, string>): string {
+function moduleGraphRecord(scanRoot: string, outputs: ReadonlyMap<string, string>): string | undefined {
+  if (!pairedDocsEnabled(scanRoot)) return undefined
   const manifest = parseTranslationPairingManifest(
     readFileSync(resolve(scanRoot, 'scripts/translation-pairing.manifest.json'), 'utf8'),
   )
@@ -160,10 +161,12 @@ export function writeModuleGraph(scanRoot: string = root): string[] {
     changed.push(path)
   }
   const record = moduleGraphRecord(scanRoot, outputs)
-  const recordPath = resolve(scanRoot, PATHS.meta)
-  if (!existsSync(recordPath) || readFileSync(recordPath, 'utf8') !== record) {
-    writeFileSync(recordPath, record)
-    changed.push(PATHS.meta)
+  if (record !== undefined) {
+    const recordPath = resolve(scanRoot, PATHS.meta)
+    if (!existsSync(recordPath) || readFileSync(recordPath, 'utf8') !== record) {
+      writeFileSync(recordPath, record)
+      changed.push(PATHS.meta)
+    }
   }
   return changed.sort()
 }
@@ -171,7 +174,8 @@ export function writeModuleGraph(scanRoot: string = root): string[] {
 /** CLI entry: regenerate by default, or verify all paired outputs with `--check`. @returns Nothing. */
 export function main(): void {
   const outputs = computeModuleGraphOutputs(root)
-  const expected = new Map([...outputs, [PATHS.meta, moduleGraphRecord(root, outputs)]])
+  const record = moduleGraphRecord(root, outputs)
+  const expected = new Map(record === undefined ? outputs : [...outputs, [PATHS.meta, record]])
   if (process.argv.includes('--check')) {
     const stale = [...expected].filter(([path, content]) => (
       !existsSync(resolve(root, path)) || readFileSync(resolve(root, path), 'utf8') !== content

@@ -5,8 +5,6 @@ kind: "package-bundle"
 
 # @deepseek-ai/dsh-subagent-claude-code
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Install this Profile Bundle for fresh, unattended Claude Code delegations in the parent workspace. Each run accepts one self-contained text task and returns the final answer or a safe failure diagnostic; reasoning, tool traffic, stderr, usage, and workspace diffs stay out of the parent Session. Native Claude settings and authentication remain authoritative; Profile configuration selects the model, environment, and `permissionMode`. The platform-pinned runtime starts on demand without host `claude` fallback. Explicit `rootRoute` enables normal text-only root turns with one live native query per Harness Session; it is dormant by default.
@@ -223,7 +221,6 @@ Native cache behavior follows Claude's persisted resume and retention. Neither t
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 Sequential conversation excludes project tools and requires completed release before external resume. Unresolved ownership cannot be recovered from history metadata alone. The following child-provider limits define when a delegation is a poor fit or needs special operational care. They are current package constraints, not a general Claude Code comparison or a task backlog.
 

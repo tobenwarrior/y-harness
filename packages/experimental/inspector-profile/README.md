@@ -5,8 +5,6 @@ kind: "package-bundle"
 
 # @deepseek-ai/dsh-experimental-inspector-profile
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Enable this optional bundle to inspect Session data in the Sidebar and open NodeJS Inspector in the bottom panel. It enables both inspectors and Host fetch capture; the bundle itself is off by default in Plugin Manager.

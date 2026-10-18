@@ -2,8 +2,6 @@
 
 Status: implemented
 
-English | [中文](2026-07-26-ci-failover-runbook.zh.md)
-
 ## Problem
 
 The three required Linux worker jobs in [CI](../../../../.github/workflows/ci.yml) (`node 24 / static`, `node 24 / coverage`, `node 24 / snapshots and artifacts`) run on the hosted enterprise 32-core pools; the required verdict job that aggregates them (`all checks passed`) runs on standard `ubuntu-latest`; the [native Windows jobs](2026-08-08-native-windows-pull-request-ci.md) run on the hosted `dsh-windows-2025-16core` larger runner. When the enterprise pools degrade — jobs queue indefinitely or the enterprise labels vanish — every open pull request becomes unmergeable, and the ordinary recovery of merging a fix is itself deadlocked behind the very required checks that cannot run. **Scope: two independent switches, one per platform.** `DSH_CI_FAILOVER_LINUX` recovers an enterprise Linux-pool outage (the three required Linux workers plus the `all checks passed` verdict); `DSH_CI_FAILOVER_WINDOWS` recovers a hosted Windows-pool outage (the native Windows jobs). A Linux-pool outage need not retarget Windows jobs and vice versa. The [Node compatibility jobs](../../../../.github/workflows/ci.yml) also follow the Linux switch with isolated setup; the verdict's `node-24-bench`, `python-sdk`, and `python-runtime` dependencies stay on standard hosted runners; in a broader GitHub-hosted capacity failure that also takes out the standard pools, those dependencies still block `all checks passed`. An outage therefore needs a switch any responder with repository write access can throw without merging anything.
@@ -41,7 +39,6 @@ The two switches are independent: flip only the one whose platform is degraded.
 ## Capacity during failover
 
 Capacity includes the master standby, main-CI jobs, and three release-rehearsal jobs for each eligible PR or master push while the Linux switch is set. Each trusted PR also adds three Node compatibility jobs at gate concurrency one, including the build-backed Node 22 leg and cold temporary runtime downloads. The release rehearsal workflows cancel superseded runs within each workflow/ref group under the [cancellation policy](../../../../.github/workflows/ci.yml); different refs can still add concurrent build, pack, and install load. Check current CPU, memory, disk, and queue pressure before extending self-hosted operation; extra registrations on this VM add scheduling slots, not machine resources. Do not infer spare capacity from the standby alone. When host resources permit extra registrations, use an org registration token (org Settings → Actions → Runners → New runner). Clone an existing runner directory **excluding its identity files** — `rsync -a --exclude '.runner*' --exclude '.credentials*' --exclude '_diag' --exclude '_work' <src>/ <dst>/` (the globs also catch `.runner_migrated`/`.credentials_migrated`, which GitHub writes on migrated runners and which equally trigger the already-configured refusal) — then run `config.sh` (copying `.runner`/`.credentials` verbatim makes it refuse with "already configured"), and **start the listener**: `sudo ./svc.sh install ubuntu && sudo ./svc.sh start`. Registration alone leaves the runner offline; a started service adds a scheduling slot, not CPU or memory.
-
 
 ### Switch back
 

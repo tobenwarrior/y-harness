@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-skill
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use this package to give agents and users one catalog of reusable, task-specific instructions collected from local directories, embedded plugin data, or remote services. It resolves duplicate names predictably, validates entries, tolerates unavailable sources without discarding usable results, and loads the selected skill's full instructions on demand. Mount it when a composition needs skills from multiple or non-filesystem sources; pair it with `dsh-skill-filesystem` for local discovery and `dsh-tool-skill` for model access, because it includes no skill content itself.
@@ -134,7 +132,6 @@ No direct prompt effect. The named consumer owns the durable initial catalog and
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the registry is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 

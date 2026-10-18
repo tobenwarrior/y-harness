@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-storage-domain
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use this package to declare schema-validated key-value domains and open them through `ctx.storageDomain` over a configured storage backend. Reads return synchronously from validated in-memory state, while each write becomes durable before it resolves and emits `domain/changed` in order. Product packages use domain handles instead of accessing storage backends directly. This host-side state does not add tools, prompts, or session events, so it remains invisible to the model and agent loop.
@@ -139,7 +137,6 @@ Independent: domain reads and writes never touch request prefixes, so nothing he
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the domain layer is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 

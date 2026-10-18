@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-settings-coding-sessions
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Browse a configured native coding-session source, import its history, and select a readable mirror in Settings. Refresh brings in new source history, while conflicts retain the existing mirror. The page shows original source IDs and connection readiness. Reviewed linked imports add quoted history to a cold ordinary Y Session. Explicit sequential continuation and restart recovery follow the Host’s published capabilities and visible ownership state.

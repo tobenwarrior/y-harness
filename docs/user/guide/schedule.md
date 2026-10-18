@@ -1,7 +1,5 @@
 # Schedule reminders
 
-English | [中文](schedule.zh.md)
-
 ## Summary
 
 Create reminders in a conversation, then inspect active and inactive tasks and edit an active task's name, instruction, and run time from the Automation tasks page. Daily reminders follow a saved local time and time zone; fixed-rate reminders follow elapsed intervals. Delivered one-shot tasks remain available until you explicitly delete them.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-tool-skill
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Agents can discover and load skills during a session. `catalogMode: relevant` supplies a bounded task shortlist and a `search_skills` metadata tool; the compatibility default `all` supplies the complete catalog. Both use the current scoped registry winners and load instructions only through the `skill` tool or an explicit user `/name` request. Generated summaries remain durable session messages.
@@ -249,7 +247,6 @@ Append-only; the injection lands after the reusable request prefix inside the st
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the catalog or the loader is a poor fit. They are current package constraints, not a task backlog.
 

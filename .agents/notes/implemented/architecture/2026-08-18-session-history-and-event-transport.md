@@ -2,8 +2,6 @@
 
 Status: implemented
 
-English | [中文](2026-08-18-session-history-and-event-transport.zh.md)
-
 ## Problem
 
 The browser consumes three kinds of data with different lifecycles: persistable, paginated Session logs; process-local state that needs an opening baseline to converge after reconnect; and immediate notifications that need no replay.
@@ -65,7 +63,6 @@ The browser's Client Remote plugin starts `RemoteStreamMuxClient` idempotently o
 The Host sends one RFC 6455 Ping control frame to every open mux socket at the configured `websocketHeartbeatIntervalMs` interval (two seconds by default). The browser replies with Pong at the protocol layer; neither control frame enters the Remote stream JSON union or changes Connection generation state. Before each Ping, the Host marks the socket as awaiting Pong and terminates it at the next interval if no Pong arrived.
 
 After an initial connection failure or the loss of a connected socket, open logical streams end their current physical generation with `RemoteStreamCarrierError`. `ConnectionController` owns the continuous exponential retry schedule with a capped delay; each attempt asks the mux to replace any candidate or active socket exactly once before reopening `$events`. A user-requested reconnect resets the attempt sequence and bypasses the delay through the same path ([decision](../../archived/feature/2026-08-28-web-connection-recovery-control.md)).
-
 
 The browser's network-status events are inputs to the same Controller. `offline` withdraws the Connection generation and suspends automatic retries; the next `online` transition restarts the base backoff. These events never establish connectivity: only a fresh `$events` ready frame publishes a Connection generation.
 

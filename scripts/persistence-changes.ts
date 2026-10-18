@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { basename, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { JSON_SCHEMA, load } from 'js-yaml'
+import { englishOnlyReason } from './translation-pairing.ts'
 import { canonicalizeSchema, reachableSchemaTypes, schemaDigest } from './persistence-schema-model.ts'
 import { matchingSourceCompatibility, sourceKindGroups, validSourceCompatibility } from './persistence-source-policy.ts'
 import type { CanonicalSchema, PersistenceRoot, PersistenceSchemaInventory, SchemaNode, SchemaTupleElement } from './persistence-schema-model.ts'
@@ -656,13 +657,16 @@ function readPersistenceEntries(root: string, allowIncompleteId?: string): Persi
     const snapshotName = `${change.id}.schema.json`
     if (!snapshots.delete(snapshotName)) throw new Error(`${filename}: missing schema snapshot ${snapshotName}`)
     const snapshot = parsePersistenceSnapshot(JSON.parse(readFileSync(join(directory, snapshotName), 'utf8')))
-    const translatedName = `${change.id}.zh.md`
-    if (!files.includes(translatedName)) throw new Error(`${filename}: missing Chinese counterpart`)
-    const translated = readFileSync(join(directory, translatedName), 'utf8').replaceAll('\r\n', '\n')
-    const englishBlock = source.match(/^```yaml persistence-change[^\S\n]*\n([\s\S]*?)^```[^\S\n]*$/mu)?.[1]
-    const chineseBlocks = [...translated.matchAll(/^```yaml persistence-change[^\S\n]*\n([\s\S]*?)^```[^\S\n]*$/gmu)]
-    if (chineseBlocks.length !== 1 || chineseBlocks[0]?.[1] !== englishBlock) throw new Error(`${filename}: bilingual machine records differ`)
-    if (!allowIncomplete && (translated.includes(EXPLANATION_PLACEHOLDER) || translated.includes(EVIDENCE_PLACEHOLDER))) throw new Error(`${translatedName}: complete compatibility and verification prose`)
+    // An English-only checkout has no counterpart to compare machine records against.
+    if (englishOnlyReason(root) === undefined) {
+      const translatedName = `${change.id}.zh.md`
+      if (!files.includes(translatedName)) throw new Error(`${filename}: missing Chinese counterpart`)
+      const translated = readFileSync(join(directory, translatedName), 'utf8').replaceAll('\r\n', '\n')
+      const englishBlock = source.match(/^```yaml persistence-change[^\S\n]*\n([\s\S]*?)^```[^\S\n]*$/mu)?.[1]
+      const chineseBlocks = [...translated.matchAll(/^```yaml persistence-change[^\S\n]*\n([\s\S]*?)^```[^\S\n]*$/gmu)]
+      if (chineseBlocks.length !== 1 || chineseBlocks[0]?.[1] !== englishBlock) throw new Error(`${filename}: bilingual machine records differ`)
+      if (!allowIncomplete && (translated.includes(EXPLANATION_PLACEHOLDER) || translated.includes(EVIDENCE_PLACEHOLDER))) throw new Error(`${translatedName}: complete compatibility and verification prose`)
+    }
     return { record: change, snapshot }
   })
   if (snapshots.size !== 0) throw new Error(`unreferenced persistence schema snapshot: ${[...snapshots].join(', ')}`)

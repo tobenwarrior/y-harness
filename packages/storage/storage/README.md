@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-storage
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `dsh-storage` to keep typed application data durable without adding it to session history. Mount it with a supported storage medium and domain configuration, then callers can access records through the public `ctx.storageDomain` API. Choose it for workspace records, session sidecars, or other application state that must survive restarts without becoming session events. It is available only to host code and has no model-visible effect; compositions that do not need such data can omit it.
@@ -123,7 +121,6 @@ Independent of live requests: the hub never touches a request prefix, so it cann
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the hub cannot do. They are current package constraints, not a task backlog.
 

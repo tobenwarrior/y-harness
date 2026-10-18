@@ -1,7 +1,5 @@
 # Session format version and release status
 
-English | [中文](session-format-status.zh.md)
-
 ## Summary
 
 Use this reference to distinguish the checkout writer, the accepted compatibility baseline, and the latest published Session format. The code constant owns the writer; the finalization and release records below separately identify accepted history and publication evidence. Other documentation links here instead of restating those values.

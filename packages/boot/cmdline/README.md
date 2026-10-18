@@ -5,8 +5,6 @@ kind: "package-library"
 
 # @deepseek-ai/dsh-cmdline
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-cmdline` lets an app parse its own flags, `--help`, and errors from the arguments left unchanged after launcher flags. Parsed values can override configuration defaults without rewriting configuration. The app can also request process exit through the launcher's shutdown path. Use this package for app bins with their own command-line interface. It adds no prompt, schema, or model-visible content.
@@ -125,7 +123,6 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits describe where app-owned command lines are a poor fit or need special care. They are current package constraints, not a task backlog.
 

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-typert-loader
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 With `dsh-typert-loader` mounted, every package that mounts in a Loader composition automatically contributes its generated Typert reflection and schema factories to the runtime registry — and withdraws them when the package or the plugin unmounts. Packages without the generated export are skipped, so adding the plugin to any composition is safe. An explicit `packages` list covers plugins nested behind another Loader entry, whose fibers carry no resolvable package specifier. It is a Node-only plugin and needs the config-tree resolution anchor to resolve packages.
@@ -106,7 +104,6 @@ No direct effect; registration changes reach a request only through a consumer t
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the loader does not discover or register; they are current package constraints, not a task backlog.
 

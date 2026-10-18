@@ -5,8 +5,6 @@ kind: "package-group"
 
 # ptc-runtime/ — PTC execution capability family
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 The `ptc-runtime/` group lets a model write one program that calls host-provided functions as ordinary async calls, then returns only the program's printed output and return value. Choose the TypeScript backend for execution in a fresh Node process under the configured sandbox policy, or the experimental Python backend when a CPython process is required. Each run starts without state from earlier programs. Failures are returned as results so callers can diagnose them or provide them to the model.

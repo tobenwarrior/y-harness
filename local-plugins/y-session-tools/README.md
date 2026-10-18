@@ -1,7 +1,5 @@
 # y-session-tools (local plugin bundle)
 
-English | [中文](README.zh.md)
-
 A profile plugin for this fork's Web UI. It is **not** a workspace package: the `pnpm-workspace.yaml` globs do not cover `local-plugins/`, so nothing here is built, tested, or published with the repository. It is installed into the `desktop` profile by path.
 
 ## What it adds

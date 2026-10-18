@@ -5,8 +5,6 @@ kind: "package-bundle"
 
 # @deepseek-ai/dsh-experimental-agent-team-profile
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-experimental-agent-team-profile` enables [Agent Teams](../agent-team/README.md) collaboration, tools, and Web UI with one bundle. Delegate work to teammates and view members, shared tasks, and teammate sessions in Web. Ordinary subagent delegation and overlapping global child controls are disabled; Workflow can still create fresh children. The bundle ships with dsh switched off. Enable it from the Plugins page or add it to an initialized profile.

@@ -4,8 +4,6 @@ kind: "package-library"
 ---
 # @deepseek-ai/dsh-client-store
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 React-free observable and snapshot-store primitives shared by Client controllers and renderer adapters. The package owns synchronous and animation-frame publication, Immer-backed updates, shallow equality, and optional browser persistence; React hook construction remains in `@deepseek-ai/dsh-client-ui-renderer`. Use it when Client state must publish stable snapshots without depending on React.
@@ -33,7 +31,6 @@ None; the stores neither assemble nor send model requests.
 
 - **Persistence is browser-local** — persisted stores use JSON in `localStorage`; non-browser runtimes disable persistence, and the package provides no cross-device synchronization.
 - **Web-shell build input** — the static ESM retains third-party imports for Vite; independent consumers supply its development dependencies ([dependency rules](../AGENTS.md#dependency-declaration)).
-
 
 <a id="dev-note"></a>
 ### Dev Note

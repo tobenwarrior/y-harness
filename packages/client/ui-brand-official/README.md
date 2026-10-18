@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-brand-official
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 This package supplies an `official` client build with the shared Y mark and the configured plain-text app name. The sidebar renders the name alone; the conversation hero uses its own shared static Y fallback. Other build profiles use the sidebar's localized local-build label or configured display name. It has no runtime state and does not affect model requests.
@@ -72,7 +70,6 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define how brand presentation is supplied. They are current package constraints, not a brand-design comparison or a task backlog.
 

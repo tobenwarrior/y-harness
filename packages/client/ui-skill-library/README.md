@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-skill-library
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Browse skills by project or shared scope, inspect their instructions and revision history, and explore explicit relationships. Review complete proposed changes with recorded evidence and uncertainty before applying them. Adopt and maintain eligible skills through reviewed, reversible actions. Use the panel with the Host skill library; native and protected sources remain read-only.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-skill
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-client-ui-skill` lets users invoke a skill by choosing it from the `/` suggestions or typing `/name` directly. The same literal command loads the skill consistently from the Web composer, TUI, and ACP, while a name shared with a host command continues to resolve as that command. Skill calls appear in the conversation as expandable `Instructions` cards whose settled contents remain stable when the installed skill catalog changes.
@@ -95,7 +93,6 @@ Append-only: the injected message lands after the reusable history prefix. This 
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define where the reference and the row fall back to generic behavior; they are current package constraints.
 

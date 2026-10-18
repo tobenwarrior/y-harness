@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-experimental-ptc-runtime-python
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 This experimental package lets explicit compositions run model-generated Python in a fresh CPython 3.10+ subprocess for each request. Programs can use top-level `await` and `return`, call configured bindings, and write normal stdout/stderr while receiving explicit completion or failure results. Resource budgets and process-group teardown contain runaway work, but the subprocess is not a security boundary: direct Python operations have no filesystem sandbox, no state persists across runs, and no shipped profile enables this runtime.
@@ -107,7 +105,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the package does and does not cover; they are current package constraints, not a task backlog.
 

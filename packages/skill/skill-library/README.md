@@ -4,8 +4,6 @@ kind: "package-reference"
 ---
 # Skill Library
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Browse project and shared skills, inspect complete instructions and history, and review proposed reusable procedures. Keep existing skills protected until you explicitly adopt a file, and maintain eligible skills through reviewed proposals. Restore archived bundles and roll back instruction changes while retaining history. Use this package for the human Skills library; the [skill subsystem](../../../docs/subsystems/skills.md) owns model invocation.

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-theme
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-client-ui-theme` lets Web GUI users choose Default or Terminal style, Light/Dark/System color mode, and conversation text from 10 to 22 px in Settings → Appearance. These choices persist across restarts on a loopback browser. Terminal applies compact corners and monospace labels across the app while preserving readable conversation text. Style and color mode remain independent, so either style supports both palettes and the System preference. Default preserves the existing appearance when no style override is saved.
@@ -124,7 +122,6 @@ None; this package neither assembles nor sends a provider request.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define the theme extension surface and the color authority; they are current package constraints.
 

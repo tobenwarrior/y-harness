@@ -2,8 +2,6 @@
 
 Status: implemented
 
-English | [中文](2026-10-12-ordinary-provider-configuration-sharing.zh.md)
-
 ## Problem
 
 Independent application profiles keep their own provider catalogs, so users repeat ordinary provider and model setup. Sharing an entire Harness home also shares session histories, credentials, vault state, and experimental controls. Copying a credential reference can silently bind another application's existing or ambient authorization, and an endpoint change can send that authorization to a different recipient.

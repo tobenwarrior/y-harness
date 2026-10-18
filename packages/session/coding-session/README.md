@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-coding-session
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Browse configured native coding sessions, import readable history, and refresh the same source into a durable Y mirror. Provider, authorized profile, and original native IDs keep sources distinct. Choose this package for coding-session history; consumer ChatGPT conversations are outside its scope. Selected original-profile sources can opt into explicit sequential continuation; native-enforced exclusive continuation remains a separate capability.

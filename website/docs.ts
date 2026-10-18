@@ -68,40 +68,35 @@ function localized<T>(value: T | Record<DocsLocale, T>, locale: DocsLocale): T {
     : value
 }
 
+/** Publish each declared page once, in English, at the site root. */
 function mirroredPages(pages: MirroredPage[]): DocsPage[] {
-  return pages.flatMap(page => (['root', 'en'] as const).map((locale) => {
+  return pages.map((page) => {
     const aliases = page.sourceAliases === undefined
       ? undefined
-      : Array.isArray(page.sourceAliases) ? page.sourceAliases : page.sourceAliases[locale]
+      : Array.isArray(page.sourceAliases) ? page.sourceAliases : page.sourceAliases.en
     return {
-      locale,
-      contentLocale: localized(page.contentLocale, locale),
-      source: localized(page.source, locale),
-      route: locale === 'root' ? page.route : `en/${page.route}`,
-      label: page.label[locale],
-      sidebar: page.sidebar[locale],
-      section: page.section[locale],
+      locale: 'root',
+      contentLocale: 'en-US',
+      source: localized(page.source, 'en'),
+      route: page.route,
+      label: page.label.en,
+      sidebar: page.sidebar.en,
+      section: page.section.en,
       order: page.order,
       ...(page.outline === undefined ? {} : { outline: page.outline }),
       ...(aliases === undefined ? {} : { sourceAliases: aliases }),
     }
-  }))
+  })
 }
 
+/** Publish the English source of a former pair; this checkout carries no translation. */
 function pairedPages(pages: PairedPage[]): DocsPage[] {
-  return mirroredPages(pages.map((page) => {
-    const chineseSource = page.source.replace(/\.md$/, '.zh.md')
-    const sharedAliases = page.sourceAliases ?? []
-    return {
-      ...page,
-      source: { root: chineseSource, en: page.source },
-      contentLocale: { root: 'zh-CN', en: 'en-US' },
-      sourceAliases: {
-        root: [...sharedAliases, page.source],
-        en: [...sharedAliases, chineseSource],
-      },
-    }
-  }))
+  return mirroredPages(pages.map(page => ({
+    ...page,
+    source: { root: page.source, en: page.source },
+    contentLocale: { root: 'en-US', en: 'en-US' },
+    sourceAliases: { root: page.sourceAliases ?? [], en: page.sourceAliases ?? [] },
+  })))
 }
 
 const homeAndGuide = pairedPages([
@@ -465,7 +460,7 @@ const reference = [
  * sequence, so a new collection lands in both surfaces together.
  */
 export const localeCollections = {
-  root: ['zh-guide', 'zh-develop', 'zh-reference'],
+  root: ['en-guide', 'en-develop', 'en-reference'],
   en: ['en-guide', 'en-develop', 'en-reference'],
 } as const satisfies Record<DocsLocale, readonly DocsSidebar[]>
 
@@ -485,16 +480,16 @@ export interface DocsSection {
  */
 const sections: Record<DocsLocale, readonly DocsSection[]> = {
   root: [
-    { label: '入门' }, { label: 'SDK' }, { label: '自动化' }, { label: '集成' },
-    { label: '基础' }, { label: '框架能力' }, { label: '实战' }, { label: 'Cordis 框架教程' },
-    { label: '概念' }, { label: '生成参考' }, { label: 'Cordis API' }, { label: '开发手册' },
-    { label: '总览' },
-    { label: '内核与作用域', collapsed: true },
-    { label: '会话与持久化', collapsed: true },
-    { label: '模型与上下文', collapsed: true },
-    { label: '执行与工具', collapsed: true },
-    { label: '策略与交互', collapsed: true },
-    { label: '平台与接入', collapsed: true },
+    { label: 'Guide' }, { label: 'SDK' }, { label: 'Automation' }, { label: 'Integrations' },
+    { label: 'Basics' }, { label: 'Framework' }, { label: 'Practice' }, { label: 'Cordis framework tutorial' },
+    { label: 'Concepts' }, { label: 'Generated reference' }, { label: 'Cordis Core API' }, { label: 'Cookbook' },
+    { label: 'Overview' },
+    { label: 'Core and scopes', collapsed: true },
+    { label: 'Sessions and persistence', collapsed: true },
+    { label: 'Model and context', collapsed: true },
+    { label: 'Execution and tools', collapsed: true },
+    { label: 'Policy and interaction', collapsed: true },
+    { label: 'Platform and access', collapsed: true },
   ],
   en: [
     { label: 'Guide' }, { label: 'SDK' }, { label: 'Automation' }, { label: 'Integrations' },

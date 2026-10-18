@@ -4,8 +4,6 @@ kind: "package-reference"
 ---
 # Workspace Controller
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `@deepseek-ai/dsh-api-workspace-controller` owns the Host `ctx.workspaceController` service and the generated Client `ctx.remote.workspace` namespace. Its Remote methods create, rename, remove, and reorder Workspaces, reorder Sessions within a Workspace, archive and unarchive Sessions from Workspace navigation, and follow the complete Workspace projection. Use it through API Gateway when a Client must change or follow Workspace navigation. The package also owns `ctx.directoryPickerController` and the generated `ctx.remote.directoryPicker` namespace, because the directory-picking seam it carries is abstract and never a Loader entry of its own.
@@ -59,7 +57,6 @@ No direct effect; Workspace mutations do not alter model requests.
 
 - `follow()` replaces the whole projection after reconnect and has no durable cursor or incremental catch-up protocol.
 - Process-local deletion markers prevent delayed data from reviving a removed Workspace only for the lifetime of the Client model.
-
 
 <a id="dev-note"></a>
 ### Dev Note

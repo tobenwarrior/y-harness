@@ -5,8 +5,6 @@ kind: "package-group"
 
 # schedule/ — Host-owned reminders
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Create one-shot, fixed-rate, daily, weekly, or cron reminders for a conversation and keep them across Host restarts. Inspect active and inactive tasks without opening their original Sessions. Use Schedule for reminder creation and delivery, and the Automation tasks page for cross-Session inspection and confirmed deletion. Due reminders arrive as ordinary follow-up messages in the original conversation, not email, SMS, or push notifications.

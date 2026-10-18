@@ -5,8 +5,6 @@ kind: "package-library"
 
 # `@deepseek-ai/dsh-experimental-webworker-runtime`
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 The browser worker host: the whole harness plugin tree runs inside one dedicated Web Worker, for preview deployments and packaging regressions ([experimental group](../README.md)). The worker inflates a packed VFS image off its download and mounts it in memory, loads its modules through a CommonJS wrapper loader, and serves the page over a postMessage tunnel that speaks plain HTTP. Use it when a preview must run the packaged harness without a Node host.
@@ -64,7 +62,6 @@ None; this package neither assembles nor sends a provider request.
 - **The shell is not bash**: no loops, functions, `case`, job control, or process substitution — the grammar stops at pipelines, `&&`/`||`, subshells, groups, redirections, and expansion. `&` runs its command to completion in place, `sed` accepts only substitution scripts, patterns are JavaScript regular expressions, and the command table holds coreutils only (no `git`, no network tools).
 - **A shell process has no synchronous filesystem**: it reads and writes the host's VFS by message, because blocking on a reply would need `SharedArrayBuffer`, which requires a cross-origin isolation GitHub Pages cannot grant. Directory-walking commands therefore cost one round trip per entry, and two concurrent commands can interleave their writes.
 - **Transport, worker-host, and page-half coverage needs a browser-grade harness** — the per-file coverage gate is unmet for those modules; unit specs cover storage, ALS, the transform, and the stub contracts.
-
 
 <a id="dev-note"></a>
 ### Dev Note

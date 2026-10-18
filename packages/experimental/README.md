@@ -5,8 +5,6 @@ kind: "package-group"
 
 # packages/experimental
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Experimental prototypes may change their contracts and carry no support promise. New packages publish by default; private packages must also appear in the [private-exception list](../../scripts/experimental-package-policy.ts). All current packages publish under their `@deepseek-ai/dsh-experimental-*` names, including the opt-in Agent Teams composition, Auto review, Cua Driver providers, browser-use backends, cross-realm Inspector, CPython PTC backend, and browser-worker preview libraries. Released products outside this group must not depend on experimental packages. The dsh installation ships the Agent Teams, voice input, and Auto review packages as optional bundles switched on from the Web sidebar's Plugins page ([decision](../../.agents/notes/implemented/architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md)); the other packages are libraries or explicit compositions.

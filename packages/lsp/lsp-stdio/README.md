@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-lsp-stdio
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `dsh-lsp-stdio` to give agents definitions, references, implementations, and hover from explicitly configured local language servers. It maps file extensions to language identifiers, starts one server per workspace on demand, and reads each queried file afresh without retaining document state between queries. Language-server processes and source reads share the mounted filesystem and subprocess environment. The package does not install servers or provide a sandbox: deployments supply commands, mappings, and any required confinement. Queries are serialized per server and workspace, while different workspaces can run in parallel.
@@ -139,7 +137,6 @@ No direct invalidation; `dsh-tool-lsp` owns request-prefix changes.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the provider is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-commands
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Typing a `/` command opens a registered popup, a client action, a host command's input, or direct execution; a command line is never silently downgraded to a plain prompt. Business packages register popupSelect specs (`/model`, `/permission`) or actions through `ctx.commandUi`, or decorate existing host commands with either kind while preserving their catalog rows and argument claims. Space and Enter resolve the line against the session's directory: a host descriptor with `input` is `leadingInput`, a registered `CommandUiSpec` is `popupSelect` or `action`, and everything else is `execute`.
@@ -86,7 +84,6 @@ None directly; this package neither assembles nor sends a provider request. Comm
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define the current command surface. They are current package constraints, not a general command-line comparison or a task backlog.
 

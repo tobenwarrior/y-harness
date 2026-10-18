@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-api-remotes
 
-English | [中文](README.zh.md)
-
 Desktop analytics follows the [product collection policy](../../client/product-analytics/README.md), including its live application setting. Web usage is excluded.
 
 ## Summary
@@ -75,7 +73,6 @@ No direct effect; mounted Host capabilities own any model-visible behavior they 
 - The capability set is fixed by explicit build-time value imports; the Client does not discover the Host's active Services or Remote definitions at runtime.
 - Additional capabilities require an explicit `/remote` value import and mount in this assembly.
 - Only scoped waterfalls that are still pending are replayed after reconnection; ordinary one-way notifications remain isolated best-effort deliveries and are not replayed. State that requires reliable recovery needs an owner-provided query, cursor, or opening baseline.
-
 
 <a id="dev-note"></a>
 ### Dev Note

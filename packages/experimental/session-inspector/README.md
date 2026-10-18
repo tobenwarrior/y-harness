@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-experimental-session-inspector
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Inspect raw Session logs and Chat structures through the optional [Developer Tools bundle](../inspector-profile/README.md). Open **Session Log** from the Sidebar's new-tab menu or guide, then choose **Raw Log** or **Chat Group** from its upper-left selector. Follow object references between Nodes, Turns, and Steps, or locate a selected Node in Chat. Stream chunks appear as child rows, and Chat updates briefly highlight their rows. Both presentations support older history and resizable details without a composer.

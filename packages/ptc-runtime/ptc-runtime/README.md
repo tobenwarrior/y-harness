@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-ptc-runtime
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `dsh-ptc-runtime` to run one model-written program against host-provided asynchronous functions through a configured backend. A request returns a lossless-JSON value, ordered per-channel logs, or a structured error; program failures resolve in the result, while rejected promises indicate caller misuse. Each run is isolated from prior runs, and the runtime has no knowledge of tools or sessions. Choose an execution backend separately; its language and isolation descriptors identify the required source language and execution substrate but do not themselves promise a security boundary.
@@ -120,7 +118,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define what the seam cannot do; they are current package constraints, not a task backlog.
 

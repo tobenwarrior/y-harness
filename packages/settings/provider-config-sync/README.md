@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-provider-config-sync
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Share ordinary provider names, endpoints, and model catalogs between compatible, explicitly paired profiles. Each application keeps its own authentication, session history, recipient restrictions, and runtime home. The base bundle mounts this plugin with sharing unconfigured.

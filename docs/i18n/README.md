@@ -1,10 +1,12 @@
-# Bilingual documentation
+# Documentation language
 
-English | [中文](README.zh.md)
+This fork maintains its documentation in **English only**. Every document in scope is written, reviewed, and read in English; none carries a Simplified Chinese counterpart, a language switcher, or a consistency record.
 
-This repo's documentation is read by people and agents both inside and outside the company, so every document in scope is maintained in English and Simplified Chinese. This page defines the pairing contract, checks, scope, and exclusions; [translation-rules.md](translation-rules.md) defines how to translate; [terminology.md](terminology.md) is the terminology source of truth. Routine agent work follows the lightweight path in [docs/AGENTS.md](../AGENTS.md); the extended [.agents/skills/dsh-translate-docs](../../.agents/skills/dsh-translate-docs/SKILL.md) workflow is available only through explicit user invocation.
+`scripts/translation-pairing.manifest.json` declares `englishOnly` with the reason. `verify-translation-pairing` therefore expects no `.zh.md` and no `.i18n.yaml` anywhere in scope, and fails when one is added back. Links target the English sibling, so a removed translation cannot leave a dangling reference.
 
-## The pairing contract
+Upstream maintains every document as a three-file pair — English, Chinese, and a record of confirmed translations. This checkout does not take that part of the upstream work: translations are removed rather than carried as stale copies. [translation-rules.md](translation-rules.md) stays as the upstream authoring reference for anyone reviving a translation deliberately.
+
+## The upstream pairing contract (not enforced here)
 
 - **Both languages carry equal authority.** A document may be authored and reviewed in either language first — a Chinese-first Agent Note is as legitimate as an English-first one — and the counterpart is translated from it. Neither file outranks the other; what binds them is that they must say the same thing.
 - **A pair is three sibling files.** The English `foo.md`, the Chinese `foo.zh.md`, and a consistency record `foo.i18n.yaml`, all in the same directory. No locale directories, no separate translation repo, no interleaved bilingual files. Pairs merge whole: a PR never lands one language without the other two files.

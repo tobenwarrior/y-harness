@@ -5,8 +5,6 @@ kind: "package-library"
 
 # dsh-util-workspace-path
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Browser-safe path helpers shared by Workspace-facing client and controller packages. The package joins Workspace-relative paths, abbreviates POSIX home directories for display, derives Workspace titles from POSIX or Windows paths, splits a path into its directories and final segment for display, and owns the `dsh-resource://file/…` address grammar that names a workspace file across the Sidebar and the resource model. `relativizeToCwd` removes the workspace prefix for display while preserving paths outside that directory. It has no Cordis service or runtime state.
@@ -36,7 +34,6 @@ A resource address is `dsh-resource://<type>/…`, and the type — the URI host
 
 - **Resolution is lexical** — it recognizes POSIX absolute paths, Windows drive paths, and UNC paths, preserves the Workspace path's separator when joining a relative path, and does not access a filesystem or canonicalize `.` and `..` segments.
 - **Home abbreviation is POSIX-only** — Windows paths remain unchanged because a portable browser cannot infer Windows home-path equivalence safely.
-
 
 <a id="dev-note"></a>
 ### Dev Note

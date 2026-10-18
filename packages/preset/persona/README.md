@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-persona
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-persona` gives one agent its own persona: a preset mounts this composable row to register persona prefix and suffix sections, shadowing the deployment-wide defaults for that session. It can also make the prefix the session's complete system prompt, suppressing every other section, and can turn off dynamic runtime-context snapshots for the session. Mount it inside a preset composition — mounting it globally collides with the prompt registry's own persona registration and fails loud. Without this row, a preset could change an agent's tools but never its identity.
@@ -109,7 +107,6 @@ Prefix-stable while the rendered template variables and text are unchanged. Suff
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the row is a poor fit. They are current package constraints, not a task backlog.
 

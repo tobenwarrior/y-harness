@@ -5,8 +5,6 @@ kind: "package-library"
 
 # dsh-util-crypto
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Zero-dependency browser-safe UUID and byte-encoding helpers. UUID minting uses `crypto.getRandomValues`, the one random primitive every shipped context provides. `crypto.randomUUID` is a secure-context Web API: a page or worker served over plain HTTP on a LAN address (the browser preview deployment) has no such method, so code that must run there cannot call it. The repository-wide `no-restricted-properties` lint rule points `crypto.randomUUID` callers here; Node-only code importing `randomUUID` from `node:crypto` stays as it is.
@@ -56,7 +54,6 @@ No direct invalidation; identifier-minting consumers own any request changes.
 
 - **v4 only** — no other UUID versions, namespaces, or parsing; consumers needing more should take a real UUID dependency.
 - **Uniqueness is probabilistic** — 122 random bits, the same guarantee `crypto.randomUUID` gives; nothing here detects collisions.
-
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-user-questions
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 Use `ctx.userQuestions` when a tool or permission flow needs a structured answer from the user. `ask()` waits for that answer; `askTimed()` may release the agent to continue independent work while the question remains answerable in the Session.
@@ -55,7 +53,6 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 - **Agent-scoped Web answering** — Remote Events route the shipped Web answerer only when the request carries a live Agent scope; agentless callers need an unscoped local waterfall listener.
 - **The vocabulary is the question-form shape only** — selectable options plus optional custom text; richer interaction shapes (file pickers, diff-preview confirmations) have no seam vocabulary yet.
 - **Draft text is not part of Host question persistence** — the question survives restart across clients through the projection; unfinished input remains local to one browser profile.
-
 
 <a id="dev-note"></a>
 ### Dev Note

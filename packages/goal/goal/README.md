@@ -5,8 +5,6 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-goal
 
-English | [中文](README.zh.md)
-
 ## Summary
 
 `dsh-goal` lets one long-running completion objective persist across turns, session resume, fork, and process restarts. Users and agents can create, edit, pause, resume, complete, block, or clear it; compare-and-set updates reject stale views. A configurable round cap (256 by default) bounds automatic continuation, and blocked goals retain a stable policy code with a human-readable explanation. The package stores goal state but does not schedule work, and continuation permission remains process-local rather than durable. Choose it for one objective spanning many turns; skip it for routine single-turn work or parallel objectives.
@@ -150,7 +148,6 @@ There is no KV-cache effect until another component exposes goal state in model-
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
-
 
 These limits define when the goal service is a poor fit or needs special care. They are current package constraints, not a task backlog.
 
