@@ -11,14 +11,18 @@ afterEach(cleanup)
 
 const t = makeTranslate(en)
 
+/** Badge state without the update progress, which every case starts from idle. */
+type BadgeState = Omit<CompoundUpdateState, 'apply'> & { apply?: CompoundUpdateState['apply'] }
+
 /**
  * Render the badge against one indicator state.
  * @param state - indicator state the injected hook reads.
  * @returns the render result and the recorded open action.
  */
-function renderBadge(state: CompoundUpdateState) {
+function renderBadge(state: BadgeState) {
+  const full: CompoundUpdateState = { apply: { phase: 'idle', error: null }, ...state }
   const show = vi.fn()
-  const props = { t, useUpdate: (select: (value: CompoundUpdateState) => unknown) => select(state), show }
+  const props = { t, useUpdate: (select: (value: CompoundUpdateState) => unknown) => select(full), show }
   return { ...render(<UpdateBadge {...props as ComponentProps<typeof UpdateBadge>} />), show }
 }
 

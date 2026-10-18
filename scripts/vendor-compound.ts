@@ -184,35 +184,29 @@ function main(): number {
   const upstream = cloneUpstream()
   try {
     const updateAvailable = compareReleases(upstream.release, vendored) !== 0
-    const report: VendorReport = {
-      vendored,
-      upstream: upstream.release,
-      commit: upstream.commit,
-      updateAvailable,
-      applied: 'no',
-      branch: null,
-      error: null,
-    }
     if (values.check && values.apply) throw new Error('--check and --apply are exclusive')
+    let applied: VendorReport['applied'] = 'no'
+    let branch: string | null = null
+    let failure: string | null = null
     if (!updateAvailable) {
       note(`already at upstream ${upstream.release}`)
     } else if (values.apply) {
-      const branch = values.branch ?? `compound/${upstream.release}`
+      branch = values.branch ?? `compound/${upstream.release}`
       try {
         apply(upstream, root, branch)
-        report.applied = 'committed'
-        report.branch = branch
+        applied = 'committed'
       } catch (error) {
-        report.applied = 'failed'
-        report.error = error instanceof Error ? error.message : String(error)
-        process.stdout.write(`${JSON.stringify(report)}\n`)
-        return 1
+        applied = 'failed'
+        failure = error instanceof Error ? error.message : String(error)
       }
     } else {
       note(`upstream publishes ${upstream.release}; this checkout records ${vendored} (pass --apply)`)
     }
+    const report: VendorReport = {
+      vendored, upstream: upstream.release, commit: upstream.commit, updateAvailable, applied, branch, error: failure,
+    }
     process.stdout.write(`${JSON.stringify(report)}\n`)
-    return 0
+    return failure === null ? 0 : 1
   } finally {
     if (!values['keep-temp']) rmSync(upstream.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
