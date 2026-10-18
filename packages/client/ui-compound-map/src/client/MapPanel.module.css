@@ -1,0 +1,5 @@
+.root { display: flex; flex-direction: column; min-height: 0; height: 100%; gap: 8px; padding: 12px; box-sizing: border-box; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.title { font-size: 14px; line-height: 22px; font-weight: 500; color: var(--yh-alias-label-primary); }
+.frame { flex: 1 1 auto; width: 100%; min-height: 0; border: 0.5px solid var(--yh-alias-border-l2); border-radius: var(--yh-radius-panel); background: var(--yh-alias-bg-layer-2); }
+.hint { margin: 0; font-size: 12px; line-height: 18px; color: var(--yh-alias-label-secondary); }

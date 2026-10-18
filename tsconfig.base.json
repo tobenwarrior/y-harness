@@ -276,6 +276,8 @@
       "@deepseek-ai/dsh-client-ui-skill": ["./packages/client/ui-skill/src"],
       "@deepseek-ai/dsh-client-ui-compound-update": ["./packages/client/ui-compound-update/src"],
       "@deepseek-ai/dsh-client-ui-compound-update/client": ["./packages/client/ui-compound-update/src/client"],
+      "@deepseek-ai/dsh-client-ui-compound-map": ["./packages/client/ui-compound-map/src"],
+      "@deepseek-ai/dsh-client-ui-compound-map/client": ["./packages/client/ui-compound-map/src/client"],
       "@deepseek-ai/dsh-client-ui-skill-library": ["./packages/client/ui-skill-library/src"],
       "@deepseek-ai/dsh-skill-library/types": ["./packages/skill/skill-library/src/types.ts"],
       "@deepseek-ai/dsh-coding-session/types": ["./packages/session/coding-session/src/types.ts"],
