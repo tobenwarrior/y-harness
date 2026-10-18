@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compound: Setup globally"
+  short_description: "Enable shared guidance across your projects"
+  default_prompt: "Use $setup-global to enable Compound across my projects."

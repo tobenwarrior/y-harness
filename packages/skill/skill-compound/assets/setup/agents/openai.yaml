@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compound: Setup project"
+  short_description: "Reassess and clean up the current project"
+  default_prompt: "Use $setup to set up and reassess this project."

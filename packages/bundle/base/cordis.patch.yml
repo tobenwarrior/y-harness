@@ -306,6 +306,9 @@
       name: '@deepseek-ai/dsh-skill-badge'
       disabled: true
 
+    - id: skill-compound
+      name: '@deepseek-ai/dsh-skill-compound'
+
     - id: tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
       config:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compound"
+  short_description: "Compact engineering workflows with real evidence"
+  default_prompt: "Use $compound for engineering work throughout this session."

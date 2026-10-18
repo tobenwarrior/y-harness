@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:">
+  <title>Compound · Code map</title><link rel="stylesheet" href="./code-map.css">
+</head>
+<body>
+  <noscript class="no-script">Enable JavaScript to explore the local code map.</noscript>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">&gt;_</span><strong>COMPOUND</strong><span class="divider"></span><label class="project-picker"><span class="sr-only">Project</span><select id="project-select" aria-label="Project"></select></label></div>
+      <div class="topbar-actions"><span class="local-label">◉ Local workspace</span><button id="refresh-button" class="icon-button" aria-label="Check for changes" title="Check for changes">↻</button><button id="sidebar-button" class="mobile-only" aria-label="Open file list" aria-expanded="false">Files</button><button id="inspector-button" class="mobile-only" aria-label="Open file inspector" aria-expanded="false">Details</button></div>
+    </header>
+    <div id="notice-strip" class="notice-strip" hidden><span aria-hidden="true">ⓘ</span><strong id="notice-title"></strong><span id="notice-detail"></span><button id="notice-dismiss" aria-label="Dismiss notice">×</button></div>
+    <main class="workspace">
+      <aside id="sidebar" class="sidebar panel" aria-label="Repository files">
+        <div class="panel-heading"><h1>Codebase <span id="sidebar-count" class="subtle">0 files</span></h1><button id="sidebar-close" class="close-button mobile-only" aria-label="Close file list">×</button></div>
+        <div class="segmented sidebar-tabs" role="group" aria-label="Browse code"><button data-browse="folders" aria-pressed="true">Folders</button><button data-browse="files" aria-pressed="false">Files</button><button data-browse="symbols" aria-pressed="false">Symbols</button></div>
+        <label class="search-box"><span aria-hidden="true">⌕</span><span class="sr-only">Find a file, symbol or folder</span><input id="file-search" type="search" placeholder="Find a file, symbol or folder" autocomplete="off"><kbd>/</kbd></label>
+        <div class="list-heading"><span id="tree-state">Reading index…</span><button id="clear-folder" class="text-button" hidden>Clear</button></div>
+        <div id="file-tree" class="file-tree"></div>
+        <button id="show-more" class="show-more" hidden>Show more</button>
+        <details class="coverage"><summary id="coverage-summary">Index coverage</summary><p id="coverage-detail"></p></details>
+        <p class="sidebar-foot">Files stay on this machine.</p>
+      </aside>
+      <section class="graph-panel panel" aria-label="Dependency graph">
+        <div class="graph-toolbar"><div class="view-tabs" role="group" aria-label="Graph view"><button data-view="all" aria-pressed="true">Everything</button><button data-view="neighbors" aria-pressed="false">Neighborhood</button><button data-view="changed" aria-pressed="false">Changed <span id="changed-count">0</span></button></div><button id="fit-button" class="text-button" title="Fit graph (F)" aria-label="Fit graph">Fit ↗</button></div>
+        <div class="graph-breadcrumb"><span id="root-name">Code map</span><span id="scope-name">/ everything</span><span id="graph-mode" class="sr-only">Repository graph</span></div>
+        <div id="graph-stage" class="graph-stage">
+          <canvas id="graph" tabindex="0" role="img" aria-label="Interactive dependency graph. Browse files in the sidebar to select a file."></canvas>
+          <div id="graph-tooltip" class="graph-tooltip" hidden></div>
+          <div id="graph-loading" class="graph-overlay"><span class="spinner"></span><strong>Reading your codebase</strong><p id="loading-detail">Connecting to the local index…</p></div>
+          <div id="graph-empty" class="graph-overlay" hidden><strong id="empty-title">No files to show</strong><p id="empty-detail"></p><button id="empty-reset" class="primary-button">Show everything</button></div>
+          <div id="graph-error" class="graph-overlay" hidden><strong>Map unavailable</strong><p id="error-detail"></p><button id="retry-button" class="primary-button">Reconnect</button></div>
+          <div class="graph-state"><i id="layout-light"></i><span id="layout-state">Waiting</span></div>
+          <div class="graph-controls"><button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-reset" aria-label="Reset graph view">⤢</button></div>
+        </div>
+        <footer class="graph-footer"><span id="graph-summary">0 files · 0 imports</span><span id="focus-summary">FOLDER GROUPS</span></footer>
+      </section>
+      <aside id="inspector" class="inspector panel" aria-label="Selected file details">
+        <div class="panel-heading"><h2>Understanding</h2><div class="history-controls"><button id="history-back" aria-label="Previous file" disabled>←</button><button id="history-forward" aria-label="Next file" disabled>→</button><button id="inspector-close" class="close-button mobile-only" aria-label="Close file inspector">×</button></div></div>
+        <div id="inspector-empty" class="inspector-empty"><span class="empty-glyph">◎</span><h3>Follow the connections</h3><p>Select a file to explore its imports, symbols, and the files that depend on it.</p><div id="repository-summary"></div></div>
+        <div id="file-detail" hidden>
+          <p id="detail-breadcrumb" class="detail-breadcrumb"></p><h2 id="inspector-title"></h2><p id="detail-path" class="file-path"></p><p id="detail-summary" class="detail-summary"></p><p id="analysis-note" class="analysis-note"></p>
+          <div class="file-actions"><button id="source-button" class="primary-button">Source</button><button id="context-button">Copy context</button><button id="path-button" class="icon-button" aria-label="Copy file path" title="Copy file path">⧉</button></div>
+          <div class="map-actions"><button id="neighborhood-button">Neighborhood</button><button id="impact-button">Impact</button><button id="trace-button" aria-expanded="false">Trace to…</button></div>
+          <form id="trace-panel" class="trace-panel" hidden><label for="trace-target">Trace a recorded import path to</label><div><input id="trace-target" type="search" list="trace-files" placeholder="Target file path" autocomplete="off"><button class="primary-button" type="submit">Trace</button></div><datalist id="trace-files"></datalist><p id="trace-result" role="status"></p></form>
+          <div class="detail-tabs" role="group" aria-label="File details"><button data-detail="connections" aria-pressed="true">Connections</button><button data-detail="symbols" aria-pressed="false">Symbols</button><button data-detail="impact" aria-pressed="false">Impact</button></div>
+          <div id="connections-panel"><section class="detail-section"><h3>IMPORTS <span id="detail-import-count">0</span></h3><ul id="import-list" class="edge-list"></ul></section><section class="detail-section"><h3>IMPORTED BY <span id="detail-importer-count">0</span></h3><ul id="importer-list" class="edge-list"></ul></section><details id="unresolved-section" class="detail-section" hidden><summary>Other import references <span id="unresolved-count"></span></summary><p class="subtle">External packages or unresolved local paths.</p><ul id="unresolved-list" class="plain-list"></ul></details></div>
+          <div id="symbols-panel" hidden><section class="detail-section"><h3>SYMBOLS <span id="detail-symbol-count">0</span></h3><p id="symbol-note" class="subtle"></p><ul id="symbol-list" class="symbol-list"></ul></section><section id="exports-section" class="detail-section" hidden><h3>EXPORT HINTS</h3><ul id="export-list" class="plain-list"></ul></section></div>
+          <div id="impact-panel" hidden><section class="detail-section"><h3>DEPENDENT FILES <span id="impact-count">0</span></h3><p id="impact-note" class="subtle"></p><button id="show-impact" class="show-more">Show on map</button><ul id="impact-list" class="edge-list"></ul></section></div>
+        </div>
+      </aside>
+    </main>
+    <footer class="statusbar"><span id="live-status" data-state="loading"><i></i><span id="live-status-text">Connecting</span></span><span id="total-files">0 files</span><span id="total-lines">0 lines</span><span id="total-symbols">0 symbols</span><span class="status-spacer"></span><span id="branch-name"></span></footer>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="source-dialog" class="source-dialog"><header><div><strong id="source-title"></strong><p id="source-meta"></p></div><button id="source-close" aria-label="Close source preview">×</button></header><div id="source-content" class="source-content"></div><p id="source-note" class="source-note"></p></dialog>
+  </div>
+  <script type="module" src="./code-map.js"></script>
+</body>
+</html>

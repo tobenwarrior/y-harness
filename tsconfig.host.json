@@ -359,6 +359,7 @@
     { "path": "./packages/core/agent-tool-presentation" },
     { "path": "./packages/skill/skill" },
     { "path": "./packages/skill/skill-badge" },
+    { "path": "./packages/skill/skill-compound" },
     { "path": "./packages/skill/skill-filesystem" },
     { "path": "./packages/skill/skill-library" },
     { "path": "./packages/session/coding-session" },
