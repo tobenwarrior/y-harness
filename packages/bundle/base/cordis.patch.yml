@@ -255,6 +255,10 @@
     - id: permission
       name: '@deepseek-ai/dsh-permission-presets'
       config:
+        # Codex-style default: this fork's owner works in full access, so new sessions
+        # start with the sandbox open and no approval prompts. The composer selector and
+        # the /permission command still switch a single session.
+        defaultPreset: danger-full-access
         presets:
           read-only:
             sandbox: read-only
