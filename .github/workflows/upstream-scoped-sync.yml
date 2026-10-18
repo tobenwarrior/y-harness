@@ -1,0 +1,144 @@
+name: Upstream scoped sync
+
+# Weekly check of the official deepseek-harness for changes inside this fork's
+# declared allowlist (scripts/upstream-sync/config.json). The job applies the
+# scoped delta on a branch, runs the declared checks, and opens or updates a
+# pull request — it never merges, so a human decides what lands on master.
+#
+# The run needs the `upstream` remote, which the checkout step below adds, and
+# these repository settings for pull-request creation:
+#   Actions -> General -> Workflow permissions: Read and write
+#   Actions -> General: Allow GitHub Actions to create and approve pull requests
+# Without them the branch push (or only the PR step) fails; the patch and report
+# are still uploaded as artifacts.
+on:
+  workflow_dispatch:
+    inputs:
+      to:
+        description: 'Upstream ref to sync to (default: the configured target)'
+        required: false
+        type: string
+  schedule:
+    # 06:23 UTC Mondays = 14:23 Asia/Singapore, off the top-of-hour cron stampede.
+    # Scheduled runs pause after 60 days without repository activity; the manual
+    # dispatch above is the backstop.
+    - cron: '23 6 * * 1'
+
+concurrency:
+  # One sync at a time: two runs would prepare the same branch concurrently.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The sync resolves upstream commits and applies their blobs, so the
+          # whole history and the upstream remote must be present.
+          fetch-depth: 0
+
+      - name: Add the upstream remote
+        run: git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Prepare the scoped sync branch
+        env:
+          TO: ${{ inputs.to }}
+        run: |
+          node scripts/upstream-sync/sync.mjs --apply \
+            --json .artifacts/upstream-sync/report.json \
+            ${TO:+--to "$TO"}
+
+      - name: Read the report
+        id: report
+        run: |
+          node -e '
+            const r = require("./.artifacts/upstream-sync/report.json");
+            const fs = require("node:fs");
+            const lines = [
+              "### Scoped upstream sync",
+              "",
+              `- Upstream range: \`${r.baseline.slice(0, 10)}\` -> \`${r.target.sha.slice(0, 10)}\` (${r.target.ref})`,
+              `- Version alignment: ${r.versionAlignment ? r.versionAlignment.status : "not needed"}`,
+              `- Files: ${r.files.added.length} added, ${r.files.modified.length} modified, ${r.files.deleted.length} deleted`,
+              `- Commits in scope: ${r.commits.length}`,
+              `- Conflicts: ${r.conflicts.length === 0 ? "none" : r.conflicts.join(", ")}`,
+              "",
+            ];
+            if (r.newPackages.length > 0) {
+              lines.push("New packages (each usually needs a bundle row):", "");
+              for (const p of r.newPackages) lines.push(`- \`${p.name}\` (${p.path})`);
+              lines.push("");
+            }
+            if (r.conflicts.length > 0) {
+              lines.push("Conflicts need a human: git diff against the recorded baseline, keep the fork behaviour, then run the checks.", "");
+            }
+            fs.writeFileSync(".artifacts/upstream-sync/pr-body.md", lines.join("\n") + "\n");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${r.applied ? "true" : "false"}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `branch=${r.branch ?? ""}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `title=chore(upstream): scoped sync ${r.target.version ?? r.target.sha.slice(0, 10)}\n`);
+          '
+
+      - name: Install
+        if: steps.report.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run the configured checks
+        id: checks
+        if: steps.report.outputs.changed == 'true'
+        continue-on-error: true
+        run: node scripts/upstream-sync/sync.mjs --check --json .artifacts/upstream-sync/checks.json
+
+      - name: Record the check outcome
+        if: steps.report.outputs.changed == 'true'
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const checks = require("./.artifacts/upstream-sync/checks.json").checks;
+            const lines = ["### Checks", ""];
+            for (const c of checks) lines.push(`- ${c.status === "passed" ? "pass" : "FAIL"}: \`${c.command}\``);
+            fs.appendFileSync(".artifacts/upstream-sync/pr-body.md", lines.join("\n") + "\n");
+          '
+
+      - name: Commit, push, and open the pull request
+        if: steps.report.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.report.outputs.branch }}
+          TITLE: ${{ steps.report.outputs.title }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "$TITLE" --no-verify
+          # Explicit lease: the branch belongs to this job, and a re-run replaces
+          # its own previous state without discarding anything unknown.
+          git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+          git push --force-with-lease="refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" origin "HEAD:refs/heads/$BRANCH"
+          existing=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$TITLE" --body-file .artifacts/upstream-sync/pr-body.md
+          else
+            gh pr create --base master --head "$BRANCH" --title "$TITLE" --body-file .artifacts/upstream-sync/pr-body.md
+          fi
+
+      - name: Upload the patch and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-${{ github.run_id }}
+          path: .artifacts/upstream-sync/
+          if-no-files-found: ignore
+          retention-days: 30

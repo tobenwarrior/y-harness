@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "Scoped upstream sync policy for the Y Harness fork. Read scripts/upstream-sync/README.md.",
+    "`baseline` is the upstream commit whose content this fork has already ingested for",
+    "`include`. Advance it only through a merged sync PR: sync.mjs rewrites it in the branch",
+    "it prepares, so merging that branch is what moves the marker."
+  ],
+  "remote": "upstream",
+  "target": "upstream/master",
+  "baseline": "6d48506ef11e875fec0d9616cd0dcf66ae248f17",
+  "include": [
+    "packages/llm/llm/",
+    "packages/llm/llm-deepseek/",
+    "packages/llm/llm-deepseek-account/",
+    "packages/llm/deepseek-llm-api-extensions/",
+    "packages/web/",
+    "packages/client/ui-model-selection/",
+    "packages/client/ui-settings-web-search/",
+    "packages/client/ui-deepseek-model-label-1017/",
+    "tsconfig.base.json",
+    "tsconfig.client.json",
+    "tsconfig.host.json"
+  ],
+  "exclude": [
+    "**/lib/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/*.tsbuildinfo"
+  ],
+  "alignVersion": true,
+  "checks": [
+    "pnpm exec vitest run --maxWorkers=2 packages/llm/llm-deepseek packages/llm/llm-deepseek-account packages/web packages/client/ui-model-selection packages/client/ui-settings-web-search"
+  ]
+}
