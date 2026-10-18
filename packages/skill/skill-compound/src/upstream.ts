@@ -9,6 +9,9 @@
  * @module @deepseek-ai/dsh-skill-compound
  */
 
+import { spawn } from 'node:child_process'
+import { existsSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** Release of the vendored content; kept equal to the table in `UPSTREAM.md`. */
@@ -22,6 +25,9 @@ const UPSTREAM_BRANCH = 'main'
 
 /** Same-origin route the browser half reads update status from. */
 export const UPDATE_ROUTE = '/api/skill-compound.update'
+
+/** Same-origin route that applies a released update to the checkout. */
+export const APPLY_ROUTE = '/api/skill-compound.update.apply'
 
 /** How long a successful reading stays fresh. */
 const FRESH_MS = 6 * 60 * 60 * 1000
@@ -114,6 +120,16 @@ export class UpstreamReleaseTracker {
     return status
   }
 
+  /**
+   * Drop the cached reading, so the next status call reads upstream again.
+   *
+   * An applied update changes the vendored release, and the badge must not keep
+   * reporting the comparison taken before it.
+   */
+  invalidate(): void {
+    this.reading = undefined
+  }
+
   private async read(signal?: AbortSignal): Promise<UpdateStatus> {
     const base = { vendored: VENDORED_VERSION, repository: UPSTREAM_REPOSITORY, checkedAt: Date.now() }
     try {
@@ -136,16 +152,137 @@ export class UpstreamReleaseTracker {
   }
 }
 
+/** Outcome of one in-app update attempt. */
+export interface UpdateApplication {
+  /** What the attempt did. */
+  readonly status: 'updated' | 'up-to-date' | 'failed' | 'unavailable'
+  /** Release the update applied, when it applied one. */
+  readonly upstream: string | null
+  /** Why the attempt did not apply, when it did not. */
+  readonly error: string | null
+}
+
+/** Runs the vendoring procedure; injectable so tests neither clone nor commit. */
+export type UpdateApplier = () => Promise<UpdateApplication>
+
+/** Repository-relative path of the script that performs the re-sync. */
+const VENDOR_SCRIPT = 'scripts/vendor-compound.ts'
+
+/** File the on-quit updater watches for a restart request. */
+export const RESTART_REQUEST = '.local-setup/update-request.json'
+
 /**
- * Register the update-status route the browser half reads.
+ * Checkout this package was installed from.
+ *
+ * `lib/index.js` and `src/index.ts` sit at the same depth, so the fourth parent is the
+ * repository root in a source checkout and whatever contains the package in an install.
+ */
+const CHECKOUT = resolve(import.meta.dirname, '../../../..')
+
+/**
+ * Run one process to completion, collecting both streams.
+ * @param command - executable to run.
+ * @param args - arguments, passed without a shell.
+ * @param cwd - working directory.
+ * @returns exit code (null when the process could not start) and both streams.
+ */
+interface ProcessResult {
+  /** Exit code, or null when the process could not start. */
+  readonly code: number | null
+  /** Everything the process wrote to stdout. */
+  readonly stdout: string
+  /** Everything the process wrote to stderr. */
+  readonly stderr: string
+}
+
+function runProcess(command: string, args: readonly string[], cwd: string): Promise<ProcessResult> {
+  return new Promise((resolveRun) => {
+    // The Host may run under Electron, where this makes execPath behave as Node.
+    const child = spawn(command, [...args], { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk: unknown) => { stdout += String(chunk) })
+    child.stderr.on('data', (chunk: unknown) => { stderr += String(chunk) })
+    child.on('error', (error) => { resolveRun({ code: null, stdout, stderr: `${stderr}${error.message}` }) })
+    child.on('close', (code) => { resolveRun({ code, stdout, stderr }) })
+  })
+}
+
+/**
+ * Apply the released update by running this repository's vendoring script.
+ *
+ * The script owns the procedure — clone, mirror, record, test, commit — and reports a
+ * JSON line the route returns unchanged. A packaged install has no checkout, so the
+ * route reports that in-app updating is unavailable rather than failing obscurely.
+ * @param cwd - checkout to update; defaults to the one this package was installed from.
+ * @returns the attempt's outcome.
+ */
+export async function runVendorScript(cwd: string = CHECKOUT): Promise<UpdateApplication> {
+  const script = join(cwd, VENDOR_SCRIPT)
+  if (!existsSync(script)) {
+    return { status: 'unavailable', upstream: null, error: `in-app updating needs a source checkout with ${VENDOR_SCRIPT}` }
+  }
+  const result = await runProcess(process.execPath, ['--import', 'tsx', script, '--apply'], cwd)
+  const line = result.stdout.trim().split('\n').reverse().find(text => text.startsWith('{'))
+  let report: { applied?: string; upstream?: unknown; error?: unknown; updateAvailable?: unknown } | undefined
+  try {
+    report = line === undefined ? undefined : JSON.parse(line) as typeof report
+  } catch {
+    report = undefined
+  }
+  if (report === undefined) {
+    const reason = (result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')
+    return { status: 'failed', upstream: null, error: reason === '' ? `vendoring exited ${String(result.code)}` : reason }
+  }
+  const upstream = typeof report.upstream === 'string' ? report.upstream : null
+  if (report.applied === 'committed') {
+    // The new content needs a rebuild, which cannot happen under a live app: ask the
+    // on-quit updater to restart this one, and it applies the build and relaunches.
+    const request = join(cwd, RESTART_REQUEST)
+    if (existsSync(join(cwd, '.local-setup'))) {
+      const payload = { upstream, requestedAt: new Date().toISOString() }
+      writeFileSync(request, `${JSON.stringify(payload)}\n`)
+    }
+    return { status: 'updated', upstream, error: null }
+  }
+  if (report.updateAvailable === false) return { status: 'up-to-date', upstream, error: null }
+  return { status: 'failed', upstream, error: typeof report.error === 'string' ? report.error : 'the update did not commit' }
+}
+
+/**
+ * Register the update-status route the browser half reads, and the route that applies one.
  * @param ctx - Context carrying the shared API channel.
  * @param tracker - process-wide reading cache.
+ * @param apply - update procedure; defaults to this checkout's vendoring script.
  */
-export function registerUpdateRoute(ctx: Context, tracker: UpstreamReleaseTracker): void {
+export function registerUpdateRoute(ctx: Context, tracker: UpstreamReleaseTracker, apply: UpdateApplier = runVendorScript): void {
+  let running: Promise<UpdateApplication> | undefined
   ctx.connection.fetch.register({
     path: UPDATE_ROUTE,
     methods: ['GET'],
     requestBody: 'buffered',
     fetch: async request => Response.json(await tracker.status(request.signal), { headers: { 'cache-control': 'no-store' } }),
+  })
+  ctx.connection.fetch.register({
+    path: APPLY_ROUTE,
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: async () => {
+      // One update at a time: a second request must not race the first into the checkout.
+      if (running !== undefined) {
+        const busy: UpdateApplication = { status: 'failed', upstream: null, error: 'an update is already running' }
+        return Response.json(busy, { status: 409, headers: { 'cache-control': 'no-store' } })
+      }
+      running = (async () => {
+        try {
+          const outcome = await apply()
+          tracker.invalidate()
+          return outcome
+        } finally {
+          running = undefined
+        }
+      })()
+      return Response.json(await running, { headers: { 'cache-control': 'no-store' } })
+    },
   })
 }

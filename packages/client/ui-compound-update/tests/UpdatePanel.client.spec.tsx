@@ -15,18 +15,23 @@ const RELEASED = {
   repository: 'tobenwarrior/compound-skills', checkedAt: 1, error: null,
 }
 
+/** Panel state without the implicit update progress, which every case starts from idle. */
+type PanelState = Omit<CompoundUpdateState, 'apply'> & { apply?: CompoundUpdateState['apply'] }
+
 /**
  * Render the panel against one indicator state.
  * @param state - indicator state the injected hook reads.
  * @returns the recorded panel actions.
  */
-function renderPanel(state: CompoundUpdateState) {
+function renderPanel(state: PanelState) {
+  const full: CompoundUpdateState = { apply: { phase: 'idle', error: null }, ...state }
   const hide = vi.fn()
   const refresh = vi.fn()
   const show = vi.fn()
-  const props = { t, useUpdate: (select: (value: CompoundUpdateState) => unknown) => select(state), hide, refresh, show }
+  const apply = vi.fn()
+  const props = { t, useUpdate: (select: (value: CompoundUpdateState) => unknown) => select(full), hide, refresh, show, apply }
   render(<UpdatePanel {...props as ComponentProps<typeof UpdatePanel>} />)
-  return { hide, refresh, show }
+  return { hide, refresh, show, apply }
 }
 
 describe('update steps panel', () => {
@@ -53,7 +58,7 @@ describe('update steps panel', () => {
     expect(dialog.textContent).toContain('0.12.0')
     expect(dialog.textContent).toContain('0.11.0')
     expect(dialog.textContent).toContain(en.stepsTitle)
-    expect(dialog.textContent).toContain(en.stepsBody)
+    expect(dialog.textContent).toContain(en.restartHint)
     expect(screen.getByRole('link', { name: RELEASED.repository }).getAttribute('href'))
       .toBe(`https://github.com/${RELEASED.repository}`)
   })
@@ -82,10 +87,21 @@ describe('update steps panel', () => {
   })
 
   it('hands the deliberate actions back to the caller', () => {
-    const { hide, refresh } = renderPanel({ phase: 'ready', open: true, status: RELEASED })
+    const { hide, refresh, apply } = renderPanel({ phase: 'ready', open: true, status: RELEASED })
+    fireEvent.click(screen.getByRole('button', { name: en.update.replace('{upstream}', '0.12.0') }))
     fireEvent.click(screen.getByRole('button', { name: en.refresh }))
     fireEvent.click(screen.getByRole('button', { name: en.close }))
+    expect(apply).toHaveBeenCalledTimes(1)
     expect(refresh).toHaveBeenCalledTimes(1)
     expect(hide).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a running update and its failure', () => {
+    renderPanel({ phase: 'ready', open: true, status: RELEASED, apply: { phase: 'running', error: null } })
+    expect(screen.getByRole('button', { name: en.updating }).hasAttribute('disabled')).toBe(true)
+    cleanup()
+    renderPanel({ phase: 'ready', open: true, status: RELEASED, apply: { phase: 'failed', error: 'tree is dirty' } })
+    expect(screen.getByRole('dialog').textContent).toContain(en.updateFailed.replace('{reason}', 'tree is dirty'))
+    expect(screen.getByRole('button', { name: en.update.replace('{upstream}', '0.12.0') }).hasAttribute('disabled')).toBe(false)
   })
 })

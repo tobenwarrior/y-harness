@@ -5,6 +5,9 @@ import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 /** Browser-relative form of the Host route registered by `dsh-skill-compound`. */
 export const UPDATE_ROUTE = 'api/skill-compound.update'
 
+/** Browser-relative form of the Host route that applies a released update. */
+export const APPLY_ROUTE = 'api/skill-compound.update.apply'
+
 /** One reading of the released Compound skills version. */
 export interface UpdateStatus {
   /** Release currently vendored into this Y Harness build. */
@@ -29,7 +32,43 @@ export interface CompoundUpdateState {
   readonly open: boolean
   /** Latest reading, retained while a newer one is in flight. */
   readonly status: UpdateStatus | null
+  /** Progress of the in-app update the user asked for. */
+  readonly apply: ApplyProgress
 }
+
+/** Progress of one in-app update. */
+export interface ApplyProgress {
+  /** Idle before the user asks; `done` means the checkout now holds the release. */
+  readonly phase: 'idle' | 'running' | 'done' | 'failed'
+  /** Why the update did not apply, when it did not. */
+  readonly error: string | null
+}
+
+/** What the Host route answers after one update attempt. */
+interface ApplyOutcome {
+  /** What the attempt did. */
+  readonly status: 'updated' | 'up-to-date' | 'failed' | 'unavailable'
+  /** Release the attempt applied, when it applied one. */
+  readonly upstream: string | null
+  /** Why the attempt did not apply, when it did not. */
+  readonly error: string | null
+}
+
+/** Validate one apply response before the indicator renders it. */
+export function isApplyOutcome(value: unknown): value is ApplyOutcome {
+  if (typeof value !== 'object' || value === null) return false
+  const outcome = value as Partial<Record<keyof ApplyOutcome, unknown>>
+  return (outcome.status === 'updated' || outcome.status === 'up-to-date' || outcome.status === 'failed' || outcome.status === 'unavailable')
+    && (typeof outcome.upstream === 'string' || outcome.upstream === null)
+    && (typeof outcome.error === 'string' || outcome.error === null)
+}
+
+/**
+ * Nothing to do here: the Host asks the on-quit updater to restart the app.
+ *
+ * The rebuild cannot run against a live app, so applying the update schedules the
+ * restart on the Host side and the panel only reports it.
+ */
 
 /** Data and callbacks the indicator registrations receive. */
 export interface CompoundUpdateFace {
@@ -41,6 +80,8 @@ export interface CompoundUpdateFace {
   readonly show: () => void
   /** Close the update steps panel. */
   readonly hide: () => void
+  /** Apply the released update, then quit so the rebuild can follow. */
+  readonly apply: () => void
 }
 
 /**
@@ -61,7 +102,9 @@ export function isUpdateStatus(value: unknown): value is UpdateStatus {
 
 /** Owns the indicator's reading state and its request lifetime. */
 export class CompoundUpdateController {
-  private readonly source = createSnapshotStore<CompoundUpdateState>({ phase: 'idle', open: false, status: null })
+  private readonly source = createSnapshotStore<CompoundUpdateState>({
+    phase: 'idle', open: false, status: null, apply: { phase: 'idle', error: null },
+  })
   private request: AbortController | undefined
 
   /** Read the Host route once, retaining the previous reading until it answers. */
@@ -96,6 +139,32 @@ export class CompoundUpdateController {
     }
   }
 
+  /**
+   * Apply the released update, then ask the desktop shell to quit.
+   *
+   * The quit is the point: the checkout now holds the release, and the on-quit
+   * updater rebuilds and relaunches. A host that cannot update (no checkout) or a
+   * failed attempt leaves the app running and reports why.
+   * @returns nothing; progress is published on the shared state.
+   */
+  async applyUpdate(): Promise<void> {
+    if (this.source.getSnapshot().apply.phase === 'running') return
+    this.patch({ apply: { phase: 'running', error: null } })
+    try {
+      const response = await fetch(APPLY_ROUTE, { method: 'POST' })
+      const value: unknown = await response.json()
+      if (!isApplyOutcome(value)) throw new Error('the Host answered with an unrecognized outcome')
+      if (value.status === 'updated' || value.status === 'up-to-date') {
+        this.patch({ apply: { phase: 'done', error: null } })
+        void this.refresh()
+        return
+      }
+      this.patch({ apply: { phase: 'failed', error: value.error ?? 'the update did not apply' } })
+    } catch (error: unknown) {
+      this.patch({ apply: { phase: 'failed', error: error instanceof Error ? error.message : String(error) } })
+    }
+  }
+
   /** Release the in-flight request; the fiber that owns this controller is going away. */
   dispose(): void {
     this.request?.abort()
@@ -112,6 +181,7 @@ export class CompoundUpdateController {
       refresh: () => { void this.refresh() },
       show: () => { this.patch({ open: true }); void this.refresh() },
       hide: () => { this.patch({ open: false }) },
+      apply: () => { void this.applyUpdate() },
     }
   }
 

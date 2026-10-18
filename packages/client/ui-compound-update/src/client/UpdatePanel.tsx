@@ -10,10 +10,11 @@ import css from './UpdatePanel.module.css'
  * @param props - locale plus the indicator's data and actions.
  * @returns the panel, or null while it is closed.
  */
-export function UpdatePanel({ t, useUpdate, hide, refresh }: PropsLocale<'compoundUpdate'> & InjectFace<CompoundUpdateFace>): ReactNode {
+export function UpdatePanel({ t, useUpdate, hide, refresh, apply }: PropsLocale<'compoundUpdate'> & InjectFace<CompoundUpdateFace>): ReactNode {
   const open = useUpdate(state => state.open)
   const phase = useUpdate(state => state.phase)
   const status = useUpdate(state => state.status)
+  const progress = useUpdate(state => state.apply)
   if (!open) return null
   return <div className={css.root} role="presentation">
     <div className={css.mask} aria-hidden="true" onClick={hide} />
@@ -28,12 +29,18 @@ export function UpdatePanel({ t, useUpdate, hide, refresh }: PropsLocale<'compou
       </p>}
       {status?.updateAvailable === true && <>
         <h3 className={css.subtitle}>{t('stepsTitle')}</h3>
-        <p className={css.body}>{t('stepsBody')}</p>
+        <p className={css.body}>{t('restartHint')}</p>
+        {progress.phase === 'failed' && <p className={css.body}>{t('updateFailed', { reason: progress.error ?? '' })}</p>}
         <p className={css.body}>
           {t('repository')}: <a className={css.link} href={`https://github.com/${status.repository}`} target="_blank" rel="noreferrer">{status.repository}</a>
         </p>
       </>}
       <div className={css.actions}>
+        {status?.updateAvailable === true && <Button variant="outline" size="sm" disabled={progress.phase === 'running' || progress.phase === 'done'} onClick={apply}>
+          {progress.phase === 'running'
+            ? t('updating')
+            : progress.phase === 'done' ? t('updated') : t('update', { upstream: status.upstream ?? '' })}
+        </Button>}
         <Button variant="outline" size="sm" onClick={refresh}>{t('refresh')}</Button>
         <Button variant="outline" size="sm" onClick={hide}>{t('close')}</Button>
       </div>

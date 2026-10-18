@@ -1,7 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import {
-  compareReleases, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker, VENDORED_VERSION,
+  APPLY_ROUTE, compareReleases, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
+  VENDORED_VERSION,
 } from '../src/upstream.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -113,11 +114,37 @@ describe('upstream release tracker', () => {
       fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
     } as never)
     registerUpdateRoute(ctx, new UpstreamReleaseTracker(() => Promise.resolve('0.12.0')))
-    expect(routes.map(route => route.path)).toEqual([UPDATE_ROUTE])
+    expect(routes.map(route => route.path)).toEqual([UPDATE_ROUTE, APPLY_ROUTE])
     expect(routes[0]?.methods).toEqual(['GET'])
     const response = await routes[0]?.fetch(new Request(`http://127.0.0.1${UPDATE_ROUTE}`))
     expect(response?.headers.get('cache-control')).toBe('no-store')
     await expect(response?.json()).resolves.toMatchObject({ vendored: VENDORED_VERSION, upstream: '0.12.0', updateAvailable: true })
+    await ctx.fiber.dispose()
+  })
+
+  it('applies through the injected procedure and drops the cached reading', async () => {
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    ctx.provide('connection', {
+      fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+    } as never)
+    const tracker = new UpstreamReleaseTracker(() => Promise.resolve('0.12.0'))
+    let applied = 0
+    registerUpdateRoute(ctx, tracker, async () => {
+      applied += 1
+      return { status: 'updated', upstream: '0.12.0', error: null }
+    })
+    const applyRoute = routes.find(route => route.path === APPLY_ROUTE)
+    expect(applyRoute?.methods).toEqual(['POST'])
+    const response = await applyRoute?.fetch(new Request(`http://127.0.0.1${APPLY_ROUTE}`, { method: 'POST' }))
+    await expect(response?.json()).resolves.toEqual({ status: 'updated', upstream: '0.12.0', error: null })
+    expect(applied).toBe(1)
+    // A second attempt while the first runs must not race it into the checkout.
+    const slow = routes.find(route => route.path === APPLY_ROUTE)?.fetch
+    const first = slow?.(new Request(`http://127.0.0.1${APPLY_ROUTE}`, { method: 'POST' }))
+    const second = slow?.(new Request(`http://127.0.0.1${APPLY_ROUTE}`, { method: 'POST' }))
+    const [one, two] = await Promise.all([first, second])
+    expect([one?.status, two?.status].sort()).toEqual([200, 409])
     await ctx.fiber.dispose()
   })
 })
