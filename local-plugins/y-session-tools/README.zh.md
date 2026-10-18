@@ -28,7 +28,7 @@ Host 配置项还会启用 `@deepseek-ai/dsh-tool-session-query`，为模型提�
 - `GET /api/y-session-tools.session?sessionId=&label=` 返回 `{ sessionId, path, mention }`。
 - `POST /api/y-session-tools.session` 接收 `{ sessionId }`，并删除该会话。
 
-产品没有提供删除操作的 Host 入口（`workspaceRegistry` 负责归档和固定；`sessionPersistence` 仅追加），因此该路由自行解析产物目录，先归档会话以将其从所有浏览入口隐藏，再删除目录、取消归档以将归档集合恢复为原来的状态，最后为该会话发布 `api-session/removed`。发布的删除事件会移除侧边栏中的会话行：Workspace 成员关系会持久保存，不随产物变化，因此若仅隐藏会话，恢复归档集合后仍会留下该行。活动会话会以 `session/live` 拒绝删除。
+产品没有提供删除操作的 Host 入口（`workspaceRegistry` 负责归档和固定；`sessionPersistence` 仅追加），因此该路由自行解析产物目录，先归档会话以将其从所有浏览入口隐藏，再删除目录、取消归档以将归档集合恢复为原来的状态，最后为该会话发布 `api-session/removed`。发布的删除事件会移除侧边栏中的会话行：Workspace 成员关系会持久保存，不随产物变化，因此若仅隐藏会话，恢复归档集合后仍会留下该行。正在运行工作的会话——进行中的回合、作业、子代理投递或未失效的提醒，即 Workspace 注册表自身归档准入所咨询的 `workspace/session-activity` 瀑布所报告的活动——会以 `session/live` 拒绝删除。驻留在内存 store 中并不作为判定依据：桌面 Host 会将本次运行中用户打开过的每个会话都保持为已恢复状态，而挂载但空闲的会话没有需要停止的工作。
 
 `client.js` 是一个动态浏览器 bundle：它注册菜单项和对话框，并且仅从模块表导入 React、`react-dom` 和 `client-store`。
 
@@ -38,12 +38,13 @@ Host 配置项还会启用 `@deepseek-ai/dsh-tool-session-query`，为模型提�
 node local-plugins/y-session-tools/verify-host-route.mjs
 ```
 
-此检查使用真实的临时会话目录树驱动已注册的 fetch 处理函数，验证路径发现、引用提及格式（检出目录构建完成后会与产品中的 `formatSessionReferenceMention` 比较）、活动会话拒绝删除、归档／删除／取消归档／移除的顺序，以及 400／404 响应路径。
+此检查使用真实的临时会话目录树驱动已注册的 fetch 处理函数，验证路径发现、引用提及格式（检出目录构建完成后会与产品中的 `formatSessionReferenceMention` 比较）、运行工作的拒绝删除、挂载但空闲会话的删除、归档／删除／取消归档／移除的顺序，以及 400／404 响应路径。
 
 ## 已知限制
 
 - 删除会移除会话日志及其目录。日志引用的附件 blob、搜索索引行和投影缓存项由各自机制负责后续协调。
-- 拒绝删除**活动**会话；请先停止它。
+- 删除不会释放该会话已挂载的 Agent（产品没有提供释放入口）：保持打开的已删除会话视图仍持有一个存储日志已不存在的活动会话，在其中写入会重建出不完整的日志。请先关闭该视图。
+- 拒绝删除**正在运行工作**的会话；请先停止它。
 - `tool-session-query` 依赖固定为运行时的版本。升级 DSH 后，请重新检查该版本固定值。
 
 ## 安装／移除

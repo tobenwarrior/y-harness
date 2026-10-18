@@ -6,9 +6,10 @@
  *
  * - `GET  ?sessionId=&label=` reports the Session's stored artifact directory
  *   and its canonical `@[label](dsh-session:…)` reference mention.
- * - `POST {sessionId}` permanently deletes a non-live Session's stored
- *   artifacts, after hiding it from every browsing surface and publishing its
- *   removal from the Session list.
+ * - `POST {sessionId}` permanently deletes a Session with no running work
+ *   (turn, job, subagent delivery, or armed reminder; refused otherwise),
+ *   after hiding it from every browsing surface and publishing its removal
+ *   from the Session list.
  *
  * The route exists because no shipped Host entry point deletes a Session:
  * `workspaceRegistry` owns archive/pin, and `sessionPersistence` is
@@ -22,8 +23,8 @@ import { join } from 'node:path'
 export const name = 'y-session-tools'
 
 /**
- * Services the route needs. `sessions` and `dshHomePath` are read through
- * `ctx.get` instead, so a composition without them still mounts the route.
+ * Services the route needs. `dshHomePath` is read through `ctx.get` instead,
+ * so a composition without it still mounts the route.
  */
 export const inject = ['connection', 'workspaceRegistry', 'sessionPersistence']
 
@@ -99,10 +100,16 @@ async function deleteRequest(ctx, request) {
   const body = await readJson(request)
   const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
   if (!isSessionId(sessionId)) return failure(400, 'session/invalid-id', 'invalid session id')
-  // A live Session owns its log and its in-memory state: removing the file
-  // under it would leave a running agent writing to a deleted directory.
-  if (ctx.get('sessions')?.get(sessionId) !== undefined) {
-    return failure(409, 'session/live', `session '${sessionId}' is live; stop it before deleting it`)
+  // Running work owns the Session's log: removing the file under it would
+  // leave an active turn, job, subagent delivery, or armed reminder writing
+  // to a deleted directory. The activity waterfall is the Workspace
+  // registry's own admission predicate (`archiveSession` without
+  // `stopActivity`), and it answers nothing for a Session that is merely
+  // mounted but idle — the desktop host keeps every Session the user opened
+  // this run resumed, so store membership is not a running signal.
+  const activity = await ctx.waterfall('workspace/session-activity', { sessionId }, () => Promise.resolve([]))
+  if (activity.length > 0) {
+    return failure(409, 'session/live', `session '${sessionId}' is running; stop it before deleting it`)
   }
   const snapshot = await ctx.sessionPersistence.stat(sessionId)
   if (snapshot === undefined) return failure(404, 'session/not-found', `session '${sessionId}' is not stored`)

@@ -26,14 +26,18 @@ const project = join(root, 'sessions', '--tmp-fake-project--')
 const liveId = 'session-live-1'
 const deadId = 'session-dead-2'
 const missingId = 'session-missing-3'
+const busyId = 'session-busy-4'
 await mkdir(join(project, deadId), { recursive: true })
 await writeFile(join(project, deadId, 'session.v4.jsonl.zstd'), 'payload')
 await mkdir(join(project, liveId), { recursive: true })
+await mkdir(join(project, busyId), { recursive: true })
 
 let route
 const calls = []
 const live = new Map([[liveId, {}]])
-const stored = new Set([liveId, deadId])
+const stored = new Set([liveId, deadId, busyId])
+/** One running Session's activity, keyed by id; the shape a provider reports. */
+const activity = new Map([[busyId, { kind: 'turn' }]])
 const ctx = {
   connection: { fetch: { register: (registered) => { route = registered; return Promise.resolve(() => {}) } } },
   workspaceRegistry: {
@@ -42,6 +46,13 @@ const ctx = {
   },
   sessionPersistence: { stat: async (id) => (stored.has(id) ? { header: { id } } : undefined) },
   emit: (event, ...args) => { calls.push(`emit:${event}:${String(args[0])}`) },
+  // One waterfall listener in the shape the archive-admission providers use:
+  // it reports its own activity around the delegated `next`.
+  waterfall: async (_name, payload, next) => {
+    const rest = await next()
+    const own = activity.get(payload.sessionId)
+    return own === undefined ? rest : [own, ...rest]
+  },
   get(name) {
     if (name === 'sessions') return { get: (id) => live.get(id) }
     if (name === 'dshHomePath') return (...segments) => join(root, ...segments)
@@ -75,12 +86,25 @@ for (const bad of ['..', '.', 'a/b', 'a~002Fb', '']) {
   assert.equal((await get(`sessionId=${encodeURIComponent(bad)}`)).status, 400, `expected 400 for ${JSON.stringify(bad)}`)
 }
 
-// A live Session is refused and nothing is touched.
-const liveResponse = await post({ sessionId: liveId })
-assert.equal(liveResponse.status, 409)
-assert.equal((await liveResponse.json()).code, 'session/live')
+// A Session with running work is refused and nothing is touched.
+const busyResponse = await post({ sessionId: busyId })
+assert.equal(busyResponse.status, 409)
+assert.equal((await busyResponse.json()).code, 'session/live')
 assert.deepEqual(calls, [])
-await stat(join(project, liveId))
+await stat(join(project, busyId))
+
+// A Session mounted in the live store but idle deletes: store membership is
+// not a running signal, and the desktop host keeps every opened Session
+// resumed for the app run.
+const mounted = await post({ sessionId: liveId })
+assert.equal(mounted.status, 200)
+assert.equal((await mounted.json()).path, join(project, liveId))
+assert.deepEqual(calls, [
+  `archive:${liveId}:true`,
+  `unarchive:${liveId}`,
+  `emit:api-session/removed:${liveId}`,
+])
+await assert.rejects(stat(join(project, liveId)), 'session directory should be gone')
 
 // Deleting hides the Session, removes it, restores the archive set, and
 // publishes the removal that drops its sidebar row.
@@ -88,6 +112,9 @@ const deleted = await post({ sessionId: deadId })
 assert.equal(deleted.status, 200)
 assert.equal((await deleted.json()).path, join(project, deadId))
 assert.deepEqual(calls, [
+  `archive:${liveId}:true`,
+  `unarchive:${liveId}`,
+  `emit:api-session/removed:${liveId}`,
   `archive:${deadId}:true`,
   `unarchive:${deadId}`,
   `emit:api-session/removed:${deadId}`,

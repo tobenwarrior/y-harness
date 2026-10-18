@@ -28,7 +28,7 @@ The fork's `packages/client/ui-workspace` opens this same menu on right-click, s
 - `GET /api/y-session-tools.session?sessionId=&label=` returns `{ sessionId, path, mention }`.
 - `POST /api/y-session-tools.session` with `{ sessionId }` deletes the session.
 
-Deleting has no shipped Host entry point (`workspaceRegistry` owns archive and pin; `sessionPersistence` is append-only), so the route resolves the artifact directory itself, archives the session to hide it from every browsing surface, removes the directory, unarchives it so the archive set returns to its prior state, and then publishes `api-session/removed` for the session. The published removal is what drops the sidebar row: Workspace membership is durable and does not follow the artifacts, so hiding alone would leave the row behind after the archive set is restored. A live session is refused with `session/live`.
+Deleting has no shipped Host entry point (`workspaceRegistry` owns archive and pin; `sessionPersistence` is append-only), so the route resolves the artifact directory itself, archives the session to hide it from every browsing surface, removes the directory, unarchives it so the archive set returns to its prior state, and then publishes `api-session/removed` for the session. The published removal is what drops the sidebar row: Workspace membership is durable and does not follow the artifacts, so hiding alone would leave the row behind after the archive set is restored. A session with running work — an in-flight turn, job, subagent delivery, or armed reminder, as reported by the `workspace/session-activity` waterfall the Workspace registry's own archive admission consults — is refused with `session/live`. Store membership is deliberately not the gate: the desktop host keeps every session the user opened this run resumed, and a mounted-but-idle session has nothing to stop.
 
 `client.js` is a dynamic browser bundle: it registers the menu rows and the dialog and imports only the module table's React, `react-dom`, and `client-store`.
 
@@ -38,12 +38,13 @@ Deleting has no shipped Host entry point (`workspaceRegistry` owns archive and p
 node local-plugins/y-session-tools/verify-host-route.mjs
 ```
 
-Drives the registered fetch handler against a real temporary session tree and checks path discovery, the reference mention (compared with the shipped `formatSessionReferenceMention` once the checkout is built), the live-session refusal, the archive/delete/unarchive/removal ordering, and the 400/404 paths.
+Drives the registered fetch handler against a real temporary session tree and checks path discovery, the reference mention (compared with the shipped `formatSessionReferenceMention` once the checkout is built), the running-work refusal, the mounted-but-idle deletion, the archive/delete/unarchive/removal ordering, and the 400/404 paths.
 
 ## Known limitations
 
 - Deleting removes the session log and its directory. Attachment blobs it referenced, the search index's rows, and projection-cache entries are left for their own reconciliation.
-- Deleting a **live** session is refused; stop it first.
+- Deleting does not dispose the session's mounted Agent (no shipped Host entry point does): a view of the deleted session that stays open holds a live session whose stored log is gone, and writing there would recreate a partial log. Close the view first.
+- Deleting a session with **running work** is refused; stop it first.
 - The `tool-session-query` dependency is pinned to the runtime's version. After a DSH upgrade, re-check that pin.
 
 ## Install / remove
