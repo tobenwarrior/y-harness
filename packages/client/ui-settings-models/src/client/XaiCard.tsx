@@ -49,12 +49,9 @@ function xaiProfile(
     models: catalog.filter(model => ids.includes(model.id)).map(modelSettings) }
 }
 
-/** The small default published on first connect: Grok 4.7 when present, else the catalog lead. */
+/** The default published on first connect: the whole installed catalog in catalog order. */
 function starterXaiModels(catalog: readonly XaiModelView[]): string[] {
-  const preferred = catalog.find(model => model.id === 'grok-4.7')
-  if (preferred !== undefined) return [preferred.id]
-  const lead = catalog[0]
-  return lead === undefined ? [] : [lead.id]
+  return catalog.map(model => model.id)
 }
 
 /**

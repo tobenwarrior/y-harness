@@ -47,7 +47,7 @@ it('keeps xAI sign-in dormant until the user consents to local token storage', a
   expect(f.writeSettings).not.toHaveBeenCalled()
 })
 
-it('publishes grok-4.7 as the starter model once connected', async () => {
+it('publishes the whole installed catalog as the starter selection once connected', async () => {
   const f = fixture({ configured: true, connected: true, busy: false })
   render(<XaiCard {...f} namespace={namespace} t={t} />)
   await screen.findByText(en.statusConnected)
@@ -59,7 +59,7 @@ it('publishes grok-4.7 as the starter model once connected', async () => {
   const written = f.writeSettings.mock.calls[0]?.[1][0]
   if (written?.op !== 'set') throw new Error('Expected saved xAI settings')
   const ids = (written.value as { models: Array<{ id: string }> }).models.map(model => model.id)
-  expect(ids).toEqual(['grok-4.7'])
+  expect(ids).toEqual(['grok-4.6', 'grok-4.7'])
 })
 
 it('returns null without the xai service or settings namespace', async () => {

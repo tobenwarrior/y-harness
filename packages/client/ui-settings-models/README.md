@@ -45,7 +45,7 @@ The generic API-key editor does not offer the ChatGPT or Nous routes. The xAI ro
 
 ### Grok subscription
 
-The Grok card connects a SuperGrok or X Premium subscription through xAI device authorization using pi-ai's bundled client. It requests consent before saving OAuth credentials, shows the device code and verification URL with expiry, then publishes Grok 4.7 as the starter model so the composer starts usable; Refresh re-reads the installed catalog and republishes the saved selection. Disconnect clears the local grant and removes an OAuth-published profile while leaving an API-key profile in place; xAI-side revocation remains an account action.
+The Grok card connects a SuperGrok or X Premium subscription through xAI device authorization using pi-ai's bundled client. It requests consent before saving OAuth credentials, shows the device code and verification URL with expiry, then publishes the whole installed catalog as the starter selection so the composer starts usable; Refresh re-reads the installed catalog and republishes the saved selection. Disconnect clears the local grant and removes an OAuth-published profile while leaving an API-key profile in place; xAI-side revocation remains an account action.
 
 ### API keys
 

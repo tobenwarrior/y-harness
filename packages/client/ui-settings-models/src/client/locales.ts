@@ -78,7 +78,7 @@ export const en = {
   xaiModels: 'Grok models enabled',
   xaiModelsHint: 'These subscription models are offered in the composer.',
   xaiReady: 'Model selection saved. Select one in the composer when ready.',
-  xaiAdded: 'Grok 4.7 was enabled. Use the provider row to choose more.',
+  xaiAdded: 'All installed Grok models were enabled.',
   xaiFailed: 'xAI connection could not be completed. Try again.',
   xaiNoModels: 'No Grok models are available in this build.',
 
@@ -280,7 +280,7 @@ export const zh: {
   xaiModels: '已启用的 Grok 模型',
   xaiModelsHint: '这些订阅模型将在输入框中提供。',
   xaiReady: '已保存模型选择。准备好后可在输入框选择。',
-  xaiAdded: '已启用 Grok 4.7。可使用提供商行选择更多。',
+  xaiAdded: '已启用所有内置 Grok 模型。',
   xaiFailed: '无法完成 xAI 连接，请重试。',
   xaiNoModels: '此构建中没有可用的 Grok 模型。',
   nav: '模型',
