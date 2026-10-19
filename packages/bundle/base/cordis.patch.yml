@@ -255,10 +255,10 @@
     - id: permission
       name: '@deepseek-ai/dsh-permission-presets'
       config:
-        # Codex-style default: this fork's owner works in full access, so new sessions
-        # start with the sandbox open and no approval prompts. The composer selector and
+        # New sessions start confined to the workspace without approval
+        # prompts; wider access is refused. The composer selector and
         # the /permission command still switch a single session.
-        defaultPreset: danger-full-access
+        defaultPreset: approve-for-me
         # Descriptions are the selector's second line. `ask` prompts only for actions the
         # sandbox would refuse, and `never` refuses them outright, so the middle preset
         # trades an interruption for a denial rather than asking about "unsafe" actions.
