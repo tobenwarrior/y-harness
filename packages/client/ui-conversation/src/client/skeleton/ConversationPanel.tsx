@@ -38,7 +38,7 @@ function zoneAt(event: DragEvent<HTMLDivElement>): DropZone {
  * @returns the Conversation subtree, the docked grid, and the drop preview.
  */
 export function ConversationPanel({
-  renderSlot, SessionProvider, t, useDock, useSessions, close, show, titleOf, retain, release, drop,
+  renderSlot, SessionProvider, useDock, useSessions, retain, release, drop,
 }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation'> & InjectFace<ConversationDockFace> & PropsLocale<'conversation'>): ReactNode {
   const dock = useDock(state => state)
   const sessions = useSessions(state => state.ids)
@@ -51,15 +51,6 @@ export function ConversationPanel({
     : (
       <SessionDock
         state={dock}
-        sessions={sessions}
-        titleOf={titleOf}
-        ambientLabel={t('dock.ambient')}
-        onClose={close}
-        onShow={show}
-        labels={{
-          close: t('dock.close'),
-          pane: t('dock.pane'),
-        }}
         renderBody={sessionId => sessionId === null
           ? renderSlot('main.conversation', {})
           : (

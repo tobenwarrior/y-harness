@@ -45,6 +45,8 @@ import { TRAJECTORY_VIEW_ID, resolveActiveView } from './view-selection.ts'
 import { en, NS, zh, type ConversationKey } from './locales.ts'
 import { SessionDockStore } from './dock/store.ts'
 import type { ConversationDockFace } from './dock/face.ts'
+import { DockPaneClose } from './dock/DockPaneClose.tsx'
+import type { DockPaneCloseInjected } from './dock/DockPaneClose.tsx'
 import { CONVERSATION_SETTINGS_NAMESPACE, type ConversationSettings } from '../submission-settings.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -533,14 +535,18 @@ export function apply(ctx: Context, config: Config = Config({})): void {
 
   const dock = new SessionDockStore()
   const dockFace: ConversationDockFace = {
-    hooks: { dock: dock.observable, sessions: sessions.list },
-    close: (index) => { dock.closePane(index) },
-    show: (index, sessionId) => { dock.show(index, sessionId) },
+    hooks: { dock: dock.observable },
     drop: (sessionId, zone) => { dock.dropSession(sessionId, zone) },
-    titleOf: sessionId => sessions.list.getSnapshot().byId[sessionId]?.title ?? sessionId.slice(0, 8),
     retain: sessionId => sessions.retain(sessionId, { source: 'dockPane' }),
     release: (reference) => { reference.release() },
   }
+  ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+    name: 'conversation.session.header.utilities',
+    id: 'dock-close', order: 10, locale: NS, inject: (): DockPaneCloseInjected => ({
+      hooks: { dock: dock.observable },
+      closePane: (index) => { dock.closePane(index) },
+    }),
+  }, DockPaneClose))
 
   slots.inject('main', function* () {
     yield slots.register({
