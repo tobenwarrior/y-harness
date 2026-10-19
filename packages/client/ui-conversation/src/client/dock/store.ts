@@ -4,8 +4,7 @@
  * The grid holds at most three columns and two rows, mirroring the desktop
  * client this fork is used beside. The first pane is the *ambient* Session the
  * rest of the client follows; dropping a Session from the sidebar grows the
- * grid toward the drop side. A pane can be pointed at another Session
- * afterwards.
+ * grid toward the drop side.
  *
  * @module @deepseek-ai/dsh-client-ui-conversation/client/dock/store
  */
@@ -88,13 +87,16 @@ export class SessionDockStore {
    * Place a Session dragged from the sidebar, growing the grid toward the drop side.
    *
    * The dropped Session is known, so nothing is seeded: a left or top drop puts it
-   * first in reading order, a right or bottom drop puts it last.
+   * first in reading order, a right or bottom drop puts it last. A Session that
+   * is already on screen is refused, so header controls resolve their pane by
+   * Session without ambiguity.
    * @param sessionId - Session that was dragged in.
    * @param zone - edge of the conversation the pointer was released on.
    * @returns whether a pane was added.
    */
   dropSession(sessionId: SessionId, zone: DropZone): boolean {
     const state = this.source.getSnapshot()
+    if (state.panes.some(pane => pane.sessionId === sessionId)) return false
     const direction: DockDirection = zone === 'top' || zone === 'bottom' ? 'down' : 'right'
     const columns = direction === 'right' ? state.columns + 1 : state.columns
     const rows = direction === 'down' ? state.rows + 1 : state.rows
@@ -107,19 +109,5 @@ export class SessionDockStore {
       rows,
     })
     return true
-  }
-
-  /**
-   * Show another Session in one pane.
-   * @param index - pane position in reading order.
-   * @param sessionId - Session to render there.
-   */
-  show(index: number, sessionId: DockedSession): void {
-    const state = this.source.getSnapshot()
-    if (!state.panes.some((_, position) => position === index)) return
-    this.source.set({
-      ...state,
-      panes: state.panes.map((pane, position) => position === index ? { sessionId } : pane),
-    })
   }
 }

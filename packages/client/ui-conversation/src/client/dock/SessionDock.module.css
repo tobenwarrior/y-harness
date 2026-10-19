@@ -15,46 +15,6 @@
   background: var(--dsh-color-bg-primary, transparent);
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--dsh-color-border-subtle, rgba(127, 127, 127, 0.2));
-}
-
-.picker {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-weight: 500;
-}
-
-.close {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--yh-alias-label-tertiary);
-  cursor: pointer;
-}
-
-.close:hover {
-  color: var(--yh-alias-label-secondary);
-}
-
-.close svg {
-  width: 14px;
-  height: 14px;
-}
-
 .body {
   flex: 1;
   min-height: 0;

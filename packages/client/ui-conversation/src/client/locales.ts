@@ -13,7 +13,6 @@ const PLAN_NEXT_ACTION_EN = 'describe your task to generate plan'
 export const zh = {
   'dock.close': '关闭窗格',
   'dock.pane': '会话窗格',
-  'dock.ambient': '当前会话',
   'shortcut.newline': '换行',
   'shortcut.complementary': '使用互补的 Queue／Steer 方式',
   'shortcut.slash': '打开命令菜单',
@@ -392,7 +391,6 @@ export type ConversationKey = keyof typeof zh
 export const en = {
   'dock.close': 'Close pane',
   'dock.pane': 'Session pane',
-  'dock.ambient': 'Current session',
   'shortcut.newline': 'New line',
   'shortcut.complementary': 'Use the complementary Queue / Steer action',
   'shortcut.slash': 'Open command menu',

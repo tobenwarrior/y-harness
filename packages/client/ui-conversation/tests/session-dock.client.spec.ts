@@ -88,14 +88,13 @@ describe('docked Session panes', () => {
     expect(store.dropSession(ids[5] as SessionId, 'bottom')).toBe(true)
   })
 
-  it('points one pane at another Session without disturbing its neighbours', () => {
-    const store = new SessionDockStore()
-    expect(store.dropSession(ids[0] as SessionId, 'right')).toBe(true)
-    store.show(1, ids[5] as SessionId)
-    expect(store.observable.getSnapshot().panes).toEqual([{ sessionId: null }, { sessionId: 'f' }])
-    store.show(0, ids[3] as SessionId)
-    expect(store.observable.getSnapshot().panes).toEqual([{ sessionId: 'd' }, { sessionId: 'f' }])
-    store.show(9, ids[1] as SessionId)
-    expect(store.observable.getSnapshot().panes).toHaveLength(2)
+  it('refuses a Session that is already on screen', () => {
+    const store = storeWith(1)
+    expect(store.dropSession(ids[0] as SessionId, 'bottom')).toBe(false)
+    expect(store.observable.getSnapshot()).toEqual({
+      panes: [{ sessionId: null }, { sessionId: 'a' }], columns: 2, rows: 1,
+    })
+    expect(store.dropSession(ids[1] as SessionId, 'bottom')).toBe(true)
+    expect(store.observable.getSnapshot()).toMatchObject({ columns: 2, rows: 2 })
   })
 })

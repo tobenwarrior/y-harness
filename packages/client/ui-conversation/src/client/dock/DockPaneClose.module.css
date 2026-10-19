@@ -1,0 +1,21 @@
+.close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--yh-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--yh-alias-label-secondary);
+}
+
+.close svg {
+  width: 14px;
+  height: 14px;
+}
