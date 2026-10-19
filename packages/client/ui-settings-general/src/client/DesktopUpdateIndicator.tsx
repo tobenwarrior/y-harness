@@ -49,7 +49,8 @@ function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslate): { l
 }
 
 /**
- * Render update status with connection-indicator geometry and brand-blue labels, including retries.
+ * Render update status as an icon with connection-indicator geometry and brand-blue ink, including retries.
+ * State labels and detail live in the tooltip and accessible name in every phase.
  * @param props - Connection priority, sidebar width, and localized bridge-failure copy.
  * @returns Desktop-only status beside the account button, or nothing in browsers.
  */
@@ -74,7 +75,6 @@ export function DesktopUpdateIndicator({ wide, hidden, t, view, onOpen }: {
         {error ? <span className={css.errorDot} />
           : busy ? <IconLoadingOutlineRegular className={css.spinner} size={14} /> : <IconDownloadOutlineRegular size={14} />}
       </span>
-      <span>{label}</span>
     </button>
   </Tooltip>
 }
