@@ -1,0 +1,25 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  color: var(--yh-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.status {
+  color: var(--yh-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
