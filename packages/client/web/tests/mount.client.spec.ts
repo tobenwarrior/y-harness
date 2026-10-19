@@ -140,4 +140,50 @@ describe('mountClient', () => {
     expect(entries.retry).toHaveBeenCalledOnce()
     await ctx.fiber.dispose()
   })
+
+  it('reloads once instead of failing the page on bootstrap staleness', async () => {
+    const ctx = new Context()
+    const entries = provideEntries(ctx)
+    const container = document.createElement('div')
+    const mount = vi.fn(() => () => {})
+    const renderer = provideRenderer(ctx, mount)
+    await mountClient(ctx, container)
+    sessionStorage.clear()
+    vi.useFakeTimers()
+    try {
+      entries.publish({ syncing: true, failures: [] })
+      entries.retire(renderer)
+      const stale = { id: 'bootstrap', message: 'Error: client-modules: replacing bootstrap module bootstrap requires a page reload' }
+      entries.publish({ syncing: false, failures: [stale] })
+      expect(container.textContent).not.toContain('Failed to load plugins')
+      expect(sessionStorage.getItem('dsh.web.bootstrapReloaded')).toBe('1')
+      entries.publish({ syncing: false, failures: [stale] })
+      expect(container.textContent).toContain('Failed to load plugins')
+    } finally {
+      vi.useRealTimers()
+      sessionStorage.clear()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps the failure screen when staleness arrives with ordinary failures', async () => {
+    const ctx = new Context()
+    const entries = provideEntries(ctx)
+    const container = document.createElement('div')
+    const mount = vi.fn(() => () => {})
+    const renderer = provideRenderer(ctx, mount)
+    await mountClient(ctx, container)
+    try {
+      entries.publish({ syncing: true, failures: [] })
+      entries.retire(renderer)
+      entries.publish({ syncing: false, failures: [
+        { id: 'bootstrap', message: 'Error: client-modules: replacing bootstrap module bootstrap requires a page reload' },
+        { id: 'layout', message: 'activation failed' },
+      ] })
+      expect(container.textContent).toContain('Failed to load plugins')
+      expect(sessionStorage.getItem('dsh.web.bootstrapReloaded')).toBeNull()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
 })

@@ -116,6 +116,25 @@ describe('bootstrap failure rendering', () => {
     }, 'facade create failed')
   })
 
+  it('reloads once instead of rendering bootstrap staleness', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const container = document.createElement('div')
+    document.body.append(container)
+    installFacade(() => { throw new Error('client-modules: replacing bootstrap module bootstrap requires a page reload') })
+    const entry = new AppWebEntry(container)
+    sessionStorage.clear()
+    vi.useFakeTimers()
+    try {
+      await entry.run()
+      expect(container.textContent).not.toContain('Failed to load plugins')
+      expect(sessionStorage.getItem('dsh.web.bootstrapReloaded')).toBe('1')
+    } finally {
+      vi.useRealTimers()
+      sessionStorage.clear()
+      await entry.dispose()
+    }
+  })
+
   it('renders a malformed boot manifest', async () => {
     await expectBootFailure(() => {
       installFacade()

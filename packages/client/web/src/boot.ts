@@ -11,6 +11,7 @@ import type {
 } from '@deepseek-ai/dsh-client-modules/client'
 import { bootClient } from './boot-client.ts'
 import { BootPage } from './boot-page.ts'
+import { isBootstrapStalenessOnly, reloadOnceForStaleness } from './bootstrap-staleness.ts'
 import { mountClient } from './mount.ts'
 import { getStaticModules } from './seed.ts'
 import { installWindowDragRecall } from './window-drag/recall.ts'
@@ -98,7 +99,10 @@ export class AppWebEntry {
     } catch (reason) {
       console.error(reason)
       if (onFailure !== undefined) onFailure(reason)
-      else this.page.fail(reason instanceof Error ? reason.message : String(reason))
+      else {
+        const message = reason instanceof Error ? reason.message : String(reason)
+        if (!(isBootstrapStalenessOnly([message]) && reloadOnceForStaleness())) this.page.fail(message)
+      }
     }
   }
 

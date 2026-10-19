@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { assertEntriesActive } from './boot-client.ts'
 import { BootPage } from './boot-page.ts'
+import { clearBootstrapReloadGuard, isBootstrapStalenessOnly, reloadOnceForStaleness } from './bootstrap-staleness.ts'
 
 /**
  * Mount the renderer while entries are settled. Exact retirement notifications
@@ -49,7 +50,12 @@ export async function mountClient(ctx: Context, container: HTMLElement): Promise
       // A failed download before teardown leaves the existing application usable.
       if (unmount !== undefined) return
       if (suspended && snapshot.failures.length > 0) {
-        recoveryPage().fail(snapshot.failures.map(failure => `${failure.id}: ${failure.message}`).join('\n'), retry)
+        // A rebuild that published its manifest before its artifacts settles
+        // itself with one reload; anything else keeps its failure screen.
+        const staleOnly = isBootstrapStalenessOnly(snapshot.failures.map(failure => failure.message))
+        if (!(staleOnly && reloadOnceForStaleness())) {
+          recoveryPage().fail(snapshot.failures.map(failure => `${failure.id}: ${failure.message}`).join('\n'), retry)
+        }
         return
       }
       if (renderer === undefined) return
@@ -60,6 +66,7 @@ export async function mountClient(ctx: Context, container: HTMLElement): Promise
         renderer.slots.renderSlot('root', {})
         unmount = renderer.uiRenderer.mount(container)
         committed = true
+        clearBootstrapReloadGuard()
         page = undefined
         suspended = false
       } catch (error) {
