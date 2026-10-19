@@ -34,6 +34,7 @@ import { readDeviceInfo } from './device-info.ts'
 import { desktopUpdateReadyConfirmation, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale } from './locale.ts'
 import { claimDesktopSingleInstance } from './single-instance.ts'
 import { DesktopUpdateCoordinator } from './update-coordinator.ts'
+import { createCheckoutProbe, detectCheckoutUpdate, findCheckoutRoot, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
@@ -586,6 +587,18 @@ async function main(): Promise<void> {
     return startup
   }
 
+  // The fork's daily app runs from a checkout, where "an update" is a new
+  // commit rather than a feed release. The checkout is resolved lazily: this
+  // scope need not await, and it only matters once a check actually runs.
+  let checkoutProbe: Promise<ReturnType<typeof createCheckoutProbe> | null> | undefined
+  const detectPendingCheckoutUpdate = async (): Promise<CheckoutUpdateState | null> => {
+    checkoutProbe ??= findCheckoutRoot(app.getAppPath())
+      .then(root => root === null ? null : createCheckoutProbe(root))
+      .catch(() => null)
+    const probe = await checkoutProbe
+    return probe === null ? null : detectCheckoutUpdate(probe)
+  }
+
   const updates = new DesktopUpdateCoordinator(
     publishUpdate,
     async () => {
@@ -640,6 +653,7 @@ async function main(): Promise<void> {
     undefined, undefined, undefined,
     (success, reason) => { void track('desktop_upgrade_download_result', { is_success: success, ...reason === undefined ? {} : { error_reason: reason } }) },
 
+    detectPendingCheckoutUpdate,
   )
 
   const updateSchedule = new DesktopUpdateSchedule(updates, resolveDesktopUpdateScheduleConfig(process.env))
@@ -817,6 +831,19 @@ async function main(): Promise<void> {
   })
   ipcMain.handle(DESKTOP_IPC.updatesOpen, async (event) => {
     assertProductSender(event)
+    // A checkout update is applied by exiting: the fork's watcher owns the
+    // rebuild and relaunches afterwards. Building in-process would rewrite the
+    // files this process is executing from.
+    //
+    // The decision reads the state the button is already displaying rather than
+    // re-detecting: `available` without an update source can only be a checkout
+    // update, and re-running the probe here would add I/O to a path whose
+    // callers expect the prompt to proceed immediately.
+    if (updates.state.phase === 'available' && !updates.hasUpdateSource()) {
+      updateJournal?.action('quit-requested')
+      app.quit()
+      return
+    }
     await openUpdatePrompt()
   })
 

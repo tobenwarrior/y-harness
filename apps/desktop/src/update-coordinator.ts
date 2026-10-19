@@ -1,6 +1,7 @@
 /** User-authorized downloads and separate installation of one version-bound Desktop release. */
 
 import { existsSync } from 'node:fs'
+import type { CheckoutUpdateState } from './update-checkout.ts'
 import { join } from 'node:path'
 import { app } from 'electron'
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
@@ -54,6 +55,11 @@ export class DesktopUpdateCoordinator {
     private readonly enabled: () => boolean = () => app.isPackaged && existsSync(join(process.resourcesPath, 'app-update.yml')),
     private readonly currentVersion: () => string = () => app.getVersion(),
     private readonly downloadResult?: (success: boolean, reason?: string) => void,
+    /**
+     * Checkout comparison for a development build, which has no update feed.
+     * Absent means such builds simply report `unavailable`.
+     */
+    private readonly checkoutUpdate: () => Promise<CheckoutUpdateState | null> = async () => null,
   ) {
     if (updater === autoUpdater) {
       // electron-updater omits this internal transport property from its public declarations.
@@ -188,6 +194,15 @@ export class DesktopUpdateCoordinator {
     try {
       this.assertLive()
       if (!this.enabled()) {
+        // A development build runs from a checkout, where "an update" is a new
+        // commit rather than a feed release: compare the build stamp with HEAD
+        // so the standing indicator can offer the rebuild the watcher already
+        // knows how to perform.
+        const checkout = await this.checkoutUpdate()
+        if (checkout !== null && checkout.available) {
+          if (this.current.phase === 'available' && this.current.version === checkout.shortHead) return this.current
+          return this.setState({ phase: 'available', version: checkout.shortHead })
+        }
         if (this.current.phase === 'unavailable') return this.current
         return this.setState({ phase: 'unavailable' })
       }
