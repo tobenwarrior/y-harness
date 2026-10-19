@@ -47,7 +47,7 @@ describe('desktop release metadata', () => {
 const coordinators: InstanceType<typeof DesktopUpdateCoordinator>[] = []
 afterEach(() => { for (const item of coordinators.splice(0)) item.dispose() })
 
-function fixture() {
+function fixture(enabled = true) {
   const events = new EventEmitter()
   const checkForUpdates = vi.fn(async () => ({
     isUpdateAvailable: true,
@@ -66,7 +66,7 @@ function fixture() {
   const updater = Object.assign(events, { checkForUpdates, downloadUpdate, quitAndInstall }) as unknown as AppUpdater
   const coordinator = new DesktopUpdateCoordinator(
     (state) => { states.push(state); return state },
-    beforeRestart, updater, () => true, () => '1.1.0-alpha.1', downloadResult,
+    beforeRestart, updater, () => enabled, () => '1.1.0-alpha.1', downloadResult,
   )
   coordinators.push(coordinator)
   return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
@@ -165,6 +165,16 @@ describe('desktop update coordinator', () => {
     await f.coordinator.check(true)
     expect(f.checkForUpdates).toHaveBeenCalledOnce()
     await expect(f.coordinator.install('1.2.0')).rejects.toThrow(/not ready/u)
+  })
+
+  it('reports a build without an update feed as unavailable instead of a check failure', async () => {
+    const f = fixture(false)
+    expect(f.coordinator.hasUpdateSource()).toBe(false)
+    expect(await f.coordinator.check(true)).toEqual({ phase: 'unavailable' })
+    expect(f.states).toEqual([{ phase: 'unavailable' }])
+    expect(f.checkForUpdates).not.toHaveBeenCalled()
+    expect(await f.coordinator.check()).toEqual({ phase: 'unavailable' })
+    expect(f.states).toEqual([{ phase: 'unavailable' }])
   })
 
   it('keeps automatic failures silent and exposes a manual caller joining the same check', async () => {

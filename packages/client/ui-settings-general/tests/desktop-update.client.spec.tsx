@@ -50,6 +50,14 @@ function fixture() {
 
 const available = { phase: 'available', version: '1.0.1' } as const
 
+it('hides the account-row icon when this build has no update feed', async () => {
+  const f = fixture()
+  try {
+    await f.emit({ phase: 'unavailable' })
+    expect(screen.queryByRole('button')).toBeNull()
+  } finally { f.view.unmount(); f.status.resolve({ phase: 'idle' }) }
+})
+
 it('renders nothing outside the Desktop carrier', () => {
   const source = new DesktopUpdateSource(undefined)
   const view = render(<DesktopUpdateIndicator wide hidden={false} t={translate(zh)}

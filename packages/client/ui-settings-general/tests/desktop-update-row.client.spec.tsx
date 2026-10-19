@@ -72,6 +72,13 @@ describe('DesktopUpdateRow', () => {
     expect(openDesktopUpdate).toHaveBeenCalledOnce()
   })
 
+  it('explains that this build cannot check and disables the action', () => {
+    show(true, { failed: false, opening: false, presentation: { phase: 'unavailable' } })
+    expect(screen.getByText('Updates are not available in this build')).toBeTruthy()
+    const action = screen.getByRole('button', { name: 'Check for Updates' }) as HTMLButtonElement
+    expect(action.disabled).toBe(true)
+  })
+
   it('offers a retry after failures', () => {
     const { openDesktopUpdate } = show(true, {
       failed: false, opening: false, presentation: { phase: 'error', version: '1.0.1', failure: 'download' },

@@ -839,6 +839,10 @@ async function main(): Promise<void> {
       let controller: AbortController | undefined
       let progress: Promise<unknown> | undefined
       try {
+        if (!updates.hasUpdateSource()) {
+          await updateSchedule.check(true)
+          return
+        }
         let state = updates.state
         if (manual || state.phase === 'idle' || (state.phase === 'error' && state.failedOperation === 'check')) {
           controller = new AbortController()
@@ -852,6 +856,7 @@ async function main(): Promise<void> {
           state = await updateSchedule.check(true)
         }
         if (isMandatory()) { mandatoryUI?.focus(); return }
+        if (state.phase === 'unavailable') return
         if (state.phase === 'error' && state.failedOperation === 'check') { await showUpdateFailure(state); return }
         if (state.phase === 'idle') {
           await ordinaryMessageBox({ type: 'info', title: locale.messages.updateCheckTitle,

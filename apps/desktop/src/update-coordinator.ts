@@ -78,6 +78,11 @@ export class DesktopUpdateCoordinator {
   /** Latest observable state; complete download identity remains main-process-owned. */
   get state(): DesktopUpdateState { return this.current }
 
+  /** Whether this process has a packaged update feed. Development builds do not. */
+  hasUpdateSource(): boolean {
+    return this.enabled()
+  }
+
   /**
    * Check metadata without downloading, joining any current check.
    * @param manual - Whether a failed check must remain visible in the status indicator.
@@ -182,7 +187,10 @@ export class DesktopUpdateCoordinator {
   private async doCheck(): Promise<DesktopUpdateState> {
     try {
       this.assertLive()
-      if (!this.enabled()) throw new Error('desktop update: this application has no packaged update source')
+      if (!this.enabled()) {
+        if (this.current.phase === 'unavailable') return this.current
+        return this.setState({ phase: 'unavailable' })
+      }
       const result = await this.updater.checkForUpdates()
       if (result === null) throw new Error('desktop update: no check result was returned')
       const version = result.updateInfo.version

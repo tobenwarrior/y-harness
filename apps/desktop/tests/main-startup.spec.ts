@@ -349,6 +349,7 @@ vi.mock('../src/update-coordinator.ts', () => ({ DesktopUpdateCoordinator: class
   readonly check = harness.updateCheck
   readonly download = harness.updateDownload
   readonly install = harness.updateInstall
+  hasUpdateSource() { return true }
   readonly dispose = vi.fn()
 } }))
 vi.mock('../src/platform-view.ts', async importOriginal => ({
