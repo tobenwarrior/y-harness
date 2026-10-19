@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Choose permission presets for the current Web session or future sessions. General settings changes only the future default; the composer and `/permission` pickers switch the current session. Default Web offers Read Only, Ask for approval, Approve for me, and Full access, each row carrying the preset's own sentence when the deployment configures one. Explicitly loading the experimental Auto integration adds Auto review with an `EXP` badge to current-session pickers. Visible Full access and Auto selections require their own risk acknowledgement; a complete `/permission <preset>` command executes directly. The host confirms each change through the Session projection.
+Choose permission presets for the current Web session or future sessions. General settings changes only the future default; the composer and `/permission` pickers switch the current session. Default Web offers Ask for approval, Approve for me, and Full access, each row carrying the preset's own sentence when the deployment configures one. A deployment that wants the read-only sandbox as a selectable row adds it to the preset table. Explicitly loading the experimental Auto integration adds Auto review with an `EXP` badge to current-session pickers. Visible Full access and Auto selections require their own risk acknowledgement; a complete `/permission <preset>` command executes directly. The host confirms each change through the Session projection.
 
 ## Table of Contents
 

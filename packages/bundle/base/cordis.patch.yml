@@ -263,10 +263,6 @@
         # sandbox would refuse, and `never` refuses them outright, so the middle preset
         # trades an interruption for a denial rather than asking about "unsafe" actions.
         presets:
-          read-only:
-            sandbox: read-only
-            approval: ask
-            description: Read-only inspection; every change and command needs approval.
           workspace-write:
             sandbox: workspace-write
             approval: ask
