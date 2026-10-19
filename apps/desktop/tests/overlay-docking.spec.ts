@@ -13,7 +13,7 @@ import {
   type SkoochDisplay,
   type SkoochScreen,
   type SkoochWindow,
-} from './overlay-docking.ts'
+} from '../src/overlay-docking.ts'
 
 function display(workArea: { x: number; y: number; width: number; height: number }, label = '', size?: { width: number; height: number }): SkoochDisplay {
   return {

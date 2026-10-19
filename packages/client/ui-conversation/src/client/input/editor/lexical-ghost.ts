@@ -51,7 +51,6 @@ function isCleanAcceptGesture(event: KeyboardEvent | null): boolean {
     && !event.ctrlKey
     && !event.metaKey
     && !event.isComposing
-    // oxlint-disable-next-line typescript/no-deprecated
     && event.keyCode !== 229
 }
 

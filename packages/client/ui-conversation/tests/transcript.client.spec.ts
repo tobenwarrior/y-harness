@@ -3,7 +3,7 @@
  * Fakes implement only { locations.getTurn, nodes.get }.
  */
 import { describe, expect, it } from 'vitest'
-import { readLastAssistantText, type ChatSnapshotLike } from './transcript.ts'
+import { readLastAssistantText, type ChatSnapshotLike } from '../src/client/input/editor/transcript.ts'
 
 function snapshot(
   turns: ReadonlyMap<number, readonly { key: string; node: { kind: string; data?: { blocks?: readonly unknown[] } } }[]>,

@@ -7,7 +7,7 @@ import {
   GhostPredictionController,
   type FollowUpPredictionProvider,
   type GhostDraftFace,
-} from './ghost-prediction.ts'
+} from '../src/client/input/editor/ghost-prediction.ts'
 
 function draftFace(empty = true): GhostDraftFace & { replaced: string[] } {
   const replaced: string[] = []
