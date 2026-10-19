@@ -33,16 +33,26 @@
   font-weight: 500;
 }
 
-.control {
+.close {
   flex: none;
-  border: 1px solid var(--dsh-color-border-subtle, rgba(127, 127, 127, 0.3));
-  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
   background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  padding: 1px 8px;
+  color: var(--yh-alias-label-tertiary);
   cursor: pointer;
+}
+
+.close:hover {
+  color: var(--yh-alias-label-secondary);
+}
+
+.close svg {
+  width: 14px;
+  height: 14px;
 }
 
 .body {
@@ -66,12 +76,14 @@
 
 .preview {
   position: absolute;
-  z-index: 3;
+  /* Above the context-meter popover (1100), the highest in-surface layer, so the
+     drop target never hides behind chat content while a Session is dragged in. */
+  z-index: 1200;
   pointer-events: none;
   border: 2px solid var(--dsh-color-accent, #4a8cff);
   border-radius: 8px;
   background: color-mix(in srgb, var(--dsh-color-accent, #4a8cff) 14%, transparent);
-  transition: all 120ms ease-out;
+  transition: inset 120ms ease-out, width 120ms ease-out, height 120ms ease-out;
 }
 
 .left { inset: 0 auto 0 0; width: 50%; }

@@ -532,11 +532,9 @@ export function apply(ctx: Context, config: Config = Config({})): void {
   }, InputBar)
 
   const dock = new SessionDockStore()
-  dock.seedFrom(() => sessions.list.getSnapshot().ids)
   const dockFace: ConversationDockFace = {
     hooks: { dock: dock.observable, sessions: sessions.list },
-    split: (direction) => { dock.split(direction) },
-    close: () => { dock.closeLast() },
+    close: (index) => { dock.closePane(index) },
     show: (index, sessionId) => { dock.show(index, sessionId) },
     drop: (sessionId, zone) => { dock.dropSession(sessionId, zone) },
     titleOf: sessionId => sessions.list.getSnapshot().byId[sessionId]?.title ?? sessionId.slice(0, 8),

@@ -7,7 +7,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { DockSession } from '../dock/DockSession.tsx'
 import { SessionDock } from '../dock/SessionDock.tsx'
 import type { ConversationDockFace } from '../dock/face.ts'
-import { MAX_DOCK_COLUMNS, MAX_DOCK_ROWS, type DropZone } from '../dock/store.ts'
+import type { DropZone } from '../dock/store.ts'
 import type {} from '../contract/slots.ts'
 import css from '../dock/SessionDock.module.css'
 
@@ -38,12 +38,12 @@ function zoneAt(event: DragEvent<HTMLDivElement>): DropZone {
  * @returns the Conversation subtree, the docked grid, and the drop preview.
  */
 export function ConversationPanel({
-  renderSlot, SessionProvider, t, useDock, useSessions, split, close, show, titleOf, retain, release, drop,
+  renderSlot, SessionProvider, t, useDock, useSessions, close, show, titleOf, retain, release, drop,
 }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation'> & InjectFace<ConversationDockFace> & PropsLocale<'conversation'>): ReactNode {
   const dock = useDock(state => state)
   const sessions = useSessions(state => state.ids)
   const [zone, setZone] = useState<DropZone | null>(null)
-  const known = new Set<string>(sessions ?? [])
+  const known = new Set<string>(sessions)
   const carriesSession = (event: DragEvent<HTMLDivElement>): boolean => event.dataTransfer.types.includes('text/plain')
 
   const body = dock.panes.length <= 1
@@ -51,16 +51,12 @@ export function ConversationPanel({
     : (
       <SessionDock
         state={dock}
-        sessions={sessions ?? []}
+        sessions={sessions}
         titleOf={titleOf}
         ambientLabel={t('dock.ambient')}
-        canSplit={dock.columns < MAX_DOCK_COLUMNS || dock.rows < MAX_DOCK_ROWS}
-        onSplit={split}
         onClose={close}
         onShow={show}
         labels={{
-          splitRight: t('dock.splitRight'),
-          splitDown: t('dock.splitDown'),
           close: t('dock.close'),
           pane: t('dock.pane'),
         }}

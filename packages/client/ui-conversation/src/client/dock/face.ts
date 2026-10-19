@@ -2,7 +2,7 @@
 import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { DockDirection, DockedSession, DropZone, SessionDockState } from './store.ts'
+import type { DockedSession, DropZone, SessionDockState } from './store.ts'
 
 declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap {
@@ -26,10 +26,11 @@ export interface ConversationDockFace {
     /** Sessions the pane picker offers. */
     readonly sessions: HostObservable<DockSessionList>
   }
-  /** Grow the grid toward one edge. */
-  readonly split: (direction: DockDirection) => void
-  /** Drop the last pane. */
-  readonly close: () => void
+  /**
+   * Close the pane at `index` in reading order.
+   * @param index - pane position in reading order.
+   */
+  readonly close: (index: number) => void
   /** Point one pane at another Session. */
   readonly show: (index: number, sessionId: DockedSession) => void
   /** Place a Session dragged in from the sidebar on one edge. */

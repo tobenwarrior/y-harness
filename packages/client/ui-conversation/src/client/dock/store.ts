@@ -3,9 +3,9 @@
  *
  * The grid holds at most three columns and two rows, mirroring the desktop
  * client this fork is used beside. The first pane is the *ambient* Session the
- * rest of the client follows; a pane the user adds takes the next Session that
- * is not docked yet, so splitting always shows work that is not already on
- * screen. A pane can be pointed at another Session afterwards.
+ * rest of the client follows; dropping a Session from the sidebar grows the
+ * grid toward the drop side. A pane can be pointed at another Session
+ * afterwards.
  *
  * @module @deepseek-ai/dsh-client-ui-conversation/client/dock/store
  */
@@ -51,8 +51,7 @@ export interface SessionDockState {
  */
 export class SessionDockStore {
   private readonly source: SnapshotStore<SessionDockState>
-  private candidates: () => readonly SessionId[] = () => []
-  /** Splits in the order they happened, so closing reverses the last one. */
+  /** Grid growth in the order it happened, so closing reverses the last one. */
   private readonly growth: DockDirection[] = []
 
   constructor() {
@@ -65,40 +64,20 @@ export class SessionDockStore {
   }
 
   /**
-   * Declare how new panes pick a Session.
-   * @param candidates - Sessions in the order they should be considered.
+   * Drop the pane at `index`, shrinking the grid with it.
+   *
+   * Closing reverses the most recent growth whichever pane held it: the grid
+   * tracks growth order, not which pane each growth added.
+   * @param index - pane position in reading order.
+   * @returns whether a pane was removed; false for an unknown index or a single pane, which stays.
    */
-  seedFrom(candidates: () => readonly SessionId[]): void {
-    this.candidates = candidates
-  }
-
-  /**
-   * Grow the grid, seeding the new cell.
-   * @param direction - `right` adds a column, `down` adds a row.
-   * @returns whether the grid grew; false at the grid's limit, or with no Session left to seed.
-   */
-  split(direction: DockDirection): boolean {
+  closePane(index: number): boolean {
     const state = this.source.getSnapshot()
-    const columns = direction === 'right' ? state.columns + 1 : state.columns
-    const rows = direction === 'down' ? state.rows + 1 : state.rows
-    if (columns > MAX_DOCK_COLUMNS || rows > MAX_DOCK_ROWS) return false
-    const sessionId = this.nextSession(state)
-    if (sessionId === undefined) return false
-    this.growth.push(direction)
-    this.source.set({ panes: [...state.panes, { sessionId }], columns, rows })
-    return true
-  }
-
-  /**
-   * Drop the last pane, shrinking the grid with it.
-   * @returns whether a pane was removed; false for a single pane, which stays.
-   */
-  closeLast(): boolean {
-    const state = this.source.getSnapshot()
+    if (!state.panes.some((_, position) => position === index)) return false
     const grew = this.growth.pop()
     if (grew === undefined) return false
     this.source.set({
-      panes: state.panes.slice(0, -1),
+      panes: state.panes.filter((_, position) => position !== index),
       columns: grew === 'right' ? state.columns - 1 : state.columns,
       rows: grew === 'down' ? state.rows - 1 : state.rows,
     })
@@ -142,17 +121,5 @@ export class SessionDockStore {
       ...state,
       panes: state.panes.map((pane, position) => position === index ? { sessionId } : pane),
     })
-  }
-
-  /** Whether another cell fits in the grid. */
-  canSplit(): boolean {
-    const state = this.source.getSnapshot()
-    return state.columns < MAX_DOCK_COLUMNS || state.rows < MAX_DOCK_ROWS
-  }
-
-  /** The Session a new pane should take: the first candidate not docked already. */
-  private nextSession(state: SessionDockState): SessionId | undefined {
-    const docked = new Set(state.panes.map(pane => pane.sessionId))
-    return this.candidates().find(candidate => !docked.has(candidate))
   }
 }

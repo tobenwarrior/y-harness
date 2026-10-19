@@ -1,7 +1,8 @@
 /** Grid of docked Session panes for the center column. */
 import type { ReactNode } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { DockDirection, DockedSession, SessionDockState } from './store.ts'
+import { IconCloseOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { DockedSession, SessionDockState } from './store.ts'
 import css from './SessionDock.module.css'
 
 /** Props of the docked grid. */
@@ -16,18 +17,12 @@ export interface SessionDockProps {
   readonly ambientLabel: string
   /** Body of one pane; the caller binds the Session scope. */
   readonly renderBody: (sessionId: DockedSession) => ReactNode
-  /** Grow the grid; `direction` is the edge the new pane lands on. */
-  readonly onSplit: (direction: DockDirection) => void
-  /** Drop the last pane. */
-  readonly onClose: () => void
+  /** Close the pane at `index` in reading order. */
+  readonly onClose: (index: number) => void
   /** Show another Session in one pane. */
   readonly onShow: (index: number, sessionId: DockedSession) => void
-  /** Whether another pane fits. */
-  readonly canSplit: boolean
   /** Localized control labels. */
   readonly labels: {
-    readonly splitRight: string
-    readonly splitDown: string
     readonly close: string
     readonly pane: string
   }
@@ -39,7 +34,7 @@ export interface SessionDockProps {
  * @returns the grid.
  */
 export function SessionDock({
-  state, sessions, titleOf, ambientLabel, renderBody, onSplit, onClose, onShow, canSplit, labels,
+  state, sessions, titleOf, ambientLabel, renderBody, onClose, onShow, labels,
 }: SessionDockProps): ReactNode {
   return (
     <div
@@ -61,9 +56,13 @@ export function SessionDock({
               <option value="">{ambientLabel}</option>
               {sessions.map(sessionId => <option key={sessionId} value={sessionId}>{titleOf(sessionId)}</option>)}
             </select>
-            {canSplit && <button type="button" className={css.control} onClick={() => { onSplit('right') }}>{labels.splitRight}</button>}
-            {canSplit && <button type="button" className={css.control} onClick={() => { onSplit('down') }}>{labels.splitDown}</button>}
-            {state.panes.length > 1 && <button type="button" className={css.control} onClick={onClose}>{labels.close}</button>}
+            {state.panes.length > 1 && (
+              <Tooltip label={labels.close} side="bottom" delayMs={500}>
+                <button type="button" className={css.close} aria-label={labels.close} onClick={() => { onClose(index) }}>
+                  <IconCloseOutlineRegular />
+                </button>
+              </Tooltip>
+            )}
           </header>
           <div className={css.body}>{renderBody(pane.sessionId)}</div>
         </section>

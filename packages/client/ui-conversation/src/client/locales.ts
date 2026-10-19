@@ -11,8 +11,6 @@ const PLAN_NEXT_ACTION_EN = 'describe your task to generate plan'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
-  'dock.splitRight': '向右分屏',
-  'dock.splitDown': '向下分屏',
   'dock.close': '关闭窗格',
   'dock.pane': '会话窗格',
   'dock.ambient': '当前会话',
@@ -392,8 +390,6 @@ export type ConversationKey = keyof typeof zh
 
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
-  'dock.splitRight': 'Split right',
-  'dock.splitDown': 'Split down',
   'dock.close': 'Close pane',
   'dock.pane': 'Session pane',
   'dock.ambient': 'Current session',
