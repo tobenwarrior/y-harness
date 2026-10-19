@@ -1,0 +1,58 @@
+/* Equal cells: the grid never scrolls horizontally, panes shrink instead. */
+.grid {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  gap: 1px;
+  background: var(--dsh-color-border-subtle, rgba(127, 127, 127, 0.2));
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--dsh-color-bg-primary, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsh-color-border-subtle, rgba(127, 127, 127, 0.2));
+}
+
+.picker {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+}
+
+.control {
+  flex: none;
+  border: 1px solid var(--dsh-color-border-subtle, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.launcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

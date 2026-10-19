@@ -54,6 +54,8 @@ The shared image slot props keep display choices separate from durable reference
 
 The composer measures its expanded control groups after size, content, visibility, or font-loading changes. If they cannot share a line, the row sets `--dsh-composer-model-text-display: none` and `--dsh-composer-model-icon-display: block` for the model seat; their defaults are `block` and `none`. Wrapping remains available if even the icon cannot fit.
 
+Docked panes render the same Conversation more than once. One pane is the ambient Session the client already follows; each additional pane retains its own Session through `ctx.sessions.retain(id, { source: 'dockPane' })` and binds it with the `SessionProvider` seat, so the reference lives exactly as long as the pane. The grid grows to three columns and two rows, a new pane takes the first Session that is not docked yet, and closing reverses the split that created the last pane. Each pane's picker points it at another Session. The controls live in the Session header's `conversation.session.header.actions` entry.
+
 The context-occupancy button shows a ring and percentage below the input card, after the Session statistics. Clicking it opens the token breakdown in a panel kept inside the viewport, including when no statistics are shown; the button stays hidden until context usage and capacity are available.
 
 With Coding Tools off, the shell hides only Trajectory; other plugin-contributed Views remain available. The View tab bar is hidden when fewer than two Views are available. Turning Coding Tools off while Trajectory is active returns to Chat; stored View preferences and recorded Session data remain intact. Turning it on makes Trajectory available again. View owners receive the available roster so their navigation actions can follow the same visibility.
@@ -167,6 +169,8 @@ None; Conversation assembly and browser input state do not alter provider-side p
 
 - **Only registered targets can render** — the shell deliberately has no implicit fallback target beyond the registered `chat` preference.
 - **Factory occurrences inherit their render-position Session** — `conversation.content` does not accept an independently addressed Session; that requires a separate Session-provider capability.
+- **Docked panes are a uniform grid, not a split tree** — panes fill a columns-by-rows grid rather than nesting, so a pane cannot be divided in two while its neighbour stays whole. [ui-dockkit](../ui-dockkit/README.md) already carries the tree the sidebar uses; adopting it here is the next step if uneven splits are wanted.
+- **A pane cannot be closed individually** — closing drops the most recently added pane.
 
 <a id="dev-note"></a>
 ### Dev Note
