@@ -64,6 +64,12 @@ function classifyPiAiError(message: string): string {
     || /\bterminated\b|premature close/i.test(message)) {
     return 'TRANSPORT'
   }
+  // A terminal generation failure reported by the upstream service with no
+  // status code (`The model failed to generate a response`): the attempt
+  // produced no response, and resending is the documented recovery. `SERVER`
+  // is retryable, unlike the `pending`/`deferred` protocol states below, which
+  // cannot succeed on resend and stay non-retryable `PI_AI_ERROR`.
+  if (/failed to generate (?:a |the )?response/i.test(message)) return 'SERVER'
   return 'PI_AI_ERROR'
 }
 

@@ -877,6 +877,31 @@ describe('mapStopReason / mapUsage', () => {
     expect(mapStopReason(assistant({ stopReason, content: [{ type: 'text', text: 'ok' }] }))).toEqual(expected)
   })
 
+  it('classifies a server generation failure as a retryable SERVER error', () => {
+    // The upstream wording carries no status code, so it must not fall into the
+    // non-retryable PI_AI_ERROR catch-all: dsh-llm-retry retries SERVER.
+    expect(mapStopReason(assistant({
+      stopReason: 'error',
+      errorMessage: 'The model failed to generate a response',
+    }))).toEqual({
+      kind: 'error',
+      failure: { message: 'The model failed to generate a response', code: 'SERVER' },
+    })
+  })
+
+  it('keeps protocol states that cannot succeed on resend non-retryable', () => {
+    for (const errorMessage of [
+      'pi-ai stream for model "m" ended pending',
+      'pi-ai deferred response for model "m" is not supported',
+    ]) {
+      const reason = mapStopReason(assistant({ stopReason: 'error', errorMessage }))
+      expect(reason).toEqual({
+        kind: 'error',
+        failure: { message: errorMessage, code: 'PI_AI_ERROR' },
+      })
+    }
+  })
+
   it('classifies a completed stop with no content as an EMPTY_RESPONSE error', () => {
     expect(mapStopReason(assistant({ stopReason: 'stop' }))).toEqual({
       kind: 'error',
