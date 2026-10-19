@@ -75,6 +75,7 @@ it('keeps the newest event, hides for connection priority, and invokes only the 
     expect(f.open).toHaveBeenCalledOnce()
     await f.emit({ phase: 'error', version: available.version, failure: 'download' })
     const retry = screen.getByRole('button', { name: '重试更新' })
+    expect(retry.querySelector('svg')).not.toBeNull()
     fireEvent.focus(retry)
     expect((await screen.findByRole('tooltip')).textContent).toBe('下载更新失败，请重试。')
     f.view.rerender(<f.Indicator wide={false} />)
