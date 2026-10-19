@@ -247,10 +247,12 @@ export const InputBar = memo(function InputBar({
   const gate = useRef({
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
     intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    menuOpen: commandMenuOpen,
   })
   gate.current = {
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
     intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    menuOpen: commandMenuOpen,
   }
 
   useEffect(() => {

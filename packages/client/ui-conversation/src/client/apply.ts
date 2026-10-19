@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ISessions, SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
+import { readLastAssistantText } from './input/editor/transcript.ts'
 import { IconPaperclipOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createSnapshotStore, type BoundActions } from '@deepseek-ai/dsh-client-store'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
@@ -209,6 +210,21 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     trackedBindings.add(binding)
     bindings.add(binding)
     binding.ctx.effect(() => () => { bindings.delete(binding) }, 'ui-conversation: active Provider binding')
+    binding.ctx.effect(() => {
+      const conversation = uiConversation.binding(binding)
+      let previous = conversation.openTurn.getSnapshot()
+      return conversation.openTurn.subscribe(() => {
+        const current = conversation.openTurn.getSnapshot()
+        const shell = inputHub.shellFor(binding)
+        if (previous !== undefined && current === undefined) {
+          const snapshot = (conversation.target as (name: string) => { getSnapshot(): unknown })('chat').getSnapshot()
+          const text = readLastAssistantText(snapshot as never, previous)
+          shell.notifyTurnCompleted(binding.sessionId, String(previous), text)
+        }
+        if (current !== undefined) shell.ghost.clear()
+        previous = current
+      })
+    }, 'ui-conversation: ghost prediction trigger')
   }
   const refreshViews = (): void => {
     const current = conversationViews.getSnapshot()

@@ -6,6 +6,8 @@ import type { ComposerBarProps } from '../../contract/slots.ts'
 import type { BusyEnterBehavior } from '../../contract/composer-submission.ts'
 import { resolveSubmitMode } from '../submission-policy.ts'
 import { registerComposerKeymap } from './keymap.ts'
+import { registerGhostPrediction } from './lexical-ghost.ts'
+import type { GhostPredictionController } from './ghost-prediction.ts'
 
 interface DraftViewGate {
   locked: boolean
@@ -19,6 +21,7 @@ interface DraftViewGate {
   showToast: (text: string) => void
   t: ComposerBarProps['t']
   canAcceptDrop: boolean
+  menuOpen: boolean
 }
 
 /**
@@ -103,12 +106,51 @@ export function installDraftFilePicker(
  * @param gate - live view values read by the installed handlers.
  * @returns the keymap disposer.
  */
+/**
+ * Ghost suggestion binding installed ahead of menu arbitration (same
+ * priority, first-registered wins): Tab/ArrowRight accept a live ghost and
+ * fall through untouched when none is showing. The menu-open gate comes
+ * from the bar so an open trigger menu keeps Tab. Composition is tracked
+ * locally with the keymap's proven pattern (Safari's late closing keydown).
+ */
+export function installGhostBinding(
+  editor: LexicalEditor,
+  controller: GhostPredictionController | undefined,
+  hasCompetingUi: () => boolean,
+): () => void {
+  if (controller === undefined) return () => {}
+  let composing = false
+  let composingUntil = 0
+  const onStart = (): void => { composing = true }
+  const onEnd = (): void => {
+    composing = false
+    composingUntil = Date.now() + 10
+  }
+  const rootListener = (root: HTMLElement | null, prevRoot: HTMLElement | null): void => {
+    prevRoot?.removeEventListener('compositionstart', onStart)
+    prevRoot?.removeEventListener('compositionend', onEnd)
+    root?.addEventListener('compositionstart', onStart)
+    root?.addEventListener('compositionend', onEnd)
+  }
+  const offRoot = editor.registerRootListener(rootListener)
+  const offGhost = registerGhostPrediction(editor, controller, {
+    isComposing: () => composing || Date.now() < composingUntil || editor.isComposing(),
+    hasCompetingUi,
+  })
+  return () => {
+    offGhost()
+    offRoot()
+  }
+}
+
 export function installDraftKeymap(
   editor: LexicalEditor,
   keyboard: ComposerKeyboard,
   gate: MutableRefObject<DraftViewGate>,
 ): () => void {
-  return registerComposerKeymap(editor, {
+  const ghost = (keyboard as { readonly ghost?: GhostPredictionController }).ghost
+  const unregisterGhost = installGhostBinding(editor, ghost, () => gate.current.menuOpen)
+  const unregisterKeymap = registerComposerKeymap(editor, {
     arbitrate: (key, composing) => keyboard.arbitrate(key, composing),
     space: () => {
       if (gate.current.machineBusy || gate.current.locked) return false
@@ -142,6 +184,10 @@ export function installDraftKeymap(
       keyboard.paste(text)
     },
   })
+  return () => {
+    unregisterGhost()
+    unregisterKeymap()
+  }
 }
 
 /**

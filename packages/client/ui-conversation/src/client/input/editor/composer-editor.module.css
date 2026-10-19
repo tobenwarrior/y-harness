@@ -18,6 +18,23 @@
   cursor: pointer;
 }
 
+:global(.ghost-prediction-face) {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+:global(.ghost-prediction-text) {
+  opacity: 0.45;
+}
+:global(.ghost-prediction-hint) {
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 7px;
+  opacity: 0.5;
+}
+
 .textRef {
   display: inline-block;
   max-width: 100%;

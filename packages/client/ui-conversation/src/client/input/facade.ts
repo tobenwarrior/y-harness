@@ -26,6 +26,8 @@ import type { InputSubmitMode, MessageSubmission, MessageSubmissionState } from 
 import { SubmitMachine } from './machine.ts'
 import { resolveDraftInput, snapshotDraft } from '../draft.ts'
 import { DraftEditorRuntime } from './editor/runtime.ts'
+import { GhostPredictionController } from './editor/ghost-prediction.ts'
+import { LlmFollowUpProvider } from './editor/llm-provider.ts'
 import type { EditorProjection } from './editor/projection.ts'
 
 /** Popup face the shell needs (dismissal only; typed structurally to avoid a value import). */
@@ -137,6 +139,8 @@ export class SessionInputShell implements SessionInput {
 
   private readonly core = new SubmitMachine()
   private readonly draftEditor: DraftEditorRuntime
+  /** Ghost follow-up suggestion state for this session's composer. */
+  readonly ghost: GhostPredictionController
   private get projection(): EditorProjection {
     return this.draftEditor.projection
   }
@@ -177,8 +181,35 @@ export class SessionInputShell implements SessionInput {
       resolveLexicon: () => this.deps.inputTriggers?.()?.lexicon,
     })
     this.unregister = this.draftEditor.register()
+    this.ghost = new GhostPredictionController(
+      new LlmFollowUpProvider(this.deps.actx, () => {
+        const selection = this.deps.submissionState?.()?.model
+        return selection === undefined
+          ? undefined
+          : { provider: selection.provider, model: selection.name }
+      }),
+      {
+        isEmpty: () => {
+          const projection = this.projection
+          return projection.clipboardText === '' && projection.occurrences.length === 0
+        },
+        replaceWith: (text: string) => { this.draftEditor.setDraft(text) },
+      },
+    )
     this.state = createSnapshotStore<InputState>(this.compose())
     this.unsubscribeInbox = deps.inbox?.subscribe(() => { this.publish() })
+  }
+
+  /**
+   * Turn-completed entry point for the ghost trigger: fetch a follow-up
+   * suggestion, or clear when there is no assistant text to continue from.
+   */
+  notifyTurnCompleted(conversationId: string, turnId: string, assistantText: string): void {
+    if (assistantText.trim() === '') {
+      this.ghost.clear()
+      return
+    }
+    void this.ghost.fetchAfterTurn(conversationId, turnId, assistantText)
   }
 
   // ---- editor plumbing ----
