@@ -24,11 +24,14 @@ export class GhostPredictionNode extends DecoratorNode<React.JSX.Element> {
   private readonly suggestionText: string
 
   /**
+   * Defaults are not decoration: Lexical requires a constructor it can call
+   * with no arguments unless the node also round-trips through
+   * {@link GhostPredictionNode.importJSON}. Both are provided.
    * @param predictionId - suggestion id for React keys/telemetry correlation.
    * @param text - suggestion text to render (never edited in place).
    * @param key - Lexical node key.
    */
-  constructor(predictionId: string, text: string, key?: NodeKey) {
+  constructor(predictionId = '', text = '', key?: NodeKey) {
     super(key)
     this.predictionId = predictionId
     this.suggestionText = text
@@ -83,9 +86,37 @@ export class GhostPredictionNode extends DecoratorNode<React.JSX.Element> {
     )
   }
 
-  /** Ghosts must not persist: refuse serialization loudly. */
+  /**
+   * The ghost round-trips as node JSON rather than refusing to serialize:
+   * Lexical requires the pair for any node it cannot construct with no
+   * arguments, and refusing broke editor creation outright. Persistence is
+   * still safe because the decorator sync removes every ghost whenever no
+   * prediction is live, and `getTextContent` keeps ghost text out of the
+   * clipboard/draft projection.
+   */
   override exportJSON(): SerializedGhostPredictionNode {
-    throw new Error('GhostPredictionNode must not be serialized')
+    return {
+      type: 'ghost-prediction',
+      version: 1,
+      predictionId: this.predictionId,
+      text: this.suggestionText,
+    }
+  }
+
+  /**
+   * Rebuild a ghost from its serialized form (undo/redo round trips). The
+   * parameter is Lexical's base shape, so the payload is validated rather than
+   * trusted; absent fields degrade to a textless ghost the sync then removes.
+   */
+  static override importJSON(
+    serialized: SerializedLexicalNode & Record<string, unknown>,
+  ): GhostPredictionNode {
+    const predictionId = serialized['predictionId']
+    const text = serialized['text']
+    return $createGhostPredictionNode(
+      typeof predictionId === 'string' ? predictionId : '',
+      typeof text === 'string' ? text : '',
+    )
   }
 
   /** Suggestion id for binding correlation. */

@@ -16,33 +16,17 @@
  * - Telemetry reports shown/accepted once per prediction id; never throws.
  */
 
-/** One follow-up suggestion. */
-export interface FollowUpPrediction {
-  /** Stable id used for shown/accepted dedupe (e.g. a turn or request id). */
-  readonly id: string
-  /** Suggested draft text; empty means abstain (nothing renders). */
-  readonly text: string
-}
+// The controller consumes only the contract's types; the host half owns the
+// provider implementation, so no value import is needed here.
+import type {
+  FollowUpPrediction, FollowUpPredictionProvider,
+} from '../../../follow-up-contract.ts'
 
-/** Context supplied to a provider fetch. */
-export interface PredictionRequest {
-  /** Owning conversation id. */
-  readonly conversationId: string
-  /** Latest completed assistant turn id. */
-  readonly turnId: string
-  /** Plain text of the completed assistant message (may be truncated). */
-  readonly assistantText: string
-  /** Abort when a newer turn completes or the session goes away. */
-  readonly signal: AbortSignal
-}
-
-/**
- * Prediction source. Implementations must resolve null on abstain, error,
- * or abort — the controller never surfaces provider failures.
- */
-export interface FollowUpPredictionProvider {
-  fetchPrediction(request: PredictionRequest): Promise<FollowUpPrediction | null>
-}
+// Re-exported so existing consumers and tests keep one import site.
+export {
+  buildFollowUpPrompt, MAX_PREDICTION_CHARS,
+  type FollowUpPrediction, type FollowUpPredictionProvider, type PredictionRequest,
+} from '../../../follow-up-contract.ts'
 
 /** Telemetry sink; the default logs at debug and never throws. */
 export interface GhostPredictionTelemetry {
@@ -62,6 +46,15 @@ export interface GhostDraftFace {
 export type PredictionSkipReason =
   | 'disabled'
   | 'no-conversation'
+
+/**
+ * Provider used when no host source is wired: the composer simply never
+ * suggests. Model access belongs to the host half, which injects a real
+ * provider through `SessionInputDeps`.
+ */
+export const NO_FOLLOW_UP_PREDICTION: FollowUpPredictionProvider = {
+  fetchPrediction: () => Promise.resolve(null),
+}
 
 /**
  * Owns ghost-prediction state for one composer session: fetch generation
@@ -195,20 +188,3 @@ export class GhostPredictionController {
     return prediction.text
   }
 }
-
-/**
- * Follow-up prompt builder for model-backed providers. Keeps the request
- * small and single-purpose: one likely next user message, plain text.
- * @param assistantText - latest completed assistant message (pre-truncated).
- */
-export function buildFollowUpPrompt(assistantText: string): { system: string; user: string } {
-  return {
-    system: 'Suggest one likely next user message for the chat below. '
-      + 'Reply with only the suggested message text, no quotes or explanation. '
-      + 'Reply with an empty string when no follow-up is likely.',
-    user: assistantText,
-  }
-}
-
-/** Max suggestion length accepted from a provider (longer text is cut). */
-export const MAX_PREDICTION_CHARS = 500

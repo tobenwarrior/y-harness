@@ -26,8 +26,8 @@ import type { InputSubmitMode, MessageSubmission, MessageSubmissionState } from 
 import { SubmitMachine } from './machine.ts'
 import { resolveDraftInput, snapshotDraft } from '../draft.ts'
 import { DraftEditorRuntime } from './editor/runtime.ts'
-import { GhostPredictionController } from './editor/ghost-prediction.ts'
-import { LlmFollowUpProvider } from './editor/llm-provider.ts'
+import { GhostPredictionController, NO_FOLLOW_UP_PREDICTION } from './editor/ghost-prediction.ts'
+import type { FollowUpPredictionProvider } from '../../follow-up-contract.ts'
 import type { EditorProjection } from './editor/projection.ts'
 
 /** Popup face the shell needs (dismissal only; typed structurally to avoid a value import). */
@@ -43,6 +43,11 @@ export interface PopupDismissFace {
 export interface SessionInputDeps {
   /** Session-scope ctx handed to claim.submit transactions. */
   actx: Context
+  /**
+   * Follow-up prediction source for the ghost suggestion. The host half owns
+   * model access and injects this; absent means the composer never suggests.
+   */
+  followUpPrediction?: FollowUpPredictionProvider | undefined
   /** Snapshot the Session facts before asynchronous command arbitration. */
   submissionState?: () => MessageSubmissionState
   /** Notify one ordinary message attempt before reference serialization. */
@@ -181,13 +186,10 @@ export class SessionInputShell implements SessionInput {
       resolveLexicon: () => this.deps.inputTriggers?.()?.lexicon,
     })
     this.unregister = this.draftEditor.register()
+    // The host half owns model access and injects the provider; without one
+    // the composer simply never suggests.
     this.ghost = new GhostPredictionController(
-      new LlmFollowUpProvider(this.deps.actx, () => {
-        const selection = this.deps.submissionState?.()?.model
-        return selection === undefined
-          ? undefined
-          : { provider: selection.provider, model: selection.name }
-      }),
+      this.deps.followUpPrediction ?? NO_FOLLOW_UP_PREDICTION,
       {
         isEmpty: () => {
           const projection = this.projection

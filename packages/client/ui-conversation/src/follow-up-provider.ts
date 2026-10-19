@@ -10,8 +10,8 @@ import type {
   FollowUpPrediction,
   FollowUpPredictionProvider,
   PredictionRequest,
-} from './ghost-prediction.ts'
-import { MAX_PREDICTION_CHARS, buildFollowUpPrompt } from './ghost-prediction.ts'
+} from './follow-up-contract.ts'
+import { MAX_PREDICTION_CHARS, buildFollowUpPrompt } from './follow-up-contract.ts'
 
 /** Route for the prediction call (small fast model preferred). */
 export interface FollowUpRoute {
