@@ -44,7 +44,6 @@ import { installStopShortcut } from './stop-shortcut.ts'
 import { TRAJECTORY_VIEW_ID, resolveActiveView } from './view-selection.ts'
 import { en, NS, zh, type ConversationKey } from './locales.ts'
 import { SessionDockStore } from './dock/store.ts'
-import { DockLauncher } from './dock/DockLauncher.tsx'
 import type { ConversationDockFace } from './dock/face.ts'
 import { CONVERSATION_SETTINGS_NAMESPACE, type ConversationSettings } from '../submission-settings.ts'
 
@@ -539,6 +538,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     split: (direction) => { dock.split(direction) },
     close: () => { dock.closeLast() },
     show: (index, sessionId) => { dock.show(index, sessionId) },
+    drop: (sessionId, zone) => { dock.dropSession(sessionId, zone) },
     titleOf: sessionId => sessions.list.getSnapshot().byId[sessionId]?.title ?? sessionId.slice(0, 8),
     retain: sessionId => sessions.retain(sessionId, { source: 'dockPane' }),
     release: (reference) => { reference.release() },
@@ -558,14 +558,6 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     yield registerHeader()
     yield registerSessionHeader()
     yield registerComposerBar()
-    yield slots.inject('conversation.session.header', function* () {
-      yield slots.register({
-        name: 'conversation.session.header.actions',
-        id: 'session-dock',
-        locale: NS,
-        inject: () => dockFace,
-      }, DockLauncher)
-    })
   })
 
   ctx.plugin(ConversationController, {

@@ -54,7 +54,7 @@ The shared image slot props keep display choices separate from durable reference
 
 The composer measures its expanded control groups after size, content, visibility, or font-loading changes. If they cannot share a line, the row sets `--dsh-composer-model-text-display: none` and `--dsh-composer-model-icon-display: block` for the model seat; their defaults are `block` and `none`. Wrapping remains available if even the icon cannot fit.
 
-Docked panes render the same Conversation more than once. One pane is the ambient Session the client already follows; each additional pane retains its own Session through `ctx.sessions.retain(id, { source: 'dockPane' })` and binds it with the `SessionProvider` seat, so the reference lives exactly as long as the pane. The grid grows to three columns and two rows, a new pane takes the first Session that is not docked yet, and closing reverses the split that created the last pane. Each pane's picker points it at another Session. The controls live in the Session header's `conversation.session.header.actions` entry.
+Docked panes render the same Conversation more than once. One pane is the ambient Session the client already follows; each additional pane retains its own Session through `ctx.sessions.retain(id, { source: 'dockPane' })` and binds it with the `SessionProvider` seat, so the reference lives exactly as long as the pane. The grid grows to three columns and two rows, a new pane takes the first Session that is not docked yet, and closing reverses the split that created the last pane. A pane's picker points it at another Session, and its header carries the split and close controls. A Session dragged out of the sidebar's workspaces tree carries its id as `text/plain`: dropping it on an edge of the conversation adds a pane on that side, and the surface previews the side while the drag is over it. A Session the client does not list is refused.
 
 The context-occupancy button shows a ring and percentage below the input card, after the Session statistics. Clicking it opens the token breakdown in a panel kept inside the viewport, including when no statistics are shown; the button stays hidden until context usage and capacity are available.
 
@@ -171,6 +171,7 @@ None; Conversation assembly and browser input state do not alter provider-side p
 - **Factory occurrences inherit their render-position Session** — `conversation.content` does not accept an independently addressed Session; that requires a separate Session-provider capability.
 - **Docked panes are a uniform grid, not a split tree** — panes fill a columns-by-rows grid rather than nesting, so a pane cannot be divided in two while its neighbour stays whole. [ui-dockkit](../ui-dockkit/README.md) already carries the tree the sidebar uses; adopting it here is the next step if uneven splits are wanted.
 - **A pane cannot be closed individually** — closing drops the most recently added pane.
+- **A dropped Session is not moved, it is copied into a pane** — the sidebar row stays where it was, so the same Session can be docked twice.
 
 <a id="dev-note"></a>
 ### Dev Note

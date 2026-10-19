@@ -56,3 +56,25 @@
   align-items: center;
   gap: 6px;
 }
+
+/* Drop surface: the conversation column accepts a Session dragged from the sidebar. */
+.surface {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+
+.preview {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 2px solid var(--dsh-color-accent, #4a8cff);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsh-color-accent, #4a8cff) 14%, transparent);
+  transition: all 120ms ease-out;
+}
+
+.left { inset: 0 auto 0 0; width: 50%; }
+.right { inset: 0 0 0 auto; width: 50%; }
+.top { inset: 0 0 auto 0; height: 50%; }
+.bottom { inset: auto 0 0 0; height: 50%; }

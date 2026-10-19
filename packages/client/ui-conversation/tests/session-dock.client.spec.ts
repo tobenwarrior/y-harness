@@ -58,6 +58,35 @@ describe('docked Session panes', () => {
     expect(store.observable.getSnapshot().panes).toEqual([{ sessionId: null }])
   })
 
+  it('places a Session dragged in on the right after the docked panes', () => {
+    const store = storeWith(ids)
+    expect(store.dropSession(ids[2] as SessionId, 'right')).toBe(true)
+    expect(store.observable.getSnapshot()).toEqual({
+      panes: [{ sessionId: null }, { sessionId: 'c' }], columns: 2, rows: 1,
+    })
+  })
+
+  it('places a Session dropped on the left or top first in reading order', () => {
+    const left = storeWith(ids)
+    left.split('right')
+    expect(left.dropSession(ids[4] as SessionId, 'left')).toBe(true)
+    expect(left.observable.getSnapshot().panes).toEqual([
+      { sessionId: 'e' }, { sessionId: null }, { sessionId: 'a' },
+    ])
+    const top = storeWith(ids)
+    expect(top.dropSession(ids[4] as SessionId, 'top')).toBe(true)
+    expect(top.observable.getSnapshot()).toMatchObject({ columns: 1, rows: 2 })
+    expect(top.observable.getSnapshot().panes[0]).toEqual({ sessionId: 'e' })
+  })
+
+  it('refuses a drop that the grid cannot hold', () => {
+    const store = storeWith(ids)
+    store.split('right')
+    store.split('right')
+    expect(store.dropSession(ids[5] as SessionId, 'right')).toBe(false)
+    expect(store.dropSession(ids[5] as SessionId, 'bottom')).toBe(true)
+  })
+
   it('points one pane at another Session without disturbing its neighbours', () => {
     const store = storeWith(ids)
     store.split('right')

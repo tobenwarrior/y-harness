@@ -20,6 +20,9 @@ export const MAX_DOCK_ROWS = 2
 /** Which way a split adds a cell. */
 export type DockDirection = 'right' | 'down'
 
+/** Edge of the conversation a dragged Session was released on. */
+export type DropZone = 'left' | 'right' | 'top' | 'bottom'
+
 /** Session one pane renders; `null` is the ambient Session the client already follows. */
 export type DockedSession = SessionId | null
 
@@ -98,6 +101,31 @@ export class SessionDockStore {
       panes: state.panes.slice(0, -1),
       columns: grew === 'right' ? state.columns - 1 : state.columns,
       rows: grew === 'down' ? state.rows - 1 : state.rows,
+    })
+    return true
+  }
+
+  /**
+   * Place a Session dragged from the sidebar, growing the grid toward the drop side.
+   *
+   * The dropped Session is known, so nothing is seeded: a left or top drop puts it
+   * first in reading order, a right or bottom drop puts it last.
+   * @param sessionId - Session that was dragged in.
+   * @param zone - edge of the conversation the pointer was released on.
+   * @returns whether a pane was added.
+   */
+  dropSession(sessionId: SessionId, zone: DropZone): boolean {
+    const state = this.source.getSnapshot()
+    const direction: DockDirection = zone === 'top' || zone === 'bottom' ? 'down' : 'right'
+    const columns = direction === 'right' ? state.columns + 1 : state.columns
+    const rows = direction === 'down' ? state.rows + 1 : state.rows
+    if (columns > MAX_DOCK_COLUMNS || rows > MAX_DOCK_ROWS) return false
+    const pane: DockedPane = { sessionId }
+    this.growth.push(direction)
+    this.source.set({
+      panes: zone === 'left' || zone === 'top' ? [pane, ...state.panes] : [...state.panes, pane],
+      columns,
+      rows,
     })
     return true
   }
