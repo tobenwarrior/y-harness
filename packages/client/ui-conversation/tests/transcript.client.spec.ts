@@ -5,10 +5,19 @@
 import { describe, expect, it } from 'vitest'
 import { readLastAssistantText, type ChatSnapshotLike } from '../src/client/input/editor/transcript.ts'
 
-function snapshot(
-  turns: ReadonlyMap<number, readonly { key: string; node: { kind: string; data?: { blocks?: readonly unknown[] } } }[]>,
-): ChatSnapshotLike {
-  const byKey = new Map<string, { kind: string; data?: { blocks?: readonly unknown[] } }>()
+/** One row in a fake turn: a node that may or may not carry blocks. */
+interface FakeNode {
+  readonly kind: string
+  /** Omitted for rows with no blocks (the real user/tool rows carry none). */
+  readonly data?: { readonly blocks?: readonly unknown[] } | undefined
+}
+interface FakeEntry {
+  readonly key: string
+  readonly node: FakeNode
+}
+
+function snapshot(turns: ReadonlyMap<number, readonly FakeEntry[]>): ChatSnapshotLike {
+  const byKey = new Map<string, FakeNode>()
   const byTurn = new Map<number, string[]>()
   for (const [turn, entries] of turns) {
     byTurn.set(turn, entries.map((entry) => {
@@ -26,15 +35,15 @@ const assistant = (text: string) => ({
   kind: 'assistant',
   data: { blocks: [{ kind: 'text', text }] },
 })
-const user = () => ({ kind: 'user', data: undefined })
+const user = (): FakeNode => ({ kind: 'user' })
 
 describe('readLastAssistantText', () => {
   it('joins assistant text blocks in anchor order, skipping other rows', () => {
-    const snap = snapshot(new Map([
+    const snap = snapshot(new Map<number, readonly FakeEntry[]>([
       [1, [
         { key: 'u1', node: user() },
         { key: 'a1', node: assistant('First.') },
-        { key: 't1', node: { kind: 'tool', data: undefined } },
+        { key: 't1', node: { kind: 'tool' } },
         { key: 'a2', node: assistant('Second.') },
       ]],
     ]))
@@ -42,7 +51,7 @@ describe('readLastAssistantText', () => {
   })
 
   it('ignores non-text blocks and trims', () => {
-    const snap = snapshot(new Map([
+    const snap = snapshot(new Map<number, readonly FakeEntry[]>([
       [2, [{
         key: 'a1',
         node: {
@@ -61,7 +70,7 @@ describe('readLastAssistantText', () => {
   })
 
   it('caps length and returns empty for unknown turns or snapshots', () => {
-    const snap = snapshot(new Map([[3, [{ key: 'a1', node: assistant('abcdef') }]]]))
+    const snap = snapshot(new Map<number, readonly FakeEntry[]>([[3, [{ key: 'a1', node: assistant('abcdef') }]]]))
     expect(readLastAssistantText(snap, 3, 4)).toBe('abcd')
     expect(readLastAssistantText(snap, 99)).toBe('')
     expect(readLastAssistantText(undefined, 3)).toBe('')

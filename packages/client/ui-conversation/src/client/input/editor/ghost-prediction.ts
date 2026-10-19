@@ -61,7 +61,6 @@ export interface GhostDraftFace {
 /** Reasons a fetch is skipped (recorded for debugging, never user-facing). */
 export type PredictionSkipReason =
   | 'disabled'
-  | 'already-fetching'
   | 'no-conversation'
 
 /**
@@ -72,7 +71,6 @@ export type PredictionSkipReason =
  */
 export class GhostPredictionController {
   private enabled = true
-  private fetching = false
   private generation = 0
   private prediction: FollowUpPrediction | null = null
   private readonly shownIds = new Set<string>()
@@ -134,7 +132,6 @@ export class GhostPredictionController {
     this.currentAbort?.abort()
     const abort = new AbortController()
     this.currentAbort = abort
-    this.fetching = true
     try {
       const result = await this.provider.fetchPrediction({
         conversationId, turnId, assistantText, signal: abort.signal,
@@ -148,7 +145,6 @@ export class GhostPredictionController {
       // Never break the composer: failures and aborts keep prior state.
       return null
     } finally {
-      if (this.generation === generation) this.fetching = false
     }
   }
 
@@ -160,7 +156,6 @@ export class GhostPredictionController {
     this.generation += 1
     this.currentAbort?.abort()
     this.currentAbort = null
-    this.fetching = false
     this.prediction = null
   }
 

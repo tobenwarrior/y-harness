@@ -35,32 +35,32 @@ export class GhostPredictionNode extends DecoratorNode<React.JSX.Element> {
   }
 
   /** Lexical node type discriminator. */
-  static getType(): string {
+  static override getType(): string {
     return 'ghost-prediction'
   }
 
   /** Lexical clone contract. */
-  static clone(node: GhostPredictionNode): GhostPredictionNode {
+  static override clone(node: GhostPredictionNode): GhostPredictionNode {
     return new GhostPredictionNode(node.predictionId, node.suggestionText, node.__key)
   }
 
   /** Block-level (own paragraph-like row under the empty paragraph). */
-  isInline(): boolean {
+  override isInline(): boolean {
     return false
   }
 
   /** Decorator nodes are atomic; text inside never participates in selection. */
-  isIsolated(): boolean {
+  override isIsolated(): boolean {
     return true
   }
 
   /** Ghost text contributes no clipboard content. */
-  getTextContent(): string {
+  override getTextContent(): string {
     return ''
   }
 
   /** Host element: inert, hidden from assistive tech, non-editable. */
-  createDOM(): HTMLElement {
+  override createDOM(): HTMLElement {
     const el = document.createElement('span')
     el.setAttribute('data-ghost-prediction', '')
     el.setAttribute('aria-hidden', 'true')
@@ -72,19 +72,19 @@ export class GhostPredictionNode extends DecoratorNode<React.JSX.Element> {
   }
 
   /** Static host: never update the DOM element itself. */
-  updateDOM(): boolean {
+  override updateDOM(): boolean {
     return false
   }
 
   /** React face: suggestion text plus the accept-hint pill. */
-  decorate(): React.JSX.Element {
+  override decorate(): React.JSX.Element {
     return (
       <GhostPredictionFace text={this.suggestionText} />
     )
   }
 
   /** Ghosts must not persist: refuse serialization loudly. */
-  exportJSON(): SerializedGhostPredictionNode {
+  override exportJSON(): SerializedGhostPredictionNode {
     throw new Error('GhostPredictionNode must not be serialized')
   }
 
