@@ -9,6 +9,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {
   CodexBackendModelView, CodexBackendView, CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
   NousConnectionView, NousDeviceVerification, NousModelView, SettingsNamespaceView, SettingsPathOpView,
+  XaiConnectionView, XaiDeviceVerification, XaiModelView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 
 /** What one namespace write answered. */
@@ -39,6 +40,15 @@ export interface ModelsOperations {
     finish(signal: AbortSignal): Promise<NousConnectionView>
     cancel(): Promise<void>
     models(): Promise<NousModelView[]>
+    disconnect(): Promise<void>
+  }
+  /** xAI subscription callbacks; finish polling belongs to the current card's abort signal. */
+  xai?: {
+    getState(): Promise<XaiConnectionView>
+    start(saveLocally: boolean): Promise<XaiDeviceVerification>
+    finish(signal: AbortSignal): Promise<XaiConnectionView>
+    cancel(): Promise<void>
+    models(): Promise<XaiModelView[]>
     disconnect(): Promise<void>
   }
   codexBackend?: {
@@ -104,37 +114,55 @@ export function createModelsOperations(ctx: ClientContext): ModelsOperations {
     if (!result.ok) throw new Error(result.error.message)
     return result.value
   }
+  /**
+   * Poll one subscription connection until its Host attempt settles.
+   * @param getState - the connection's Host state reader.
+   * @param signal - the card's abort signal; withdrawal rejects without a state read.
+   * @returns the settled connection view.
+   */
+  const finishDeviceAttempt = async <T extends { busy: boolean }>(
+    getState: () => Promise<T>, signal: AbortSignal,
+  ): Promise<T> => {
+    signal.throwIfAborted()
+    let state = await getState()
+    signal.throwIfAborted()
+    while (state.busy) {
+      await new Promise<void>((resolve, reject) => {
+        const aborted = (): void => {
+          clearTimeout(timer); signal.removeEventListener('abort', aborted)
+          const reason: unknown = signal.reason
+          reject(reason instanceof Error ? reason : new DOMException('Aborted', 'AbortError'))
+        }
+        const timer = setTimeout(() => { signal.removeEventListener('abort', aborted); resolve() }, 1_000)
+        signal.addEventListener('abort', aborted, { once: true })
+        if (signal.aborted) aborted()
+      })
+      signal.throwIfAborted()
+      state = await getState()
+      signal.throwIfAborted()
+    }
+    return state
+  }
   // The subscription providers are optional; ctx.get resolves them without a required inject.
   const codexBackend = ctx.get('remote.codexBackend') as typeof ctx.remote.codexBackend | undefined
   const nous = ctx.get('remote.nous') as typeof ctx.remote.nous | undefined
+  const xai = ctx.get('remote.xai') as typeof ctx.remote.xai | undefined
   return {
     ...(nous === undefined ? {} : { nous: {
       getState: async () => unwrap(await nous.getState()),
       start: async (saveLocally: boolean) => unwrap(await nous.start(saveLocally)),
-      finish: async (signal: AbortSignal) => {
-        signal.throwIfAborted()
-        let state = unwrap(await nous.getState())
-        signal.throwIfAborted()
-        while (state.busy) {
-          await new Promise<void>((resolve, reject) => {
-            const aborted = (): void => {
-              clearTimeout(timer); signal.removeEventListener('abort', aborted)
-              const reason: unknown = signal.reason
-              reject(reason instanceof Error ? reason : new DOMException('Aborted', 'AbortError'))
-            }
-            const timer = setTimeout(() => { signal.removeEventListener('abort', aborted); resolve() }, 1_000)
-            signal.addEventListener('abort', aborted, { once: true })
-            if (signal.aborted) aborted()
-          })
-          signal.throwIfAborted()
-          state = unwrap(await nous.getState())
-          signal.throwIfAborted()
-        }
-        return state
-      },
+      finish: async (signal: AbortSignal) => finishDeviceAttempt(async () => unwrap(await nous.getState()), signal),
       cancel: async () => { unwrap(await nous.cancel()) },
       models: async () => unwrap(await nous.models()),
       disconnect: async () => { unwrap(await nous.disconnect()) },
+    } }),
+    ...(xai === undefined ? {} : { xai: {
+      getState: async () => unwrap(await xai.getState()),
+      start: async (saveLocally: boolean) => unwrap(await xai.start(saveLocally)),
+      finish: async (signal: AbortSignal) => finishDeviceAttempt(async () => unwrap(await xai.getState()), signal),
+      cancel: async () => { unwrap(await xai.cancel()) },
+      models: async () => unwrap(await xai.models()),
+      disconnect: async () => { unwrap(await xai.disconnect()) },
     } }),
     ...(codexBackend === undefined ? {} : { codexBackend: {
       getState: async () => unwrap(await codexBackend.getState()),

@@ -96,6 +96,10 @@ describe('pi-ai login flows', () => {
     // through its own prompt rather than leaving it to the settings form.
     expect(offered.find(entry => entry.key === recordKeyFor('deepseek'))?.methods.map(one => one.id))
       .toEqual(['api-key'])
+    // Subscription cards own their flows: Nous and xAI register through their
+    // connection services, never through the generic directory.
+    expect(offered.find(entry => entry.key === recordKeyFor('nous'))).toBeUndefined()
+    expect(offered.find(entry => entry.key === recordKeyFor('xai'))).toBeUndefined()
   })
 
   it('runs the pi-ai auth type the chosen method names', async () => {

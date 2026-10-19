@@ -76,6 +76,9 @@ export { CodexBackendConnection } from './codex-backend-connection.ts'
 import { NousConnection } from './nous-connection.ts'
 export { NousConnection } from './nous-connection.ts'
 export type { NousConnectionView, NousDeviceVerification, NousModelView } from './nous-types.ts'
+import { XaiConnection } from './xai-connection.ts'
+export { XaiConnection } from './xai-connection.ts'
+export type { XaiConnectionView, XaiDeviceVerification, XaiModelView } from './xai-types.ts'
 import { registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
@@ -246,6 +249,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
   ctx.inject(['authorization', 'credentials'], (child) => { child.plugin(NousConnection,
     { clientId: () => config.nousClientId.get() }) })
+  ctx.inject(['authorization', 'credentials'], (child) => { child.plugin(XaiConnection) })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as

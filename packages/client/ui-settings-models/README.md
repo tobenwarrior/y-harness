@@ -41,7 +41,11 @@ Host configuration `credentialOnboarding` defaults to `true`. The Electron prelo
 
 The single ChatGPT card publishes a connected account without a second confirmation step: on mount it reads native status, so a stored sign-in is detected rather than reported as signed out, and it enables the route so its catalog reaches the composer. An explicit enable or disable then becomes the user's own choice and stops the automatic publication, and disconnecting stops it too. Consent-gated device sign-in, cancellation, disconnect, and per-model processing choices remain explicit user operations, and the card never starts login on mount. The read-only/network-off/fail-closed policy and the per-model processing controls each sit behind their own disclosure row, so the card shows a status, its actions, and a route summary by default. Native effort IDs populate the composer after publication, while applying a processing tier sends no model request. Read-only settings documents perform no native read and never publish.
 
-The generic API-key editor does not offer the ChatGPT or Nous routes. OpenCode Go's masked key field requires separate local-storage consent.
+The generic API-key editor does not offer the ChatGPT or Nous routes. The xAI route stays editable there for API-key users while the Grok subscription card below owns OAuth. OpenCode Go's masked key field requires separate local-storage consent.
+
+### Grok subscription
+
+The Grok card connects a SuperGrok or X Premium subscription through xAI device authorization using pi-ai's bundled client. It requests consent before saving OAuth credentials, shows the device code and verification URL with expiry, then publishes Grok 4.7 as the starter model so the composer starts usable; Refresh re-reads the installed catalog and republishes the saved selection. Disconnect clears the local grant and removes an OAuth-published profile while leaving an API-key profile in place; xAI-side revocation remains an account action.
 
 ### API keys
 

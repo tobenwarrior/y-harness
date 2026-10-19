@@ -30,6 +30,7 @@ import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from './slot-contract.ts'
 import { CodexBackendCard } from './CodexBackendCard.tsx'
 import { NousCard } from './NousCard.tsx'
+import { XaiCard } from './XaiCard.tsx'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, protocolChoices, providerUsable } from './store.ts'
 import type { ModelsSettingsStore, ProviderRow } from './store.ts'
@@ -253,6 +254,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const [dismissedSetup, setDismissedSetup] = useState<ReadonlySet<string>>(() => new Set())
   const [chatgptOpen, setChatgptOpen] = useState(false)
   const [nousOpen, setNousOpen] = useState(false)
+  const [xaiOpen, setXaiOpen] = useState(false)
 
   const announceSaved = (target: ProviderIdentity): void => {
     // Announced only once the refreshed directory is in the snapshot the
@@ -444,6 +446,24 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           </span>
         </div>
         {nousOpen && <NousCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={nousOpen} />}
+      </div>
+      <div className={styles['rowCard']}>
+        <div className={styles['rowHead']}>
+          <span className={styles['rowIdentity']}>
+            <span className={styles['rowName']}>{t('xaiTitle')}</span>
+          </span>
+          <span className={styles['rowActions']}>
+            <button
+              type="button"
+              className={styles['secondaryButton']}
+              aria-label={providerCopy(t('editProvider'), { provider: t('xaiTitle'), displayName: t('xaiTitle') })}
+              onClick={() => { setXaiOpen(!xaiOpen) }}
+            >
+              {t('edit')}
+            </button>
+          </span>
+        </div>
+        {xaiOpen && <XaiCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={xaiOpen} />}
       </div>
       <ul className={styles['rows']}>
         {configured.map((row) => {

@@ -119,7 +119,7 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
  */
 export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
   for (const providerId of catalogProviderIds()) {
-    if (providerId === 'nous') continue // Its connection card owns registration.
+    if (providerId === 'nous' || providerId === 'xai') continue // Their connection cards own registration.
     const provider = catalogProvider(providerId)
     const [first, ...rest] = loginMethods(provider)
     /* v8 ignore next 3 -- every id here names an installed provider and every

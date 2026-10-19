@@ -206,4 +206,4 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   }
 }
 
-export type { CodexBackendModelView, CodexBackendView, NousConnectionView, NousDeviceVerification, NousModelView } from '@deepseek-ai/dsh-llm-pi-ai/types'
+export type { CodexBackendModelView, CodexBackendView, NousConnectionView, NousDeviceVerification, NousModelView, XaiConnectionView, XaiDeviceVerification, XaiModelView } from '@deepseek-ai/dsh-llm-pi-ai/types'
