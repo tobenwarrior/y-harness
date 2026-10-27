@@ -2,7 +2,16 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { uniqueRepoFiles } from './repo-files.ts'
+import { uniqueRepoFiles, isVendoredCompoundAttributionPath } from './repo-files.ts'
+describe('vendored attribution paths', () => {
+  it('recognizes only the two vendored documents on POSIX and Windows', () => {
+    expect(isVendoredCompoundAttributionPath('packages/skill/skill-compound/SOURCES.md')).toBe(true)
+    expect(isVendoredCompoundAttributionPath('packages\\skill\\skill-compound\\THIRD_PARTY_NOTICES.md')).toBe(true)
+    expect(isVendoredCompoundAttributionPath('packages/skill/skill-compound/README.md')).toBe(false)
+    expect(isVendoredCompoundAttributionPath('packages/skill/other/SOURCES.md')).toBe(false)
+  })
+})
+
 
 interface Tree {
   root: string

@@ -45,6 +45,9 @@ const NO_MODEL_EXPERIENCE_SECTION: Readonly<Record<string, string>> = {
  * blocks. A package moves on or off this list with its context behavior.
  */
 const SENTENCE_MODEL_EXPERIENCE: Readonly<Record<string, SentenceContract>> = {
+  'packages/client/ui-compound-map': { kind: 'none', reason: 'The browser panel exposes no model context; the map skill owns model-facing instructions.' },
+  'packages/client/ui-compound-update': { kind: 'none', reason: 'The browser update indicator exposes no model context or session events.' },
+  'packages/skill/skill-compound': { kind: 'indirect', reason: 'The skill provider delegates catalog and instruction rendering to dsh-tool-skill.' },
   'packages/client/product-analytics': { kind: 'none', reason: 'Desktop analytics observes selected interactions without contributing model context or Session events.' },
   'packages/experimental/speech-to-text': { kind: 'none', reason: 'Routes transient recognition without adding model requests or Session events.' },
   'packages/experimental/api-speech-to-text': { kind: 'none', reason: 'Transports audio and preparation state; ordinary user submission owns model-visible text.' },

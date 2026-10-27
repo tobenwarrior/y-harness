@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ComponentProps } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { en } from '../src/client/locales.ts'
@@ -41,6 +41,38 @@ describe('compound code map panel', () => {
     expect(after).not.toBe(before)
   })
 })
+
+describe('viewer appearance', () => {
+  afterEach(() => {
+    document.body.removeAttribute('data-ds-dark-theme')
+    document.body.removeAttribute('data-yh-style')
+    document.body.style.removeProperty('--yh-alias-label-primary')
+  })
+
+  it('copies and updates the host theme inside the viewer', async () => {
+    document.body.setAttribute('data-ds-dark-theme', '')
+    document.body.setAttribute('data-yh-style', 'terminal')
+    document.body.style.setProperty('--yh-alias-label-primary', 'rgb(1, 2, 3)')
+    renderPanel()
+    const frame = screen.getByTitle(en.frameTitle) as HTMLIFrameElement
+    const viewer = document.implementation.createHTMLDocument('viewer')
+    Object.defineProperty(frame, 'contentDocument', { configurable: true, value: viewer })
+    fireEvent.load(frame)
+    const root = viewer.documentElement
+    expect(root?.hasAttribute('data-ds-dark-theme')).toBe(true)
+    expect(root?.getAttribute('data-yh-style')).toBe('terminal')
+    expect(root?.style.getPropertyValue('--yh-alias-label-primary')).toBe('rgb(1, 2, 3)')
+    document.body.removeAttribute('data-ds-dark-theme')
+    document.body.setAttribute('data-yh-style', 'default')
+    document.body.style.setProperty('--yh-alias-label-primary', 'rgb(4, 5, 6)')
+    await waitFor(() => {
+      expect(root?.hasAttribute('data-ds-dark-theme')).toBe(false)
+      expect(root?.getAttribute('data-yh-style')).toBe('default')
+      expect(root?.style.getPropertyValue('--yh-alias-label-primary')).toBe('rgb(4, 5, 6)')
+    })
+  })
+})
+
 
 describe('compound code map glyph', () => {
   it('renders at the sidebar size the framework requests', () => {

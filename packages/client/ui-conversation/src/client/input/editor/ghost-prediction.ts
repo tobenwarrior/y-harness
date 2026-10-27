@@ -79,8 +79,8 @@ export class GhostPredictionController {
     private readonly provider: FollowUpPredictionProvider,
     private readonly draft: GhostDraftFace,
     private readonly telemetry: GhostPredictionTelemetry = {
-      shown: p => console.debug('[ghost-prediction] shown', p.id),
-      accepted: (p, text) => console.debug('[ghost-prediction] accepted', p.id, text.length),
+      shown: (p) => { console.debug('[ghost-prediction] shown', p.id) },
+      accepted: (p, text) => { console.debug('[ghost-prediction] accepted', p.id, text.length) },
     },
   ) {}
 
@@ -89,7 +89,10 @@ export class GhostPredictionController {
     return this.prediction
   }
 
-  /** Enable or disable fetching (settings gate); disabling clears state. */
+  /**
+   * Enable or disable fetching (settings gate); disabling clears state.
+   * @param enabled - whether prediction fetching is enabled.
+   */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled
     if (!enabled) this.clear()
@@ -100,6 +103,7 @@ export class GhostPredictionController {
    * draft empty, editor not composing. Callers combine this with their own
    * competing-UI checks.
    * @param composing - live IME composition state.
+   * @returns whether the prediction can render before competing-UI checks.
    */
   mayShow(composing: boolean): boolean {
     return this.prediction !== null
@@ -111,6 +115,9 @@ export class GhostPredictionController {
   /**
    * Fetch a suggestion after an assistant turn completes. Concurrent calls
    * supersede each other by generation; stale results are dropped.
+   * @param conversationId - conversation owning the completed turn.
+   * @param turnId - completed assistant turn identifier.
+   * @param assistantText - completed assistant message text.
    * @returns the skip reason, or null when a fetch ran.
    */
   async fetchAfterTurn(

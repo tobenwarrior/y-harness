@@ -19,6 +19,25 @@ describe('concrete terminology policy', () => {
     ])
   })
 
+  it('exempts only the literal Claude SDK wire key at audited boundaries', () => {
+    const files = [
+      'packages/session/coding-session/src/claude-source-worker.ts',
+      'packages/session/coding-session/tests/claude-source-worker.e2e.ts',
+      'packages/session/coding-session/tests/claude-sequential-source.spec.ts',
+      'packages/session/coding-session/tests/claude-sequential-policy.spec.ts',
+    ]
+    const code = `const value = { ${blockedTerm}: {} }; value.${blockedTerm}`
+    for (const file of files) {
+      expect(findConcreteTermViolations(file, code)).toEqual([])
+      const source = [code + ` // vague ${blockedTerm}`, `/* ${blockedTerm}: vague */`,
+        `const text = "${blockedTerm}"`, `const ${blockedTerm}Label = 1`,
+        `const value2 = { ${blockedTerm.toUpperCase()}: {} }`].join('\n')
+      expect(findConcreteTermViolations(file, source)).toEqual([1, 2, 3, 4, 5].map(line => ({ file, line })))
+    }
+    const other = 'packages/session/coding-session/src/other.ts'
+    expect(findConcreteTermViolations(other, code)).toEqual([{ file: other, line: 1 }])
+  })
+
   it('scans text that contains an embedded NUL', () => {
     expect(findConcreteTermViolations('packages/example/src/source.ts', `scope\0${blockedTerm}`))
       .toEqual([{ file: 'packages/example/src/source.ts', line: 1 }])

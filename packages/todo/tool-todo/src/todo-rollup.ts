@@ -116,14 +116,22 @@ function rollupNode(node: TodoNodeLike): TodoRollup {
   }
 }
 
-/** "3/5 done", or "done" once every leaf finished, or '' when there is no work. */
+/**
+  * Format completed leaf progress.
+  * @param rollup - derived progress for the entry.
+  * @returns a completion count, "done", or an empty string when there is no work.
+  */
 export function formatRollupProgress(rollup: TodoRollup): string {
   if (rollup.total === 0) return ''
   if (rollup.completed === rollup.total) return 'done'
   return `${String(rollup.completed)}/${String(rollup.total)} done`
 }
 
-/** "1 running task" / "2 running tasks", or '' when nothing is running. */
+/**
+  * Format the running leaf count.
+  * @param rollup - derived progress for the entry.
+  * @returns a singular or plural running-task count, or an empty string.
+  */
 export function formatRollupRunning(rollup: TodoRollup): string {
   if (rollup.running === 0) return ''
   return rollup.running === 1 ? '1 running task' : `${String(rollup.running)} running tasks`
@@ -149,6 +157,7 @@ export interface TodoTotals {
 /**
  * Sum a rolled-up list, counting leaves once.
  * @param rollups - top-level rollups.
+ * @returns combined completed, running, and total leaf counts.
  */
 export function totalRollups(rollups: readonly TodoRollup[]): TodoTotals {
   return rollups.reduce<TodoTotals>(
@@ -166,6 +175,7 @@ export function totalRollups(rollups: readonly TodoRollup[]): TodoTotals {
  * renderer can indent without re-walking the tree.
  * @param rollups - top-level rollups.
  * @param depth - starting depth (0 for top level).
+ * @returns entries in depth-first order paired with their depths.
  */
 export function flattenRollups(
   rollups: readonly TodoRollup[],

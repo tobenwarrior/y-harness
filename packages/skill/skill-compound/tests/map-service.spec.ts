@@ -149,3 +149,46 @@ describe('service state directory', () => {
     expect(starts).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('workspace map selection', () => {
+  it('identifies the current workspace when the service lists other projects', async () => {
+    const { service } = bridge({ forward: () => Promise.resolve(Response.json({ projects: [{ id: 'old' }, { id: 'abc123' }] })) })
+    const response = await service.proxy('projects', new Request('http://localhost/x'))
+    expect(await response.json()).toEqual({ projects: [{ id: 'old' }, { id: 'abc123' }], defaultProject: 'abc123' })
+  })
+})
+
+describe('service recovery', () => {
+  it('retries startup after a transient failure', async () => {
+    let attempts = 0
+    const { service } = bridge({ startService: () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('temporarily unavailable')
+      return 'http://127.0.0.1:43127/?project=abc123'
+    } })
+    expect((await service.proxy('map', new Request('http://localhost/x'))).status).toBe(502)
+    expect((await service.proxy('map', new Request('http://localhost/x'))).status).toBe(200)
+    expect(attempts).toBe(2)
+  })
+})
+
+describe('service forwarding failures', () => {
+  it('returns a useful error if the loopback service disconnects', async () => {
+    let failed = false
+    const { service, starts } = bridge({ forward: () => {
+      if (!failed) { failed = true; return Promise.reject(new Error('connection refused')) }
+      return Promise.resolve(Response.json({ model: {} }))
+    } })
+    const response = await service.proxy('map', new Request('http://localhost/x'))
+    expect(response.status).toBe(502)
+    expect(await response.json()).toEqual({ error: 'connection refused' })
+    expect((await service.proxy('map', new Request('http://localhost/x'))).status).toBe(200)
+    expect(starts).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports malformed project responses instead of throwing', async () => {
+    const { service } = bridge({ forward: () => Promise.resolve(new Response('not JSON')) })
+    const response = await service.proxy('projects', new Request('http://localhost/x'))
+    expect(response.status).toBe(502)
+  })
+})

@@ -4232,6 +4232,43 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
     ],
   },
+  {
+    key: 'xaiConnection',
+    summary: 'Own one xAI sign-in attempt through cancellation and durable grant commit.',
+    description: 'Own one xAI sign-in attempt through cancellation and durable grant commit. The bundled pi-ai OAuth client identity ships inside the dependency; no deployment configuration selects it.',
+    methods: [
+      {
+        signature: '@Remote async getState(): Promise<XaiConnectionView>',
+        description: 'Read local connection metadata without redeeming a refresh token.',
+        parameters: [],
+        returns: 'connection and attempt state without credentials.',
+      },
+      {
+        signature: '@Remote async start(saveLocally: boolean): Promise<XaiDeviceVerification>',
+        description: 'Begin one device attempt with explicit local-storage consent.',
+        parameters: [{ name: 'saveLocally', description: 'affirmative consent to the owner-only unencrypted credential file.' }],
+        returns: 'browser instructions; the grant commits asynchronously before busy becomes false.',
+      },
+      {
+        signature: '@Remote async cancel(): Promise<void>',
+        description: 'Cancel before commit admission; an admitted save completes before cancellation returns.',
+        parameters: [],
+        returns: 'after polling and durable credential work have settled.',
+      },
+      {
+        signature: '@Remote async models(): Promise<XaiModelView[]>',
+        description: 'Read the installed xAI catalog for the Models card. No network call: the catalog ships with the build and grok-4.7 is among it.',
+        parameters: [],
+        returns: 'catalog models; failures expose a sanitized retry or sign-in message.',
+      },
+      {
+        signature: '@Remote async disconnect(): Promise<void>',
+        description: 'Delete this app\'s local grant while no sign-in is running; remote revocation is user-owned.',
+        parameters: [],
+        returns: 'after the local credential deletion completes.',
+      },
+    ],
+  },
 ]
 
 /** Every harness event, sorted by name. */
@@ -9439,6 +9476,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceView',
     declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+  },
+  {
+    name: 'XaiConnectionView',
+    declaration: 'export interface XaiConnectionView {\n    configured: boolean;\n    connected: boolean;\n    busy: boolean;\n    error?: string;\n    expiresAt?: number;\n}',
+  },
+  {
+    name: 'XaiDeviceVerification',
+    declaration: 'export interface XaiDeviceVerification {\n    url: string;\n    code: string;\n    expiresAt: number;\n}',
+  },
+  {
+    name: 'XaiModelView',
+    declaration: 'export interface XaiModelView {\n    id: string;\n    name: string;\n    contextWindow?: number;\n    maxTokens?: number;\n    inputModalities?: Array<\'text\' | \'image\'>;\n    reasoning: boolean;\n    reasoningEfforts?: {\n        off?: string;\n        minimal?: string;\n        low?: string;\n        medium?: string;\n        high?: string;\n        xhigh?: string;\n        max?: string;\n    };\n}',
   },
 ]
 

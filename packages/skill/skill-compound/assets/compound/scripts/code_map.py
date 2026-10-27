@@ -22,13 +22,15 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 try:
     from .onboarding import _reject_symlink_chain, _state_paths
+    from .workspace_imports import load_workspace_packages, resolve_workspace_import
 except ImportError:  # direct script execution
     from onboarding import _reject_symlink_chain, _state_paths
+    from workspace_imports import load_workspace_packages, resolve_workspace_import
 
 DEFAULT_MAX_CHARS = 2500
 MAX_CHARS = 12000
 DEFAULT_MAX_FILES = 2000
-MAX_FILES = 5000
+MAX_FILES = 20000
 MAX_FILE_BYTES = 1024 * 1024
 MAX_READ_BYTES = 64 * 1024 * 1024
 MAX_SYMBOLS = 512
@@ -36,11 +38,13 @@ MAX_DEPS = 256
 MAX_IMPORTS = MAX_DEPS * 2
 MAX_PARSE_NOTE_CHARS = 160
 GIT_TIMEOUT = 5
-CACHE_VERSION = 6
+CACHE_VERSION = 7
 ANALYSIS_KINDS = {"python-ast", "javascript-outline", "metadata"}
-MAX_ALIAS_CONFIGS = 8
+MAX_ALIAS_CONFIGS = 64
 MAX_ALIAS_CONFIG_BYTES = 64 * 1024
-MAX_ALIAS_RULES = 64
+MAX_ALIAS_RULES = 2048
+MAX_ALIAS_EXTENDS_DEPTH = 16
+MAX_ALIAS_READS = 128
 MAX_ALIAS_TARGETS = 8
 MAX_COCHANGE_COMMITS = 30
 MAX_COCHANGE_FILES = 60
@@ -81,13 +85,14 @@ LANGUAGES = {
 JS_IMPORT = re.compile(
     r"(?:\bimport\s+(?:[^'\";]*?\s+from\s+)?|\bexport\s+[^'\";]*?\s+from\s+)['\"]([^'\"]+)['\"]"
 )
-JS_REQUIRE = re.compile(r"\brequire\s*\(\s*['\"]([^'\"]+)['\"]\s*\)")
+JS_CALL_IMPORT = re.compile(r"\b(?:require|import)\s*\(\s*['\"]([^'\"]+)['\"]\s*\)")
 JS_SYMBOLS = (
-    (re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)"), "function"),
-    (re.compile(r"^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)"), "class"),
+    (re.compile(r"^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)"), "function"),
+    (re.compile(r"^\s*(?:export\s+(?:default\s+)?)?class\s+([A-Za-z_$][\w$]*)"), "class"),
     (re.compile(r"^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)"), "interface"),
     (re.compile(r"^\s*(?:export\s+)?(?:type|enum)\s+([A-Za-z_$][\w$]*)"), "type"),
     (re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\("), "function"),
+    (re.compile(r"^\s*(?:export\s+)?(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)"), "variable"),
 )
 JS_EXPORT_DECL = re.compile(
     r"^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)",
@@ -399,7 +404,7 @@ def _javascript_outline(text: str) -> tuple[list[dict[str, Any]], list[str]]:
                 break
         if len(symbols) == MAX_SYMBOLS:
             break
-    return symbols, (JS_IMPORT.findall(text) + JS_REQUIRE.findall(text))[:MAX_IMPORTS]
+    return symbols, (JS_IMPORT.findall(text) + JS_CALL_IMPORT.findall(text))[:MAX_IMPORTS]
 
 
 def _javascript_exports(text: str) -> list[str]:
@@ -559,46 +564,74 @@ def _strip_jsonc(text: str) -> str:
 
 def _load_alias_configs(root: Path, candidates: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     configs: list[dict[str, Any]] = []
-    names = {"tsconfig.json", "jsconfig.json"}
-    for rel, info in sorted(candidates.items()):
-        if len(configs) >= MAX_ALIAS_CONFIGS or PurePosixPath(rel).name.lower() not in names:
-            continue
+    cache: dict[str, dict[str, Any] | None] = {}
+    reads = 0
+
+    def load(rel: str, active: set[str]) -> dict[str, Any] | None:
+        nonlocal reads
+        if rel in active or len(active) >= MAX_ALIAS_EXTENDS_DEPTH:
+            return None
+        if rel in cache:
+            return cache[rel]
+        if rel not in candidates or reads >= MAX_ALIAS_READS:
+            return None
+        reads += 1
+        info = candidates[rel]
         try:
-            if info["fingerprint"]["size"] > MAX_ALIAS_CONFIG_BYTES:
-                continue
-            with info["absolute"].open("rb") as source:
+            absolute = info["absolute"]
+            if (absolute.resolve() != (root / rel).resolve() or not absolute.resolve().is_relative_to(root.resolve())
+                    or info["fingerprint"]["size"] > MAX_ALIAS_CONFIG_BYTES):
+                return None
+            with absolute.open("rb") as source:
                 data = source.read(MAX_ALIAS_CONFIG_BYTES + 1)
-            if len(data) > MAX_ALIAS_CONFIG_BYTES or _fingerprint(info["absolute"]) != info["fingerprint"]:
-                continue
+            if len(data) > MAX_ALIAS_CONFIG_BYTES or _fingerprint(absolute) != info["fingerprint"]:
+                return None
             text = data.decode("utf-8")
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = json.loads(_strip_jsonc(text))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, dict) or not isinstance(payload.get("compilerOptions"), dict):
-            continue
-        compiler = payload["compilerOptions"]
-        config_dir = PurePosixPath(rel).parent
-        base_url = _config_relative(config_dir, compiler.get("baseUrl"))
-        paths_base = PurePosixPath(base_url) if base_url is not None else config_dir
-        raw_paths = compiler.get("paths")
-        paths: list[tuple[str, list[str]]] = []
-        if isinstance(raw_paths, dict):
-            for pattern, targets in list(raw_paths.items())[:MAX_ALIAS_RULES]:
-                if not isinstance(pattern, str) or not pattern or len(pattern) > 512 or pattern.count("*") > 1:
+            payload = json.loads(_strip_jsonc(text))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, KeyError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        directory = PurePosixPath(rel).parent
+        parent = None
+        extends = payload.get("extends")
+        if isinstance(extends, str) and (extends.startswith("./") or extends.startswith("../")):
+            target = _config_relative(directory, extends)
+            if target is not None:
+                options = [target, target + ".json", posixpath.join(target, "tsconfig.json")]
+                for option in options:
+                    if option in candidates:
+                        parent = load(option, active | {rel})
+                        break
+        compiler = payload.get("compilerOptions")
+        if not isinstance(compiler, dict):
+            compiler = {}
+        base_url = parent["base_url"] if parent else None
+        if "baseUrl" in compiler:
+            base_url = _config_relative(directory, compiler["baseUrl"])
+        paths = parent["paths"] if parent else []
+        if isinstance(compiler.get("paths"), dict):
+            paths = []
+            paths_base = PurePosixPath(base_url) if base_url is not None else directory
+            for pattern, targets in list(compiler["paths"].items())[:MAX_ALIAS_RULES]:
+                if not isinstance(pattern, str) or not pattern or len(pattern) > 512 or pattern.count("*") > 1 or not isinstance(targets, list):
                     continue
-                if not isinstance(targets, list):
-                    continue
-                normalized = [
-                    target for target in (_config_relative(paths_base, value) for value in targets[:MAX_ALIAS_TARGETS])
-                    if target is not None
-                ]
+                normalized = [target for target in (_config_relative(paths_base, value) for value in targets[:MAX_ALIAS_TARGETS]) if target is not None]
                 if normalized:
                     paths.append((pattern, normalized))
-        if base_url or paths:
-            configs.append({"directory": config_dir.as_posix(), "base_url": base_url, "paths": paths})
+        result = {"directory": directory.as_posix(), "base_url": base_url, "paths": paths}
+        cache[rel] = result
+        return result
+
+    names = {"tsconfig.json", "jsconfig.json"}
+    ordered = sorted(candidates, key=lambda rel: (len(PurePosixPath(rel).parts), rel))
+    for rel in ordered:
+        if len(configs) >= MAX_ALIAS_CONFIGS:
+            break
+        if PurePosixPath(rel).name.lower() in names:
+            config = load(rel, set())
+            if config and (config["base_url"] or config["paths"]):
+                configs.append(config)
     return configs
 
 
@@ -649,7 +682,7 @@ def _javascript_alias_dep(path: str, spec: str, known: set[str], configs: list[d
         key=lambda config: (len(config["directory"].split("/")), config["directory"]),
         reverse=True,
     )
-    for config in applicable:
+    for config in applicable[:1]:
         rules = sorted(config["paths"], key=lambda item: ("*" not in item[0], len(item[0])), reverse=True)
         for pattern, targets in rules:
             wildcard = _alias_match(spec, pattern)
@@ -804,7 +837,7 @@ def _cochanges_for_known(raw: dict[str, list[dict[str, Any]]], known: set[str]) 
     }
 
 
-def _record(path: str, entry: dict[str, Any], known: set[str], aliases: list[dict[str, Any]] | None = None, changes: dict[str, str] | None = None, cochanges: dict[str, list[dict[str, Any]]] | None = None, modules: dict[str, str | None] | None = None) -> dict[str, Any]:
+def _record(path: str, entry: dict[str, Any], known: set[str], aliases: list[dict[str, Any]] | None = None, changes: dict[str, str] | None = None, cochanges: dict[str, list[dict[str, Any]]] | None = None, modules: dict[str, str | None] | None = None, packages: dict[str, Any] | None = None) -> dict[str, Any]:
     dependencies: list[str] = []
     unresolved: list[str] = []
     if entry["language"] == "python":
@@ -819,6 +852,8 @@ def _record(path: str, entry: dict[str, Any], known: set[str], aliases: list[dic
     elif entry["language"] in {"javascript", "typescript"}:
         for spec in entry["imports"]:
             dep = _javascript_dep(path, spec, known, aliases)
+            if not dep and packages:
+                dep = resolve_workspace_import(spec, known, packages, _javascript_candidates)
             if dep and dep != path and dep not in dependencies:
                 dependencies.append(dep)
             elif not dep and spec not in unresolved:
@@ -1084,12 +1119,13 @@ def _build(root: Path, head: str, inventory: list[str], notes: list[str], query:
     budget_hit = bool(limited) or inventory_capped
     known = set(entries)
     aliases = _load_alias_configs(root, candidates)
+    packages = load_workspace_packages(root, candidates)
     branch, changes, git_state_note = _git_state(root)
     if git_state_note:
         _note(notes, git_state_note)
     cochanges = _cochanges(root, head, known)
     modules = _python_modules(known)
-    records = [_record(path, entry, known, aliases, changes, cochanges, modules) for path, entry in entries.items()]
+    records = [_record(path, entry, known, aliases, changes, cochanges, modules, packages) for path, entry in entries.items()]
     ranked = _rank(records, query)
     file_cap = len(ranked) > max_files
     truncated = file_cap or budget_hit

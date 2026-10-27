@@ -175,6 +175,9 @@ export class MapServiceBridge {
       const project = parsed.searchParams.get('project')
       if (project === null || project === '') throw new Error(`code-map service printed no project id: ${url}`)
       return { port: Number(parsed.port), project }
+    }).catch((error: unknown) => {
+      this.target = undefined
+      throw error
     })
     return this.target
   }
@@ -214,13 +217,22 @@ export class MapServiceBridge {
       { status: 502, headers: { 'cache-control': 'no-store' } },
     )
     let target: MapTarget
+    const targetPromise = this.resolveTarget()
     try {
-      target = await this.resolveTarget()
+      target = await targetPromise
     } catch (error: unknown) {
       return failure(error)
     }
-    const query = new URL(request.url).search
-    return await (this.options.forward ?? forwardToService)(`http://127.0.0.1:${target.port}/api/${endpoint}${query}`, request)
+    try {
+      const query = new URL(request.url).search
+      const response = await (this.options.forward ?? forwardToService)(`http://127.0.0.1:${target.port}/api/${endpoint}${query}`, request)
+      if (endpoint !== 'projects' || !response.ok) return response
+      const payload = await response.json() as Record<string, unknown>
+      return Response.json({ ...payload, defaultProject: target.project }, { headers: { 'cache-control': 'no-store' } })
+    } catch (error: unknown) {
+      if (!request.signal.aborted && this.target === targetPromise) this.target = undefined
+      return failure(error)
+    }
   }
 }
 

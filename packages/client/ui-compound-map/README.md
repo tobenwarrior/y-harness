@@ -50,7 +50,11 @@ The panel frames `/api/skill-compound.map/viewer` rather than reimplementing the
 
 ## Model Experience
 
-None. The panel is browser chrome: it adds no prompt section, no tool, and no session event. When the model wants the map, it uses the `map` skill, which drives the same service through the command line.
+None, as the browser panel adds no prompt section, tool, or session event; the `map` skill drives the service separately.
+
+#### KV Cache effect
+
+The panel does not alter model request prefixes.
 
 ## Known Limitations and Deferred Work
 
@@ -58,6 +62,6 @@ None. The panel is browser chrome: it adds no prompt section, no tool, and no se
 - A deployment without Python 3.11+ cannot start the service, and the viewer's own error overlay reports it.
 - The panel holds no state beyond the reload generation: switching panels and returning reloads the frame.
 
-## Dev Note
+### Dev Note
 
 The viewer is a vendored asset served through the Host proxy; the package itself adds no build step beyond the shared client bundle.

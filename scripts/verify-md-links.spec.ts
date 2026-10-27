@@ -45,6 +45,19 @@ describe('Markdown source discovery', () => {
       ])
   })
 
+  it('excludes only vendored attribution sources, while retaining authored neighbors', () => {
+    const root = layout({
+      'packages/skill/skill-compound/SOURCES.md': '[upstream](missing.md)\n',
+      'packages/skill/skill-compound/THIRD_PARTY_NOTICES.md': '[upstream](missing.md)\n',
+      'packages/skill/skill-compound/README.md': '[missing](missing.md)\n',
+      'packages/skill/other/SOURCES.md': '[missing](missing.md)\n',
+    })
+    expect(markdownLinkSourcePaths(root).sort()).toEqual([
+      'packages/skill/other/SOURCES.md',
+      'packages/skill/skill-compound/README.md',
+    ])
+  })
+
   it('checks package instructions and nested docs while excluding frozen notes', () => {
     const root = layout({
       'packages/AGENTS.md': '[missing](missing.md)\n',

@@ -210,6 +210,7 @@ export type WorktreeRemoval =
  * @param path - the worktree directory to remove.
  * @param branch - branch created with the worktree; omitted leaves the ref.
  * @param signal - cancellation.
+ * @returns whether the worktree was removed, missing, or failed to be removed.
  */
 export async function removeForkWorktree(
   git: GitRunner,

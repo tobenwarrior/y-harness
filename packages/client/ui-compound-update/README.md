@@ -54,7 +54,11 @@ The controller validates the route body before anything renders it, keeps the la
 
 ## Model Experience
 
-None. The indicator is browser chrome: it adds no prompt section, no tool, and no session event, and the model never sees its state.
+None, as the browser indicator adds no prompt section, tool, or session event and the model never sees its state.
+
+#### KV Cache effect
+
+The indicator does not alter model request prefixes.
 
 ## Known Limitations and Deferred Work
 
@@ -62,6 +66,6 @@ None. The indicator is browser chrome: it adds no prompt section, no tool, and n
 - The reading is cached by the Host for six hours after success and fifteen minutes after a failure, so a release published in between appears on the next read rather than immediately.
 - The package reads one route and renders no version of its own; a deployment that mounts it without `@deepseek-ai/dsh-skill-compound` shows no badge and reports the missing route as an unreadable check.
 
-## Dev Note
+### Dev Note
 
 The badge and panel share one reading controller; the Host caches the released version, so opening the panel does not re-request it.

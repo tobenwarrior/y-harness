@@ -112,6 +112,10 @@ export function installDraftFilePicker(
  * fall through untouched when none is showing. The menu-open gate comes
  * from the bar so an open trigger menu keeps Tab. Composition is tracked
  * locally with the keymap's proven pattern (Safari's late closing keydown).
+ * @param editor - editor receiving the ghost binding.
+ * @param controller - prediction controller, or undefined to install nothing.
+ * @param hasCompetingUi - reports whether another UI owns the gesture.
+ * @returns a disposer for the binding and root listener.
  */
 export function installGhostBinding(
   editor: LexicalEditor,
@@ -143,6 +147,13 @@ export function installGhostBinding(
   }
 }
 
+/**
+ * Bind draft editor gestures to live view guards and Session operations.
+ * @param editor - the borrowed Session-owned editor.
+ * @param keyboard - composer keyboard operations.
+ * @param gate - live view values read by the handlers.
+ * @returns a disposer for the keymap and ghost binding.
+ */
 export function installDraftKeymap(
   editor: LexicalEditor,
   keyboard: ComposerKeyboard,

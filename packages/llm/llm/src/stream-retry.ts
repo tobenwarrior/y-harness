@@ -58,6 +58,8 @@ function ownDataProperty(value: object, key: string): unknown {
 /**
  * Classify a dispatch/iteration throw. Reads only own data properties so a
  * hostile or foreign error object cannot trigger accessors.
+ * @param error - thrown dispatch or iteration failure.
+ * @returns its failure code and any valid provider retry-after hint.
  */
 export function classifyStreamFailure(error: unknown): ClassifiedFailure {
   if (typeof error !== 'object' || error === null) {
@@ -111,13 +113,18 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 /**
  * Compute the pre-attempt delay: exponential from initialDelayMs, capped at
- * maxDelayMs, symmetric jitter, and never below a provider retry-after hint.
+ * maxDelayMs, symmetric jitter, and a provider retry-after hint capped at maxDelayMs.
+ * @param policy - delay and jitter settings.
+ * @param failedAttempt - one-based failed attempt number.
+ * @param random - random source for jitter.
+ * @param retryAfterMs - optional provider-advised minimum delay.
+ * @returns the delay in milliseconds.
  */
 export function retryDelayMs(
   policy: RetryPolicyLike,
   failedAttempt: number,
   random: () => number,
-  retryAfterMs?: number | undefined,
+  retryAfterMs?: number,
 ): number {
   const grown = policy.initialDelayMs * 2 ** Math.max(0, failedAttempt - 1)
   const capped = Math.min(policy.maxDelayMs, grown)
@@ -130,6 +137,10 @@ export function retryDelayMs(
  * Open the stream, transparently reopening it on retryable pre-output
  * failures until the policy is exhausted, the error is terminal, output
  * has started, or the signal aborts.
+ * @param openStream - opens a fresh stream for each attempt.
+ * @param options - retry policy, cancellation, and optional hooks.
+ * @param random - random source for retry jitter.
+ * @returns an async generator of stream chunks.
  */
 export async function* withTransientRetries<TChunk extends RetryChunk>(
   openStream: () => AsyncIterable<TChunk>,

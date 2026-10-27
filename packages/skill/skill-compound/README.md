@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Agents can load the Compound engineering skills — investigate, design, debug, refactor, performance, review, verify, repository hygiene, and Git conventions — together with the code-map and repository-audit tooling that backs them. The content is vendored from [compound-skills](https://github.com/tobenwarrior/compound-skills) `0.11.0` (MIT) and registered as bundled skills, so a session needs no installation step and no other host.
+Agents can load the Compound engineering skills — investigate, design, debug, refactor, performance, review, verify, repository hygiene, and Git conventions — together with the code-map and repository-audit tooling that backs them. The content is vendored from [compound-skills](https://github.com/tobenwarrior/compound-skills) `0.11.1` (MIT) and registered as bundled skills, so a session needs no installation step and no other host.
 
 ## Table of Contents
 
@@ -50,7 +50,7 @@ Each loaded skill body ends with a `Compound runtime` section naming the absolut
 | [`src/index.ts`](src/index.ts) | Provider registration, frontmatter parsing, interpreter resolution, and the appended runtime sections. |
 | [`assets/`](assets/) | Byte-identical copy of upstream `skills/`; see [UPSTREAM.md](UPSTREAM.md). |
 | [`UPSTREAM.md`](UPSTREAM.md) | Vendored version, upstream commit, and the re-sync procedure. |
-| [`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`SOURCES.md`](SOURCES.md) | The vendored content's MIT license, the pstack notice its workflows were adapted from, and its provenance record. |
+| [`LICENSE`](LICENSE), [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), [`SOURCES.md`](SOURCES.md) | The vendored content's MIT license, the pstack notice its workflows were adapted from, and its source attribution record. |
 
 The provider reads `SKILL.md` frontmatter from each vendored directory at load and serves bodies on request; nothing is copied into `lib/`, so `assets/` must ship in the package `files` list.
 

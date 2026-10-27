@@ -52,6 +52,7 @@ flowchart LR
   svc_codexBackendConnection["ctx.codexBackendConnection<br/>Native Codex backend controls"]
   pkg_client_ui_settings_models["client-ui-settings-models"]
   svc_nousConnection["ctx.nousConnection<br/>Nous device authorization controls"]
+  svc_xaiConnection["ctx.xaiConnection<br/>xAI device authorization controls"]
   pkg_deepseek_llm_api_extensions["deepseek-llm-api-extensions"]
   svc_deepseekLlmApiExtensions["ctx.deepseekLlmApiExtensions<br/>Official DeepSeek request extensions"]
   pkg_session_log_deepseek["session-log-deepseek"]
@@ -362,6 +363,7 @@ flowchart LR
   pkg_llm_pi_ai --> svc_codexBackendConnection
   pkg_llm_pi_ai --> svc_llm
   pkg_llm_pi_ai --> svc_nousConnection
+  pkg_llm_pi_ai --> svc_xaiConnection
   pkg_llm_replay --> svc_llm
   pkg_lsp --> svc_lsp
   pkg_lsp_stdio --> svc_lsp
@@ -594,6 +596,8 @@ flowchart LR
   svc_workflowEngine --> pkg_tool_workflow
   svc_workspaceRegistry --> pkg_api_session_controller
   svc_workspaceRegistry --> pkg_api_workspace_controller
+  svc_xaiConnection --> pkg_client_ui_settings_models
+  svc_xaiConnection --> pkg_llm_pi_ai
   svc_fs -. event gate .-> pkg_fs_observation_policy
 ```
 
@@ -613,6 +617,7 @@ flowchart LR
 | `ctx.llm` | `seam` | [`llm`](../packages/llm/llm) | [`llm-deepseek`](../packages/llm/llm-deepseek), [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`llm-replay`](../packages/test-support/llm-replay) | [`agent-loop`](../packages/core/agent-loop), [`compaction-basic`](../packages/compaction/compaction-basic) | - | Adapters register provider implementations; the loop and compaction call the provider-neutral stream service. |
 | `ctx.codexBackendConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device login, cached model discovery, and adapter enablement through the generated Remote namespace; Codex owns its native credential file. |
 | `ctx.nousConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device authorization for an explicitly configured public client, durable grant commit, and account model discovery through the generated Remote namespace. |
+| `ctx.xaiConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device authorization, durable grant commit, and installed model catalog discovery through the generated Remote namespace. |
 | `ctx.deepseekLlmApiExtensions` | `seam` | [`deepseek-llm-api-extensions`](../packages/llm/deepseek-llm-api-extensions) | [`session-log-deepseek`](../packages/session/session-log-deepseek), [`plugin-package-inventory-deepseek`](../packages/llm/plugin-package-inventory-deepseek) | [`llm-deepseek`](../packages/llm/llm-deepseek) | - | Plugins prepare independent top-level fields; the official adapter merges them and commits their delivery state after HTTP acceptance. |
 | `ctx.tokenMeter` | `core` | [`token-meter`](../packages/llm/token-meter) | - | [`compaction-basic`](../packages/compaction/compaction-basic) | - | Owns isolated per-session replay folds; pressure consumers share immutable revisioned measurements. |
 | `ctx.toolResultPruner` | `core` | [`compaction-tool-result-pruner`](../packages/compaction/compaction-tool-result-pruner) | - | [`compaction-basic`](../packages/compaction/compaction-basic) | - | Rewrites oversized current tool results through replayable single-node surface replacements before summary compaction. |

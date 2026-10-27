@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
 import { historicalSchemaRegion } from './historical-schema-region.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -30,6 +31,35 @@ function containsBlockedTerm(value: string): boolean {
   return value.normalize('NFKC').toLowerCase().includes(blockedTerm)
 }
 
+// The pinned Claude SDK exposes this exact wire key. Only its syntax nodes in
+// these audited boundary files are exempt, never comments, strings or prose.
+const claudeWireFiles = new Set([
+  'packages/session/coding-session/src/claude-source-worker.ts',
+  'packages/session/coding-session/tests/claude-source-worker.e2e.ts',
+  'packages/session/coding-session/tests/claude-sequential-source.spec.ts',
+  'packages/session/coding-session/tests/claude-sequential-policy.spec.ts',
+])
+
+function maskClaudeWireField(file: string, source: string): string {
+  if (!claudeWireFiles.has(file)) return source
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
+  const ranges: Array<[number, number]> = []
+  function visit(node: ts.Node): void {
+    if ((ts.isPropertyAssignment(node) || ts.isPropertyAccessExpression(node))
+      && ts.isIdentifier(node.name) && node.name.text === blockedTerm
+      && node.name.getText(tree) === blockedTerm) {
+      ranges.push([node.name.getStart(tree), node.name.end])
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(tree)
+  let masked = source
+  for (const [start, end] of ranges.reverse()) {
+    masked = masked.slice(0, start) + ' '.repeat(end - start) + masked.slice(end)
+  }
+  return masked
+}
+
 /**
  * Find the blocked term in one maintained tracked file.
  * @param file - repository-relative tracked path.
@@ -40,7 +70,7 @@ export function findConcreteTermViolations(file: string, source: string): Concre
   if (isExcluded(file)) return []
   const violations: ConcreteTermViolation[] = []
   if (containsBlockedTerm(file)) violations.push({ file, line: null })
-  const lines = source.split(/\r?\n/u)
+  const lines = maskClaudeWireField(file, source).split(/\r?\n/u)
   const schemaRegion = historicalSchemaRegion(file, source)
   for (const [index, line] of lines.entries()) {
     if (schemaRegion !== undefined && index >= schemaRegion[0] && index < schemaRegion[1]) continue
@@ -92,7 +122,7 @@ const isMain = invokedPath !== undefined && import.meta.url === pathToFileURL(re
 if (isMain) {
   const violations = scanRepository(root)
   if (violations.length === 0) {
-    console.log(`verify-concrete-terms: maintained tracked files contain no ${blockedTerm}.`)
+    console.log(`verify-concrete-terms: maintained tracked files contain no forbidden ${blockedTerm} outside audited boundaries.`)
   } else {
     console.error(`verify-concrete-terms: ${blockedTerm} is forbidden; name the exact source, field, identity, or evidence:`)
     for (const violation of violations) {

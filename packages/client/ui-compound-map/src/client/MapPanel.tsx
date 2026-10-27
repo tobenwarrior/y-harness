@@ -1,5 +1,5 @@
 /** Compound code map: the vendored graph viewer, served by this Y Harness build. */
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, useEffect, useRef } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './MapPanel.module.css'
@@ -19,6 +19,15 @@ export const VIEWER_ROUTE = 'api/skill-compound.map/viewer'
  */
 export function MapPanel({ t }: PropsLocale<'compoundMap'>): ReactNode {
   const [generation, setGeneration] = useState(0)
+  const frame = useRef<HTMLIFrameElement>(null)
+  useEffect(() => {
+    const update = () => { syncMapTheme(frame.current) }
+    const observer = new MutationObserver(update)
+    observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme', 'data-yh-style', 'style'] })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    update()
+    return () => { observer.disconnect() }
+  }, [generation])
   return <section className={css.root} aria-label={t('title')}>
     <header className={css.toolbar}>
       <span className={css.title}>{t('title')}</span>
@@ -26,10 +35,30 @@ export function MapPanel({ t }: PropsLocale<'compoundMap'>): ReactNode {
     </header>
     <iframe
       key={generation}
+      ref={frame}
+      onLoad={() => { syncMapTheme(frame.current) }}
       className={css.frame}
       title={t('frameTitle')}
       src={VIEWER_ROUTE}
     />
     <p className={css.hint}>{t('hint')}</p>
   </section>
+}
+/** Mirror the resolved host palette into the same-origin viewer. */
+function syncMapTheme(frame: HTMLIFrameElement | null): void {
+  try {
+    const root = frame?.contentDocument?.documentElement
+    if (!root) return
+    root.toggleAttribute('data-ds-dark-theme', document.body.hasAttribute('data-ds-dark-theme'))
+    root.setAttribute('data-yh-style', document.body.getAttribute('data-yh-style') ?? 'default')
+    for (const name of Array.from(root.style)) {
+      if (name.startsWith('--yh-')) root.style.removeProperty(name)
+    }
+    const styles = getComputedStyle(document.body)
+    for (const name of Array.from(styles)) {
+      if (name.startsWith('--yh-')) root.style.setProperty(name, styles.getPropertyValue(name))
+    }
+  } catch {
+    // The viewer may have navigated away from this origin.
+  }
 }

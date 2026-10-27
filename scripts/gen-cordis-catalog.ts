@@ -96,6 +96,7 @@ export const SERVICE_PAGE: Record<string, string> = {
   llm: 'llm-streaming.md',
   codexBackendConnection: 'llm-streaming.md',
   nousConnection: 'llm-streaming.md',
+  xaiConnection: 'llm-streaming.md',
   lsp: 'lsp.md',
   messageFeedback: 'feedback.md',
   sessionFeedback: 'feedback.md',
@@ -1073,6 +1074,9 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   NousConnectionView: 'Nous Portal connection view is owned by packages/llm/llm-pi-ai/README.md',
   NousDeviceVerification: 'Nous Portal device instructions are owned by packages/llm/llm-pi-ai/README.md',
   NousModelView: 'Nous Portal account model view is owned by packages/llm/llm-pi-ai/README.md',
+  XaiConnectionView: 'xAI connection view is owned by packages/llm/llm-pi-ai/README.md and src/xai-types.ts',
+  XaiDeviceVerification: 'xAI device instructions are owned by packages/llm/llm-pi-ai/README.md and src/xai-types.ts',
+  XaiModelView: 'xAI catalog model view is owned by packages/llm/llm-pi-ai/README.md and src/xai-types.ts',
 }
 
 /** Repository data policy consumed by the Cordis catalog projector. */

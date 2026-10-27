@@ -486,7 +486,7 @@ export function createGraph(canvas, options = {}) {
     const dimmed = focusMode && state.selected && !selected && !connected && !highlighted;
     const alpha = dimmed ? 0.17 : state.query && !queryMatch && !selected && !highlighted ? 0.3 : 1;
     context.globalAlpha = alpha;
-    context.fillStyle = selected ? "#8fe960" : hovered ? "#afc982" : colorFor(node.group);
+    context.fillStyle = selected ? "#8fb5ff" : hovered ? "#c1d2f0" : colorFor(node.group);
     context.strokeStyle = node.changed ? "#ffd37a" : "rgba(237, 245, 255, 0.15)";
     context.lineWidth = (node.changed ? 1.4 : 0.35) / state.view.scale;
     context.beginPath();
@@ -503,7 +503,7 @@ export function createGraph(canvas, options = {}) {
     context.stroke();
     if (hovered || selected || highlighted) {
       context.globalAlpha = selected ? 0.25 : 0.18;
-      context.strokeStyle = selected ? "#8fe960" : "#afc982";
+      context.strokeStyle = selected ? "#8fb5ff" : "#c1d2f0";
       context.lineWidth = (selected ? 5 : 3) / state.view.scale;
       context.beginPath();
       context.arc(position.x, position.y, radius + (selected ? 6 : 4), 0, TAU);
@@ -537,7 +537,7 @@ export function createGraph(canvas, options = {}) {
       const queryEdge = state.query && (nodeMatchesQuery(state.byId.get(edge.source)) || nodeMatchesQuery(state.byId.get(edge.target)));
       const focusDim = state.mode === "focus" && state.selected && !selectedEdge && !highlightedEdge;
       context.globalAlpha = focusDim ? 0.012 : selectedEdge ? selectedEdgeAlpha : highlightedEdge ? 0.16 : queryEdge ? 0.12 : !state.query ? 0.025 : 0.01;
-      context.strokeStyle = selectedEdge ? "#8fe960" : highlightedEdge ? "#afc982" : "#436842";
+      context.strokeStyle = selectedEdge ? "#8fb5ff" : highlightedEdge ? "#c1d2f0" : "#9aabc0";
       context.lineWidth = (selectedEdge ? 0.85 : highlightedEdge ? 1.1 : 0.55) / state.view.scale;
       context.beginPath();
       context.moveTo(source.x, source.y);

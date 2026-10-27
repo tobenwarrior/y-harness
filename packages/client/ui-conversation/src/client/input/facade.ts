@@ -205,6 +205,9 @@ export class SessionInputShell implements SessionInput {
   /**
    * Turn-completed entry point for the ghost trigger: fetch a follow-up
    * suggestion, or clear when there is no assistant text to continue from.
+   * @param conversationId - conversation owning the completed turn.
+   * @param turnId - completed assistant turn identifier.
+   * @param assistantText - completed assistant message text.
    */
   notifyTurnCompleted(conversationId: string, turnId: string, assistantText: string): void {
     if (assistantText.trim() === '') {

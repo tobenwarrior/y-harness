@@ -55,7 +55,7 @@ function normalizeModel(payload) {
     changed: str(file.changed),
   })).sort((a, b) => a.path.localeCompare(b.path));
   return { root: str(raw.root_name, "Code map"), branch: str(raw.branch), head: str(raw.head), files, coverage: {
-    inventory: num(coverage.inventory), excluded: num(coverage.excluded), skipped: num(coverage.skipped), truncated: Boolean(coverage.truncated),
+    inventory: num(coverage.inventory), excluded: num(coverage.excluded), available: num(coverage.available ?? files.length), outOfView: num(coverage.response_skipped), skipped: Math.max(0, num(coverage.skipped) - num(coverage.response_skipped)), truncated: Boolean(coverage.truncated),
     notes: (Array.isArray(coverage.notes) ? coverage.notes : []).filter(note => typeof note === "string"),
     exclusions: coverage.excluded_reasons && typeof coverage.excluded_reasons === "object" ? Object.entries(coverage.excluded_reasons).map(([reason, total]) => count(num(total)) + " " + reason + (Number(total) === 1 ? "" : "s")) : [],
   } };
@@ -118,14 +118,14 @@ function renderStatus() {
   const status = error ? "error" : state.status?.indexing ? "indexing" : state.model ? "live" : "loading";
   refs["live-status"].dataset.state = status;
   refs["live-status-text"].textContent = status === "live" ? "Ready" : status === "error" ? "Offline" : status === "indexing" ? "Indexing" : "Connecting";
-  const issues = state.model?.coverage.notes.filter(note => !note.includes("import links are heuristic")) || [];
+  const issues = state.model?.coverage.notes.filter(note => !note.includes("import links are heuristic") && !note.includes("response file cap")) || [];
   const coverage = state.model?.coverage;
   const partial = coverage && (coverage.skipped || coverage.truncated || issues.length);
   const key = error || (partial ? JSON.stringify([coverage.skipped, coverage.truncated, issues]) : "");
   refs["notice-strip"].hidden = !key || key === state.dismissed;
   refs["notice-strip"].classList.toggle("error", Boolean(error));
-  refs["notice-title"].textContent = error ? "Update unavailable" : "Incomplete index";
-  refs["notice-detail"].textContent = error ? error + (state.model ? " The last map remains available." : "") : [coverage?.truncated ? "Scan limit reached" : "", coverage?.skipped ? count(coverage.skipped) + " source files skipped" : "", issues[0]].filter(Boolean).join(" · ");
+  refs["notice-title"].textContent = error ? "Update unavailable" : coverage?.skipped || issues.length ? "Incomplete index" : "Limited view";
+  refs["notice-detail"].textContent = error ? error + (state.model ? " The last map remains available." : "") : [coverage?.outOfView ? count(coverage.outOfView) + " indexed files outside this view; search to find them" : "", coverage?.skipped ? count(coverage.skipped) + " source files skipped" : "", issues[0]].filter(Boolean).join(" · ");
 }
 function renderSummary() {
   const files = state.model?.files || [];
@@ -139,7 +139,7 @@ function renderSummary() {
   refs["total-symbols"].textContent = count(symbols) + " symbols";
   refs["branch-name"].textContent = state.model?.branch ? "⑂ " + state.model.branch : state.model?.head ? state.model.head.slice(0, 8) : "";
   const coverage = state.model?.coverage;
-  refs["coverage-summary"].textContent = count(files.length) + " indexed" + (coverage?.excluded ? " · " + count(coverage.excluded) + " excluded" : "");
+  refs["coverage-summary"].textContent = count(coverage?.available ?? files.length) + " indexed" + (coverage?.outOfView ? " · " + count(files.length) + " in view" : "") + (coverage?.excluded ? " · " + count(coverage.excluded) + " excluded" : "");
   refs["coverage-detail"].textContent = coverage ? [count(coverage.inventory) + " repository files considered.", ...coverage.exclusions, ...coverage.notes].join(" ") : "Waiting for the index.";
   const folders = unique(files.map(file => group(file.path))).length;
   refs["repository-summary"].replaceChildren(make("span", count(files.length) + " files across " + count(folders) + " folder groups"), make("span", count(state.edges.length) + " recorded imports"), make("span", "Python AST · JS/TS outlines · local metadata"));
@@ -163,8 +163,11 @@ function renderTree() {
     for (const file of files) { const key = group(file.path); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(file); }
     items = [...groups].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([name, members]) => ({ name, members }));
   } else if (mode === "symbols") {
-    const query = state.query.toLowerCase();
-    items = files.flatMap(file => file.symbols.filter(symbol => !query || symbol.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query)).map(symbol => ({ file, symbol })));
+    const terms = state.query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    items = files.flatMap(file => file.symbols.filter(symbol => {
+      const haystack = [symbol.name, file.path, file.language].join(" ").toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    }).map(symbol => ({ file, symbol })));
   } else items = files;
   const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE)); state.page = state.page >= pages ? 0 : state.page;
   const fragment = document.createDocumentFragment();
@@ -329,7 +332,7 @@ async function loadMap() {
     const payload = await fetchJson(API.map + "?project=" + encodeURIComponent(project) + "&query=" + encodeURIComponent(requestedQuery));
     if (state.project !== project || state.epoch !== epoch) return;
     if (payload.indexing && !payload.model) {
-      state.status = { ...state.status, indexing: true }; state.error = "";
+      state.status = { ...state.status, indexing: true }; state.error = str(payload.error);
       renderStatus();
       if (!state.model) setOverlay("loading", "", "Indexing source files; the map will appear automatically…");
       return;
@@ -379,16 +382,16 @@ async function loadProjects() {
   try {
     const payload = await fetchJson(API.projects);
     state.projects = (Array.isArray(payload.projects) ? payload.projects : []).filter(project => project && typeof project.id === "string").map(project => ({ id: project.id, name: str(project.name, "Repository") }));
-    const target = state.projects.find(project => project.id === state.project) || state.projects[0];
+    const target = state.projects.find(project => project.id === state.project) || state.projects.find(project => project.id === payload.defaultProject) || state.projects[0];
     if (target) await activateProject(target.id); else { state.error = "No repository is registered. Open the map from a project chat."; renderStatus(); setOverlay("error", "", state.error); }
   } catch (error) { state.error = error.message; renderStatus(); setOverlay("error", "", state.error); }
 }
 function setView(view) { state.view = view; state.trace = view === "trace" ? state.trace : []; renderGraph(true); }
-function resetScope() { state.folder = ""; state.query = ""; state.view = "all"; state.page = 0; refs["file-search"].value = ""; renderTree(); renderGraph(true); updateUrl(); }
+function resetScope() { state.folder = ""; state.query = ""; state.view = "all"; state.page = 0; refs["file-search"].value = ""; renderTree(); renderGraph(true); updateUrl(); if (state.model?.coverage.truncated) loadMap(); }
 function installInteractions() {
   refs["project-select"].addEventListener("change", event => { state.selected = null; state.query = ""; refs["file-search"].value = ""; activateProject(event.target.value); });
   refs["refresh-button"].addEventListener("click", () => poll(true)); refs["retry-button"].addEventListener("click", loadProjects);
-  refs["notice-dismiss"].addEventListener("click", () => { state.dismissed = state.error || JSON.stringify([state.model?.coverage.skipped, state.model?.coverage.truncated, state.model?.coverage.notes.filter(note => !note.includes("import links are heuristic"))]); renderStatus(); });
+  refs["notice-dismiss"].addEventListener("click", () => { state.dismissed = state.error || JSON.stringify([state.model?.coverage.skipped, state.model?.coverage.truncated, state.model?.coverage.notes.filter(note => !note.includes("import links are heuristic") && !note.includes("response file cap"))]); renderStatus(); });
   refs["sidebar-button"].addEventListener("click", () => drawer("sidebar", !refs.sidebar.classList.contains("is-open"))); refs["sidebar-close"].addEventListener("click", () => drawer("sidebar", false));
   refs["inspector-button"].addEventListener("click", () => drawer("inspector", !refs.inspector.classList.contains("is-open"))); refs["inspector-close"].addEventListener("click", () => drawer("inspector", false));
   refs["file-search"].value = state.query;

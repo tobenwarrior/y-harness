@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** Release of the vendored content; kept equal to the table in `UPSTREAM.md`. */
-export const VENDORED_VERSION = '0.11.0'
+export const VENDORED_VERSION = '0.11.1'
 
 /** Upstream repository the vendored content is copied from. */
 export const UPSTREAM_REPOSITORY = 'tobenwarrior/compound-skills'

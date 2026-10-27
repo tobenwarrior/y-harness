@@ -47,7 +47,8 @@ MAX_RESPONSE = 8 * 1024 * 1024
 MAX_QUERY = 512
 MAX_LOG_BYTES = 256 * 1024
 MAX_HANDOFF = 16 * 1024
-INDEX_MAX_FILES = 5000
+INDEX_MAX_FILES = 20000
+RESPONSE_MAX_FILES = 5000
 MAX_SOURCE_BYTES = 64 * 1024
 MAX_SOURCE_PATH = 4096
 MAX_GIT_STATUS_BYTES = 256 * 1024
@@ -86,7 +87,7 @@ def _json(value: Any) -> bytes:
 def _build_assets() -> tuple[dict[str, bytes], str]:
     assets: dict[str, bytes] = {}
     digest = hashlib.sha256()
-    for script in (Path(__file__), Path(engine.__file__)):
+    for script in (Path(__file__), Path(engine.__file__), Path(engine.__file__).with_name("workspace_imports.py")):
         try:
             digest.update(script.read_bytes())
         except OSError:
@@ -179,6 +180,33 @@ def _git_state_fingerprint(root: Path) -> tuple[str, str] | None:
     digest.update(b"\0truncated=")
     digest.update(b"1" if truncated else b"0")
     return _git_branch(raw), digest.hexdigest()
+
+
+def _inventory_fingerprint(root: Path) -> str:
+    """Bounded Git inventory and worktree metadata; failures are never cache hits."""
+    limit = int(getattr(engine, "MAX_GIT_INVENTORY_BYTES", 8 * 1024 * 1024))
+    inventory = engine._bounded_git_output(root, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], limit)
+    status = engine._bounded_git_output(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], limit)
+    if inventory is None or status is None:
+        raise MapServerError("Git fingerprint unavailable or exceeded its bounded output limit")
+    digest = hashlib.sha256(status)
+    digest.update(inventory)
+    paths = sorted(set(inventory.split(b"\0")))
+    for raw in paths:
+        if not raw:
+            continue
+        rel = os.fsdecode(raw)
+        if not engine._safe_relative(rel):
+            raise MapServerError("Git inventory contains an unsafe path")
+        try:
+            info = (root / rel).lstat()
+        except FileNotFoundError:
+            digest.update(raw + b"\0missing\0")
+            continue
+        digest.update(raw + b"\0")
+        digest.update(f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}:{info.st_ctime_ns}:{info.st_ino}".encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _model_git_state(model: Any) -> tuple[str, str] | None:
@@ -757,7 +785,7 @@ def get_model(repo: str | os.PathLike[str], query: str = "", max_files: int = 20
     path = "/api/map?" + urllib.parse.urlencode({
         "project": project,
         "query": query[:MAX_QUERY],
-        "max_files": max(1, min(INDEX_MAX_FILES, int(max_files))),
+        "max_files": max(1, min(RESPONSE_MAX_FILES, int(max_files))),
     })
     status, value, raw = _request(runtime["port"], "GET", path, runtime["token"])
     if status != 200 or not value or not isinstance(value.get("model"), dict):
@@ -781,6 +809,7 @@ class Project:
     last_check: float = 0.0
     git_fingerprint: tuple[str, str] | None = None
     last_used: float = 0.0
+    inventory_fingerprint: str | None = None
     lock: Any = dataclasses.field(default_factory=threading.RLock, repr=False)
 
 
@@ -797,6 +826,8 @@ def _project_model(model: dict[str, Any], query: str, max_files: int) -> dict[st
     result["focus"] = [record["path"] for record in engine._rank(selected, query[:MAX_QUERY])[:12]]
     coverage = dict(model.get("coverage", {}))
     response_skipped = max(0, len(ranked) - len(selected))
+    coverage["available"] = len(ranked)
+    coverage["response_skipped"] = response_skipped
     coverage["indexed"] = len(selected)
     coverage["truncated"] = bool(coverage.get("truncated") or response_skipped)
     coverage["skipped"] = int(coverage.get("skipped", 0)) + response_skipped
@@ -915,11 +946,18 @@ class MapService:
                 values.setdefault(project_id, {"id": project_id, "name": entry["name"]})
             return sorted(values.values(), key=lambda item: item["name"])
 
-    def _refresh_worker(self, project: Project) -> None:
+    def _refresh_worker(self, project: Project, force: bool = False) -> None:
         self._index_slots.acquire()
         try:
+            before = _inventory_fingerprint(project.root)
+            with project.lock:
+                pending = bool(project.model and project.model.get("coverage", {}).get("pending"))
+                unchanged = project.model is not None and project.inventory_fingerprint == before
+                if not force and unchanged and not pending and not project.error:
+                    return
             display_name = engine.repository_name(project.root)
-            model, _ = engine.build_map(project.root, query="", max_files=INDEX_MAX_FILES, output_format="json")
+            model, _ = engine.build_map(project.root, query="", max_files=INDEX_MAX_FILES, output_format="text")
+            after = _inventory_fingerprint(project.root)
             git_state = _model_git_state(model)
             if git_state is None and not hasattr(engine, "_git_state"):
                 git_state = _git_state_fingerprint(project.root)
@@ -935,6 +973,8 @@ class MapService:
                 if old is None or stable_old != stable_new or (git_state is not None and project.git_fingerprint != git_state):
                     project.revision += 1
                 project.model = model
+                # A concurrent edit must force another build on the next check.
+                project.inventory_fingerprint = after if before == after else None
                 if git_state is not None:
                     project.git_fingerprint = git_state
                 project.name = model.get("root_name", display_name)
@@ -958,14 +998,7 @@ class MapService:
 
     def _refresh(self, project: Project, force: bool = False) -> None:
         """Queue one bounded index build without holding the service lock."""
-        try:
-            display_name = engine.repository_name(project.root)
-        except Exception:
-            display_name = ""
         with project.lock:
-            if display_name and display_name != project.name:
-                project.name = display_name
-                force = True
             now = time.monotonic()
             if project.indexing or (not force and now - project.last_check < 2.0):
                 return
@@ -973,7 +1006,7 @@ class MapService:
             project.indexing = True
         worker = threading.Thread(
             target=self._refresh_worker,
-            args=(project,),
+            args=(project, force),
             name="compound-map-index",
             daemon=True,
         )
@@ -1037,9 +1070,9 @@ class MapService:
             indexing = project.indexing
             error = project.error
             selected_query = project.query if query is None else query
-        if current is None:
+        if current is None or error:
             return None, project_info, revision, indexing, error
-        requested = INDEX_MAX_FILES if max_files is None else max(1, min(INDEX_MAX_FILES, int(max_files)))
+        requested = RESPONSE_MAX_FILES if max_files is None else max(1, min(RESPONSE_MAX_FILES, int(max_files)))
         return _project_model(current, selected_query, requested), project_info, revision, indexing, error
 
     def model(self, project: Project, max_files: int | None = None, query: str | None = None) -> dict[str, Any] | None:
@@ -1048,7 +1081,7 @@ class MapService:
 
     def map_response(self, project: Project, max_files: int | None = None, query: str | None = None) -> tuple[dict[str, Any] | None, bytes]:
         """Serialize a map response under the transport cap without shrinking the index."""
-        cap = INDEX_MAX_FILES if max_files is None else max(1, min(INDEX_MAX_FILES, int(max_files)))
+        cap = RESPONSE_MAX_FILES if max_files is None else max(1, min(RESPONSE_MAX_FILES, int(max_files)))
         response_capped = False
         while True:
             model, project_info, revision, indexing, error = self._model_snapshot(project, cap, query=query)

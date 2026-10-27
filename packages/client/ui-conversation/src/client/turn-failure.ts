@@ -84,6 +84,7 @@ function titleFor(code: string, retryable: boolean): string {
  * producing side did not stamp an explicit `retryable` on the failure.
  * @param code - the failure's code.
  * @param retryableCodes - the route's policy list.
+ * @returns whether the policy list contains the code.
  */
 export function isRetryableCode(code: string, retryableCodes: readonly string[]): boolean {
   return retryableCodes.includes(code)
@@ -201,6 +202,7 @@ export function presentTurnFailure(input: TurnFailureInput): TurnFailurePresenta
  * (persistent) rather than as a transient toast. Every state here is
  * persistent: the reference never drops a pending or failed resolution.
  * @param presentation - the decided presentation.
+ * @returns whether the presentation is persistent rather than transient.
  */
 export function isPersistent(presentation: TurnFailurePresentation): boolean {
   return presentation.kind !== 'retrying' || presentation.attempt > 0

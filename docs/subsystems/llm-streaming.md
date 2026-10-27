@@ -1206,6 +1206,48 @@ assertClientChange(nextClientId: string | undefined): void
 
 Source: [`packages/llm/llm-pi-ai/src/nous-connection.ts`](../../packages/llm/llm-pi-ai/src/nous-connection.ts)
 
+<a id="ctxxaiconnection--xaiconnection"></a>
+
+### `ctx.xaiConnection` — `XaiConnection`
+
+Own one xAI sign-in attempt through cancellation and durable grant commit. The bundled pi-ai OAuth client identity ships inside the dependency; no deployment configuration selects it.
+
+```ts cordis-catalog
+/**
+ * Read local connection metadata without redeeming a refresh token.
+ * @returns connection and attempt state without credentials.
+ */
+@Remote async getState(): Promise<XaiConnectionView>
+
+/**
+ * Begin one device attempt with explicit local-storage consent.
+ * @param saveLocally - affirmative consent to the owner-only unencrypted credential file.
+ * @returns browser instructions; the grant commits asynchronously before busy becomes false.
+ */
+@Remote async start(saveLocally: boolean): Promise<XaiDeviceVerification>
+
+/**
+ * Cancel before commit admission; an admitted save completes before cancellation returns.
+ * @returns after polling and durable credential work have settled.
+ */
+@Remote async cancel(): Promise<void>
+
+/**
+ * Read the installed xAI catalog for the Models card. No network call:
+ * the catalog ships with the build and grok-4.7 is among it.
+ * @returns catalog models; failures expose a sanitized retry or sign-in message.
+ */
+@Remote async models(): Promise<XaiModelView[]>
+
+/**
+ * Delete this app's local grant while no sign-in is running; remote revocation is user-owned.
+ * @returns after the local credential deletion completes.
+ */
+@Remote async disconnect(): Promise<void>
+```
+
+Source: [`packages/llm/llm-pi-ai/src/xai-connection.ts`](../../packages/llm/llm-pi-ai/src/xai-connection.ts)
+
 <a id="llm-events"></a>
 
 ### `llm/*` events

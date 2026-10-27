@@ -27,6 +27,17 @@ export function isArchivedAgentNotePath(path: string): boolean {
 }
 
 /**
+ * Identify upstream attribution files whose formatting and links must remain intact.
+ * @param path - repository-relative path.
+ * @returns whether the path is a vendored attribution file.
+ */
+export function isVendoredCompoundAttributionPath(path: string): boolean {
+  const normalized = path.replaceAll('\\', '/')
+  return normalized === 'packages/skill/skill-compound/SOURCES.md'
+    || normalized === 'packages/skill/skill-compound/THIRD_PARTY_NOTICES.md'
+}
+
+/**
  * Whether a pattern segment matches a directory or file name. Supports `*` and
  * `?` inside a segment and mirrors node's glob `dot: false`: a segment whose
  * first character is a wildcard does not match dot names. `**` is handled as a

@@ -40,6 +40,7 @@ export interface FollowUpPredictionProvider {
  * Follow-up prompt builder for model-backed providers. Keeps the request small
  * and single-purpose: one likely next user message, plain text.
  * @param assistantText - latest completed assistant message (pre-truncated).
+ * @returns the system instruction and assistant text as the user prompt.
  */
 export function buildFollowUpPrompt(assistantText: string): { system: string; user: string } {
   return {

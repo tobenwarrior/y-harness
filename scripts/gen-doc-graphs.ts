@@ -222,6 +222,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Owns device authorization for an explicitly configured public client, durable grant commit, and account model discovery through the generated Remote namespace.',
   },
   {
+    key: 'xaiConnection',
+    pkg: 'llm-pi-ai',
+    title: 'xAI device authorization controls',
+    mode: 'service',
+    consumers: ['llm-pi-ai', 'client-ui-settings-models'],
+    note: 'Owns device authorization, durable grant commit, and installed model catalog discovery through the generated Remote namespace.',
+  },
+  {
     key: 'deepseekLlmApiExtensions',
     pkg: 'deepseek-llm-api-extensions',
     title: 'Official DeepSeek request extensions',
