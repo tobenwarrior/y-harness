@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlatformOverlay } from '../src/client/PlatformOverlay.tsx'
 import { acquireOverlayInert } from '../src/client/overlay-inert.ts'
 import { OnboardingSurface } from '../src/client/OnboardingSurface.tsx'
+import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { readFileSync } from 'node:fs'
 
 let appRoot: HTMLDivElement
 
@@ -93,6 +95,59 @@ it('restores interaction when onboarding and its recharge overlay unmount togeth
     expect(appRoot.style.opacity).toBe('')
   } finally { vi.unstubAllGlobals() }
 })
+
+it('keeps a portaled Settings draft inert and traps focus during onboarding', () => {
+  const settings = render(<Modal open title="Settings" closeLabel="Close" shortcutModal="settings" onClose={() => {}}>
+    <input aria-label="Draft" defaultValue="keep this" />
+  </Modal>)
+  const dialog = screen.getByRole('dialog', { name: 'Settings' }) as HTMLElement
+  dialog.inert = false
+  dialog.parentElement!.style.visibility = 'visible'
+  const draft = screen.getByRole<HTMLInputElement>('textbox', { name: 'Draft' })
+  const onboarding = render(<OnboardingSurface label="Introduction"><button>Continue</button><button>Later</button></OnboardingSurface>)
+  expect(screen.getByRole('dialog', { name: 'Introduction' }).getAttribute('aria-modal')).toBe('true')
+  const first = screen.getByRole<HTMLButtonElement>('button', { name: 'Continue' })
+  const last = screen.getByRole<HTMLButtonElement>('button', { name: 'Later' })
+  expect(dialog.inert).toBe(true)
+  expect(dialog.parentElement!.style.visibility).toBe('hidden')
+  expect(document.activeElement).toBe(first)
+  last.focus()
+  fireEvent.keyDown(document, { key: 'Tab' })
+  expect(document.activeElement).toBe(first)
+  onboarding.unmount()
+  expect(dialog.inert).toBe(false)
+  expect(dialog.parentElement!.style.visibility).toBe('visible')
+  expect(draft.value).toBe('keep this')
+  settings.unmount()
+})
+
+it('tolerates a Settings dialog that has detached before onboarding claims it', () => {
+  const dialog = document.createElement('div')
+  const lookup = vi.spyOn(document, 'querySelector').mockReturnValueOnce(dialog)
+  try {
+    const view = render(<OnboardingSurface label="Introduction">ready</OnboardingSurface>)
+    expect(appRoot.inert).toBe(true)
+    view.unmount()
+    expect(appRoot.inert).toBe(false)
+  } finally { lookup.mockRestore() }
+})
+
+it('layers onboarding above Settings while allowing subsequent dialogs above it', () => {
+  const css = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  const zIndex = (text: string, selector: string) => {
+    const match = text.match(new RegExp(`\\.${selector}\\s*\\{[^}]*z-index:\\s*(\\d+)`, 'u'))
+    if (match === null) throw new Error(`missing z-index for ${selector}`)
+    return Number(match[1])
+  }
+  const onboarding = zIndex(css('../src/client/OnboardingSurface.module.css'), 'onboardingOverlay')
+  const settings = zIndex(css('../../ui-settings-general/src/client/SettingsRoot.module.css'), 'overlay')
+  const dialog = zIndex(css('../../ui-primitives/src/Modal.module.css'), 'root')
+  expect(onboarding).toBeGreaterThanOrEqual(settings)
+  expect(dialog).toBeGreaterThanOrEqual(onboarding)
+})
+
+
+
 
 it('releasing one overlay twice cannot release a different active overlay', () => {
   const first = acquireOverlayInert(appRoot)

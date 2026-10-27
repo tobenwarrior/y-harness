@@ -49,6 +49,7 @@ function mount(step: DesktopOnboardingState['progress']['step'] = 'welcome', bal
 
 it('keeps welcome mandatory and enters credit only through Start', async () => {
   const operations = mount()
+  expect(screen.getByRole('dialog').getAttribute('aria-labelledby')).toBe('desktop-onboarding-title')
   expect(screen.queryByRole('button', { name: zh.onboardingSkip })).toBeNull()
   expect(screen.queryByRole('button', { name: zh.onboardingBack })).toBeNull()
   fireEvent.keyDown(document, { key: 'Escape' })
@@ -60,6 +61,7 @@ it('keeps welcome mandatory and enters credit only through Start', async () => {
 
 it('covers the application without showing an unfinished step while durable settings load', () => {
   mount('welcome', 'positive', 'loading')
+  expect(screen.getByRole('dialog', { name: zh.onboardingLoading })).toBeTruthy()
   expect(screen.getByRole('status').textContent).toBe(zh.onboardingLoading)
   expect(screen.queryByRole('button', { name: zh.onboardingStart })).toBeNull()
   expect(document.querySelector('[data-desktop-onboarding]')).toBeNull()
@@ -141,7 +143,7 @@ it('requires explicit skip confirmation and Escape only closes that dialog', asy
   fireEvent.click(screen.getByRole('button', { name: zh.onboardingSkip }))
   expect(screen.getByRole('dialog', { name: zh.onboardingSkipTitle })).toBeTruthy()
   fireEvent.keyDown(document, { key: 'Escape' })
-  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('dialog', { name: zh.onboardingSkipTitle })).toBeNull()
   expect(operations.complete).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: zh.onboardingSkip }))
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingEnter })) })
@@ -205,7 +207,7 @@ it('closes skip confirmation when saving fails so the page can show retry', asyn
   operations.complete.mockResolvedValueOnce(false)
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingSkip })) })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingEnter })) })
-  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('dialog', { name: zh.onboardingSkipTitle })).toBeNull()
   expect(document.querySelector('[data-desktop-onboarding="purpose"]')).toBeTruthy()
 })
 
@@ -260,7 +262,7 @@ it('traps Tab in confirmation, closes it, and keeps the selected page', async ()
   const trigger = screen.getByRole('button', { name: zh.onboardingSkip })
   trigger.focus()
   fireEvent.click(trigger)
-  const dialog = screen.getByRole('dialog')
+  const dialog = screen.getByRole('dialog', { name: zh.onboardingSkipTitle })
   const buttons = dialog.querySelectorAll('button')
   const first = buttons[0]!
   const last = buttons[buttons.length - 1]!
@@ -273,11 +275,11 @@ it('traps Tab in confirmation, closes it, and keeps the selected page', async ()
   fireEvent.keyDown(last, { key: 'Tab', shiftKey: true })
   fireEvent.keyDown(first, { key: 'a' })
   fireEvent.click(screen.getByRole('button', { name: zh.onboardingKeepSetting }))
-  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('dialog', { name: zh.onboardingSkipTitle })).toBeNull()
   expect(document.activeElement).toBe(trigger)
   fireEvent.click(trigger)
   fireEvent.click(screen.getByRole('button', { name: zh.close }))
-  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('dialog', { name: zh.onboardingSkipTitle })).toBeNull()
 })
 
 it('opens recharge directly from a credit warning', async () => {
@@ -325,7 +327,7 @@ it('does not restore focus to a disconnected confirmation trigger', () => {
   fireEvent.click(trigger)
   trigger.remove()
   fireEvent.click(screen.getByRole('button', { name: zh.close }))
-  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('dialog', { name: zh.onboardingSkipTitle })).toBeNull()
 })
 
 it('returns from purpose to credit without dropping the selected purpose', async () => {

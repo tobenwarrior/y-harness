@@ -55,6 +55,26 @@ async function bench(isLoopback = true, mock = RemoteMock.create().load(remoteDe
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, remote }
 }
 
+it.each([
+  [{}, false, false],
+  [{ credentialOnboarding: true }, false, true],
+  [{ credentialOnboarding: true }, true, false],
+] as const)('controls automatic credential onboarding (%j, desktop=%s)', async (config, desktop, expected) => {
+  const { ctx, slots } = await bench()
+  declare(slots)
+  vi.stubGlobal(ONBOARDING_CONFIG_GLOBAL, config)
+  if (desktop) vi.stubGlobal('dshDesktop', {})
+  try {
+    const plugin = ctx.plugin({ inject: [...inject], apply })
+    await plugin.await()
+    const onboarding = slots.entries('settings.onboarding').find(entry => entry.options.id === 'deepseek-official')!
+    expect((onboarding.inject as () => { automatic: boolean })().automatic).toBe(expected)
+  } finally {
+    await ctx.fiber.dispose()
+  }
+})
+
+
 function declare(slots: SlotRegistry): () => void {
   return slots.register(
     {
@@ -96,8 +116,9 @@ describe('ui-settings-models apply', () => {
     }
   })
 
-  it('defaults to browser onboarding and rejects malformed bootstrap options', async () => {
-    expect(hostPlugin.Config({})).toEqual({ credentialOnboarding: true })
+  it('defaults to no credential prompt and rejects malformed bootstrap options', async () => {
+    expect(hostPlugin.Config({})).toEqual({ credentialOnboarding: false })
+    expect(hostPlugin.Config({ credentialOnboarding: true })).toEqual({ credentialOnboarding: true })
     expect(hostPlugin.Config['~standard'].validate({ credentialOnboarding: 'false' })).toHaveProperty('issues')
     const { ctx } = await bench()
     try {

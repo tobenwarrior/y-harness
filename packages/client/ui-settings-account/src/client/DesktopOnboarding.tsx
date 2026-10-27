@@ -75,7 +75,7 @@ export function DesktopOnboarding({
   const popupClick = (button_name: ProductEventMap['onboarding_popup_click']['button_name']) => {
     track?.('onboarding_popup_click', { popup_name: dialog === 'skip' ? 'skip_setting' : 'skip_charge', button_name })
   }
-  if (state.visible && state.status === 'loading') return <OnboardingSurface>
+  if (state.visible && state.status === 'loading') return <OnboardingSurface label={t('onboardingLoading')}>
     <div className={css.loading} role="status">{t('onboardingLoading')}</div>
   </OnboardingSurface>
   if (!state.visible || pageName === undefined) return null
@@ -102,7 +102,7 @@ export function DesktopOnboarding({
     else go('process')
   }
   return <>
-    <OnboardingSurface exiting={exiting}>
+    <OnboardingSurface exiting={exiting} labelledBy="desktop-onboarding-title">
       <section key={step} ref={page} className={`${css.page} ${dialog !== null ? css.blurred : ''}`} data-desktop-onboarding={step} lang={locale} aria-labelledby="desktop-onboarding-title" aria-busy={busy}>
         {step === 'welcome' && <OnboardingWelcomeStep t={t} locale={locale} heading={heading} busy={busy} onStart={() => { click('next'); go('credit') }} />}
         {step === 'credit' && <OnboardingCreditStep t={t} locale={locale} heading={heading} busy={busy}

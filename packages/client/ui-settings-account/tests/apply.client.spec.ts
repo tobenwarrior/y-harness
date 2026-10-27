@@ -71,6 +71,7 @@ it('keeps account UI and account RPC inactive in a plain browser, including afte
     await c.flush()
     expect(c.ctx.slots.entries('settings.launcher')).toHaveLength(0)
     expect(c.ctx.slots.entries('settings.models.sign-in')).toHaveLength(0)
+    expect(c.ctx.slots.entries('settings.models.footer').some(entry => entry.options.id === 'deepseek-account-sign-in')).toBe(false)
     expect(c.ctx.slots.entries('settings.section').some(entry => entry.options.id === 'account')).toBe(false)
     expect(quotaNoticeEntry(c)).toBeUndefined()
     expect(platformHostEntry(c)).toBeUndefined()
@@ -99,6 +100,9 @@ it('shares account actions across seats, publishes dialog ownership, and opens c
   const c = await start()
   const actions = operations(c)
   expect(c.ctx.slots.entries('settings.models.sign-in')[0]!.inject!()).toBe(actions)
+  const modelSignIn = c.ctx.slots.entries('settings.models.footer').find(entry => entry.options.id === 'deepseek-account-sign-in')
+  expect(modelSignIn).toBeDefined()
+  expect(modelSignIn!.inject!()).toBe(actions)
   // The account UI follows the live theme service through the framework hook channel.
   const theme = c.ctx.get('theme') as ThemeRuntime
   const onTheme = vi.fn()

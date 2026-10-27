@@ -671,6 +671,80 @@ it('reads the account again when the user returns from the top-up view, and not 
   expect(operations.refreshAccount).toHaveBeenCalledOnce()
 })
 
+it.each([en, zh])('offers optional DeepSeek sign-in in Models without prompting on load', async (copy) => {
+  const { ModelsAccountSignIn } = await import('../src/client/ModelsAccountSignIn.tsx')
+  const operations = operationsOf({ status: 'signed-out', attempt: null })
+  let snapshot: AccountSnapshot = { view: undefined, details: undefined, failed: false }
+  const props = {
+    ...({} as GlobalStandardProps), ...operations,
+    useAccount: <T,>(selector: (value: AccountSnapshot) => T): T => selector(snapshot),
+    t: (key: string) => key in copy ? copy[key as AccountKey] : key,
+  }
+  const view = render(<ModelsAccountSignIn {...props} />)
+  expect(screen.getByRole('button', { name: copy.signIn }).hasAttribute('disabled')).toBe(true)
+  expect(operations.start).not.toHaveBeenCalled()
+  snapshot = operations.hooks.account.getSnapshot()
+  view.rerender(<ModelsAccountSignIn {...props} />)
+  expect(screen.getByText(copy.modelsAccountTitle)).toBeTruthy()
+  expect(screen.getByText(copy.modelsAccountDescription)).toBeTruthy()
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: copy.signIn })) })
+  expect(operations.start).toHaveBeenCalledOnce()
+  snapshot = { ...snapshot, view: { ...snapshot.view!, status: 'credential-stored' } }
+  view.rerender(<ModelsAccountSignIn {...props} />)
+  expect(screen.queryByRole('button', { name: copy.signIn })).toBeNull()
+})
+
+it('keeps the Models sign-in action disabled while a login dialog is active', async () => {
+  const { ModelsAccountSignIn } = await import('../src/client/ModelsAccountSignIn.tsx')
+  const operations = operationsOf({ status: 'signed-out', attempt: null })
+  vi.mocked(operations.start).mockRejectedValueOnce(new Error('sign-in unavailable'))
+  let snapshot: AccountSnapshot = { ...operations.hooks.account.getSnapshot(), failed: true, loginVisible: true }
+  const props = {
+    ...({} as GlobalStandardProps), ...operations,
+    useAccount: <T,>(selector: (value: AccountSnapshot) => T): T => selector(snapshot),
+    t: (key: string) => key in en ? en[key as AccountKey] : key,
+  }
+  const view = render(<ModelsAccountSignIn {...props} />)
+  expect(screen.getByText(en.failed)).toBeTruthy()
+  expect(screen.getByRole('button', { name: en.signIn }).hasAttribute('disabled')).toBe(true)
+  snapshot = { ...snapshot, loginVisible: false }
+  view.rerender(<ModelsAccountSignIn {...props} />)
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+  expect(operations.start).toHaveBeenCalledOnce()
+})
+
+it('opens the shared sign-in dialog only after choosing DeepSeek in Models', async () => {
+  const { ModelsAccountSignIn } = await import('../src/client/ModelsAccountSignIn.tsx')
+  const { AccountMenu } = await import('../src/client/AccountMenu.tsx')
+  const operations = operationsOf({ status: 'signed-out', attempt: null })
+  let snapshot = operations.hooks.account.getSnapshot()
+  const listeners = new Set<() => void>()
+  const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
+  const useAccount = <T,>(selector: (value: AccountSnapshot) => T): T =>
+    selector(useSyncExternalStore(subscribe, () => snapshot))
+  const start = vi.fn(async () => {
+    snapshot = { ...snapshot, loginVisible: true }
+    for (const listener of listeners) listener()
+  })
+  const common = {
+    ...({} as GlobalStandardProps), ...operations, start, useAccount,
+    t: (key: string) => key in en ? en[key as AccountKey] : key,
+  }
+  render(<>
+    <ModelsAccountSignIn {...common} />
+    <AccountMenu {...common} settingsOpen wide openOnboarding={() => {}} openSettings={() => {}}
+      useTheme={selector => selector(operations.hooks.theme.getSnapshot())} />
+  </>)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  const card = screen.getByRole('region', { name: en.modelsAccountTitle })
+  await act(async () => { fireEvent.click(within(card).getByRole('button', { name: en.signIn })) })
+  expect(start).toHaveBeenCalledOnce()
+  expect(screen.getByRole('dialog', { name: en.loginTitle })).toBeTruthy()
+})
+
+
+
+
 it('reports resize failure, ignores late native failures, and tolerates a removed IPC receiver', async () => {
   let resize: (() => void) | undefined
   vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resize = callback } observe() {} disconnect() {} })

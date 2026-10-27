@@ -24,7 +24,7 @@ function productCopy(value: Awaited<ReturnType<typeof dictionaries>>): string[] 
       copy.nousHint, copy.nousModelsHint, copy.nousHermesDisclosure, copy.welcomeBody,
     ]),
     ...[value.account.en, value.account.zh].flatMap(copy => [
-      copy.backToHarness, copy.settingsSignedOutTitle, copy.settingsSignedOutDescription, copy.quotaDescription,
+      copy.backToHarness, copy.quotaDescription,
     ]),
     ...[value.office.en, value.office.zh].flatMap(copy => [copy.unavailable]),
     ...[value.onboarding.onboardingCopy, value.onboarding.onboardingEnglishCopy].flatMap(copy => [
@@ -56,7 +56,7 @@ describe('feature product labels', () => {
     if (displayName !== 'Y Harness') {
       for (const copy of productCopy(value)) expect(copy).not.toMatch(/Y Harness|DeepSeek Harness/)
     }
-    expect(value.account.en.signInDescription).toBe('Use your DeepSeek account to get started.')
+    expect(value.account.en.signInDescription).toBe('Sign in to use DeepSeek account models.')
     expect(value.account.en.signedIn).toBe('Signed in to DeepSeek')
     expect(value.models.en.deepSeekAccount).toBe('DeepSeek Account')
     expect(value.models.en.onboardingDescription).toBe('Configure the official DeepSeek provider to start building.')

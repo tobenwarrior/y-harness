@@ -1,1 +1,1 @@
-开始使用登录 DeepSeek 账号，或添加 API Key，即可开始使用。你的项目和文件保存在本地。添加 API Key登录
+登录 DeepSeek登录以使用 DeepSeek 账号模型，或在模型设置中添加 API Key。你的项目和文件保存在本地。添加 API Key登录

@@ -5,13 +5,13 @@ kind: "package-reference"
 
 # @deepseek-ai/dsh-client-ui-settings-account
 
-Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded. Workspace login dialogs emit no authentication events; native welcome owns authentication analytics.
+Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded. Workspace login dialogs emit no authentication events.
 
 Server-expired account credentials clear the displayed account details and emit a localized sign-in reminder toast once; account snapshot replay does not repeat it.
 
 ## Summary
 
-The Account settings section displays DeepSeek login state and offers browser sign-in and cancellation; the sidebar account menu provides Platform sign-out. Desktop users also receive a resumable introduction to account credit and presentation preferences.
+The Models page offers optional DeepSeek account sign-in. The Account settings section displays login state and supports cancellation; the sidebar account menu provides Platform sign-out. Desktop users also receive a resumable introduction to account credit and presentation preferences.
 
 The sign-in dialog offers network troubleshooting only for `no-response` failures. HTTP, business, response-validation, storage, and account-stream failures retain the generic retry message.
 
@@ -21,12 +21,12 @@ The sign-in dialog offers network troubleshooting only for `no-response` failure
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 
-A new account-model sign-in-required event displays “Model unavailable. Please sign in and try again.” in a toast. The notice is transient: remounting or refreshing does not replay it.
+A new account-model sign-in-required event displays “DeepSeek account model unavailable. Sign in or choose another model.” in a toast. The notice is transient: remounting or refreshing does not replay it.
 
 <a id="use-this-package"></a>
 ## Use this package
 
-The client activates only inside Desktop, identified by its preload bridge. Plain Web clients keep the standard Settings launcher and API-key onboarding without account login, account settings, or an account-state subscription.
+The client activates only inside Desktop, identified by its preload bridge. Plain Web clients keep the standard Settings launcher and Models provider configuration without account login, account settings, or an account-state subscription.
 
 The sidebar and Account settings display circular profile images with diameters of 24px and 32px respectively, with the account icon as fallback when the URL is absent or the image fails to load. The collapsed sidebar centers the avatar in a 36 × 36 px button. Before sign-in the sidebar launcher shows a More row instead, leading with the ellipsis glyph.
 

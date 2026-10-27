@@ -28,6 +28,8 @@ import { DesktopOnboardingController } from './onboarding-state.ts'
 import { DesktopOnboardingEntry, type DesktopOnboardingInjected } from './DesktopOnboardingEntry.tsx'
 import { readOnboardingApiKeyPresence } from './onboarding-credentials.ts'
 import { refreshAfterReturn } from './account-refresh.ts'
+import { ModelsAccountSignIn } from './ModelsAccountSignIn.tsx'
+
 export type { AccountSectionInjected, AccountSectionProps } from './AccountSection.tsx'
 export type { AccountMenuProps } from './AccountMenu.tsx'
 export type { AccountSnapshot } from './AccountSection.tsx'
@@ -262,6 +264,9 @@ export function apply(ctx: Context): void {
       }),
     }, DesktopOnboardingEntry))
   }
+  ctx.slots.inject('settings.models.footer', () => ctx.slots.register({
+    name: 'settings.models.footer', id: 'deepseek-account-sign-in', locale: 'settings.account', inject: () => operations,
+  }, ModelsAccountSignIn))
   ctx.slots.inject('settings.models.sign-in', () => ctx.slots.register({
     name: 'settings.models.sign-in', locale: 'settings.account', inject: () => operations,
   }, AccountOnboarding))

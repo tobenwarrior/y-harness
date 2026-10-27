@@ -336,9 +336,10 @@ describe('ModelsSection', () => {
     scripted.face.llm.listConfigurableProviders.mockResolvedValue({
       ok: false, error: new RemoteError('gateway/internal', 'Provider directory offline', {}),
     })
-    await mountFace(scripted)
+    const { renderSlot } = await mountFace(scripted)
     expect(screen.getByText(`${en.loadFailed}: Provider directory offline`)).toBeTruthy()
     expect(screen.getByRole('button', { name: en.retry })).toBeTruthy()
+    expect(renderSlot).toHaveBeenCalledWith('settings.models.footer', {})
     expect(screen.queryByText(en.addUnavailable)).toBeNull()
     expect(scripted.face.credentials.set).not.toHaveBeenCalled()
   })

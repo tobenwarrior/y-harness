@@ -2622,6 +2622,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'settings.section\' (client-ui-settings-models), so it exists while that entry is mounted',
     occupants: [
+      'client-ui-settings-account ModelsAccountSignIn id \'deepseek-account-sign-in\'',
       'client-ui-skill-library DecisionSettings id \'skill-decision\'',
     ],
     replaceRisk: 'none',

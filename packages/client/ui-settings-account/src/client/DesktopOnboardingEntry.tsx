@@ -54,7 +54,7 @@ export function DesktopOnboardingEntry({ useOnboarding, useAccount, ...props }:
 
   const displayed = state.visible ? state : exiting || pendingCompletion ? lastVisible : null
   if (displayed === null) return state.status === 'loading'
-    ? <OnboardingSurface><div role="status">{props.t('onboardingLoading')}</div></OnboardingSurface> : null
+    ? <OnboardingSurface label={props.t('onboardingLoading')}><div role="status">{props.t('onboardingLoading')}</div></OnboardingSurface> : null
   return <DesktopOnboarding {...props} locale={locale} state={pendingCompletion ? { ...displayed, status: 'saving' } : displayed}
     account={account} exiting={exiting} />
 }
