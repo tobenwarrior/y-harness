@@ -3,8 +3,12 @@
  * unknown stays unknown rather than reporting an update that cannot apply.
  */
 import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   detectCheckoutUpdate,
+  detectManagedGithubUpdate,
   isCheckoutUpdateActionable,
   type CheckoutUpdateProbe,
   type GitProbeResult,
@@ -69,5 +73,36 @@ describe('detectCheckoutUpdate', () => {
       readHeadCommit: async () => ({ exitCode: 1, stdout: '' }),
     }))
     expect(isCheckoutUpdateActionable(state)).toBe(false)
+  })
+})
+
+
+describe('managed GitHub status', () => {
+  it('only exposes a valid, ready, different commit from a bounded regular file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'desktop-status-'))
+    const path = join(dir, 'update-status.json')
+    const env = { DSH_DESKTOP_GITHUB_MANAGED: '1', DSH_DESKTOP_GITHUB_STATUS: path, DSH_DESKTOP_GITHUB_BUILD_COMMIT: HEAD }
+    const candidate = 'a'.repeat(40)
+    try {
+      await writeFile(path, JSON.stringify({ phase: 'ready', commit: candidate }))
+      expect(await detectManagedGithubUpdate(env)).toMatchObject({ available: true, shortHead: candidate.slice(0, 12) })
+      await writeFile(path, JSON.stringify({ phase: 'ready', commit: HEAD }))
+      expect(await detectManagedGithubUpdate(env)).toMatchObject({ available: false })
+      for (const raw of [JSON.stringify({ phase: 'active', commit: candidate }), JSON.stringify({ phase: 'ready', commit: 'abc' }), '{', ' '.repeat(4097)]) {
+        await writeFile(path, raw)
+        expect(await detectManagedGithubUpdate(env)).toBeNull()
+      }
+      await writeFile(path, JSON.stringify({ phase: 'ready', commit: candidate }))
+      if (process.platform !== 'win32') {
+        const link = join(dir, 'link')
+        await symlink(path, link)
+        expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_STATUS: link })).toBeNull()
+      }
+      expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_STATUS: 'relative' })).toBeNull()
+      expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_BUILD_COMMIT: 'abc' })).toBeNull()
+      expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_MANAGED: '0' })).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

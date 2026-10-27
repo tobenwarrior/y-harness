@@ -3,7 +3,7 @@ import { WINDOWS_TITLEBAR_HEIGHT } from '../src/windows-layout.ts'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import type { MenuItemConstructorOptions, MessageBoxOptions } from 'electron'
 import { DESKTOP_IPC, type DesktopUpdateState } from '../src/ipc.ts'
@@ -51,6 +51,7 @@ const harness = await vi.hoisted(async () => {
   let embeddedPolicy: unknown
   let closeWindowsOnQuit = false
   let updateState: DesktopUpdateState = { phase: 'idle' }
+  let updateSourceAvailable = true
   let platformDisposeDeferred: ReturnType<typeof deferred> | undefined
   // The native Platform view owns persistent browser storage; Desktop startup tests replace it so
   // each quit can control when that cleanup settles.
@@ -213,6 +214,8 @@ const harness = await vi.hoisted(async () => {
     ipcOn: vi.fn<(channel: string, listener: (event: { sender: unknown; senderFrame: unknown }, ...args: unknown[]) => void) => void>(),
     get updateState() { return updateState },
     set updateState(value: DesktopUpdateState) { updateState = value },
+    get updateSourceAvailable() { return updateSourceAvailable },
+    set updateSourceAvailable(value: boolean) { updateSourceAvailable = value },
     get prepareUpdate() { return prepareUpdate! },
     set prepareUpdate(value: () => Promise<boolean>) { prepareUpdate = value },
     get publishUpdate() { return publishUpdate! },
@@ -252,6 +255,7 @@ const harness = await vi.hoisted(async () => {
       prepareUpdate = undefined
       publishUpdate = undefined
       updateState = { phase: 'idle' }
+      updateSourceAvailable = true
       updateCheck.mockReset().mockImplementation(async () => updateState)
       loginShell.mockReset().mockImplementation(base => readLoginShell(base))
       updateDownload.mockReset().mockImplementation(async () => updateState)
@@ -349,7 +353,7 @@ vi.mock('../src/update-coordinator.ts', () => ({ DesktopUpdateCoordinator: class
   readonly check = harness.updateCheck
   readonly download = harness.updateDownload
   readonly install = harness.updateInstall
-  hasUpdateSource() { return true }
+  hasUpdateSource() { return harness.updateSourceAvailable }
   readonly dispose = vi.fn()
 } }))
 vi.mock('../src/platform-view.ts', async importOriginal => ({
@@ -1103,6 +1107,27 @@ describe('desktop main startup', () => {
     await harness.navigated.promise
     return harness.hosts[0]!
   }
+
+  it('rechecks a managed update before allowing a stale indicator to quit the app', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-update-'))
+    onTestFinished(() => { rmSync(directory, { recursive: true, force: true }) })
+    const status = join(directory, 'status.json')
+    const built = 'a'.repeat(40)
+    const candidate = 'b'.repeat(40)
+    writeFileSync(status, JSON.stringify({ phase: 'active', commit: built }))
+    vi.stubEnv('DSH_DESKTOP_GITHUB_MANAGED', '1')
+    vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
+    vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
+    harness.updateSourceAvailable = false
+    await readyForUpdate()
+    harness.updateState = { phase: 'available', version: candidate.slice(0, 12) }
+    harness.app.quit.mockClear()
+    await invoke(DESKTOP_IPC.updatesOpen, 'app')
+    expect(harness.app.quit).not.toHaveBeenCalled()
+    writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
+    await invoke(DESKTOP_IPC.updatesOpen, 'app')
+    expect(harness.app.quit).toHaveBeenCalledOnce()
+  })
 
   it.each([
     ['win32', ['--updated'], true],

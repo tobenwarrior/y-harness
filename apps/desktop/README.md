@@ -173,6 +173,18 @@ The [native/renderer keyboard tests](tests/keyboard.spec.ts) compile as part of 
 
 Dependency installation does not run the locked Electron package's separate binary installer. Before running the [Windows console-signal tests](tests/windows-cli-signals.spec.ts) directly, prepare the locked Electron binary with `pnpm --filter @deepseek-ai/dsh-desktop exec install-electron` from the repository root. For downloads through a proxy, enable `ELECTRON_GET_USE_PROXY=1` for that installer process. Windows coverage aggregates require successful provisioning before the instrumented unit inventory starts.
 
+### GitHub-managed macOS launcher
+
+The fork can install a separate `Y Harness GitHub.app` that checks `tobenwarrior/y-harness` on GitHub. On macOS, with Git, Python 3.9+, Node and pnpm available on `PATH`, run from the repository root:
+
+```sh
+python3 apps/desktop/scripts/install-github-desktop.py
+```
+
+Open `~/Applications/Y Harness GitHub.app` in Finder. The first launch clones the repository, installs dependencies, and builds the app. Later launches use the last prepared version while the supervisor checks GitHub immediately and every ten minutes. It builds a new commit in a separate directory, exposes it in the update indicator when ready, and switches versions only after the app quits; open the app again to use it. A network or build failure leaves the previous version available. If the app quits during an update build, the build stops and is retried on the next launch. Reopening an already running app focuses its existing window.
+
+This launcher uses `~/Library/Application Support/Y Harness GitHub` for its own source versions, build files, logs, Harness home, and Electron data. It does not overwrite an existing application, modify the working checkout, migrate another profile, or remove older versions and failed build directories. Installation refuses existing destinations rather than replacing them. Updates require a fast-forward commit on the configured GitHub branch and execute repository build and dependency installation scripts; they are source updates, not signed or notarized release packages. Protect the GitHub repository and review its changes before they are merged into that branch.
+
 ### Startup onboarding
 
 The API-key input starts empty and uses `autocomplete="new-password"` to ask Chromium not to autofill saved login passwords.

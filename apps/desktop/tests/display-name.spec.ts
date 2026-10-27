@@ -64,6 +64,11 @@ it('refreshes only the development bundle display label when the configuration c
   expect(await prepareDevelopmentApp(options)).toBe(executable)
   expect(JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8'))).toEqual(original)
   expect(readFileSync(executable, 'utf8')).toBe(launcher)
+
+  await prepareDevelopmentApp({ ...options, managed: true, disableInspectors: true })
+  const managed = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
+  expect(managed.CFBundleURLTypes).toEqual([])
+  expect(readFileSync(executable, 'utf8')).toContain("export DSH_DESKTOP_DEV_APP='0'")
 })
 
 it('adds a release display label without changing product filenames or identity metadata', () => {

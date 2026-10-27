@@ -12,7 +12,7 @@ const portVariables = [
   'DSH_DESKTOP_HOST_INSPECT_PORT',
 ] as const
 
-function launcherFixture(openDevtools = '1') {
+function launcherFixture(openDevtools = '1', disableInspectors = false) {
   const root = mkdtempSync(join(tmpdir(), 'dsh-development-app-'))
   onTestFinished(() => { rmSync(root, { recursive: true, force: true }) })
   const bundle = join(root, "Harness ' $(false).app")
@@ -23,7 +23,8 @@ function launcherFixture(openDevtools = '1') {
   const home = join(root, "home ' $(false)")
   const userData = join(root, 'browser data')
   writeFileSync(launcher, developmentLauncher({ electron: binary, appRoot: root, directory: root,
-    home, userData, mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools }, bundle))
+    home, userData, mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools,
+    disableInspectors, managed: disableInspectors }, bundle))
   const environment = { ...process.env }
   delete environment.DSH_DESKTOP_MAIN_INSPECT_PORT
   delete environment.DSH_DESKTOP_RENDERER_DEBUG_PORT
@@ -149,4 +150,13 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       },
     )
   }
+})
+
+describe.skipIf(process.platform === 'win32')('managed development launcher', () => {
+  it('omits all debugger ports when inspectors are disabled', () => {
+    const fixture = launcherFixture('0', true)
+    const result = execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: fixture.environment })
+    expect(result.trimEnd().split('\n')).toEqual([fixture.home, '0', '0', '',
+      `--user-data-dir=${fixture.userData}`, fixture.root])
+  })
 })

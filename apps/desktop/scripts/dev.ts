@@ -60,9 +60,11 @@ async function launchElectron(): Promise<void> {
   const require = createRequire(import.meta.url)
   const electron: unknown = require('electron')
   if (typeof electron !== 'string') throw new Error('desktop development: electron executable is unavailable')
-  const mainPort = debugPort('DSH_DESKTOP_MAIN_INSPECT_PORT', 9229)
-  const rendererPort = debugPort('DSH_DESKTOP_RENDERER_DEBUG_PORT', 9222)
-  const hostPort = debugPort('DSH_DESKTOP_HOST_INSPECT_PORT', 9230)
+  const managed = process.env.DSH_DESKTOP_GITHUB_MANAGED === '1'
+  const disableInspectors = managed || process.env.DSH_DESKTOP_DISABLE_INSPECTORS === '1'
+  const mainPort = disableInspectors ? 9229 : debugPort('DSH_DESKTOP_MAIN_INSPECT_PORT', 9229)
+  const rendererPort = disableInspectors ? 9222 : debugPort('DSH_DESKTOP_RENDERER_DEBUG_PORT', 9222)
+  const hostPort = disableInspectors ? 9230 : debugPort('DSH_DESKTOP_HOST_INSPECT_PORT', 9230)
   const home = resolve(process.env.DSH_HOME ?? join(DEVELOPMENT_ROOT, 'home'))
   const userData = resolve(process.env.DSH_DESKTOP_USER_DATA_DIR ?? join(DEVELOPMENT_ROOT, 'electron-user-data'))
   const environment: NodeJS.ProcessEnv = {
@@ -72,21 +74,21 @@ async function launchElectron(): Promise<void> {
     DSH_DESKTOP_MAIN_INSPECT_PORT: String(mainPort),
     DSH_DESKTOP_RENDERER_DEBUG_PORT: String(rendererPort),
     DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
-    DSH_DESKTOP_OPEN_DEVTOOLS: process.env.DSH_DESKTOP_OPEN_DEVTOOLS ?? '1',
+    DSH_DESKTOP_OPEN_DEVTOOLS: disableInspectors ? '0' : process.env.DSH_DESKTOP_OPEN_DEVTOOLS ?? '1',
     ELECTRON_ENABLE_LOGGING: process.env.ELECTRON_ENABLE_LOGGING ?? '1',
   }
+  if (disableInspectors) delete environment.DSH_DESKTOP_HOST_INSPECT_PORT
   console.log(`desktop development: DSH_HOME=${home}`)
   console.log(`desktop development: userData=${userData}`)
-  console.log(`desktop development: inspectors main=${String(mainPort)}, renderer=${String(rendererPort)}, host=${String(hostPort)}`)
+  console.log(disableInspectors ? 'desktop development: inspectors disabled' : `desktop development: inspectors main=${String(mainPort)}, renderer=${String(rendererPort)}, host=${String(hostPort)}`)
   if (process.platform === 'darwin') {
     const executable = await prepareDevelopmentApp({ electron, appRoot: APP_ROOT, directory: DEVELOPMENT_ROOT, home, userData,
-      mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS! })
+      mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS!, disableInspectors, managed })
     await run(executable, [], APP_ROOT, environment)
     return
   }
   await run(electron, [
-    `--inspect=127.0.0.1:${String(mainPort)}`,
-    `--remote-debugging-port=${String(rendererPort)}`,
+    ...disableInspectors ? [] : [`--inspect=127.0.0.1:${String(mainPort)}`, `--remote-debugging-port=${String(rendererPort)}`],
     `--user-data-dir=${userData}`,
     APP_ROOT,
   ], APP_ROOT, environment)

@@ -20,6 +20,8 @@ export interface DevelopmentAppOptions {
   readonly rendererPort: number
   readonly hostPort: number
   readonly openDevtools: string
+  readonly disableInspectors?: boolean
+  readonly managed?: boolean
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'` }
@@ -51,7 +53,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
       CFBundleDisplayName: displayName ?? 'Y harness',
       CFBundleExecutable: 'YHarness',
       CFBundleIconFile: ICON_FILE,
-      CFBundleURLTypes: [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
+      CFBundleURLTypes: options.managed === true ? [] : [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
     }
     for (const [key, value] of Object.entries(values)) {
       execFileSync('/usr/bin/plutil', ['-replace', key, '-json', JSON.stringify(value), plist])
@@ -74,13 +76,24 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
 export function developmentLauncher(options: DevelopmentAppOptions, bundle: string): string {
   const environment = {
     DSH_HOME: options.home,
-    DSH_DESKTOP_DEV_APP: '1',
+    DSH_DESKTOP_DEV_APP: options.managed === true ? '0' : '1',
     ELECTRON_ENABLE_LOGGING: '1',
   }
   const args = [
     `--user-data-dir=${options.userData}`,
     options.appRoot,
   ]
+  if (options.disableInspectors === true) {
+    return [
+      '#!/bin/sh',
+      'unset DSH_DESKTOP_HOST_INSPECT_PORT',
+      'export DSH_DESKTOP_OPEN_DEVTOOLS=0',
+      ...Object.entries(environment).map(([key, value]) => `export ${key}=${quote(value)}`),
+      `cd ${quote(options.appRoot)}`,
+      `exec ${quote(join(bundle, 'Contents', 'MacOS', 'Electron'))} ${args.map(quote).join(' ')} "$@"`,
+      '',
+    ].join('\n')
+  }
   return [
     '#!/bin/sh',
     'debug_port_error() {',

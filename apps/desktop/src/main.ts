@@ -34,7 +34,7 @@ import { readDeviceInfo } from './device-info.ts'
 import { desktopUpdateReadyConfirmation, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale } from './locale.ts'
 import { claimDesktopSingleInstance } from './single-instance.ts'
 import { DesktopUpdateCoordinator } from './update-coordinator.ts'
-import { createCheckoutProbe, detectCheckoutUpdate, findCheckoutRoot, type CheckoutUpdateState } from './update-checkout.ts'
+import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, findCheckoutRoot, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
@@ -592,6 +592,7 @@ async function main(): Promise<void> {
   // scope need not await, and it only matters once a check actually runs.
   let checkoutProbe: Promise<ReturnType<typeof createCheckoutProbe> | null> | undefined
   const detectPendingCheckoutUpdate = async (): Promise<CheckoutUpdateState | null> => {
+    if (process.env.DSH_DESKTOP_GITHUB_MANAGED === '1') return detectManagedGithubUpdate()
     checkoutProbe ??= findCheckoutRoot(app.getAppPath())
       .then(root => root === null ? null : createCheckoutProbe(root))
       .catch(() => null)
@@ -831,15 +832,22 @@ async function main(): Promise<void> {
   })
   ipcMain.handle(DESKTOP_IPC.updatesOpen, async (event) => {
     assertProductSender(event)
-    // A checkout update is applied by exiting: the fork's watcher owns the
-    // rebuild and relaunches afterwards. Building in-process would rewrite the
-    // files this process is executing from.
+    // Checkout updates are applied by the external launcher after this process exits.
+    // The GitHub-managed launcher has already prepared its target separately.
     //
-    // The decision reads the state the button is already displaying rather than
-    // re-detecting: `available` without an update source can only be a checkout
-    // update, and re-running the probe here would add I/O to a path whose
-    // callers expect the prompt to proceed immediately.
+    // Legacy checkout updates use the displayed state. Managed updates recheck
+    // that the displayed commit is still staged before requesting an exit.
     if (updates.state.phase === 'available' && !updates.hasUpdateSource()) {
+      if (process.env.DSH_DESKTOP_GITHUB_MANAGED === '1') {
+        const displayed = updates.state.version
+        const pending = await detectManagedGithubUpdate()
+        const latest = updates.state
+        if (pending?.available !== true || pending.shortHead !== displayed
+          || latest.phase !== 'available' || latest.version !== displayed) {
+          await updateSchedule.check(true)
+          return
+        }
+      }
       updateJournal?.action('quit-requested')
       app.quit()
       return

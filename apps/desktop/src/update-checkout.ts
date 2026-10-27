@@ -1,33 +1,27 @@
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { constants } from 'node:fs'
+import { open, readFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
 /**
  * Checkout update detection for the fork's development build.
  *
- * The daily app runs from a checkout, so "an update" is a new commit: the
- * build stamp records the commit that was compiled, and a newer HEAD means the
- * running process is behind. `.local-setup/update-on-quit.py` already owns the
- * rebuild and relaunch, but it only acts when the app EXITS — so without a
- * visible affordance the user has to know to quit, which is not a workflow.
- *
- * This module answers only "is the running build behind the checkout?". The
- * caller decides what to show and what the action does.
- *
- * Both inputs are injected so the decision is unit-testable and so no spawn
- * policy lives here.
+ * A legacy launcher can compare its build stamp with local HEAD. The managed
+ * GitHub launcher publishes a separate status only after a newer commit has
+ * been built in an isolated directory. The launcher owns activation after exit;
+ * this module only reports whether a prepared target differs from the running build.
  */
 
 /** A checkout state comparison for one running build. */
 export interface CheckoutUpdateState {
   /** Commit the running build was compiled from (the stamp). */
   readonly builtCommit: string
-  /** Commit currently checked out. */
+  /** Local or prepared target commit. */
   readonly headCommit: string
-  /** True when HEAD moved past the built commit. */
+  /** Whether the target differs from the running build. */
   readonly available: boolean
-  /** Short HEAD spelling for display. */
+  /** Short target spelling for display. */
   readonly shortHead: string
 }
 
@@ -83,11 +77,9 @@ export async function detectCheckoutUpdate(
 }
 
 /**
- * Whether a checkout update can be applied by this process at all. The rebuild
- * is owned by the fork's watcher, which acts when the app exits, so applying an
- * update means quitting — never building in-process, which would rewrite the
- * files the running app is executing.
- * @param state - the detected comparison.
+ * Whether the launcher has an update to offer after the app exits.
+ * @param state - The detected comparison.
+ * @returns Whether a different target is available.
  */
 export function isCheckoutUpdateActionable(state: CheckoutUpdateState | null): boolean {
   return state !== null && state.available
@@ -159,5 +151,44 @@ export function createCheckoutProbe(
       return typeof commit === 'string' ? commit : null
     },
     readHeadCommit: () => runGit(['rev-parse', 'HEAD']),
+  }
+}
+
+/**
+ * Read a bounded supervisor status without following a final symlink.
+ * @param env - Environment supplied by the managed launcher.
+ * @returns A prepared update comparison, or null when the status is unavailable.
+ */
+export async function detectManagedGithubUpdate(env: NodeJS.ProcessEnv = process.env): Promise<CheckoutUpdateState | null> {
+  const path = env.DSH_DESKTOP_GITHUB_STATUS
+  const builtCommit = env.DSH_DESKTOP_GITHUB_BUILD_COMMIT
+  if (env.DSH_DESKTOP_GITHUB_MANAGED !== '1' || path === undefined || !isAbsolute(path)
+    || builtCommit === undefined || !/^[0-9a-f]{40}$/i.test(builtCommit)) return null
+  try {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const stat = await file.stat()
+      const limit = 4096
+      if (!stat.isFile() || stat.size > limit) return null
+      const buffer = Buffer.alloc(limit + 1)
+      let length = 0
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length)
+        if (bytesRead === 0) break
+        length += bytesRead
+      }
+      if (length > limit) return null
+      const status: unknown = JSON.parse(buffer.subarray(0, length).toString('utf8'))
+      if (typeof status !== 'object' || status === null) return null
+      const { phase, commit } = status as { phase?: unknown; commit?: unknown }
+      if (phase !== 'ready' || typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) return null
+      const built = builtCommit.toLowerCase()
+      const head = commit.toLowerCase()
+      return { builtCommit: built, headCommit: head, available: built !== head, shortHead: head.slice(0, 12) }
+    } finally {
+      await file.close()
+    }
+  } catch {
+    return null
   }
 }
