@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     release,
     target: resolveDesktopBuildTarget(),
   })
-  await preparePrimaryRuntime()
+  if (process.env.DSH_DESKTOP_GITHUB_MANAGED !== '1') await preparePrimaryRuntime()
   await launchElectron()
 }
 

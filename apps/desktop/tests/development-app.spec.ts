@@ -31,6 +31,7 @@ function launcherFixture(openDevtools = '1', disableInspectors = false) {
   delete environment.DSH_DESKTOP_HOST_INSPECT_PORT
   delete environment.DSH_DESKTOP_OPEN_DEVTOOLS
   delete environment.DSH_DESKTOP_USER_DATA_DIR
+  delete environment.DSH_DESKTOP_GITHUB_MANAGED
   return { launcher, home, userData, root, environment, binary, bundle }
 }
 
@@ -55,7 +56,7 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       '--remote-debugging-port=19322', `--user-data-dir=${fixture.userData}`, fixture.root, '--test-launch-argument'])
   })
 
-  it.skipIf(process.platform !== 'darwin')('normalizes Number port syntax before invoking the generated bundle', () => {
+  it.skipIf(process.platform !== 'darwin')('normalizes ports and reuses the managed runtime', () => {
     const fixture = launcherFixture()
     const appRoot = join(fixture.root, 'apps', 'desktop')
     const script = join(appRoot, 'scripts', 'dev.ts')
@@ -74,7 +75,12 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       'apps/desktop/scripts/desktop-build-paths.mjs':
         'export const developmentRuntimeDirectory = () => "test-runtime"\nexport const resolveDesktopBuildTarget = () => "mac-arm64"\n',
       'apps/desktop/scripts/development-project.ts': 'export const prepareDevelopmentProject = () => {}\n',
-      'apps/desktop/scripts/prepare-primary-runtime.ts': 'export const preparePrimaryRuntime = async () => {}\n',
+      'apps/desktop/scripts/prepare-primary-runtime.ts': [
+        'export const preparePrimaryRuntime = async () => {',
+        '  if (process.env.DSH_DESKTOP_GITHUB_MANAGED === "1") throw new Error("managed launch rebuilt runtime")',
+        '}',
+        '',
+      ].join('\n'),
       'apps/desktop/scripts/development-app.ts': [
         'import { writeFileSync } from "node:fs"',
         `import { developmentLauncher } from ${JSON.stringify(new URL('../scripts/development-app.ts', import.meta.url).href)}`,
@@ -110,6 +116,15 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
     const resolvedAppRoot = realpathSync(appRoot)
     expect(readFileSync(output, 'utf8').trimEnd().split('\n')).toEqual(['0', '19330',
       '--inspect=127.0.0.1:19329', '--remote-debugging-port=19322',
+      `--user-data-dir=${join(resolvedAppRoot, '.desktop-build', 'development', 'electron-user-data')}`, resolvedAppRoot])
+
+    const managed = spawnSync(process.execPath, [script, '--skip-build'], {
+      encoding: 'utf8',
+      env: { ...fixture.environment, ELECTRON_RUN_AS_NODE: '', DSH_LAUNCHER_TEST_OUTPUT: output,
+        DSH_HOME: fixture.home, DSH_DESKTOP_GITHUB_MANAGED: '1', DSH_DESKTOP_PRIMARY_RUNTIME_DIR: 'test-runtime' },
+    })
+    expect(managed.status, managed.stderr).toBe(0)
+    expect(readFileSync(output, 'utf8').trimEnd().split('\n')).toEqual(['0', '',
       `--user-data-dir=${join(resolvedAppRoot, '.desktop-build', 'development', 'electron-user-data')}`, resolvedAppRoot])
   })
 
