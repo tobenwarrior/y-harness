@@ -37,6 +37,8 @@ export type DesktopUpdatePreparationFailureKind = 'stop-failed' | 'tasks-changed
 
 export interface DesktopUpdateState {
   readonly phase: 'idle' | 'checking' | 'available' | 'downloading' | 'verifying' | 'installing' | 'ready' | 'unavailable' | 'error'
+  /** True when a GitHub-managed supervisor owns update discovery for this build. */
+  readonly managed?: boolean
   readonly version?: string
   readonly message?: string
   /** Main-owned diagnostics without subprocess output or credentials; hidden until expanded. */
@@ -62,6 +64,8 @@ export type DesktopUpdateFailureKind =
 /** Semantic status content; actions open main-process confirmation dialogs only. */
 export interface DesktopUpdatePresentation {
   readonly phase: DesktopUpdateState['phase']
+  /** True when a GitHub-managed supervisor owns update discovery for this build. */
+  readonly managed?: boolean
   readonly version?: string
   readonly percent?: number
   readonly failure?: DesktopUpdateFailureKind

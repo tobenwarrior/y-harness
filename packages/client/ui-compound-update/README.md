@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-The sidebar foot shows a badge when a Compound revision is pending or its latest check failed. A successful current check stays quiet so the app-update affordance remains the only persistent update signal; the Compound updater checks and applies revisions automatically in the Host. Opening a pending or failed badge explains the result and offers refresh/apply actions. When an update is available, one button applies it: the Host downloads the commit-pinned skill tree into a private overlay, verifies every file, and publishes the complete revision atomically. A failed attempt leaves the active revision untouched and reports why.
+The sidebar shows a circular action when a Compound skills update is pending or a check fails. Its tooltip identifies the update, and the action opens version details and retry controls. Updates apply automatically in the Host; manual apply verifies and publishes a commit-pinned skill tree to a private overlay. A failed attempt leaves the active revision untouched.
 
 ## Table of Contents
 

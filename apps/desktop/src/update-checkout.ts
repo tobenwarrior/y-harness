@@ -23,6 +23,8 @@ export interface CheckoutUpdateState {
   readonly available: boolean
   /** Short target spelling for display. */
   readonly shortHead: string
+  /** Whether this comparison came from the GitHub-managed supervisor. */
+  readonly managed?: boolean
 }
 
 /** Bounded git fact the detector needs; a nonzero exit is data, not a throw. */
@@ -181,10 +183,19 @@ export async function detectManagedGithubUpdate(env: NodeJS.ProcessEnv = process
       const status: unknown = JSON.parse(buffer.subarray(0, length).toString('utf8'))
       if (typeof status !== 'object' || status === null) return null
       const { phase, commit } = status as { phase?: unknown; commit?: unknown }
-      if (phase !== 'ready' || typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) return null
+      if ((phase !== 'ready' && phase !== 'active') || typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) return null
       const built = builtCommit.toLowerCase()
       const head = commit.toLowerCase()
-      return { builtCommit: built, headCommit: head, available: built !== head, shortHead: head.slice(0, 12) }
+      // An active status is the supervisor's normal steady state. It must name
+      // the running build; a mismatch is stale/unknown rather than actionable.
+      if (phase === 'active' && head !== built) return null
+      return {
+        builtCommit: built,
+        headCommit: head,
+        available: phase === 'ready' && built !== head,
+        shortHead: head.slice(0, 12),
+        managed: true,
+      }
     } finally {
       await file.close()
     }

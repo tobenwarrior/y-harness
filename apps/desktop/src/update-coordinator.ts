@@ -203,7 +203,11 @@ export class DesktopUpdateCoordinator {
           if (this.current.phase === 'available' && this.current.version === checkout.shortHead) return this.current
           return this.setState({ phase: 'available', version: checkout.shortHead })
         }
-        if (this.current.phase === 'unavailable') return this.current
+        if (checkout?.managed === true) {
+          if (this.current.phase === 'unavailable' && this.current.managed === true) return this.current
+          return this.setState({ phase: 'unavailable', managed: true })
+        }
+        if (this.current.phase === 'unavailable' && this.current.managed !== true) return this.current
         return this.setState({ phase: 'unavailable' })
       }
       const result = await this.updater.checkForUpdates()

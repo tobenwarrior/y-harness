@@ -5,6 +5,7 @@ import { DESKTOP_HOST_PROTOCOL_VERSION } from '../src/host-protocol.ts'
 import { parseDesktopRelease } from '../src/release.ts'
 import type { DesktopUpdateState } from '../src/ipc.ts'
 import { DesktopUpdatePreparationError } from '../src/update-error.ts'
+import type { CheckoutUpdateState } from '../src/update-checkout.ts'
 import { zh } from '../src/locale.ts'
 
 vi.mock('electron', () => ({ app: { isPackaged: false } }))
@@ -47,7 +48,7 @@ describe('desktop release metadata', () => {
 const coordinators: InstanceType<typeof DesktopUpdateCoordinator>[] = []
 afterEach(() => { for (const item of coordinators.splice(0)) item.dispose() })
 
-function fixture(enabled = true) {
+function fixture(enabled = true, checkoutUpdate: () => Promise<CheckoutUpdateState | null> = async () => null) {
   const events = new EventEmitter()
   const checkForUpdates = vi.fn(async () => ({
     isUpdateAvailable: true,
@@ -66,7 +67,7 @@ function fixture(enabled = true) {
   const updater = Object.assign(events, { checkForUpdates, downloadUpdate, quitAndInstall }) as unknown as AppUpdater
   const coordinator = new DesktopUpdateCoordinator(
     (state) => { states.push(state); return state },
-    beforeRestart, updater, () => enabled, () => '1.1.0-alpha.1', downloadResult,
+    beforeRestart, updater, () => enabled, () => '1.1.0-alpha.1', downloadResult, checkoutUpdate,
   )
   coordinators.push(coordinator)
   return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
@@ -175,6 +176,16 @@ describe('desktop update coordinator', () => {
     expect(f.checkForUpdates).not.toHaveBeenCalled()
     expect(await f.coordinator.check()).toEqual({ phase: 'unavailable' })
     expect(f.states).toEqual([{ phase: 'unavailable' }])
+  })
+
+  it('identifies a managed build whose supervisor is still active', async () => {
+    const f = fixture(false, async () => ({
+      builtCommit: 'a'.repeat(40), headCommit: 'a'.repeat(40), available: false, shortHead: 'aaaaaaaaaaaa', managed: true,
+    }))
+    expect(await f.coordinator.check(true)).toEqual({ phase: 'unavailable', managed: true })
+    expect(f.states).toEqual([{ phase: 'unavailable', managed: true }])
+    expect(await f.coordinator.check()).toEqual({ phase: 'unavailable', managed: true })
+    expect(f.states).toEqual([{ phase: 'unavailable', managed: true }])
   })
 
   it('keeps automatic failures silent and exposes a manual caller joining the same check', async () => {

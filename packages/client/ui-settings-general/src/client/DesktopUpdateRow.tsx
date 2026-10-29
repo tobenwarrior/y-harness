@@ -33,7 +33,8 @@ export function DesktopUpdateRow({ hasUpdateBridge, useDesktopUpdate, openDeskto
   if (!hasUpdateBridge) return null
   const view = useDesktopUpdate(value => value)
   const presentation = view.presentation
-  const unavailable = presentation?.phase === 'unavailable'
+  const managed = presentation?.managed === true
+  const unavailable = presentation?.phase === 'unavailable' && !managed
   const failed = view.failed || presentation?.phase === 'error'
   const busy = view.opening || (presentation !== undefined && BUSY_PHASES.has(presentation.phase))
   const copy = unavailable
@@ -42,16 +43,16 @@ export function DesktopUpdateRow({ hasUpdateBridge, useDesktopUpdate, openDeskto
       ? { label: t('desktop.update.check'), detail: failed ? t('desktop.update.retry') : t('desktop.update.current') }
       : updateCopy(presentation, t)
   const advance = !failed && !unavailable && presentation !== undefined
-    && (presentation.phase === 'available' || presentation.phase === 'ready')
+    && !managed && (presentation.phase === 'available' || presentation.phase === 'ready')
   return (
     <div className={css.row}>
       <div className={css.text}>
         <div className={css.title}>{t('desktop.update.title')}</div>
         <div className={css.status}>{copy.detail}</div>
       </div>
-      <Button variant={advance ? 'primary' : 'ghost'} disabled={busy || unavailable} onClick={() => { openDesktopUpdate() }}>
+      {!managed && <Button variant={advance ? 'primary' : 'ghost'} disabled={busy || unavailable} onClick={() => { openDesktopUpdate() }}>
         {copy.label}
-      </Button>
+      </Button>}
     </div>
   )
 }

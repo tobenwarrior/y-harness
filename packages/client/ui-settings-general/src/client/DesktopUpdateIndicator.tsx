@@ -24,6 +24,10 @@ export function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslat
     error: t('desktop.update.retry'),
   }
   const label = labels[state.phase]
+  if (state.managed === true) {
+    const managed = t('desktop.update.managed')
+    return { label: managed, detail: managed }
+  }
   if (state.phase === 'unavailable') return { label, detail: label }
   if (state.phase === 'checking' || state.phase === 'verifying' || state.phase === 'installing') {
     return { label, detail: state.version ?? label }

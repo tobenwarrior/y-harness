@@ -9,6 +9,10 @@ it('keeps the Electron preload assignable to the product consumer', () => {
   expect(assign).toBeTypeOf('function')
 })
 
+it('preserves the managed-updater marker without exposing checkout details', () => {
+  expect(presentDesktopUpdate({ phase: 'unavailable', managed: true })).toEqual({ phase: 'unavailable', managed: true })
+})
+
 it('records visible ordinary-update states without authorizing downloads or installation', async () => {
   const phases: DesktopUpdateState['phase'][] = ['idle', 'available', 'downloading', 'verifying', 'ready', 'installing', 'error']
   const states = phases.map(phase => presentDesktopUpdate({ phase, version: '0.1.5-rc.2', percent: 58 }))

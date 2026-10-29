@@ -79,6 +79,12 @@ describe('DesktopUpdateRow', () => {
     expect(action.disabled).toBe(true)
   })
 
+  it('explains that a managed build updates automatically without a manual action', () => {
+    show(true, { failed: false, opening: false, presentation: { phase: 'unavailable', managed: true } })
+    expect(screen.getByText('Updates are managed automatically')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
   it('offers a retry after failures', () => {
     const { openDesktopUpdate } = show(true, {
       failed: false, opening: false, presentation: { phase: 'error', version: '1.0.1', failure: 'download' },

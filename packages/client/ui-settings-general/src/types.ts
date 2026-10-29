@@ -15,6 +15,8 @@ export type DesktopUpdateFailureKind =
 /** Public semantic preload fields consumed by the settings row. */
 export interface DesktopUpdatePresentation {
   readonly phase: 'idle' | 'checking' | 'available' | 'downloading' | 'verifying' | 'installing' | 'ready' | 'unavailable' | 'error'
+  /** True when a GitHub-managed supervisor owns update discovery for this build. */
+  readonly managed?: boolean
   readonly version?: string
   readonly percent?: number
   readonly failure?: DesktopUpdateFailureKind

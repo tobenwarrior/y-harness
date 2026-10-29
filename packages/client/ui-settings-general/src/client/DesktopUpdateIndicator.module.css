@@ -11,13 +11,13 @@
   border: none;
   border-radius: 50%;
   corner-shape: round;
-  color: var(--yh-alias-label-primary-foreground);
-  background: var(--yh-alias-button-primary-fill);
+  color: var(--yh-static-neutral-bluish-00);
+  background: var(--yh-static-blue-500);
   cursor: pointer;
 }
 
 .indicator:hover:not([aria-disabled="true"]) {
-  background: var(--yh-alias-button-primary-hover);
+  background: var(--yh-static-blue-600);
 }
 
 .indicator:focus-visible {
