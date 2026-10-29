@@ -24,14 +24,15 @@ function derivedDocumentStore(remote: object) {
 }
 import { en, zh } from '../src/client/locales.ts'
 import { CurrentVersionRow } from '../src/client/CurrentVersionRow.tsx'
-import { DesktopUpdateBadge } from '../src/client/DesktopUpdateIndicator.tsx'
+import { DesktopUpdateBadge, DesktopUpdateFooterAction } from '../src/client/DesktopUpdateIndicator.tsx'
 import type { DesktopUpdateView } from '../src/types.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllEnvs() })
 
 // The seat's key domain is settings ∪ common; the stub answers from the
 // package dictionary and falls back to the key like the real chain.
-const t: TriggerContentProps['t'] = key => (en as Record<string, string>)[key] ?? key
+const t: TriggerContentProps['t'] = (key, params) => Object.entries(params ?? {})
+  .reduce((message, [name, value]) => message.replaceAll(`{${name}}`, String(value)), (en as Record<string, string>)[key] ?? key)
 
 // Global standard kit stubs: none of these components consume the hooks.
 const unusedHook = (() => { throw new Error('unused by settings-general components') }) as never
@@ -43,34 +44,64 @@ const kit = {
   usePanelInfo, useSessionRetainInfo: () => undefined, useResource, useWorkspaces: unusedHook,
 }
 
-describe('Desktop collapsed update badge', () => {
-  it('shows update and retry status and yields to connection feedback', () => {
+describe('Desktop collapsed update action', () => {
+  it('shows a clickable update only in the rail and keeps the wide row as its owner', () => {
     let state: DesktopUpdateView = { failed: false, opening: false }
-    let connection: 'connected' | 'connecting' | 'disconnected' = 'connected'
     const props = { ...kit, t,
+      useDesktopUpdate: (select => select(state)) as Parameters<typeof DesktopUpdateFooterAction>[0]['useDesktopUpdate'],
+      openDesktopUpdate: vi.fn(),
+    }
+    const view = render(<DesktopUpdateFooterAction {...props} wide={false} />)
+    expect(screen.queryByRole('button')).toBeNull()
+    state = { ...state, presentation: { phase: 'available', version: '1.0.1' } }
+    view.rerender(<DesktopUpdateFooterAction {...props} wide={false} />)
+    const button = screen.getByRole('button', { name: 'Update' })
+    expect(button.querySelector('svg')).not.toBeNull()
+    fireEvent.click(button)
+    expect(props.openDesktopUpdate).toHaveBeenCalledOnce()
+    state = { failed: false, opening: false, presentation: { phase: 'downloading', version: '1.0.1', percent: 58 } }
+    view.rerender(<DesktopUpdateFooterAction {...props} wide={false} />)
+    const progress = screen.getByRole('button', { name: '58%' })
+    expect(progress.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(progress)
+    expect(props.openDesktopUpdate).toHaveBeenCalledOnce()
+    state = { failed: false, opening: false, presentation: { phase: 'error', failure: 'install' } }
+    view.rerender(<DesktopUpdateFooterAction {...props} wide={false} />)
+    const retry = screen.getByRole('button', { name: 'Retry update' })
+    expect(retry.querySelector('svg')).not.toBeNull()
+    fireEvent.click(retry)
+    expect(props.openDesktopUpdate).toHaveBeenCalledTimes(2)
+    view.rerender(<DesktopUpdateFooterAction {...props} wide />)
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('keeps the rail tooltip to the user-facing available label', async () => {
+    const state: DesktopUpdateView = { failed: false, opening: false, presentation: { phase: 'available' } }
+    const props = {
+      ...kit,
+      t,
+      useDesktopUpdate: (select => select(state)) as Parameters<typeof DesktopUpdateFooterAction>[0]['useDesktopUpdate'],
+      openDesktopUpdate: vi.fn(),
+    }
+    render(<DesktopUpdateFooterAction {...props} wide={false} />)
+    fireEvent.focus(screen.getByRole('button', { name: 'Update' }))
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Update available')
+  })
+
+  it('keeps the legacy status marker only in the Windows caption collapse', () => {
+    document.documentElement.setAttribute('data-windows-titlebar', '')
+    const state: DesktopUpdateView = { failed: false, opening: false, presentation: { phase: 'available' } }
+    const props = {
+      ...kit,
+      t,
       useDesktopUpdate: (select => select(state)) as Parameters<typeof DesktopUpdateBadge>[0]['useDesktopUpdate'],
-      useConnectionState: (select => select(connection)) as Parameters<typeof DesktopUpdateBadge>[0]['useConnectionState'],
+      useConnectionState: (select => select('connected')) as Parameters<typeof DesktopUpdateBadge>[0]['useConnectionState'],
     }
     const view = render(<DesktopUpdateBadge {...props} />)
-    expect(screen.queryByRole('img')).toBeNull()
-    state = { ...state, presentation: { phase: 'available', version: '1.0.1' } }
-    view.rerender(<DesktopUpdateBadge {...props} />)
     expect(screen.getByRole('img', { name: 'Update' })).toBeTruthy()
-    expect(screen.queryByRole('button')).toBeNull()
-    state = { ...state, failed: true }
+    document.documentElement.removeAttribute('data-windows-titlebar')
     view.rerender(<DesktopUpdateBadge {...props} />)
-    expect(screen.getByRole('img', { name: en['desktop.update.retry'] })).toBeTruthy()
-    state = { failed: true, opening: false }
-    view.rerender(<DesktopUpdateBadge {...props} />)
-    expect(screen.getByRole('img', { name: en['desktop.update.retry'] })).toBeTruthy()
-    state = { failed: false, opening: false, presentation: { phase: 'error', failure: 'install' } }
-    view.rerender(<DesktopUpdateBadge {...props} />)
-    expect(screen.getByRole('img', { name: en['desktop.update.retry'] })).toBeTruthy()
-    for (const value of ['connecting', 'disconnected'] as const) {
-      connection = value
-      view.rerender(<DesktopUpdateBadge {...props} />)
-      expect(screen.queryByRole('img')).toBeNull()
-    }
+    expect(screen.queryByRole('img')).toBeNull()
   })
 })
 

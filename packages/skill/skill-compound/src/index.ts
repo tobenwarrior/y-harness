@@ -9,11 +9,25 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import z from '@deepseek-ai/schemastery'
-import { BUNDLED_SKILL_RANK, type SkillCandidate, type SkillProvider } from '@deepseek-ai/dsh-skill'
+import {
+  BUNDLED_SKILL_RANK,
+  type SkillCandidate,
+  type SkillLookupOptions,
+  type SkillProvider,
+  type SkillProviderControl,
+} from '@deepseek-ai/dsh-skill'
 import { parse as parseYaml } from 'yaml'
 import { MapServiceBridge, registerMapRoutes } from './map-service.ts'
-import { registerUpdateRoute, UpstreamReleaseTracker } from './upstream.ts'
-
+import { activeOverlay, overlayRoot as defaultOverlayRoot } from './overlay.ts'
+import {
+  compareReleases,
+  recordedCommit,
+  registerUpdateRoute,
+  runOverlayUpdate,
+  UpstreamReleaseTracker,
+  VENDORED_VERSION,
+  type UpdateApplication,
+} from './upstream.ts'
 /** Vendored skill directories, each carrying its own `SKILL.md` and resources. */
 const SKILL_NAMES = ['compound', 'map', 'setup', 'setup-global', 'status-global'] as const
 
@@ -32,6 +46,8 @@ export interface Config {
   python?: string
   /** Absolute cache directory for the code-map service; defaults outside the mapped repository. */
   mapStateDir?: string
+  /** Absolute private directory where automatically downloaded revisions are published. */
+  overlayRoot?: string
 }
 
 /** Validated resource configuration. */
@@ -39,12 +55,19 @@ export const Config: z<Config> = z.object({
   assetRoot: z.string().min(1),
   python: z.string().min(1),
   mapStateDir: z.string().min(1),
+  overlayRoot: z.string().min(1),
 })
 
 /** Cordis plugin identity. */
 export const name = 'skill-compound'
 /** Registry used by the bundled provider. */
 export const inject = ['skills']
+
+/** Interval for host-side automatic Compound revision checks. */
+export const AUTO_UPDATE_INTERVAL_MS = 60 * 60 * 1000
+
+/** Package root carrying the recorded bundled release metadata. */
+const PACKAGE_ROOT = fileURLToPath(new URL('../', import.meta.url))
 
 /**
  * Split one vendored skill file into its declared identity and body.
@@ -145,48 +168,143 @@ function harnessActivation(): string {
 export function apply(ctx: Context, config: Config = {}): void {
   const assetRoot = config.assetRoot ?? fileURLToPath(new URL('../assets/', import.meta.url))
   if (!isAbsolute(assetRoot)) throw new Error('skill-compound: assetRoot must be an absolute directory')
+  const updateRoot = config.overlayRoot ?? defaultOverlayRoot()
+  if (!isAbsolute(updateRoot)) throw new Error('skill-compound: overlayRoot must be an absolute directory')
   const { python, supported } = resolvePython(config.python)
-  const candidates: SkillCandidate[] = SKILL_NAMES.map((skillName) => {
+  const bundledCommit = recordedCommit(readFileSync(join(PACKAGE_ROOT, 'UPSTREAM.md'), 'utf8'))
+  const bundledBaseline = { version: VENDORED_VERSION, commit: bundledCommit }
+  const activeRevision = () => {
+    const overlay = activeOverlay(updateRoot)
+    if (overlay === undefined) return undefined
+    const order = compareReleases(overlay.version, VENDORED_VERSION)
+    return order !== undefined && order >= 0 ? overlay : undefined
+  }
+  const baseline = (): { version: string; commit: string } => {
+    return activeRevision() ?? bundledBaseline
+  }
+  const currentAssetRoot = (): string => activeRevision()?.assetRoot ?? assetRoot
+  // Keep the original load-time contract for the bundled package: malformed shipped
+  // assets fail plugin activation instead of surfacing later during discovery.
+  for (const skillName of SKILL_NAMES) {
     const directory = join(assetRoot, skillName)
     const path = join(directory, 'SKILL.md')
-    const { name: declared, description } = parseSkill(readFileSync(path, 'utf8'), path)
+    const { name: declared } = parseSkill(readFileSync(path, 'utf8'), path)
     if (declared !== skillName) {
       throw new Error(`skill-compound: ${path} declares "${declared}" but its directory is "${skillName}"`)
     }
-    return {
-      name: skillName,
-      description,
-      path,
-      invocation: { modelInvocable: true, userInvocable: true },
-      provider: 'dsh-compound',
-      source: 'bundled',
-      rank: BUNDLED_SKILL_RANK,
-      resourceBase: { kind: 'directory', path: directory },
-      locator: { path, directory },
-    }
-  })
+  }
   const provider: SkillProvider = {
     name: 'dsh-compound',
-    list: () => Promise.resolve(candidates),
-    async get(candidate, options) {
+    list: () => {
+      const root = currentAssetRoot()
+      return Promise.resolve(SKILL_NAMES.map((skillName) => {
+        const directory = join(root, skillName)
+        const path = join(directory, 'SKILL.md')
+        const { name: declared, description } = parseSkill(readFileSync(path, 'utf8'), path)
+        if (declared !== skillName) {
+          throw new Error(`skill-compound: ${path} declares "${declared}" but its directory is "${skillName}"`)
+        }
+        return {
+          name: skillName,
+          description,
+          path,
+          invocation: { modelInvocable: true, userInvocable: true },
+          provider: 'dsh-compound',
+          source: 'bundled',
+          rank: BUNDLED_SKILL_RANK,
+          resourceBase: { kind: 'directory', path: directory },
+          locator: { skillName },
+        }
+      }))
+    },
+    async get(candidate: SkillCandidate, options: SkillLookupOptions) {
       const { rank: _rank, locator, ...summary } = candidate
-      const { path, directory } = locator as { path: string; directory: string }
+      const skillName = (locator as { skillName?: unknown }).skillName
+      if (typeof skillName !== 'string' || !SKILL_NAMES.includes(skillName as typeof SKILL_NAMES[number])) return undefined
+      const directory = join(currentAssetRoot(), skillName)
+      const path = join(directory, 'SKILL.md')
       const raw = await readFile(path, { encoding: 'utf8', signal: options.signal })
       const body = parseSkill(raw, path).content
-      return { ...summary, content: body + compoundRuntime(directory, python, supported) + harnessActivation() }
+      return {
+        ...summary,
+        path,
+        resourceBase: { kind: 'directory', path: directory },
+        content: body + compoundRuntime(directory, python, supported) + harnessActivation(),
+      }
     },
   }
-  ctx.skills.registerProvider(() => provider)
-  const tracker = new UpstreamReleaseTracker()
+  let invalidateCatalog = (): void => {}
+  ctx.skills.registerProvider((control: SkillProviderControl) => {
+    invalidateCatalog = control.invalidate
+    return provider
+  })
+  const tracker = new UpstreamReleaseTracker(undefined, baseline)
   // Optional: a composition without the shared API channel still gets the
   // skills, it just cannot report upstream releases or serve the code map.
   ctx.inject(['connection'], (scope) => {
-    registerUpdateRoute(scope, tracker)
-    registerMapRoutes(scope, new MapServiceBridge({
+    let disposed = false
+    const lifetime = new AbortController()
+    let runningUpdate: Promise<UpdateApplication> | undefined
+    const updateOperations = new Set<Promise<UpdateApplication>>()
+    const mapBridge = new MapServiceBridge({
       python,
       assetRoot,
+      assetRootFor: currentAssetRoot,
       workspaceRoot: ctx.get('sandboxPolicy')?.workspaceRoot ?? process.cwd(),
       ...(config.mapStateDir === undefined ? {} : { stateDir: config.mapStateDir }),
-    }))
+    })
+    const applyUpdate = (): Promise<UpdateApplication> => {
+      if (disposed) return Promise.resolve({ status: 'failed', upstream: null, error: 'skill-compound is disposing' })
+      if (runningUpdate !== undefined) return runningUpdate
+      const operation = (async (): Promise<UpdateApplication> => {
+        const outcome = await runOverlayUpdate(updateRoot, baseline, lifetime.signal)
+        if (outcome.status === 'updated' || outcome.status === 'up-to-date') {
+          invalidateCatalog()
+          tracker.invalidate()
+          if (outcome.status === 'updated') mapBridge.invalidate()
+        }
+        return outcome
+      })()
+      runningUpdate = operation
+      updateOperations.add(operation)
+      void operation.then(
+        () => {
+          updateOperations.delete(operation)
+          if (runningUpdate === operation) runningUpdate = undefined
+        },
+        () => {
+          updateOperations.delete(operation)
+          if (runningUpdate === operation) runningUpdate = undefined
+        },
+      )
+      return operation
+    }
+    registerUpdateRoute(scope, tracker, applyUpdate)
+    registerMapRoutes(scope, mapBridge)
+    scope.effect(() => {
+      const pendingChecks = new Set<Promise<void>>()
+      const synchronize = async (): Promise<void> => {
+        if (disposed) return
+        tracker.invalidate()
+        const status = await tracker.status(lifetime.signal)
+        if (status.error !== null || !status.updateAvailable) return
+        await applyUpdate()
+      }
+      const schedule = (): void => {
+        const operation = synchronize().catch(() => {})
+        pendingChecks.add(operation)
+        void operation.then(() => { pendingChecks.delete(operation) }, () => { pendingChecks.delete(operation) })
+      }
+      schedule()
+      const timer = setInterval(schedule, AUTO_UPDATE_INTERVAL_MS)
+      return async () => {
+        disposed = true
+        lifetime.abort()
+        clearInterval(timer)
+        while (pendingChecks.size > 0 || updateOperations.size > 0) {
+          await Promise.all([...pendingChecks, ...updateOperations])
+        }
+      }
+    }, 'skill-compound: automatic upstream updates')
   })
 }

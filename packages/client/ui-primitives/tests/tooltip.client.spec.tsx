@@ -319,6 +319,52 @@ describe('Tooltip', () => {
     }
   })
 
+  it('fits against the visual viewport when page scale shrinks the visible bounds', () => {
+    const originalVisualViewport = window.visualViewport
+    const visualViewport = {
+      width: 120,
+      height: 180,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: visualViewport })
+    bubbleSize = { inlineSize: 90, blockSize: 40 }
+    const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect(54, 82))
+    try {
+      render(
+        <Tooltip label="Update available">
+          <button type="button">anchor</button>
+        </Tooltip>,
+      )
+      fireEvent.mouseEnter(screen.getByText('anchor'))
+      const bubble = screen.getByRole('tooltip')
+      expect(bubble.style.maxWidth).toBe('96px')
+      expect(bubble.style.left).toBe('18px')
+      expect(visualViewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function))
+    } finally {
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalVisualViewport })
+      spy.mockRestore()
+    }
+  })
+
+  it('falls back to the layout viewport when visual viewport is unavailable', () => {
+    const originalVisualViewport = window.visualViewport
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: undefined })
+    const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect(54, 82))
+    try {
+      render(
+        <Tooltip label="Update available">
+          <button type="button">anchor</button>
+        </Tooltip>,
+      )
+      fireEvent.mouseEnter(screen.getByText('anchor'))
+      expect(screen.getByRole('tooltip').style.left).toBe('92px')
+    } finally {
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalVisualViewport })
+      spy.mockRestore()
+    }
+  })
+
   it('clamps a bubble past the left viewport edge back inside', () => {
     bubbleSize = { inlineSize: 100, blockSize: 20 }
     const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect(-20, 80))

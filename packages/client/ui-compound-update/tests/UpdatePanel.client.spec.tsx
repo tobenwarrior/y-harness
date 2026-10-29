@@ -59,6 +59,7 @@ describe('update steps panel', () => {
     expect(dialog.textContent).toContain('0.11.0')
     expect(dialog.textContent).toContain(en.stepsTitle)
     expect(dialog.textContent).toContain(en.restartHint)
+    expect(dialog.querySelectorAll('svg')).toHaveLength(5)
     expect(screen.getByRole('link', { name: RELEASED.repository }).getAttribute('href'))
       .toBe(`https://github.com/${RELEASED.repository}`)
   })
@@ -93,6 +94,12 @@ describe('update steps panel', () => {
     fireEvent.click(screen.getByRole('button', { name: en.close }))
     expect(apply).toHaveBeenCalledTimes(1)
     expect(refresh).toHaveBeenCalledTimes(1)
+    expect(hide).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes from Escape through the shared modal layer', () => {
+    const { hide } = renderPanel({ phase: 'ready', open: true, status: RELEASED })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(hide).toHaveBeenCalledTimes(1)
   })
 

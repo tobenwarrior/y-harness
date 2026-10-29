@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { compareReleases, recordVendoredRelease, recordVendoredVersion } from './vendor-compound.ts'
+import { hasUpdate, recordedCommit } from '../packages/skill/skill-compound/src/upstream.ts'
 
 describe('release comparison', () => {
   it('orders dot-separated parts numerically, not as text', () => {
@@ -22,6 +23,16 @@ describe('upstream record', () => {
     '| Vendored on | 2026-10-18 |',
     '| Upstream license | MIT, `Copyright (c) 2026 tobenwarrior` |',
   ].join('\n')
+
+  it('compares the recorded commit for matching versions and rejects missing records', () => {
+    const commit = recordedCommit(source)
+    expect(hasUpdate('0.11.0', '0.11.0', commit, commit)).toBe(false)
+    expect(hasUpdate('0.11.0', '0.11.0', 'b'.repeat(40), commit)).toBe(true)
+    expect(hasUpdate('0.12.0', '0.11.0', commit, commit)).toBe(true)
+    expect(hasUpdate('0.10.0', '0.11.0', 'b'.repeat(40), commit)).toBe(false)
+    expect(() => recordedCommit('missing')).toThrow('no valid vendored commit')
+    expect(() => hasUpdate('invalid', '0.11.0', commit, commit)).toThrow('not a plain')
+  })
 
   it('records the release, commit, and date without touching other rows', () => {
     const next = recordVendoredRelease(source, '0.12.0', 'b'.repeat(40), '2026-10-19')

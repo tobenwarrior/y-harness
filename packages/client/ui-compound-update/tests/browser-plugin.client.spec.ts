@@ -37,6 +37,25 @@ async function mount(): Promise<{ ctx: Context; slots: SlotRegistry; requested: 
 }
 
 describe('compound update plugin', () => {
+  it('refreshes periodically and stops after disposal', async () => {
+    const { ctx, requested } = await mount()
+    vi.useFakeTimers()
+    try {
+      const fiber = await ctx.plugin(PLUGIN).await()
+      expect(requested).toEqual(['api/skill-compound.update'])
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+      expect(requested).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+      expect(requested).toHaveLength(3)
+      await fiber.dispose()
+      await vi.advanceTimersByTimeAsync(60 * 1000)
+      expect(requested).toHaveLength(3)
+    } finally {
+      await ctx.fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('registers the badge, the panel, and reads the route once', async () => {
     const { ctx, slots, requested } = await mount()
     try {

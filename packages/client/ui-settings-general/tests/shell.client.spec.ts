@@ -59,8 +59,9 @@ describe('ui-settings-general shell', () => {
     onTestFinished(() => { vi.unstubAllGlobals(); initial.resolve({ phase: 'idle' }) })
     const c = await start()
     const row = injectedOf(c)
-    const badge = (c.ctx.slots.entries('sidebar.toggle.badge')[0]!.inject as () => Pick<SettingsRootInjected, 'hooks'>)()
-    expect(badge.hooks.desktopUpdate).toBe(row.hooks.desktopUpdate)
+    const action = c.ctx.slots.entries('sidebar.footer.action').find(entry => entry.options.id === 'desktop-update')!
+    const footer = (action.inject as () => Pick<SettingsRootInjected, 'hooks'>)()
+    expect(footer.hooks.desktopUpdate).toBe(row.hooks.desktopUpdate)
     expect(subscribe).toHaveBeenCalledOnce()
     const status = { phase: 'available' as const, version: '1.0.1' }
     publish!(status)
@@ -71,7 +72,7 @@ describe('ui-settings-general shell', () => {
     await c.unload(SELF)
     await c.flush()
     expect(off).toHaveBeenCalledOnce()
-    expect(c.ctx.slots.entries('sidebar.toggle.badge')).toHaveLength(0)
+    expect(c.ctx.slots.entries('sidebar.footer.action').find(entry => entry.options.id === 'desktop-update')).toBeUndefined()
     publish!({ phase: 'error', version: status.version, failure: 'install' })
     expect(row.hooks.desktopUpdate.getSnapshot().presentation).toEqual(status)
   }, COLD_BOOT_TIMEOUT_MS)

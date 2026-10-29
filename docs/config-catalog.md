@@ -2936,7 +2936,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-skill-compound`
 
 - `inject`: `skills`
-- `source`: [`packages/skill/skill-compound/src/index.ts:28`](../packages/skill/skill-compound/src/index.ts)
+- `source`: [`packages/skill/skill-compound/src/index.ts:42`](../packages/skill/skill-compound/src/index.ts)
 
 ```ts config-catalog
 /** Compound skill resource location. */
@@ -2947,6 +2947,8 @@ export interface Config {
   python?: string
   /** Absolute cache directory for the code-map service; defaults outside the mapped repository. */
   mapStateDir?: string
+  /** Absolute private directory where automatically downloaded revisions are published. */
+  overlayRoot?: string
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-skill-compound -->

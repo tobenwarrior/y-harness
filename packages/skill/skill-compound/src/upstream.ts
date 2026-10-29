@@ -9,19 +9,20 @@
  * @module @deepseek-ai/dsh-skill-compound
  */
 
-import { spawn } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import { activeOverlay, overlayRoot, updateOverlay, type OverlayRevision } from './overlay.ts'
+import { resolveUpstreamCommit, UPSTREAM_REPOSITORY as RESOLVER_REPOSITORY } from './upstream-head.ts'
+export { resolveUpstreamCommit } from './upstream-head.ts'
 
 /** Release of the vendored content; kept equal to the table in `UPSTREAM.md`. */
 export const VENDORED_VERSION = '0.11.1'
 
 /** Upstream repository the vendored content is copied from. */
-export const UPSTREAM_REPOSITORY = 'tobenwarrior/compound-skills'
+export const UPSTREAM_REPOSITORY = RESOLVER_REPOSITORY
 
 /** Branch whose `plugin.json` carries the current release. */
-const UPSTREAM_BRANCH = 'main'
 
 /** Same-origin route the browser half reads update status from. */
 export const UPDATE_ROUTE = '/api/skill-compound.update'
@@ -34,6 +35,7 @@ const FRESH_MS = 6 * 60 * 60 * 1000
 
 /** How long a failed reading suppresses further attempts. */
 const RETRY_MS = 15 * 60 * 1000
+const UPSTREAM_REQUEST_TIMEOUT_MS = 30_000
 
 /** One reading of the upstream release, as the browser half receives it. */
 export interface UpdateStatus {
@@ -72,26 +74,48 @@ export function compareReleases(left: string, right: string): number | undefined
   return 0
 }
 
+/** Parse the commit recorded alongside the vendored snapshot. */
+export function recordedCommit(source: string): string {
+  const commit = source.match(/^\| Vendored commit \| `([a-f0-9]{40})`/m)?.[1]
+  if (commit === undefined) throw new Error('UPSTREAM.md carries no valid vendored commit')
+  return commit
+}
+
+/** Whether the upstream snapshot is newer or has changed at the same version. */
+export function hasUpdate(release: string, vendored: string, commit: string, currentCommit: string): boolean {
+  const order = compareReleases(release, vendored)
+  if (order === undefined) throw new Error(`upstream release "${release}" is not a plain major.minor.patch version`)
+  return order > 0 || (order === 0 && commit.toLowerCase() !== currentCommit.toLowerCase())
+}
+
 /**
  * Read the release upstream currently publishes.
  * @param signal - cancels the request when the caller goes away.
  * @returns the upstream release.
  * @throws when the request fails, the response is not JSON, or it carries no version.
  */
-async function fetchUpstreamRelease(signal?: AbortSignal): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${UPSTREAM_BRANCH}/plugin.json`
-  const response = await fetch(url, { ...(signal === undefined ? {} : { signal }), headers: { accept: 'application/json' } })
+async function fetchUpstreamRelease(signal?: AbortSignal): Promise<{ version: string; commit: string }> {
+  const commit = await resolveUpstreamCommit(signal)
+  const timeout = AbortSignal.timeout(UPSTREAM_REQUEST_TIMEOUT_MS)
+  const requestSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
+  const options = { signal: requestSignal, headers: { accept: 'application/json' } }
+  const url = `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/plugin.json`
+  const response = await fetch(url, options)
   if (!response.ok) throw new Error(`upstream plugin.json answered HTTP ${response.status}`)
-  const payload: unknown = await response.json()
-  const version = typeof payload === 'object' && payload !== null && 'version' in payload
-    ? (payload as { version?: unknown }).version
+  const manifest: unknown = await response.json()
+  const version = typeof manifest === 'object' && manifest !== null && 'version' in manifest
+    ? (manifest as { version?: unknown }).version
     : undefined
   if (typeof version !== 'string') throw new Error('upstream plugin.json carries no version')
-  return version
+  return { version, commit }
 }
 
 /** Reads the upstream release; injectable so tests do not depend on the network. */
-export type ReleaseReader = (signal?: AbortSignal) => Promise<string>
+export type ReleaseReader = (signal?: AbortSignal) => Promise<string | { version: string; commit: string }>
+
+interface RevisionBaselineValue { version: string; commit: string }
+
+interface TrackerRead { status: UpdateStatus; baseline?: RevisionBaselineValue }
 
 /**
  * Cache one process's view of the upstream release.
@@ -102,10 +126,16 @@ export type ReleaseReader = (signal?: AbortSignal) => Promise<string>
  * next attempt.
  */
 export class UpstreamReleaseTracker {
-  private reading: { status: UpdateStatus; expiresAt: number } | undefined
+  private reading: { status: UpdateStatus; expiresAt: number; baseline: RevisionBaselineValue } | undefined
 
   /** @param readRelease - upstream reader; defaults to the GitHub raw request. */
-  constructor(private readonly readRelease: ReleaseReader = fetchUpstreamRelease) {}
+  constructor(
+    private readonly readRelease: ReleaseReader = fetchUpstreamRelease,
+    private readonly baseline: () => { version: string; commit: string } = () => ({
+      version: VENDORED_VERSION,
+      commit: recordedCommit(readFileSync(join(import.meta.dirname, '../UPSTREAM.md'), 'utf8')),
+    }),
+  ) {}
 
   /**
    * Report the current comparison, reading upstream when the cache expired.
@@ -113,11 +143,35 @@ export class UpstreamReleaseTracker {
    * @returns the reading, carrying `error` instead of a comparison when upstream was unreadable.
    */
   async status(signal?: AbortSignal): Promise<UpdateStatus> {
-    const now = Date.now()
-    if (this.reading !== undefined && this.reading.expiresAt > now) return this.reading.status
-    const status = await this.read(signal)
-    this.reading = { status, expiresAt: now + (status.error === null ? FRESH_MS : RETRY_MS) }
-    return status
+    for (;;) {
+      const now = Date.now()
+      if (this.reading !== undefined && this.reading.expiresAt > now) {
+        const current = this.safeBaseline()
+        if (current !== undefined && sameRevision(current, this.reading.baseline)) return this.reading.status
+        this.reading = undefined
+      }
+      const result = await this.read(signal)
+      // A cancelled request belongs to its caller, not to the process-wide cache.
+      // Otherwise a browser tab closing during a read could suppress the host's
+      // next automatic check for the full retry window.
+      if (signal?.aborted) return result.status
+      const current = this.safeBaseline()
+      if (result.baseline !== undefined && current !== undefined && !sameRevision(current, result.baseline)) {
+        // The overlay changed while the remote request was in flight. Discard the
+        // comparison and read again so neither the response nor the cache mixes
+        // two revisions.
+        this.reading = undefined
+        continue
+      }
+      if (current !== undefined) {
+        this.reading = {
+          status: result.status,
+          expiresAt: now + (result.status.error === null ? FRESH_MS : RETRY_MS),
+          baseline: current,
+        }
+      }
+      return result.status
+    }
   }
 
   /**
@@ -130,26 +184,40 @@ export class UpstreamReleaseTracker {
     this.reading = undefined
   }
 
-  private async read(signal?: AbortSignal): Promise<UpdateStatus> {
+  private safeBaseline(): RevisionBaselineValue | undefined {
+    try { return this.baseline() } catch { return undefined }
+  }
+
+  private async read(signal?: AbortSignal): Promise<TrackerRead> {
     const base = { vendored: VENDORED_VERSION, repository: UPSTREAM_REPOSITORY, checkedAt: Date.now() }
+    let current: RevisionBaselineValue | undefined
     try {
-      const upstream = await this.readRelease(signal)
-      const order = compareReleases(upstream, VENDORED_VERSION)
-      return {
-        ...base,
-        upstream,
-        updateAvailable: order === undefined ? false : order > 0,
-        error: order === undefined ? `upstream release "${upstream}" is not a plain major.minor.patch version` : null,
-      }
+      current = this.baseline()
+      base.vendored = current.version
+      const release = await this.readRelease(signal)
+      const upstream = typeof release === 'string' ? release : release.version
+      const order = compareReleases(upstream, current.version)
+      if (order === undefined) return { status: { ...base, upstream, updateAvailable: false, error: `upstream release "${upstream}" is not a plain major.minor.patch version` }, baseline: current }
+      const updateAvailable = typeof release === 'string'
+        ? order > 0
+        : hasUpdate(upstream, current.version, release.commit, current.commit)
+      return { status: { ...base, upstream, updateAvailable, error: null }, baseline: current }
     } catch (error: unknown) {
       return {
-        ...base,
-        upstream: null,
-        updateAvailable: false,
-        error: error instanceof Error ? error.message : String(error),
+        status: {
+          ...base,
+          upstream: null,
+          updateAvailable: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        ...(current === undefined ? {} : { baseline: current }),
       }
     }
   }
+}
+
+function sameRevision(left: RevisionBaselineValue, right: RevisionBaselineValue): boolean {
+  return left.version === right.version && left.commit.toLowerCase() === right.commit.toLowerCase()
 }
 
 /** Outcome of one in-app update attempt. */
@@ -162,100 +230,54 @@ export interface UpdateApplication {
   readonly error: string | null
 }
 
-/** Runs the vendoring procedure; injectable so tests neither clone nor commit. */
-export type UpdateApplier = () => Promise<UpdateApplication>
+/** Runs the overlay update procedure; injectable so tests neither clone nor commit. */
+export type UpdateApplier = (signal?: AbortSignal) => Promise<UpdateApplication>
 
-/** Repository-relative path of the script that performs the re-sync. */
-const VENDOR_SCRIPT = 'scripts/vendor-compound.ts'
+/** Baseline revision used when no private overlay has been published. */
+export type RevisionBaseline = () => Pick<OverlayRevision, 'version' | 'commit'>
 
-/** File the on-quit updater watches for a restart request. */
-export const RESTART_REQUEST = '.local-setup/update-request.json'
-
-/**
- * Checkout this package was installed from.
- *
- * `lib/index.js` and `src/index.ts` sit at the same depth, so the fourth parent is the
- * repository root in a source checkout and whatever contains the package in an install.
- */
-const CHECKOUT = resolve(import.meta.dirname, '../../../..')
-
-/**
- * Run one process to completion, collecting both streams.
- * @param command - executable to run.
- * @param args - arguments, passed without a shell.
- * @param cwd - working directory.
- * @returns exit code (null when the process could not start) and both streams.
- */
-interface ProcessResult {
-  /** Exit code, or null when the process could not start. */
-  readonly code: number | null
-  /** Everything the process wrote to stdout. */
-  readonly stdout: string
-  /** Everything the process wrote to stderr. */
-  readonly stderr: string
-}
-
-function runProcess(command: string, args: readonly string[], cwd: string): Promise<ProcessResult> {
-  return new Promise((resolveRun) => {
-    // The Host may run under Electron, where this makes execPath behave as Node.
-    const child = spawn(command, [...args], { cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (chunk: unknown) => { stdout += String(chunk) })
-    child.stderr.on('data', (chunk: unknown) => { stderr += String(chunk) })
-    child.on('error', (error) => { resolveRun({ code: null, stdout, stderr: `${stderr}${error.message}` }) })
-    child.on('close', (code) => { resolveRun({ code, stdout, stderr }) })
-  })
-}
-
-/**
- * Apply the released update by running this repository's vendoring script.
- *
- * The script owns the procedure — clone, mirror, record, test, commit — and reports a
- * JSON line the route returns unchanged. A packaged install has no checkout, so the
- * route reports that in-app updating is unavailable rather than failing obscurely.
- * @param cwd - checkout to update; defaults to the one this package was installed from.
- * @returns the attempt's outcome.
- */
-export async function runVendorScript(cwd: string = CHECKOUT): Promise<UpdateApplication> {
-  const script = join(cwd, VENDOR_SCRIPT)
-  if (!existsSync(script)) {
-    return { status: 'unavailable', upstream: null, error: `in-app updating needs a source checkout with ${VENDOR_SCRIPT}` }
+/** Read the release recorded in the bundled package. */
+function bundledBaseline(): { version: string; commit: string } {
+  return {
+    version: VENDORED_VERSION,
+    commit: recordedCommit(readFileSync(join(import.meta.dirname, '../UPSTREAM.md'), 'utf8')),
   }
-  const result = await runProcess(process.execPath, ['--import', 'tsx', script, '--apply'], cwd)
-  const line = result.stdout.trim().split('\n').reverse().find(text => text.startsWith('{'))
-  let report: { applied?: string; upstream?: unknown; error?: unknown; updateAvailable?: unknown } | undefined
+}
+
+/**
+ * Download and publish the current Compound revision in the private overlay.
+ *
+ * The managed application checkout is deliberately untouched: it may be detached,
+ * carry launcher markers, and be replaced by the app updater at any time. The overlay
+ * is user-owned and is selected by the skill provider on the next catalog read.
+ * @param root - private overlay directory.
+ * @param baseline - bundled revision used when no overlay exists.
+ * @returns the update outcome consumed by the browser route.
+ */
+export async function runOverlayUpdate(
+  root: string = overlayRoot(), baseline: RevisionBaseline = bundledBaseline, signal?: AbortSignal,
+): Promise<UpdateApplication> {
   try {
-    report = line === undefined ? undefined : JSON.parse(line) as typeof report
-  } catch {
-    report = undefined
+    signal?.throwIfAborted()
+    const before = activeOverlay(root) ?? baseline()
+    const revision = await updateOverlay(root, before.version, signal)
+    const changed = revision.version !== before.version || revision.commit.toLowerCase() !== before.commit.toLowerCase()
+    return { status: changed ? 'updated' : 'up-to-date', upstream: revision.version, error: null }
+  } catch (error: unknown) {
+    return { status: 'failed', upstream: null, error: error instanceof Error ? error.message : String(error) }
   }
-  if (report === undefined) {
-    const reason = (result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ')
-    return { status: 'failed', upstream: null, error: reason === '' ? `vendoring exited ${String(result.code)}` : reason }
-  }
-  const upstream = typeof report.upstream === 'string' ? report.upstream : null
-  if (report.applied === 'committed') {
-    // The new content needs a rebuild, which cannot happen under a live app: ask the
-    // on-quit updater to restart this one, and it applies the build and relaunches.
-    const request = join(cwd, RESTART_REQUEST)
-    if (existsSync(join(cwd, '.local-setup'))) {
-      const payload = { upstream, requestedAt: new Date().toISOString() }
-      writeFileSync(request, `${JSON.stringify(payload)}\n`)
-    }
-    return { status: 'updated', upstream, error: null }
-  }
-  if (report.updateAvailable === false) return { status: 'up-to-date', upstream, error: null }
-  return { status: 'failed', upstream, error: typeof report.error === 'string' ? report.error : 'the update did not commit' }
 }
 
 /**
  * Register the update-status route the browser half reads, and the route that applies one.
  * @param ctx - Context carrying the shared API channel.
  * @param tracker - process-wide reading cache.
- * @param apply - update procedure; defaults to this checkout's vendoring script.
+ * @param apply - update procedure; defaults to the private overlay updater.
  */
-export function registerUpdateRoute(ctx: Context, tracker: UpstreamReleaseTracker, apply: UpdateApplier = runVendorScript): void {
+export function registerUpdateRoute(
+  ctx: Context, tracker: UpstreamReleaseTracker,
+  apply: UpdateApplier = signal => runOverlayUpdate(undefined, undefined, signal),
+): void {
   let running: Promise<UpdateApplication> | undefined
   ctx.connection.fetch.register({
     path: UPDATE_ROUTE,
@@ -267,7 +289,7 @@ export function registerUpdateRoute(ctx: Context, tracker: UpstreamReleaseTracke
     path: APPLY_ROUTE,
     methods: ['POST'],
     requestBody: 'buffered',
-    fetch: async () => {
+    fetch: async (request) => {
       // One update at a time: a second request must not race the first into the checkout.
       if (running !== undefined) {
         const busy: UpdateApplication = { status: 'failed', upstream: null, error: 'an update is already running' }
@@ -277,6 +299,7 @@ export function registerUpdateRoute(ctx: Context, tracker: UpstreamReleaseTracke
         try {
           const outcome = await apply()
           tracker.invalidate()
+          request.signal.throwIfAborted()
           return outcome
         } finally {
           running = undefined

@@ -2,15 +2,27 @@
   display: inline-grid;
   grid-template-columns: 14px;
   align-items: center;
+  justify-content: center;
   flex: none;
+  width: 28px;
   height: 28px;
-  padding: 0 7px;
+  padding: 0;
   box-sizing: border-box;
-  border: 1px solid color-mix(in srgb, var(--yh-alias-brand-primary-new-colorprimary-new-color) 20%, transparent);
-  border-radius: var(--yh-radius-sm);
-  color: var(--yh-alias-brand-primary-new-colorprimary-new-color);
-  background: color-mix(in srgb, var(--yh-alias-brand-primary-new-colorprimary-new-color) 8%, transparent);
+  border: none;
+  border-radius: 50%;
+  corner-shape: round;
+  color: var(--yh-alias-label-primary-foreground);
+  background: var(--yh-alias-button-primary-fill);
   cursor: pointer;
+}
+
+.indicator:hover:not([aria-disabled="true"]) {
+  background: var(--yh-alias-button-primary-hover);
+}
+
+.indicator:focus-visible {
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 2px;
 }
 
 .icon {
@@ -20,6 +32,8 @@
   height: 14px;
 }
 
+/* Windows' zero-width caption collapse keeps the historical status marker
+   inside the fixed expand control; the rail footer is not mounted there. */
 .badge {
   position: absolute;
   inset-inline-end: 2px;

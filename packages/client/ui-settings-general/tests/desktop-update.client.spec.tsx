@@ -92,6 +92,21 @@ it('keeps the newest event, hides for connection priority, and invokes only the 
   expect(f.unsubscribe).toHaveBeenCalledOnce()
 })
 
+it('uses the compact blue update control and concise available tooltip', async () => {
+  const f = fixture()
+  try {
+    await f.emit(available)
+    f.view.rerender(<f.Indicator dictionary={en} />)
+    const button = screen.getByRole('button', { name: 'Update' })
+    expect(button.className).toContain('indicator')
+    fireEvent.focus(button)
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Update available')
+    await f.emit({ phase: 'ready', version: available.version })
+    fireEvent.focus(screen.getByRole('button', { name: 'Install and Restart' }))
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Update available')
+  } finally { f.view.unmount(); f.status.resolve(available) }
+})
+
 it('keeps bridge failures actionable and ignores status completion after unmount', async () => {
   const f = fixture()
   await act(async () => { f.status.reject(new Error('IPC unavailable')) })

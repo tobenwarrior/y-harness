@@ -74,6 +74,25 @@ describe('loopback proxy', () => {
     expect(starts).toHaveBeenCalledTimes(1)
   })
 
+  it('switches the service and viewer assets after the active root changes', async () => {
+    let current = assets
+    const starts = vi.fn(() => 'http://127.0.0.1:43127/?project=abc123')
+    const service = new MapServiceBridge({
+      python: '/usr/bin/python3.11',
+      assetRoot: assets,
+      assetRootFor: () => current,
+      workspaceRoot: '/work/repo',
+      startService: starts,
+      forward: () => Promise.resolve(Response.json({ model: {} })),
+    })
+    await service.proxy('map', new Request('http://localhost/x'))
+    current = '/private/compound-overlay'
+    service.invalidate()
+    await service.proxy('map', new Request('http://localhost/x'))
+    expect(starts).toHaveBeenNthCalledWith(1, '/usr/bin/python3.11', `${assets}compound/scripts/map_server.py`, '/work/repo', expect.any(String))
+    expect(starts).toHaveBeenNthCalledWith(2, '/usr/bin/python3.11', '/private/compound-overlay/compound/scripts/map_server.py', '/work/repo', expect.any(String))
+  })
+
   it('answers 502 with the reason when the service cannot start', async () => {
     const { service } = bridge({ startService: () => { throw new Error('python3.11: not found') } })
     const response = await service.proxy('map', new Request('http://localhost/x'))

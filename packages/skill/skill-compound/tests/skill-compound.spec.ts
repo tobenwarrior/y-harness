@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,9 +6,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import * as SkillCompound from '@deepseek-ai/dsh-skill-compound'
-import { describe, expect, it } from 'vitest'
+import { activeOverlay } from '../src/overlay.ts'
+import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
+import { VENDORED_VERSION } from '../src/upstream.ts'
+import { describe, expect, it, vi } from 'vitest'
 
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
 const names = ['compound', 'map', 'setup', 'setup-global', 'status-global']
@@ -98,6 +103,230 @@ describe('bundled Compound skills', () => {
     } finally {
       await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('loads a valid private overlay and keeps the bundled assets as fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-overlay-'))
+    const ctx = new Context()
+    try {
+      const commit = 'a'.repeat(40)
+      const skills = join(root, 'revisions', commit, 'skills')
+      for (const name of names) {
+        const directory = join(skills, name)
+        await mkdir(directory, { recursive: true, mode: 0o700 })
+        await writeFile(join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: "overlay ${name}"\n---\n\nOverlay body ${name}.\n`, { mode: 0o600 })
+      }
+      await writeFile(join(root, 'current.json'), JSON.stringify({ commit, version: '2.0.0' }), { mode: 0o600 })
+      await ctx.plugin(SkillRegistry)
+      await ctx.plugin(SkillCompound, { overlayRoot: root })
+      expect((await ctx.skills.list()).map(skill => skill.description)).toEqual(names.map(name => `overlay ${name}`))
+      const loaded = await ctx.skills.get('compound')
+      expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: join(skills, 'compound') })
+      expect(loaded?.content).toContain('Overlay body compound.')
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('automatically applies upstream revisions and stops after disposal', async () => {
+    vi.useFakeTimers()
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-auto-update-'))
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    let upstreamVersion = '2.0.0'
+    let upstreamCommit = 'a'.repeat(40)
+    let fetchCalls = 0
+    let treeStarted = Promise.withResolvers<undefined>()
+    const filesFor = () => new Map(names.map(name => [
+      `skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: upstream ${upstreamVersion}\n---\n\nAuto body ${upstreamVersion}.\n`,
+    ]))
+    vi.stubGlobal('fetch', (url: string) => {
+      fetchCalls += 1
+      if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: upstreamCommit }))
+      if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
+      const files = filesFor()
+      if (url.includes('/git/trees/')) {
+        treeStarted.resolve(undefined)
+        const tree = [...files].map(([path, text]) => ({
+          path, type: 'blob', mode: '100644', size: Buffer.byteLength(text),
+          sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex'),
+        }))
+        return Promise.resolve(Response.json({ truncated: false, tree }))
+      }
+      const path = [...files.keys()].find(key => url.endsWith(key))
+      return Promise.resolve(new Response(path === undefined ? 'missing' : files.get(path)))
+    })
+    ctx.provide('connection', {
+      fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+    } as never)
+    try {
+      await ctx.plugin(SkillRegistry)
+      const fiber = await ctx.plugin(SkillCompound, { overlayRoot: root })
+      await treeStarted.promise
+      const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
+      expect(applyRoute).toBeDefined()
+      await applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST' }))
+      expect(activeOverlay(root)?.version).toBe('2.0.0')
+      treeStarted = Promise.withResolvers<undefined>()
+      upstreamVersion = '2.1.0'
+      upstreamCommit = 'b'.repeat(40)
+      await vi.advanceTimersByTimeAsync(AUTO_UPDATE_INTERVAL_MS)
+      await treeStarted.promise
+      await applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST' }))
+      expect(activeOverlay(root)?.version).toBe('2.1.0')
+      const callsAfterUpdate = fetchCalls
+      await fiber.dispose()
+      upstreamVersion = '2.2.0'
+      upstreamCommit = 'c'.repeat(40)
+      await vi.advanceTimersByTimeAsync(AUTO_UPDATE_INTERVAL_MS * 2)
+      expect(fetchCalls).toBe(callsAfterUpdate)
+      expect(activeOverlay(root)?.version).toBe('2.1.0')
+      expect(routes.map(route => route.path)).toContain('/api/skill-compound.update')
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies an update and reports its status through a real Loader composition', async () => {
+    vi.useFakeTimers()
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-loader-update-'))
+    const configPath = join(root, 'cordis.yml')
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    const upstreamVersion = '2.0.0'
+    const upstreamCommit = 'd'.repeat(40)
+    const treeStarted = Promise.withResolvers<undefined>()
+    const files = new Map(names.map(name => [
+      `skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: composed upstream ${upstreamVersion}\n---\n\nLoader body ${upstreamVersion}.\n`,
+    ]))
+    vi.stubGlobal('fetch', (url: string) => {
+      if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: upstreamCommit }))
+      if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
+      if (url.includes('/git/trees/')) {
+        treeStarted.resolve(undefined)
+        const tree = [...files].map(([path, text]) => ({
+          path, type: 'blob', mode: '100644', size: Buffer.byteLength(text),
+          sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex'),
+        }))
+        return Promise.resolve(Response.json({ truncated: false, tree }))
+      }
+      const path = [...files.keys()].find(key => url.endsWith(key))
+      return Promise.resolve(new Response(path === undefined ? 'missing' : files.get(path)))
+    })
+    await writeFile(configPath, [
+      "- name: '@deepseek-ai/dsh-skill'",
+      "- name: '@deepseek-ai/dsh-skill-compound'",
+      '  config:',
+      `    overlayRoot: ${JSON.stringify(root)}`,
+      '',
+    ].join('\n'))
+    ctx.provide('connection', {
+      fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+    } as never)
+    try {
+      ctx.baseUrl = pathToFileURL(root).href + '/'
+      await ctx.plugin(Loader)
+      ctx.loader.builtins.include = Include
+      ctx.loader.internal = {
+        version: 'v2',
+        async import(specifier: string) {
+          if (specifier === '@deepseek-ai/dsh-skill') return SkillRegistry
+          if (specifier === '@deepseek-ai/dsh-skill-compound') return SkillCompound
+          throw new Error(`Unexpected Loader import: ${specifier}`)
+        },
+      } as unknown as NonNullable<typeof ctx.loader.internal>
+      await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
+      await ctx.loader.await()
+      await treeStarted.promise
+      const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
+      expect(applyRoute).toBeDefined()
+      await applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST' }))
+      expect(activeOverlay(root)?.version).toBe(upstreamVersion)
+      const loaded = await ctx.skills.get('compound')
+      expect(loaded?.content).toContain(`Loader body ${upstreamVersion}.`)
+      const statusRoute = routes.find(route => route.path === '/api/skill-compound.update')
+      expect(statusRoute).toBeDefined()
+      const response = await statusRoute!.fetch(new Request('http://localhost/api/skill-compound.update'))
+      await expect(response.json()).resolves.toMatchObject({
+        vendored: upstreamVersion, upstream: upstreamVersion, updateAvailable: false, error: null,
+      })
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a manual update alive after the request aborts and waits on disposal', async () => {
+    vi.useFakeTimers()
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-manual-update-'))
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    let upstreamVersion = VENDORED_VERSION
+    let upstreamCommit = 'd36f372a60624b92e0e364871cae2c50cbf4ba01'
+    let upstreamSignal: AbortSignal | null | undefined
+    const initialStatus = Promise.withResolvers<undefined>()
+    const rawStarted = Promise.withResolvers<undefined>()
+    const filesFor = () => new Map(names.map(name => [
+      `skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: manual upstream ${upstreamVersion}\n---\n\nManual body ${upstreamVersion}.\n`,
+    ]))
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      if (url.includes('/commits/')) {
+        initialStatus.resolve(undefined)
+        return Promise.resolve(Response.json({ sha: upstreamCommit }))
+      }
+      if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
+      const files = filesFor()
+      if (url.includes('/git/trees/')) {
+        const tree = [...files].map(([path, text]) => ({
+          path, type: 'blob', mode: '100644', size: Buffer.byteLength(text),
+          sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex'),
+        }))
+        return Promise.resolve(Response.json({ truncated: false, tree }))
+      }
+      const path = [...files.keys()].find(key => url.endsWith(key))
+      if (path === undefined) return Promise.resolve(new Response('missing'))
+      upstreamSignal = init?.signal
+      rawStarted.resolve(undefined)
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new Error('manual update aborted', { cause: init.signal?.reason }))
+        }, { once: true })
+      })
+    })
+    ctx.provide('connection', {
+      fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+    } as never)
+    try {
+      await ctx.plugin(SkillRegistry)
+      const fiber = await ctx.plugin(SkillCompound, { overlayRoot: root })
+      await initialStatus.promise
+      upstreamVersion = '2.0.0'
+      upstreamCommit = 'a'.repeat(40)
+      const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
+      expect(applyRoute).toBeDefined()
+      const controller = new AbortController()
+      const responsePromise = applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST', signal: controller.signal }))
+      await rawStarted.promise
+      controller.abort()
+      expect(upstreamSignal?.aborted).toBe(false)
+      await fiber.dispose()
+      await expect(responsePromise).rejects.toThrow()
+      expect(upstreamSignal?.aborted).toBe(true)
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
     }
   })
 

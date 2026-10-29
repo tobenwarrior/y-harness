@@ -51,7 +51,7 @@ export function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslat
 }
 
 /**
- * Render update status as an icon with connection-indicator geometry and brand-blue ink, including retries.
+ * Render update status as a compact circular icon with brand-blue ink, including retries.
  * State labels and detail live in the tooltip and accessible name in every phase.
  * @param props - Connection priority, sidebar width, and localized bridge-failure copy.
  * @returns Desktop-only status beside the account button, or nothing in browsers.
@@ -63,14 +63,29 @@ export function DesktopUpdateIndicator({ wide, hidden, t, view, onOpen }: {
   view: DesktopUpdateView
   onOpen: () => void
 }) {
-  const { presentation: state, failed, opening } = view
+  const { presentation: state, failed } = view
   if (!wide || hidden || (!failed && (state === undefined || state.phase === 'idle' || state.phase === 'unavailable'))) return null
+  return <DesktopUpdateControl t={t} view={view} onOpen={onOpen} side="top" />
+}
+
+type DesktopUpdateControlProps = {
+  t: SettingsTranslate
+  view: DesktopUpdateView
+  onOpen: () => void
+  side: 'right' | 'top'
+}
+
+/** Render one updater control after its owner has decided that it belongs in the chrome. */
+function DesktopUpdateControl({ t, view, onOpen, side }: DesktopUpdateControlProps) {
+  const { presentation: state, failed, opening } = view
   const retryLabel = t('desktop.update.retry')
   const copy = state === undefined ? { label: retryLabel, detail: retryLabel } : updateCopy(state, t)
   const label = failed ? retryLabel : copy.label
   const error = failed || state?.phase === 'error'
   const busy = opening || (state !== undefined && BUSY_PHASES.has(state.phase))
-  return <Tooltip label={failed ? retryLabel : copy.detail} side="top">
+  const updateAvailable = state?.phase === 'available' || state?.phase === 'ready'
+  const tooltip = updateAvailable ? t('desktop.update.availableTooltip') : failed ? retryLabel : copy.detail
+  return <Tooltip label={tooltip} side={side}>
     <button type="button" className={css.indicator}
       aria-label={label} aria-disabled={busy} onClick={() => { if (!busy) onOpen() }}>
       <span className={css.icon} aria-hidden="true">
@@ -81,16 +96,36 @@ export function DesktopUpdateIndicator({ wide, hidden, t, view, onOpen }: {
   </Tooltip>
 }
 
-type BadgeProps = PropsRuntime<'sidebar.toggle.badge'> & PropsLocale<'settings'>
+type FooterActionProps = PropsRuntime<'sidebar.footer.action'> & PropsLocale<'settings'>
+  & Pick<InjectFace<SettingsRootInjected>, 'useDesktopUpdate' | 'openDesktopUpdate'>
+
+/**
+ * Render the collapsed-rail update action in the footer, outside the sidebar toggle button.
+ * @param props - Framework-bound carrier, column geometry, and shell action.
+ * @returns A proper update button when an app update is available, or nothing otherwise.
+ */
+export function DesktopUpdateFooterAction({ wide, useDesktopUpdate, openDesktopUpdate, t }: FooterActionProps) {
+  const view = useDesktopUpdate(value => value)
+  const phase = view.presentation?.phase
+  const visible = view.failed || (phase !== undefined && phase !== 'idle' && phase !== 'unavailable')
+  if (wide || !visible) return null
+  return <DesktopUpdateControl t={t} view={view} onOpen={openDesktopUpdate} side="right" />
+}
+
+type WindowsBadgeProps = PropsRuntime<'sidebar.toggle.badge'> & PropsLocale<'settings'>
   & Pick<InjectFace<SettingsRootInjected>, 'useDesktopUpdate' | 'useConnectionState'>
 
 /**
+ * Keep the legacy Windows caption marker in the zero-width collapse.
+ * The Windows sidebar has no rail footer track; the marker remains inside the
+ * fixed caption toggle until a dedicated caption action seat exists.
  * @param props - Framework-bound carrier and connection state.
- * @returns A non-interactive brand-blue notification on the sidebar expand button.
+ * @returns A non-interactive notification marker on Windows, or nothing elsewhere.
  */
-export function DesktopUpdateBadge({ useDesktopUpdate, useConnectionState, t }: BadgeProps) {
+export function DesktopUpdateBadge({ useDesktopUpdate, useConnectionState, t }: WindowsBadgeProps) {
   const { presentation: state, failed } = useDesktopUpdate(value => value)
   const connection = useConnectionState(value => value)
+  if (!document.documentElement.hasAttribute('data-windows-titlebar')) return null
   if (((connection === 'disconnected' || connection === 'connecting') && state?.phase !== 'installing')
     || (!failed && (state === undefined || state.phase === 'idle' || state.phase === 'unavailable'))) return null
   const retryLabel = t('desktop.update.retry')

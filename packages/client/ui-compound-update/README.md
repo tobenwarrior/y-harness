@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-The sidebar foot shows a small badge as soon as the released Compound skills version is newer than the one this Y Harness build ships. Opening it explains the difference and offers one button that applies it: the Host re-syncs the vendored tree, records the release, runs the package tests, and commits only when they pass, then asks the on-quit updater to rebuild and reopen the app. A failed attempt leaves the checkout untouched and reports why. The badge stays silent while the released version matches, cannot be read, or the deployment has no Host route to ask.
+The sidebar foot shows a small status badge only when a Compound revision is pending or its latest check failed. A successful current check stays quiet so the app-update affordance remains the only persistent update signal; the Compound updater checks and applies revisions automatically in the Host. Opening a pending or failed badge explains the result and keeps the deliberate refresh/apply actions available. When an update is available, one button applies it: the Host downloads the commit-pinned skill tree into a private overlay, verifies every file, and publishes the complete revision atomically. A failed attempt leaves the active revision untouched and reports why.
 
 ## Table of Contents
 
@@ -32,15 +32,16 @@ The badge registers into `sidebar.footer.action` and the steps panel into `shell
 
 | Reading | What the user sees |
 |---|---|
-| Released version is newer | Badge with the released version; the panel names both versions and the upstream repository, and offers the update button. |
-| Released version matches | No badge; the panel reports that this build already ships it. |
-| Upstream unreadable | No badge; the panel reports why the check failed and offers another attempt. |
+| Released version is newer | Pending badge with the released version; the panel names both versions and the upstream repository, and offers the update button. |
+| Released version matches | No sidebar badge; the automatic updater stays quiet after confirming the bundled revision is current. |
+| Upstream unreadable | Check-failed badge; the panel reports why the check failed and offers another attempt. |
+| First reading has not completed | No badge yet; the panel shows a concise loading state when opened. |
 
 ## Understand the implementation
 
 | File | Responsibility |
 |---|---|
-| [`src/client/index.ts`](src/client/index.ts) | Registrations, dictionary, and the single initial read. |
+| [`src/client/index.ts`](src/client/index.ts) | Registrations, dictionary, and periodic status reads. |
 | [`src/client/controller.ts`](src/client/controller.ts) | Route request, response validation, and the shared reading state. |
 | [`src/client/UpdateBadge.tsx`](src/client/UpdateBadge.tsx) | Sidebar-foot badge. |
 | [`src/client/UpdatePanel.tsx`](src/client/UpdatePanel.tsx) | Released version, upstream link, and update steps. |
@@ -62,7 +63,7 @@ The indicator does not alter model request prefixes.
 
 ## Known Limitations and Deferred Work
 
-- The panel only reports. Updating the checkout, rebuilding, and restarting stay with the operator, because this fork's production checkout must not be rewritten by the running application.
+- The panel applies a verified user-owned overlay. The managed production checkout is intentionally left unchanged, so applying a revision does not depend on a detached Git checkout or a live-app rebuild.
 - The reading is cached by the Host for six hours after success and fifteen minutes after a failure, so a release published in between appears on the next read rather than immediately.
 - The package reads one route and renders no version of its own; a deployment that mounts it without `@deepseek-ai/dsh-skill-compound` shows no badge and reports the missing route as an unreadable check.
 

@@ -1,3 +1,6 @@
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { delimiter, join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
 import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import {
@@ -79,19 +82,79 @@ describe('upstream release tracker', () => {
     expect(failing).toHaveBeenCalledTimes(2)
   })
 
+  it('drops a cached reading when the active baseline revision changes', async () => {
+    let baseline = { version: VENDORED_VERSION, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' }
+    const reader = vi.fn(() => Promise.resolve({ version: '2.0.0', commit: 'a'.repeat(40) }))
+    const tracker = new UpstreamReleaseTracker(reader, () => baseline)
+    await expect(tracker.status()).resolves.toMatchObject({ vendored: VENDORED_VERSION, updateAvailable: true })
+    baseline = { version: '2.0.0', commit: 'a'.repeat(40) }
+    await expect(tracker.status()).resolves.toMatchObject({ vendored: '2.0.0', updateAvailable: false })
+    expect(reader).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-reads when the active baseline changes during a remote read', async () => {
+    let baseline = { version: VENDORED_VERSION, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' }
+    const first = Promise.withResolvers<{ version: string; commit: string }>()
+    const reader = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValue({ version: '2.0.0', commit: 'a'.repeat(40) })
+    const tracker = new UpstreamReleaseTracker(reader, () => baseline)
+    const status = tracker.status()
+    await Promise.resolve()
+    baseline = { version: '2.0.0', commit: 'a'.repeat(40) }
+    first.resolve({ version: '2.0.0', commit: 'a'.repeat(40) })
+    await expect(status).resolves.toMatchObject({ vendored: '2.0.0', updateAvailable: false, error: null })
+    expect(reader).toHaveBeenCalledTimes(2)
+  })
+
+  it('detects a changed commit at the same version and ignores an older version', async () => {
+    const changed = { version: VENDORED_VERSION, commit: 'a'.repeat(40) }
+    await expect(new UpstreamReleaseTracker(() => Promise.resolve(changed)).status()).resolves.toMatchObject({
+      updateAvailable: true, error: null,
+    })
+    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, version: '0.10.0' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
+    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
+  })
+
   it('reads the published release from the repository raw file', async () => {
     const requested: string[] = []
     vi.stubGlobal('fetch', (url: string) => {
       requested.push(url)
-      return Promise.resolve(Response.json({ name: 'compound-skills', version: '0.13.0' }))
+      return Promise.resolve(Response.json(url.includes('api.github.com') ? { sha: 'a'.repeat(40) } : { name: 'compound-skills', version: '0.13.0' }))
     })
     const status = await new UpstreamReleaseTracker().status()
-    expect(requested).toEqual([`https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/main/plugin.json`])
+    expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${'a'.repeat(40)}/plugin.json`])
     expect(status).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
   })
 
+  it.each([403, 429])('uses noninteractive git head fallback for GitHub HTTP %s rate limits', async (statusCode) => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-git-head-'))
+    const git = join(root, 'git')
+    const marker = join(root, 'environment')
+    const commit = 'b'.repeat(40)
+    const previousPath = process.env.PATH
+    await writeFile(git, `#!/bin/sh\nprintf '%s\\n' "$GIT_TERMINAL_PROMPT|$GIT_ASKPASS|$SSH_ASKPASS|$SSH_ASKPASS_REQUIRE" > ${JSON.stringify(marker)}\nprintf '%s\\n' '${commit} refs/heads/main'\n`)
+    await chmod(git, 0o755)
+    process.env.PATH = `${root}${delimiter}${previousPath ?? ''}`
+    const requested: string[] = []
+    vi.stubGlobal('fetch', (url: string) => {
+      requested.push(url)
+      if (url.includes('/commits/')) return Promise.resolve(new Response('rate limited', { status: statusCode, headers: { 'x-ratelimit-remaining': '0' } }))
+      return Promise.resolve(Response.json({ name: 'compound-skills', version: '0.13.0' }))
+    })
+    try {
+      const result = await new UpstreamReleaseTracker().status()
+      expect(result).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
+      expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/plugin.json`])
+      expect(await readFile(marker, 'utf8')).toBe('0|||' + 'never\n')
+    } finally {
+      process.env.PATH = previousPath
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reports the HTTP status when the raw file is not served', async () => {
-    vi.stubGlobal('fetch', () => Promise.resolve(new Response('nope', { status: 404 })))
+    vi.stubGlobal('fetch', (url: string) => Promise.resolve(url.includes('api.github.com') ? Response.json({ sha: 'a'.repeat(40) }) : new Response('nope', { status: 404 })))
     await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({ error: 'upstream plugin.json answered HTTP 404' })
   })
 
@@ -103,8 +166,23 @@ describe('upstream release tracker', () => {
   })
 
   it('reports JSON that carries no version', async () => {
-    vi.stubGlobal('fetch', () => Promise.resolve(Response.json({ name: 'compound-skills' })))
+    vi.stubGlobal('fetch', (url: string) => Promise.resolve(Response.json(url.includes('api.github.com') ? { sha: 'a'.repeat(40) } : { name: 'compound-skills' })))
     await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({ error: 'upstream plugin.json carries no version' })
+  })
+
+  it('cancels an in-flight remote read when its caller is disposed', async () => {
+    const controller = new AbortController()
+    let requestSignal: AbortSignal | null | undefined
+    vi.stubGlobal('fetch', (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      requestSignal = init?.signal
+      init?.signal?.addEventListener('abort', () => {
+        reject(new Error('upstream read aborted', { cause: init.signal?.reason }))
+      }, { once: true })
+    }))
+    const reading = new UpstreamReleaseTracker().status(controller.signal)
+    controller.abort()
+    await expect(reading).resolves.toMatchObject({ upstream: null, updateAvailable: false })
+    expect(requestSignal?.aborted).toBe(true)
   })
 
   it('answers the registered route with the current status and no caching', async () => {
@@ -147,4 +225,13 @@ describe('upstream release tracker', () => {
     expect([one?.status, two?.status].sort()).toEqual([200, 409])
     await ctx.fiber.dispose()
   })
+})
+
+it('compares upstream against the active installed revision', async () => {
+  const commit = 'a'.repeat(40)
+  const tracker = new UpstreamReleaseTracker(
+    () => Promise.resolve({ version: '0.12.0', commit }),
+    () => ({ version: '0.12.0', commit }),
+  )
+  await expect(tracker.status()).resolves.toMatchObject({ vendored: '0.12.0', updateAvailable: false, error: null })
 })

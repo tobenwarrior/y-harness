@@ -16,7 +16,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { UPSTREAM_REPOSITORY, VENDORED_VERSION } from '../packages/skill/skill-compound/src/upstream.ts'
+import { hasUpdate, recordedCommit, UPSTREAM_REPOSITORY, VENDORED_VERSION } from '../packages/skill/skill-compound/src/upstream.ts'
 
 const REPOSITORY_URL = `https://github.com/${UPSTREAM_REPOSITORY}`
 const BRANCH = 'main'
@@ -183,7 +183,8 @@ function main(): number {
   const vendored = recordedRelease(root)
   const upstream = cloneUpstream()
   try {
-    const updateAvailable = compareReleases(upstream.release, vendored) !== 0
+    const commit = recordedCommit(readFileSync(join(root, RECORD), 'utf8'))
+    const updateAvailable = hasUpdate(upstream.release, vendored, upstream.commit, commit)
     if (values.check && values.apply) throw new Error('--check and --apply are exclusive')
     let applied: VendorReport['applied'] = 'no'
     let branch: string | null = null
@@ -191,7 +192,7 @@ function main(): number {
     if (!updateAvailable) {
       note(`already at upstream ${upstream.release}`)
     } else if (values.apply) {
-      branch = values.branch ?? `compound/${upstream.release}`
+      branch = values.branch ?? `compound/${upstream.release}-${upstream.commit.slice(0, 12)}`
       try {
         apply(upstream, root, branch)
         applied = 'committed'

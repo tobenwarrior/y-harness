@@ -1,22 +1,39 @@
-/** Sidebar-foot badge shown while the upstream repository publishes a newer release. */
+/** Sidebar-foot status control for a pending or failed Compound skills check. */
 import type { ReactNode } from 'react'
+import {
+  IconDownloadOutlineRegular, IconWarningTriangleOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { CompoundUpdateFace } from './controller.ts'
 import css from './UpdateBadge.module.css'
 
 /**
- * Render the update badge; nothing renders while no newer release is known.
+ * Render the update status control; nothing renders before the first reading
+ * or after a successful check finds no pending revision. The host applies
+ * Compound updates automatically, so a current-state button would be noise.
  * @param props - sidebar geometry, locale, and the indicator's data and actions.
- * @returns the badge, or null when this build already ships the released version.
+ * @returns the status control, or null before the first reading/current state.
  */
 export function UpdateBadge({ t, useUpdate, show }: PropsRuntime<'sidebar.footer.action'> & PropsLocale<'compoundUpdate'> & InjectFace<CompoundUpdateFace>): ReactNode {
-  const available = useUpdate(state => state.status?.updateAvailable === true)
-  const released = useUpdate(state => state.status?.upstream ?? '')
-  if (!available) return null
-  return <button type="button" className={css.badge} onClick={show} title={t('badge')} aria-label={t('badge')}>
-    <span className={css.dot} aria-hidden="true" />
-    <span className={css.label}>{t('badgeShort')}</span>
-    <span className={css.version}>{released}</span>
+  const status = useUpdate(state => state.status)
+  if (status === null || (status.error === null && !status.updateAvailable)) return null
+  const failed = status.error !== null
+  const title = failed ? t('badgeError') : t('badge')
+  const label = failed ? t('badgeErrorShort') : t('badgeShort')
+  const released = failed ? '' : status.upstream ?? status.vendored
+  return <button
+    type="button"
+    className={`${css.badge} ${failed ? css.error : css.available}`}
+    onClick={show}
+    aria-label={title}
+  >
+    <span className={css.icon} aria-hidden="true">
+      {failed
+        ? <IconWarningTriangleOutlineRegular size={14} />
+        : <IconDownloadOutlineRegular size={14} />}
+    </span>
+    <span className={css.label}>{label}</span>
+    {released !== '' && <span className={css.version}>{released}</span>}
   </button>
 }

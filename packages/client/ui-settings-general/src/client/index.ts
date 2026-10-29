@@ -27,7 +27,7 @@ import type {
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { createSettingsShellStore } from './shell-store.ts'
 import { SettingsRoot } from './SettingsRoot.tsx'
-import { DesktopUpdateBadge } from './DesktopUpdateIndicator.tsx'
+import { DesktopUpdateBadge, DesktopUpdateFooterAction } from './DesktopUpdateIndicator.tsx'
 import type { DesktopUpdateBridge } from '../types.ts'
 import { DesktopUpdateSource } from './desktop-update-source.ts'
 import { CloseLabel, HeaderContent, TriggerContent } from './chrome.tsx'
@@ -100,6 +100,12 @@ export function apply(ctx: ClientContext): void {
       hasUpdateBridge,
     }),
   }, DesktopUpdateRow))
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action', id: 'desktop-update', order: 40, locale: NS,
+    inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store }, openDesktopUpdate: () => { desktopUpdate.open() } }),
+  }, DesktopUpdateFooterAction))
+  // Windows collapses the sidebar to a zero-width caption surface, so its
+  // footer track is hidden; retain the legacy status marker in the opener.
   ctx.slots.inject('sidebar.toggle.badge', () => ctx.slots.register({
     name: 'sidebar.toggle.badge', locale: NS,
     inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store, connectionState: connection.state } }),

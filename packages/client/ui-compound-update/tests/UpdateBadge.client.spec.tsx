@@ -27,15 +27,27 @@ function renderBadge(state: BadgeState) {
 }
 
 describe('update badge', () => {
-  it('renders nothing while no newer release is known', () => {
+  it('renders nothing before the first status read', () => {
     renderBadge({ phase: 'ready', open: false, status: null })
     expect(screen.queryByRole('button')).toBeNull()
-    cleanup()
+  })
+
+  it('keeps the sidebar quiet when skills are already up to date', () => {
     renderBadge({
       phase: 'ready', open: false,
       status: { vendored: '0.11.0', upstream: '0.11.0', updateAvailable: false, repository: 'r', checkedAt: 1, error: null },
     })
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('keeps a failed status action available for retry', () => {
+    renderBadge({
+      phase: 'ready', open: false,
+      status: { vendored: '0.11.0', upstream: null, updateAvailable: false, repository: 'r', checkedAt: 1, error: 'HTTP 503' },
+    })
+    const badge = screen.getByRole('button', { name: en.badgeError })
+    expect(badge.textContent).toContain(en.badgeErrorShort)
+    expect(badge.querySelector('svg')).not.toBeNull()
   })
 
   it('names the released version and opens the steps panel', () => {
@@ -46,6 +58,7 @@ describe('update badge', () => {
     const badge = screen.getByRole('button', { name: en.badge })
     expect(badge.textContent).toContain(en.badgeShort)
     expect(badge.textContent).toContain('0.12.0')
+    expect(badge.querySelector('svg')).not.toBeNull()
     fireEvent.click(badge)
     expect(show).toHaveBeenCalledTimes(1)
   })

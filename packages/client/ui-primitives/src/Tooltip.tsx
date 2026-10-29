@@ -19,6 +19,25 @@ export type TooltipSide = 'right' | 'bottom' | 'top'
  */
 export const TooltipSuppression = createContext<((suppressed: boolean) => void) | null>(null)
 
+const TOOLTIP_EDGE_MARGIN = 12
+
+/**
+ * Return the currently visible viewport, including browser page-scale bounds.
+ * AnchorClientRects are already relative to this visual viewport after a
+ * pinch pan, so offsetLeft/offsetTop must not be added a second time.
+ */
+function visibleViewport(): { width: number; height: number; scaled: boolean } {
+  const visual = window.visualViewport
+  if (visual == null || visual.width <= 0 || visual.height <= 0) {
+    return { width: window.innerWidth, height: window.innerHeight, scaled: false }
+  }
+  return {
+    width: visual.width,
+    height: visual.height,
+    scaled: visual.width < window.innerWidth || visual.height < window.innerHeight,
+  }
+}
+
 /** Props Tooltip injects into its anchor child; the child's own handlers are chained ahead of the tooltip's. */
 interface AnchorProps {
   'aria-describedby'?: string | undefined
@@ -102,16 +121,33 @@ export function Tooltip({ label, shortcutKeys, side = 'right', align = 'center',
   useEffect(() => {
     const el = bubble.current
     if (pos === null || !visible || suppressed || el === null) return
-    const edgeMargin = 12
     let size: ResizeObserverSize | undefined
     let placement = side
     const fit = () => {
       if (size === undefined) return
       const { inlineSize: width, blockSize: height } = size
+      const viewport = visibleViewport()
+      // When page zoom or pinch scale narrows the visual viewport, the CSS
+      // `vw` cap still measures the layout viewport. Tighten the bubble's cap
+      // to the visible bounds before placing it, so the ResizeObserver can
+      // re-run fit with the wrapped size rather than clipping at the edge.
+      if (viewport.scaled) {
+        const margin = Math.min(TOOLTIP_EDGE_MARGIN, Math.max(0, (viewport.width - width) / 2))
+        const availableWidth = Math.max(0, viewport.width - margin * 2)
+        const defaultMaxWidth = window.innerWidth * 0.5
+        const boundedMaxWidth = maxWidth === undefined
+          ? Math.min(defaultMaxWidth, availableWidth)
+          : Math.min(maxWidth, availableWidth)
+        el.style.maxWidth = `${boundedMaxWidth}px`
+      } else if (maxWidth === undefined) {
+        el.style.removeProperty('max-width')
+      }
+      const horizontalMargin = Math.min(TOOLTIP_EDGE_MARGIN, Math.max(0, (viewport.width - width) / 2))
+      const verticalMargin = Math.min(TOOLTIP_EDGE_MARGIN, Math.max(0, (viewport.height - height) / 2))
       const offset = side === 'right' ? 0 : align === 'end' ? width : width / 2
-      const left = Math.max(edgeMargin, Math.min(pos.x - offset, window.innerWidth - edgeMargin - width))
-      const fitsBelow = pos.bottom + gap + height <= window.innerHeight - edgeMargin
-      const fitsAbove = pos.top - gap - height >= edgeMargin
+      const left = Math.max(horizontalMargin, Math.min(pos.x - offset, viewport.width - horizontalMargin - width))
+      const fitsBelow = pos.bottom + gap + height <= viewport.height - verticalMargin
+      const fitsAbove = pos.top - gap - height >= verticalMargin
       if (placement === 'bottom' && !fitsBelow && fitsAbove) placement = 'top'
       else if (placement === 'top' && !fitsAbove && fitsBelow) placement = 'bottom'
       el.style.left = `${left + offset}px`
@@ -126,11 +162,15 @@ export function Tooltip({ label, shortcutKeys, side = 'right', align = 'center',
     })
     observer.observe(el, { box: 'border-box' })
     window.addEventListener('resize', fit)
+    window.visualViewport?.addEventListener('resize', fit)
+    window.visualViewport?.addEventListener('scroll', fit)
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', fit)
+      window.visualViewport?.removeEventListener('resize', fit)
+      window.visualViewport?.removeEventListener('scroll', fit)
     }
-  }, [align, gap, pos, side, suppressed, visible])
+  }, [align, gap, maxWidth, pos, side, suppressed, visible])
   useEffect(() => {
     announce(visible)
     return () => { announce(false) }

@@ -1,4 +1,4 @@
-/** Update status the Host reports for the vendored Compound skills. */
+/** Update status the Host reports for the active Compound skills overlay. */
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 
@@ -8,13 +8,18 @@ export const UPDATE_ROUTE = 'api/skill-compound.update'
 /** Browser-relative form of the Host route that applies a released update. */
 export const APPLY_ROUTE = 'api/skill-compound.update.apply'
 
-/** One reading of the released Compound skills version. */
+/** Read the cancellation bit through a helper so it remains a live check across awaits. */
+function isAborted(request: AbortController): boolean {
+  return request.signal.aborted
+}
+
+/** One reading of the active and upstream Compound skills revisions. */
 export interface UpdateStatus {
-  /** Release currently vendored into this Y Harness build. */
+  /** Version currently active in this Y Harness session. */
   readonly vendored: string
-  /** Release the upstream repository publishes, when it could be read. */
+  /** Version the upstream repository publishes, when it could be read. */
   readonly upstream: string | null
-  /** Whether upstream publishes a later release than the vendored one. */
+  /** Whether a newer upstream revision is available. */
   readonly updateAvailable: boolean
   /** Upstream repository the comparison was made against. */
   readonly repository: string
@@ -32,13 +37,13 @@ export interface CompoundUpdateState {
   readonly open: boolean
   /** Latest reading, retained while a newer one is in flight. */
   readonly status: UpdateStatus | null
-  /** Progress of the in-app update the user asked for. */
+  /** Progress of the private overlay update the user asked for. */
   readonly apply: ApplyProgress
 }
 
 /** Progress of one in-app update. */
 export interface ApplyProgress {
-  /** Idle before the user asks; `done` means the checkout now holds the release. */
+  /** Idle before the user asks; `done` means the verified overlay is active. */
   readonly phase: 'idle' | 'running' | 'done' | 'failed'
   /** Why the update did not apply, when it did not. */
   readonly error: string | null
@@ -48,7 +53,7 @@ export interface ApplyProgress {
 interface ApplyOutcome {
   /** What the attempt did. */
   readonly status: 'updated' | 'up-to-date' | 'failed' | 'unavailable'
-  /** Release the attempt applied, when it applied one. */
+  /** Version the attempt applied, when it applied one. */
   readonly upstream: string | null
   /** Why the attempt did not apply, when it did not. */
   readonly error: string | null
@@ -67,13 +72,6 @@ export function isApplyOutcome(value: unknown): value is ApplyOutcome {
     && (typeof outcome.error === 'string' || outcome.error === null)
 }
 
-/**
- * Nothing to do here: the Host asks the on-quit updater to restart the app.
- *
- * The rebuild cannot run against a live app, so applying the update schedules the
- * restart on the Host side and the panel only reports it.
- */
-
 /** Data and callbacks the indicator registrations receive. */
 export interface CompoundUpdateFace {
   /** Reading source the renderer binds as `useUpdate`. */
@@ -84,7 +82,7 @@ export interface CompoundUpdateFace {
   readonly show: () => void
   /** Close the update steps panel. */
   readonly hide: () => void
-  /** Apply the released update, then quit so the rebuild can follow. */
+  /** Apply the verified upstream revision to the private overlay. */
   readonly apply: () => void
 }
 
@@ -110,8 +108,9 @@ export class CompoundUpdateController {
     phase: 'idle', open: false, status: null, apply: { phase: 'idle', error: null },
   })
   private request: AbortController | undefined
+  private applyRequest: AbortController | undefined
 
-  /** Read the Host route once, retaining the previous reading until it answers. */
+  /** Read the Host route, retaining the previous reading until it answers. */
   async refresh(): Promise<void> {
     this.request?.abort()
     const request = new AbortController()
@@ -144,28 +143,36 @@ export class CompoundUpdateController {
   }
 
   /**
-   * Apply the released update, then ask the desktop shell to quit.
+   * Apply a verified upstream revision to the private overlay.
    *
-   * The quit is the point: the checkout now holds the release, and the on-quit
-   * updater rebuilds and relaunches. A host that cannot update (no checkout) or a
-   * failed attempt leaves the app running and reports why.
+   * The active provider reads that overlay dynamically, so the update takes effect
+   * in this session without rebuilding or restarting the managed application. A
+   * host that cannot update or a failed attempt leaves the current revision active
+   * and reports why.
    * @returns nothing; progress is published on the shared state.
    */
   async applyUpdate(): Promise<void> {
     if (this.source.getSnapshot().apply.phase === 'running') return
+    const request = new AbortController()
+    this.applyRequest = request
     this.patch({ apply: { phase: 'running', error: null } })
     try {
-      const response = await fetch(APPLY_ROUTE, { method: 'POST' })
+      const response = await fetch(APPLY_ROUTE, { method: 'POST', signal: request.signal })
+      if (isAborted(request)) return
       const value: unknown = await response.json()
+      if (isAborted(request)) return
       if (!isApplyOutcome(value)) throw new Error('the Host answered with an unrecognized outcome')
       if (value.status === 'updated' || value.status === 'up-to-date') {
         this.patch({ apply: { phase: 'done', error: null } })
-        void this.refresh()
+        if (!isAborted(request)) void this.refresh()
         return
       }
       this.patch({ apply: { phase: 'failed', error: value.error ?? 'the update did not apply' } })
     } catch (error: unknown) {
+      if (isAborted(request)) return
       this.patch({ apply: { phase: 'failed', error: error instanceof Error ? error.message : String(error) } })
+    } finally {
+      if (this.applyRequest === request) this.applyRequest = undefined
     }
   }
 
@@ -173,6 +180,8 @@ export class CompoundUpdateController {
   dispose(): void {
     this.request?.abort()
     this.request = undefined
+    this.applyRequest?.abort()
+    this.applyRequest = undefined
   }
 
   /**

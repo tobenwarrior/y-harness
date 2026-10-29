@@ -1,10 +1,24 @@
 .badge {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 4px 8px; border: 0.5px solid var(--yh-alias-border-l3); border-radius: var(--yh-radius-md);
-  background: transparent; cursor: pointer; font-size: 12px; line-height: 18px;
-  color: var(--yh-alias-label-primary); text-align: left;
+  display: inline-grid; grid-template-columns: 14px max-content max-content; align-items: center; gap: 5px;
+  max-width: 100%; height: 28px; box-sizing: border-box; padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--yh-alias-state-warn-label) 20%, transparent);
+  border-radius: var(--yh-radius-sm); background: var(--yh-alias-state-warn-tertiary);
+  cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500; line-height: 18px;
+  color: var(--yh-alias-state-warn-label); text-align: left;
 }
-.badge:hover { background: var(--yh-alias-interactive-bg-hover); }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--yh-alias-state-warning-primary); flex: 0 0 auto; }
+.badge:hover { background: color-mix(in srgb, var(--yh-alias-state-warn-tertiary), var(--yh-alias-state-warn-primary) 6%); }
+.badge:active { background: color-mix(in srgb, var(--yh-alias-state-warn-tertiary), var(--yh-alias-state-warn-primary) 10%); }
+.badge:focus-visible { outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: 2px; }
+.available { background: var(--yh-alias-state-info-tertiary); color: var(--yh-alias-state-info-primary); border-color: color-mix(in srgb, var(--yh-alias-state-info-primary) 20%, transparent); }
+.available:hover { background: color-mix(in srgb, var(--yh-alias-state-info-tertiary), var(--yh-alias-state-info-primary) 6%); }
+.available:active { background: color-mix(in srgb, var(--yh-alias-state-info-tertiary), var(--yh-alias-state-info-primary) 10%); }
+.current { background: var(--yh-alias-state-success-tertiary); color: var(--yh-alias-state-success-primary); border-color: color-mix(in srgb, var(--yh-alias-state-success-primary) 20%, transparent); }
+.current:hover { background: color-mix(in srgb, var(--yh-alias-state-success-tertiary), var(--yh-alias-state-success-primary) 6%); }
+.current:active { background: color-mix(in srgb, var(--yh-alias-state-success-tertiary), var(--yh-alias-state-success-primary) 10%); }
+.error { background: var(--yh-alias-state-warn-tertiary); color: var(--yh-alias-state-warn-label); border-color: color-mix(in srgb, var(--yh-alias-state-warn-label) 20%, transparent); }
+.error:hover { background: color-mix(in srgb, var(--yh-alias-state-warn-tertiary), var(--yh-alias-state-warn-primary) 6%); }
+.error:active { background: color-mix(in srgb, var(--yh-alias-state-warn-tertiary), var(--yh-alias-state-warn-primary) 10%); }
+.icon { display: grid; place-items: center; width: 14px; height: 14px; }
+.icon > svg { color: inherit; }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.version { color: var(--yh-alias-label-secondary); flex: 0 0 auto; }
+.version { color: inherit; opacity: 0.78; flex: 0 0 auto; }

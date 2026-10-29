@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CompoundUpdateController, isUpdateStatus, UPDATE_ROUTE, type UpdateStatus } from '../src/client/controller.ts'
+import { APPLY_ROUTE, CompoundUpdateController, isUpdateStatus, UPDATE_ROUTE, type UpdateStatus } from '../src/client/controller.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -125,5 +125,25 @@ describe('compound update controller', () => {
     release(Response.json(RELEASED))
     await pending
     expect(controller.face().hooks.update.getSnapshot()).toMatchObject({ phase: 'loading', status: null })
+  })
+
+  it('cancels an in-flight apply POST when the controller is disposed', async () => {
+    let aborted = false
+    vi.stubGlobal('fetch', (url: string, init?: { signal?: AbortSignal }) => {
+      expect(url).toBe(APPLY_ROUTE)
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          aborted = true
+          reject(new Error('aborted'))
+        }, { once: true })
+      })
+    })
+    const controller = new CompoundUpdateController()
+    const pending = controller.applyUpdate()
+    expect(controller.face().hooks.update.getSnapshot().apply.phase).toBe('running')
+    controller.dispose()
+    await pending
+    expect(aborted).toBe(true)
+    expect(controller.face().hooks.update.getSnapshot().apply).toEqual({ phase: 'running', error: null })
   })
 })

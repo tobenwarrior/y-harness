@@ -104,6 +104,8 @@ export interface MapBridgeOptions {
   readonly python: string
   /** Absolute assets directory holding the vendored skill folders. */
   readonly assetRoot: string
+  /** Resolves the current assets directory when a private Compound overlay is active. */
+  readonly assetRootFor?: () => string
   /** Absolute repository root the map is opened for. */
   readonly workspaceRoot: string
   /** Absolute cache directory for the service; defaults outside the mapped repository. */
@@ -158,6 +160,16 @@ export class MapServiceBridge {
   /** @param options - interpreter, assets, workspace root, and injectable edges. */
   constructor(private readonly options: MapBridgeOptions) {}
 
+  /** Resolve the assets directory for a service start or viewer asset read. */
+  private currentAssetRoot(): string {
+    return this.options.assetRootFor?.() ?? this.options.assetRoot
+  }
+
+  /** Drop the cached target so the next request starts the current revision. */
+  invalidate(): void {
+    this.target = undefined
+  }
+
   /**
    * Resolve the loopback target once per process.
    * @returns the service port and the project id registered for the workspace.
@@ -167,7 +179,7 @@ export class MapServiceBridge {
     this.target ??= Promise.resolve().then(() => {
       const url = (this.options.startService ?? startMapService)(
         this.options.python,
-        join(this.options.assetRoot, 'compound', 'scripts', 'map_server.py'),
+        join(this.currentAssetRoot(), 'compound', 'scripts', 'map_server.py'),
         this.options.workspaceRoot,
         this.options.stateDir ?? resolveStateDir(this.options.workspaceRoot),
       )
@@ -188,7 +200,7 @@ export class MapServiceBridge {
    * @returns the file contents, with the viewer script rewritten.
    */
   private readAsset(name: string): string {
-    const path = join(this.options.assetRoot, 'compound', 'assets', name)
+    const path = join(this.currentAssetRoot(), 'compound', 'assets', name)
     const source = readFileSync(path, 'utf8')
     return name === VIEWER_SCRIPT ? rewriteViewerScript(source) : source
   }

@@ -19,6 +19,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Framework services used by the badge and its panel. */
 export const inject = ['slots', 'locale']
 
+/** Browser-side freshness cadence; the Host still owns upstream response caching. */
+const STATUS_REFRESH_INTERVAL_MS = 60 * 1000
+
 /**
  * Register the sidebar-foot badge and the update steps panel.
  * @param ctx - browser plugin context supplied by Cordis.
@@ -26,12 +29,12 @@ export const inject = ['slots', 'locale']
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register('compoundUpdate', { en, zh }), 'ui-compound-update: dictionaries')
   const controller = new CompoundUpdateController()
-  // Read once per session so the badge is present without a user gesture; the
-  // Host caches the reading, so this is one request per app start.
+  // Read immediately and periodically while this plugin is active.
   ctx.effect(() => {
     void controller.refresh()
-    return () => { controller.dispose() }
-  }, 'ui-compound-update: initial read')
+    const timer = setInterval(() => { void controller.refresh() }, STATUS_REFRESH_INTERVAL_MS)
+    return () => { clearInterval(timer); controller.dispose() }
+  }, 'ui-compound-update: periodic read')
   const face = controller.face()
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action', id: 'compound-update', order: 50, locale: 'compoundUpdate', inject: () => face,

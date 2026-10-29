@@ -73,12 +73,12 @@ describe('web e2e: Desktop update workspace chrome', () => {
 
           const progress = presentDesktopUpdate({ phase: 'downloading', version, percent: 58 }, en)
           await publish(progress)
-          const downloading = page.getByRole('button', { name: '58%', exact: true })
-          await downloading.waitFor()
-          expect(await downloading.getAttribute('aria-disabled')).toBe('true')
-          expect(await downloading.locator('svg').count()).toBe(1)
+          const wideDownloading = page.locator('[class*="triggerRow"]').getByRole('button', { name: '58%', exact: true })
+          await wideDownloading.waitFor()
+          expect(await wideDownloading.getAttribute('aria-disabled')).toBe('true')
+          expect(await wideDownloading.locator('svg').count()).toBe(1)
           // Force dispatch past Playwright's aria-disabled guard to verify the product's click guard.
-          await downloading.click({ force: true })
+          await wideDownloading.click({ force: true })
           expect(await opens()).toBe(1)
           await page.screenshot({ path: join(evidence, 'downloading.png') })
 
@@ -86,16 +86,18 @@ describe('web e2e: Desktop update workspace chrome', () => {
           const expand = locale === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
           await page.getByRole('button', { name: collapse, exact: true }).click()
           const toggle = page.getByRole('button', { name: expand, exact: true })
-          const badge = toggle.getByRole('img', { name: '58%', exact: true })
+          const badge = page.getByRole('button', { name: '58%', exact: true })
           await badge.waitFor()
-          await expect.poll(() => downloading.count()).toBe(0)
-          expect(await page.getByRole('img', { name: '58%', exact: true }).count()).toBe(1)
+          await expect.poll(() => wideDownloading.count()).toBe(0)
+          expect(await page.getByRole('button', { name: '58%', exact: true }).count()).toBe(1)
           const updateBackground = await badge.evaluate(element => getComputedStyle(element).backgroundColor)
           await page.screenshot({ path: join(evidence, 'collapsed.png') })
 
           const error = presentDesktopUpdate({ phase: 'error', version, failedOperation: 'download', message: 'HTTP 503' }, en)
           await publish(error)
-          const errorBadge = toggle.getByRole('img', { name: retryLabel, exact: true })
+          // Keep the collapsed action scoped to its rail slot. After expanding,
+          // the same retry label is rendered by the wide account-row control.
+          const errorBadge = page.locator('[class*="footerActions"]').getByRole('button', { name: retryLabel, exact: true })
           await errorBadge.waitFor()
           // A failure keeps the update palette; only the label distinguishes it.
           const failedBackground = await errorBadge.evaluate(element => getComputedStyle(element).backgroundColor)
