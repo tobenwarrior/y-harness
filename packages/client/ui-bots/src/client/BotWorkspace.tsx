@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconAgentPresetOutlineRegular, IconEditOutlineRegular, IconLinkOutlineRegular,
-  IconPlusOutlineRegular, IconSearchOutlineRegular, Input, Modal, StateDot, Tag, Tooltip,
+  Button, IconEditOutlineRegular, IconLinkOutlineRegular,
+  IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
+  Input, Modal, StateDot, Tag, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
@@ -192,7 +193,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
     }
     return (
       <section className={css.detailEmpty} aria-labelledby="dsh-bots-empty-title">
-        <span className={css.emptyMark} aria-hidden="true"><IconAgentPresetOutlineRegular size={24} /></span>
+        <span className={css.emptyMark} aria-hidden="true"><IconSidebarBotsOutlineRegular size={24} /></span>
         <h2 id="dsh-bots-empty-title" className={css.emptyTitle}>{t('chooseBotTitle')}</h2>
         <p className={css.emptyDescription}>{t('chooseBotDescription')}</p>
       </section>
@@ -283,11 +284,11 @@ export function BotRoster({
                     <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={15} />} onClick={openAvatarEditor} />
                   </Tooltip>
                 )}
-                <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconPlusOutlineRegular size={16} />} onClick={openNewBot} />
+                <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
               </div>
               <Input
                 className={css.search ?? ''}
-                icon={<IconSearchOutlineRegular size={16} />}
+                icon={<IconSidebarSearchOutlineRegular size={16} />}
                 placeholder={t('searchPlaceholder')}
                 aria-label={t('searchLabel')}
                 value={query}
@@ -320,7 +321,7 @@ export function BotRoster({
               ))}
               {!loading && hasRows && groups.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
               {!loading && !hasRows && error === null && (
-                <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconAgentPresetOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconPlusOutlineRegular size={14} />}>{t('newBot')}</Button></div>
+                <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconSidebarBotsOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconSidebarBotAddOutlineRegular size={14} />}>{t('newBot')}</Button></div>
               )}
             </div>
             {onConnectApps !== undefined && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={onConnectApps}>{t('connectApps')}</Button></div>}
@@ -334,7 +335,7 @@ export function BotRoster({
                 size="sm"
                 className={css.botRailAction}
                 aria-label={t('newBot')}
-                icon={<IconPlusOutlineRegular size={18} />}
+                icon={<IconSidebarBotAddOutlineRegular size={18} />}
                 onClick={openNewBot}
               />
             </Tooltip>

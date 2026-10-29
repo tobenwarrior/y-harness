@@ -11,7 +11,8 @@
 import type { ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Button, IconFolderCloseRegular, IconPlusOutlineRegular, Menu, Modal, type MenuEntry,
+  Button, IconSidebarWorkspaceAddOutlineRegular, IconSidebarWorkspaceFolderOutlineRegular,
+  Menu, Modal, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   WorkspaceId, WorkspaceSnapshot, WorkspaceView,
@@ -104,7 +105,7 @@ export function WorkspacePickFlow({
     if (flowOpen && !flowAvailable) setFlowOpen(false)
   }, [flowOpen, flowAvailable])
   const addEntries: MenuEntry[] = flowAvailable
-    ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconPlusOutlineRegular size={16} />, disabled: flowBusy }]
+    ? [{ id: ADD_WORKSPACE, label: t('menu.addWorkspace'), icon: <IconSidebarWorkspaceAddOutlineRegular size={16} />, disabled: flowBusy }]
     : []
   // With workspaces listed, the add action pins below the scroll region
   // (divider + always visible); otherwise it IS the menu.
@@ -113,7 +114,7 @@ export function WorkspacePickFlow({
     ? workspaces.map(workspace => ({
       id: workspace.workspaceId,
       label: workspaceDisplayTitle(workspace.title, t('workspace.defaultName')),
-      icon: <IconFolderCloseRegular size={16} />,
+      icon: <IconSidebarWorkspaceFolderOutlineRegular size={16} />,
       disabled: flowBusy,
     }))
     : addEntries

@@ -1,7 +1,7 @@
 /** Skill library glyph; the sidebar owns navigation and selected state. */
 import type { ReactNode } from 'react'
-import { IconSkillOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconSidebarSkillsOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
 /**
@@ -9,4 +9,4 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
  * @param props - framework-owned sidebar icon inputs.
  * @returns the skill glyph.
  */
-export function SkillsPanelIcon({ size }: PropsRuntime<'sidebar.panellist'>): ReactNode { return <IconSkillOutlineRegular size={size} /> }
+export function SkillsPanelIcon({ size }: PropsRuntime<'sidebar.panellist'>): ReactNode { return <IconSidebarSkillsOutlineRegular size={size} /> }

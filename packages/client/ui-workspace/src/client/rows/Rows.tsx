@@ -16,8 +16,9 @@ import clsx from 'clsx'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   HoverCard, IconArchiveOutlineRegular, IconEditOutlineRegular,
-  IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+  IconEllipsisOutlineRegular,
   IconNewChatOutlineRegular, IconPinFillRegular, IconTrashOutlineRegular,
+  IconSidebarWorkspaceFolderOpenOutlineRegular, IconSidebarWorkspaceFolderOutlineRegular,
   IconTriangleRightFillRegular, IconUnarchiveOutlineRegular, Menu, relativeTime, StateDot, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
@@ -257,7 +258,7 @@ export function ProjectRowItem({ group, containsCurrentDescendant = false, onTog
       onDragEnd={drag?.end}
     >
       <span className={clsx(css.slot, css.folder, active && css.folderActive)}>
-        {row.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
+        {row.expanded ? <IconSidebarWorkspaceFolderOpenOutlineRegular /> : <IconSidebarWorkspaceFolderOutlineRegular />}
       </span>
       <span className={clsx(css.slot, css.chevron)}>
         <IconTriangleRightFillRegular className={clsx(css.arrow, row.expanded && css.arrowOpen)} />

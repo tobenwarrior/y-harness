@@ -19,8 +19,8 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  IconAgentPresetOutlineRegular, IconCodeOutlineRegular, IconNewChatOutlineMedium, IconNewChatOutlineRegular,
-  IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
+  IconSidebarBotsOutlineRegular, IconSidebarCodeOutlineRegular, IconSidebarCollapseOutlineRegular,
+  IconSidebarNewSessionOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -93,7 +93,7 @@ function SidebarModeSwitch({ botMode, wide, selectCodePanel, selectPanel, t }: {
           aria-label={t('mode.code')}
           onClick={selectCodePanel}
         >
-          <IconCodeOutlineRegular size={wide ? 15 : 18} />
+          <IconSidebarCodeOutlineRegular size={wide ? 15 : 18} />
           {wide && <span>{t('mode.code')}</span>}
         </button>
       </Tooltip>
@@ -105,7 +105,7 @@ function SidebarModeSwitch({ botMode, wide, selectCodePanel, selectPanel, t }: {
           aria-label={t('mode.bots')}
           onClick={() => { selectPanel(BOT_PANEL_ID) }}
         >
-          <IconAgentPresetOutlineRegular size={wide ? 15 : 18} />
+          <IconSidebarBotsOutlineRegular size={wide ? 15 : 18} />
           {wide && <span>{t('mode.bots')}</span>}
         </button>
       </Tooltip>
@@ -219,7 +219,7 @@ export function SidebarRoot({
         onClick={() => { toggleSidebar() }}
       >
         {/* Rail icons render at 18 (figma rail spec); expanded keeps the glyph-native sizes. */}
-        <IconPanelLeftOutlineRegular size={wide || windowsTitlebar ? 16 : 18} />
+        <IconSidebarCollapseOutlineRegular size={wide || windowsTitlebar ? 16 : 18} />
         {!wide && renderSlot('sidebar.toggle.badge', {})}
       </button>
     </Tooltip>
@@ -295,8 +295,8 @@ export function SidebarRoot({
         >
           <span className={css.newSessionLabelMask}><span className={css.newSessionContent}>
             {wide
-              ? <IconNewChatOutlineMedium size={14} />
-              : <IconNewChatOutlineRegular size={windowsTitlebar ? 16 : 18} />}
+              ? <IconSidebarNewSessionOutlineRegular size={14} />
+              : <IconSidebarNewSessionOutlineRegular size={windowsTitlebar ? 16 : 18} />}
             {wide && <span className={clsx(css.newSessionLabel, css.wide)}>{t('session.new')}</span>}
           </span></span>
           {wide && newShortcut !== undefined && newShortcut.keys.length > 0 && <span className={css.newSessionShortcut} aria-hidden="true">

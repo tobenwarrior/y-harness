@@ -19,8 +19,9 @@ import clsx from 'clsx'
 import {
   Button, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
   IconChevronsUpDownOutlineRegular, IconClockOutlineRegular, IconCloseFillRegular,
-  IconFlatListOutlineRegular, IconFolderCloseRegular, IconProjectAddOutlineRegular,
-  IconQueueOutlineRegular, IconSearchOutlineRegular, IconSlidersTwoOutlineRegular,
+  IconFlatListOutlineRegular, IconQueueOutlineRegular,
+  IconSidebarFilterOutlineRegular, IconSidebarSearchOutlineRegular, IconSidebarWorkspaceAddOutlineRegular,
+  IconSidebarWorkspaceFolderOutlineRegular,
   IconWorkspaceTreeOutlineRegular, Menu, Modal, Toast, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
@@ -119,7 +120,7 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
       onClose={() => { setOpen(false) }}
       items={[
         { type: 'label' as const, id: 'group-by', text: t('groupBy.label') },
-        { id: 'workspace', label: t('groupBy.workspace'), icon: <IconFolderCloseRegular /> },
+        { id: 'workspace', label: t('groupBy.workspace'), icon: <IconSidebarWorkspaceFolderOutlineRegular /> },
         { id: 'workspace-tree', label: t('groupBy.workspaceTree'), icon: <IconWorkspaceTreeOutlineRegular /> },
         { id: 'flat', label: t('groupBy.flat'), icon: <IconFlatListOutlineRegular /> },
         { type: 'separator' as const, id: 'order-by-separator' },
@@ -159,7 +160,7 @@ function ViewOptionsMenu({ groupBy, orderBy, archivedFilter, onGroupPick, onOrde
             aria-label={t('viewOptions.label')}
             onClick={() => { setOpen(v => !v) }}
           >
-            <IconSlidersTwoOutlineRegular />
+            <IconSidebarFilterOutlineRegular />
           </button>
         </Tooltip>
       )}
@@ -1237,7 +1238,7 @@ export function WorkspaceBrowser({
                     requestSearch()
                   }}
                 >
-                  <IconSearchOutlineRegular size={searchExpanded ? 11 : 14} />
+                  <IconSidebarSearchOutlineRegular size={searchExpanded ? 11 : 14} />
                 </button>
               </Tooltip>
               <input
@@ -1300,7 +1301,7 @@ export function WorkspaceBrowser({
                   requestAddWorkspace()
                 }}
               >
-                <IconProjectAddOutlineRegular size={wide ? 16 : 18} />
+                <IconSidebarWorkspaceAddOutlineRegular size={wide ? 16 : 18} />
               </button>
             </Tooltip>
           )}
@@ -1337,7 +1338,7 @@ export function WorkspaceBrowser({
               requestSearch()
             }}
           >
-            <IconSearchOutlineRegular size={18} />
+            <IconSidebarSearchOutlineRegular size={18} />
           </button>
         </Tooltip>
       </div>}

@@ -4,12 +4,31 @@
  */
 import { useId } from 'react'
 import type { IconProps } from './props.ts'
+import { ICON_MEDIUM_STROKE, ICON_REGULAR_STROKE } from './stroke.ts'
 import {
   BrowseOutlineArtwork, ChatLinesOutlineArtwork, CodeBracketsArtwork, FolderCloseArtwork,
   GlobeOutlineArtwork, NewChatOutlineArtwork,
 } from './shared-artwork.tsx'
+export {
+  IconSidebarAutomationOutlineMedium, IconSidebarAutomationOutlineRegular,
+  IconSidebarBotAddOutlineMedium, IconSidebarBotAddOutlineRegular,
+  IconSidebarBotsOutlineMedium, IconSidebarBotsOutlineRegular,
+  IconSidebarCodeMapOutlineMedium, IconSidebarCodeMapOutlineRegular,
+  IconSidebarCodeOutlineMedium, IconSidebarCodeOutlineRegular,
+  IconSidebarCollapseOutlineMedium, IconSidebarCollapseOutlineRegular,
+  IconSidebarFilterOutlineMedium, IconSidebarFilterOutlineRegular,
+  IconSidebarNewSessionOutlineMedium, IconSidebarNewSessionOutlineRegular,
+  IconSidebarPluginsOutlineMedium, IconSidebarPluginsOutlineRegular,
+  IconSidebarSearchOutlineMedium, IconSidebarSearchOutlineRegular,
+  IconSidebarSettingsOutlineMedium, IconSidebarSettingsOutlineRegular,
+  IconSidebarSkillsOutlineMedium, IconSidebarSkillsOutlineRegular,
+  IconSidebarWorkspaceAddOutlineMedium, IconSidebarWorkspaceAddOutlineRegular,
+  IconSidebarWorkspaceFolderOpenOutlineMedium, IconSidebarWorkspaceFolderOpenOutlineRegular,
+  IconSidebarWorkspaceFolderOutlineMedium, IconSidebarWorkspaceFolderOutlineRegular,
+} from './sidebar-artwork.tsx'
 
 export type { IconProps } from './props.ts'
+export { ICON_MEDIUM_STROKE, ICON_REGULAR_STROKE } from './stroke.ts'
 
 interface WeightedIconProps extends IconProps {
   strokeWidth: number
@@ -17,12 +36,6 @@ interface WeightedIconProps extends IconProps {
 
 /** Shared shield contour used by composite icons outside this module. */
 export const SHIELD_OUTLINE_PATH = 'M6.80132 2.14853C7.70663 1.80917 8.70422 1.80919 9.60952 2.14859L14.1296 3.84317V7.11961C14.1296 11.6089 10.7615 13.5975 8.20543 14.5779C5.64931 13.5975 2.28052 11.6089 2.28052 7.11961V3.84317L6.80132 2.14853Z'
-
-/** Regular stroke width used by the product icon set. */
-export const ICON_REGULAR_STROKE = 1
-
-/** Medium stroke width used by emphasized product icons. */
-export const ICON_MEDIUM_STROKE = 1.3
 
 /** Regular one-pixel IconNewChatOutline artwork. */
 export const IconNewChatOutlineRegular = (props: IconProps) => (
