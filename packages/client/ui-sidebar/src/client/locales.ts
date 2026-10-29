@@ -7,6 +7,9 @@ export const zh = {
   'toggle.open': '打开侧边栏',
   'toggle.collapse': '收起侧边栏',
   'panels.label': '全局面板',
+  'mode.label': '工作区模式',
+  'mode.code': '代码',
+  'mode.bots': '机器人',
 } satisfies Record<string, string>
 
 /** The sidebar namespace key union. */
@@ -19,4 +22,7 @@ export const en = {
   'toggle.open': 'Open sidebar',
   'toggle.collapse': 'Collapse sidebar',
   'panels.label': 'Global panels',
+  'mode.label': 'Workspace mode',
+  'mode.code': 'Code',
+  'mode.bots': 'Bots',
 } satisfies Record<SidebarKey, string>

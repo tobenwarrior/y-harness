@@ -8,8 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
-import { BotsConversation, BotsPanel } from './panel.tsx'
-import { BotsPanelIcon } from './BotsPanelIcon.tsx'
+import { BotsConversation, BotsPanel, BotsRoster } from './panel.tsx'
 import { en, zh } from './locales.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
@@ -41,14 +40,11 @@ export function apply(ctx: Context): void {
     const disposeConversation = ctx.slots.inject('bots.conversation', () => ctx.slots.register({
       name: 'bots.conversation',
     }, BotsConversation))
-    const t = ctx.locale.bind('bots')
-    const disposeSidebar = ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-      name: 'sidebar.panellist',
-      id: PANEL_ID,
-      order: 4,
-      label: () => t('panel'),
+    const disposeSidebar = ctx.slots.inject('sidebar.bots', () => ctx.slots.register({
+      name: 'sidebar.bots',
       locale: 'bots',
-    }, BotsPanelIcon))
+      inject: () => controller.face(),
+    }, BotsRoster))
     const disposeChanged = ctx.remote.$on('bots/changed', () => { void controller.load() })
     void controller.load()
     return () => {

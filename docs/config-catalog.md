@@ -389,7 +389,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-avatar-generation`
 
-- `source`: [`packages/agents/avatar-generation/src/index.ts:29`](../packages/agents/avatar-generation/src/index.ts)
+- `source`: [`packages/agents/avatar-generation/src/index.ts:28`](../packages/agents/avatar-generation/src/index.ts)
 
 ```ts config-catalog
 /** Deployment configuration for the OpenAI Images API adapter. */

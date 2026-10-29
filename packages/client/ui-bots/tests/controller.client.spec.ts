@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SessionBinding, SessionReference, ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type {
+  SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
+} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { BotId, type BotView } from '@deepseek-ai/dsh-bots/client'
 import { BotWorkspaceController, type BotWorkspaceRemote } from '../src/client/controller.ts'
@@ -28,6 +30,30 @@ function reference(sessionId: SessionId, ready: Promise<SessionBinding> = Promis
     ready,
     release,
     [Symbol.dispose]: release,
+  }
+}
+
+function sessionList(sessionId: SessionId, known: () => boolean): ISessions['list'] {
+  return {
+    getSnapshot: (): SessionListState => {
+      const available = known()
+      const summary: SessionSummary = {
+        id: sessionId,
+        displayTitle: String(sessionId),
+        running: false,
+        retainedBy: {},
+        blank: true,
+        updatedAt: 0,
+      }
+      const byId: Record<SessionId, SessionSummary> = available ? { [sessionId]: summary } : {}
+      return {
+        ids: available ? [sessionId] : [],
+        byId,
+        phase: available ? 'ready' : 'pending',
+        projectionsBySession: {},
+      }
+    },
+    subscribe: () => () => {},
   }
 }
 
@@ -88,7 +114,7 @@ describe('BotWorkspaceController', () => {
       if (!catalogued) throw new Error(`sessions.retain: unknown session ${sessionId}`)
       return reference(sessionId)
     })
-    const sessions = { retain, refresh } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+    const sessions = { retain, refresh, list: sessionList(persisted.sessionId, () => catalogued) } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
     const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
 
     await controller.load()
@@ -96,6 +122,112 @@ describe('BotWorkspaceController', () => {
     expect(refresh).toHaveBeenCalledOnce()
     expect(controller.face().reference()?.sessionId).toBe(persisted.sessionId)
     expect(controller.source.getSnapshot().error).toBeNull()
+  })
+
+  it('retries a Bot whose Session arrives after the initial catalog refresh', async () => {
+    const persisted = bot('bot-raced', 'bot-session-raced')
+    const remote = remoteFixture([persisted])
+    let refreshes = 0
+    const refresh = vi.fn(async () => { refreshes++ })
+    const retain = vi.fn((sessionId: SessionId) => {
+      if (refreshes < 2) throw new Error(`sessions.retain: unknown session ${sessionId}`)
+      return reference(sessionId)
+    })
+    const sessions = { retain, refresh, list: sessionList(persisted.sessionId, () => refreshes >= 2) } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    await controller.load()
+
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(retain).toHaveBeenCalledTimes(2)
+    expect(controller.face().reference()?.sessionId).toBe(persisted.sessionId)
+    expect(controller.source.getSnapshot().error).toBeNull()
+  })
+
+  it('does not let a delayed catalog retry replace a newer Bot selection', async () => {
+    const first = bot('bot-first', 'bot-session-first')
+    const second = bot('bot-second', 'bot-session-second')
+    const nextFirst = { ...first, sessionId: 'bot-session-first-new' as SessionId }
+    const remote = remoteFixture([first, second])
+    let refreshes = 0
+    let releaseRetry!: () => void
+    let retryStarted!: () => void
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve })
+    const retryStartedPromise = new Promise<void>((resolve) => { retryStarted = resolve })
+    const refresh = vi.fn(async () => {
+      refreshes++
+      if (refreshes === 3) {
+        retryStarted()
+        await retryGate
+      }
+    })
+    const firstReference = reference(first.sessionId)
+    const secondReference = reference(second.sessionId)
+    const retain = vi.fn((sessionId: SessionId) => {
+      if (sessionId !== second.sessionId && refreshes >= 2) {
+        throw new Error(`sessions.retain: unknown session ${sessionId}`)
+      }
+      return sessionId === first.sessionId ? firstReference : secondReference
+    })
+    const sessions = {
+      retain,
+      refresh,
+      list: sessionList(nextFirst.sessionId, () => false),
+    } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    await controller.load()
+    remote.list.mockResolvedValueOnce({ ok: true, value: { bots: [nextFirst, second] } })
+    const loading = controller.load()
+    await retryStartedPromise
+
+    controller.face().select(second.id)
+    expect(controller.face().reference()).toBe(secondReference)
+    releaseRetry()
+    await loading
+
+    expect(controller.source.getSnapshot().selectedBotId).toBe(second.id)
+    expect(controller.face().reference()).toBe(secondReference)
+    expect(secondReference.release).not.toHaveBeenCalled()
+  })
+
+  it('does not retain a Bot after a delayed catalog retry is disposed', async () => {
+    const persisted = bot('bot-disposed', 'bot-session-disposed')
+    const nextPersisted = { ...persisted, sessionId: 'bot-session-disposed-new' as SessionId }
+    const remote = remoteFixture([persisted])
+    let refreshes = 0
+    let releaseRetry!: () => void
+    let retryStarted!: () => void
+    const retryGate = new Promise<void>((resolve) => { releaseRetry = resolve })
+    const retryStartedPromise = new Promise<void>((resolve) => { retryStarted = resolve })
+    const refresh = vi.fn(async () => {
+      refreshes++
+      if (refreshes === 3) {
+        retryStarted()
+        await retryGate
+      }
+    })
+    const retain = vi.fn((sessionId: SessionId) => {
+      if (refreshes >= 2) throw new Error(`sessions.retain: unknown session ${sessionId}`)
+      return reference(sessionId)
+    })
+    const sessions = {
+      retain,
+      refresh,
+      list: sessionList(nextPersisted.sessionId, () => false),
+    } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    await controller.load()
+    remote.list.mockResolvedValueOnce({ ok: true, value: { bots: [nextPersisted] } })
+    const loading = controller.load()
+    await retryStartedPromise
+    controller.dispose()
+    releaseRetry()
+    await loading
+
+    expect(retain).toHaveBeenCalledTimes(2)
+    expect(controller.face().reference()).toBeUndefined()
   })
 
   it('releases a failed Session reference so retry can restore the Bot', async () => {

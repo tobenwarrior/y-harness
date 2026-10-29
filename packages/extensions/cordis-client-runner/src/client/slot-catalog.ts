@@ -3111,6 +3111,37 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     source: 'packages/client/ui-layout/src/client/index.ts:68',
   },
   {
+    key: 'sidebar.bots',
+    kind: 'single',
+    scope: 'root',
+    summary: 'Bot roster rendered in place of the code/session browser in Bot mode.',
+    doc: 'Bot roster rendered in place of the code/session browser in Bot mode.',
+    registerOptions: [],
+    ownerProps: [
+      '/**\n * Owner share of the browser hole — the only facts crossing the shell/region\n * boundary. Business data and actions arrive through the region\'s own inject.\n */\nexport interface SidebarSectionOwnerProps {\n  /** Shell fold-state output: wide renders the full browser, rail the icon column. */\n  wide: boolean\n  /** Rail icons request expansion; the browser rides the wide flip for focus. */\n  expandSidebar: () => void\n}',
+    ],
+    ownerPropsReferences: [],
+    standardProps: [
+      'useResource: UseResource',
+      'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
+      'usePanelInfo: UsePanelInfo',
+      'useSessions: UseSessions',
+      'useSessionStatus: UseSessionStatus',
+      'useSessionRetainInfo: UseSessionRetainInfo',
+      'useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>',
+    ],
+    keyDomain: '',
+    hookContext: '',
+    slotInject: '',
+    declaredBy: 'an entry in \'sidebar\' (client-ui-sidebar), so it exists while that entry is mounted',
+    occupants: [
+      'client-ui-bots BotsRoster',
+    ],
+    replaceRisk: 'shadows-shipped-ui',
+    example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.bots\', () => ctx.slots.register(\n      { name: \'sidebar.bots\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
+    source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:44',
+  },
+  {
     key: 'sidebar.brand.mark',
     kind: 'single',
     scope: 'root',
@@ -3259,7 +3290,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.footer.action\', () => ctx.slots.register(\n      { name: \'sidebar.footer.action\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:53',
+    source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:55',
   },
   {
     key: 'sidebar.panellist',
@@ -3305,7 +3336,6 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'sidebar\' (client-ui-sidebar), so it exists while that entry is mounted',
     occupants: [
-      'client-ui-bots BotsPanelIcon',
       'client-ui-compound-map MapPanelIcon',
       'client-ui-plugin-manager PluginsPanelIcon',
       'client-ui-schedule TaskManagerIcon',
@@ -4016,7 +4046,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'sidebar.settings\', () => ctx.slots.register(\n      { name: \'sidebar.settings\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:48',
+    source: 'packages/client/ui-sidebar/src/client/contract/slots.ts:50',
   },
   {
     key: 'sidebar.toggle.badge',

@@ -40,6 +40,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * registers the browser.
      */
     'sidebar.workspaces': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
+    /** Bot roster rendered in place of the code/session browser in Bot mode. */
+    'sidebar.bots': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
     /**
      * The settings seat at the sidebar foot. Declared by this package's
      * 'sidebar' entry; ui-settings registers its trigger row + modal panel.
@@ -124,7 +126,7 @@ export type SidebarRootInjected = {
   /** Toggle the sidebar column through the layout service. */
   toggleSidebar: () => void
   /** Select the global panel addressed by a sidebar row. */
-  selectPanel: (id: MainPanelId) => void
+  selectPanel: (id: MainPanelId | null) => void
   /** Private reactive sources bound to framework selector hooks. */
   hooks: { panels: ObservableSnapshot<readonly SidebarPanelMetadata[]>; shortcuts: ObservableSnapshot<readonly ShortcutCatalogEntry[]> }
 }
@@ -142,6 +144,7 @@ export type SidebarRootComponentProps =
     | 'sidebar.toggle.badge'
     | 'sidebar.panellist'
     | 'sidebar.workspaces'
+    | 'sidebar.bots'
     | 'sidebar.settings'
     | 'sidebar.footer.action'
   >

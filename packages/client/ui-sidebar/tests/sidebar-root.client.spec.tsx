@@ -10,6 +10,7 @@ import type {
   SidebarFooterActionOwnerProps, SidebarRootComponentProps, SidebarSectionOwnerProps,
   SidebarSettingsOwnerProps,
 } from '../src/client/contract/slots.ts'
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { HeaderLeadingControls, type HeaderLeadingControlsProps } from '../src/client/HeaderLeadingControls.tsx'
 import { SidebarRoot } from '../src/client/SidebarRoot.tsx'
 import { en } from '../src/client/locales.ts'
@@ -35,24 +36,30 @@ type AttentionSnapshot = Parameters<Parameters<SidebarRootComponentProps['useSes
 const noAttention: AttentionSnapshot = new Map()
 const useSessionStatus: SidebarRootComponentProps['useSessionStatus'] = selector => selector(noAttention)
 
-function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
+function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = false, botMode = false, codePanel = null }: {
   collapsed?: boolean
   width?: number
   shortcuts?: readonly ShortcutCatalogEntry[]
+  bots?: boolean
+  botMode?: boolean
+  codePanel?: MainPanelId | null
 } = {}) {
   const startSession = vi.fn()
   const toggleSidebar = vi.fn()
+  const selectPanel = vi.fn()
   let regionOwner: SidebarSectionOwnerProps | undefined
   let settingsOwner: SidebarSettingsOwnerProps | undefined
   let footerActionOwner: SidebarFooterActionOwnerProps | undefined
   const brandMark = <span data-testid="custom-brand-mark">M</span>
   const brandName = <span data-testid="custom-brand-name">Custom Brand</span>
-  let current = { collapsed, width }
+  let current = { collapsed, width, botMode, codePanel }
+  const panelMetadata = bots ? [{ id: 'bots' as MainPanelId, order: Number.MAX_SAFE_INTEGER, label: 'Bots' }] : []
   const root = () => (
     <SidebarRoot
       collapsed={current.collapsed} width={current.width}
       useSessions={neverHook} useSessionStatus={useSessionStatus} useSessionRetainInfo={neverHook}
-      usePanelInfo={usePanelInfo} selectPanel={() => {}} usePanels={selector => selector([])} useShortcuts={selector => selector(shortcuts)}
+      usePanelInfo={selector => selector({ activePanelId: current.botMode ? 'bots' as MainPanelId : current.codePanel })}
+      selectPanel={selectPanel} usePanels={selector => selector(panelMetadata)} useShortcuts={selector => selector(shortcuts)}
       useResource={useResource} useWorkspaces={neverHook}
       startSession={startSession} toggleSidebar={toggleSidebar} t={t}
       renderSlot={((
@@ -70,6 +77,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
           footerActionOwner = owner
           return <div data-testid="footer-action-seat" data-wide={owner.wide} />
         }
+        if (key === 'sidebar.bots') return <div data-testid="bots-region" data-wide={owner.wide} />
         regionOwner = owner as SidebarSectionOwnerProps
         return <div data-testid="region" data-wide={owner.wide} />
       }) as SidebarRootComponentProps['renderSlot']}
@@ -79,6 +87,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
   return {
     startSession,
     toggleSidebar,
+    selectPanel,
     regionOwner: () => {
       if (regionOwner === undefined) throw new Error('region owner not rendered')
       return regionOwner
@@ -241,6 +250,37 @@ describe('SidebarRoot shell', () => {
     expect(screen.queryByTestId('custom-brand-mark')).toBeNull()
     fireEvent.click(opener)
     expect(b.toggleSidebar).toHaveBeenCalledOnce()
+  })
+
+  it('swaps the existing sidebar region for the bot roster through the mode switch', () => {
+    const b = mountShell({ bots: true, botMode: true })
+
+    expect(screen.getByRole('group', { name: en['mode.label'] })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en['mode.code'] }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: en['mode.bots'] }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('button', { name: en['session.new.label'] })).toBeNull()
+    expect(screen.queryByTestId('region')).toBeNull()
+    expect(screen.getByTestId('bots-region')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en['mode.code'] }))
+    expect(b.selectPanel).toHaveBeenCalledWith(null)
+
+    b.rerender({ botMode: false })
+    expect(screen.getByRole('button', { name: en['mode.code'] }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByTestId('bots-region')).toBeNull()
+    expect(screen.getByTestId('region')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: en['session.new.label'] })).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: en['mode.bots'] }))
+    expect(b.selectPanel).toHaveBeenCalledWith('bots')
+  })
+
+  it('returns to the last code panel when leaving Bot mode', () => {
+    const b = mountShell({ bots: true, codePanel: 'plugins' as MainPanelId })
+    fireEvent.click(screen.getByRole('button', { name: en['mode.bots'] }))
+    b.rerender({ botMode: true })
+    fireEvent.click(screen.getByRole('button', { name: en['mode.code'] }))
+    expect(b.selectPanel).toHaveBeenLastCalledWith('plugins')
   })
 
   it('shows only the badge bubble while the rail badge is hovered inside the toggle', () => {

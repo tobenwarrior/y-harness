@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import type { BotAvatar as SharedBotAvatar } from '@deepseek-ai/dsh-bots/client'
-import css from './BotWorkspace.module.css'
+import portraits from './bot-portraits.png'
+import css from './BotAvatar.module.css'
 import type { BotAccent, BotIdentity } from './types.ts'
 
 /**
@@ -41,17 +42,17 @@ export function BotAvatar({ name, identity = 'agent', accent = 'violet', avatar,
     return () => { live = false }
   }, [avatar, botId, loadAvatar])
   return (
-    <span className={clsx(css.avatar, size === 'large' ? css.avatarLarge : css.avatarSmall)} data-accent={accent} data-identity={identity} data-avatar-loaded={avatarURL === undefined ? 'false' : 'true'} role="img" aria-label={name || initials}>
-      {avatarURL !== undefined && <img className={css.avatarImage} src={avatarURL} alt="" aria-hidden="true" />}
-      <span className={css.avatarFallback} aria-hidden="true">
-        <span className={css.avatarGlow} />
-        <span className={css.avatarAccessory} />
-        <span className={css.avatarFace}>
-          <span className={clsx(css.avatarEye, css.avatarEyeLeft)} />
-          <span className={clsx(css.avatarEye, css.avatarEyeRight)} />
-          <span className={css.avatarMouth} />
-        </span>
-      </span>
+    <span
+      className={clsx(css.avatar, size === 'large' ? css.large : css.small)}
+      data-accent={accent}
+      data-identity={identity}
+      data-avatar-loaded={avatarURL === undefined ? 'false' : 'true'}
+      role="img"
+      aria-label={name || initials}
+    >
+      {avatarURL === undefined
+        ? <span className={css.portrait} style={{ backgroundImage: `url("${portraits}")` }} aria-hidden="true" />
+        : <img className={css.image} src={avatarURL} alt="" aria-hidden="true" />}
     </span>
   )
 }

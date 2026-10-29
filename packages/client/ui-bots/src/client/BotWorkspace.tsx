@@ -13,6 +13,13 @@ import type { BotAccent, BotIdentity, BotStatus, BotSummary, BotWorkspaceProps }
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
 
+/** Sidebar geometry passed to the roster when it occupies the shared app rail. */
+export interface BotRosterLayoutProps {
+  /** Whether the sidebar is showing its expanded content. */
+  readonly wide?: boolean
+  /** Expand the shared sidebar when a rail-only action needs the full roster. */
+  readonly expandSidebar?: () => void
+}
 function statusState(status: BotStatus): 'ongoing' | 'idle' {
   switch (status) {
     case 'working': return 'ongoing'
@@ -123,7 +130,6 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
     </button>
   )
 }
-
 const identityChoices: readonly [BotIdentity, BotAccent][] = [
   ['agent', 'violet'],
   ['sparkle', 'blue'],
@@ -235,7 +241,7 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
@@ -299,18 +305,17 @@ function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading }: {
 }
 
 /**
- * Render the bot workspace shell and roster.
+ * Render only the bot roster for the shared application sidebar.
  *
- * The component owns only view-local search, the create dialog, and avatar-editor visibility. Bot
- * persistence, one-to-one Session binding, and conversation rendering belong
- * to the caller and arrive through plain props or children.
- * @param props - bot rows, selection callbacks, optional conversation, and locale.
- * @returns the roster and selected bot workspace.
+ * Search, creation, and avatar actions remain local to this surface. The
+ * selected bot's conversation is rendered by the main panel.
+ * @param props - bot rows, selection callbacks, optional sidebar geometry, and locale.
+ * @returns the sidebar roster and its dialogs.
  */
-export function BotWorkspace({
+export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
-  onRetry, loadAvatar, avatarEditor, error = null, loading = false, children, t,
-}: BotWorkspaceViewProps): ReactNode {
+  onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
+}: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
@@ -323,67 +328,108 @@ export function BotWorkspace({
   const groups = useMemo(() => groupBots(filteredBots, t('defaultGroup')), [filteredBots, t])
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
+  const openNewBot = (): void => {
+    if (!wide) expandSidebar?.()
+    setNewBotOpen(true)
+  }
+  const openAvatarEditor = (): void => {
+    if (!wide) expandSidebar?.()
+    setAvatarEditorOpen(true)
+  }
 
   return (
-    <section className={css.root} aria-label={t('title')}>
-      <aside className={css.roster}>
-        <header className={css.rosterHeader}>
-          <div className={css.brandRow}>
-            <span className={css.brandMark} aria-hidden="true"><IconAgentPresetOutlineRegular size={18} /></span>
-            <span className={css.brandCopy}>
-              <span className={css.brandTitle}>{t('title')}</span>
-              <span className={css.brandSubtitle}>{t('subtitle')}</span>
-            </span>
-            <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconPlusOutlineRegular size={16} />} onClick={() => { setNewBotOpen(true) }} />
-          </div>
-          <Input
-            className={css.search ?? ''}
-            icon={<IconSearchOutlineRegular size={16} />}
-            placeholder={t('searchPlaceholder')}
-            aria-label={t('searchLabel')}
-            value={query}
-            onChange={(event) => { setQuery(event.currentTarget.value) }}
-          />
-        </header>
-        <div className={css.rosterScroll}>
-          {error !== null && <div className={css.loadNotice} role="alert"><span>{error || t('loadError')}</span>{onRetry !== undefined && <Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button>}</div>}
-          {loading && (
-            <div className={css.skeletonList} role="status" aria-label={t('loading')}>
-              {[0, 1, 2].map(index => <span key={index} className={css.skeletonRow} />)}
-            </div>
-          )}
-          {!loading && groups.length > 0 && groups.map(([group, rows]) => (
-            <section className={css.group} key={group} aria-labelledby={`dsh-bots-group-${group}`}>
-              <h2 id={`dsh-bots-group-${group}`} className={css.groupLabel}>{group}</h2>
-              <div className={css.groupRows}>
-                {rows.map(bot => (
-                  <BotRow
-                    key={bot.id}
-                    bot={bot}
-                    selected={bot.id === selectedBotId}
-                    onSelect={() => { onSelectBot(bot.id) }}
-                    t={t}
-                    loadAvatar={loadAvatar}
-                  />
-                ))}
+    <aside className={css.roster} aria-label={t('title')}>
+      {wide
+        ? (
+          <>
+            <header className={css.rosterHeader}>
+              <div className={css.brandRow}>
+                <span className={css.brandCopy}>
+                  <span className={css.brandTitle}>{t('panel')}</span>
+                </span>
+                {selectedBot !== undefined && avatarEditor !== undefined && (
+                  <Tooltip label={t('editAvatar')} side="bottom" portal>
+                    <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={15} />} onClick={openAvatarEditor} />
+                  </Tooltip>
+                )}
+                <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconPlusOutlineRegular size={16} />} onClick={openNewBot} />
               </div>
-            </section>
-          ))}
-          {!loading && hasRows && groups.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
-          {!loading && !hasRows && error === null && (
-            <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconAgentPresetOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={() => { setNewBotOpen(true) }} icon={<IconPlusOutlineRegular size={14} />}>{t('newBot')}</Button></div>
-          )}
-        </div>
-        {onConnectApps !== undefined && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={onConnectApps}>{t('connectApps')}</Button></div>}
-      </aside>
-      <BotDetail
-        bot={selectedBot}
-        children={children}
-        t={t}
-        loadAvatar={loadAvatar}
-        loading={loading}
-        onEditAvatar={avatarEditor === undefined ? undefined : () => { setAvatarEditorOpen(true) }}
-      />
+              <Input
+                className={css.search ?? ''}
+                icon={<IconSearchOutlineRegular size={16} />}
+                placeholder={t('searchPlaceholder')}
+                aria-label={t('searchLabel')}
+                value={query}
+                onChange={(event) => { setQuery(event.currentTarget.value) }}
+              />
+            </header>
+            <div className={css.rosterScroll}>
+              {error !== null && <div className={css.loadNotice} role="alert"><span>{error || t('loadError')}</span>{onRetry !== undefined && <Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button>}</div>}
+              {loading && (
+                <div className={css.skeletonList} role="status" aria-label={t('loading')}>
+                  {[0, 1, 2].map(index => <span key={index} className={css.skeletonRow} />)}
+                </div>
+              )}
+              {!loading && groups.length > 0 && groups.map(([group, rows]) => (
+                <section className={css.group} key={group} aria-labelledby={`dsh-bots-group-${group}`}>
+                  <h2 id={`dsh-bots-group-${group}`} className={css.groupLabel}>{group}</h2>
+                  <div className={css.groupRows}>
+                    {rows.map(bot => (
+                      <BotRow
+                        key={bot.id}
+                        bot={bot}
+                        selected={bot.id === selectedBotId}
+                        onSelect={() => { onSelectBot(bot.id) }}
+                        t={t}
+                        loadAvatar={loadAvatar}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {!loading && hasRows && groups.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
+              {!loading && !hasRows && error === null && (
+                <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconAgentPresetOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconPlusOutlineRegular size={14} />}>{t('newBot')}</Button></div>
+              )}
+            </div>
+            {onConnectApps !== undefined && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={onConnectApps}>{t('connectApps')}</Button></div>}
+          </>
+        )
+        : (
+          <div className={css.botRail} aria-label={t('title')}>
+            <Tooltip label={t('newBot')} side="right" delayMs={500}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={css.botRailAction}
+                aria-label={t('newBot')}
+                icon={<IconPlusOutlineRegular size={18} />}
+                onClick={openNewBot}
+              />
+            </Tooltip>
+            {bots.map((bot) => {
+              const status = bot.status
+              const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
+              return (
+                <Tooltip key={bot.id} label={label} side="right" delayMs={500}>
+                  <button
+                    type="button"
+                    className={clsx(css.botRailRow, bot.id === selectedBotId && css.botRailRowSelected)}
+                    data-bot-id={bot.id}
+                    aria-current={bot.id === selectedBotId ? 'page' : undefined}
+                    aria-label={label}
+                    onClick={() => { onSelectBot(bot.id) }}
+                  >
+                    <BotAvatar
+                      name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+                      botId={bot.id} loadAvatar={loadAvatar}
+                    />
+                  </button>
+                </Tooltip>
+              )
+            })}
+          </div>
+        )}
       <NewBotDialog open={newBotOpen} onClose={() => { setNewBotOpen(false) }} onCreate={onCreateBot} error={error} t={t} />
       {selectedBot !== undefined && avatarEditor !== undefined && (
         <BotAvatarEditor
@@ -396,6 +442,6 @@ export function BotWorkspace({
           t={t}
         />
       )}
-    </section>
+    </aside>
   )
 }

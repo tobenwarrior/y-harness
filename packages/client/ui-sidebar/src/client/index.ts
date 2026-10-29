@@ -39,6 +39,8 @@ interface WorkspaceNavigation {
 /** Services required by the sidebar plugin. */
 export const inject = ['slots', 'layout', 'uiWorkspace', 'locale', 'shortcuts']
 
+const BOT_PANEL_ID = 'bots' as MainPanelId
+
 /** Registers the sidebar shell and its service callbacks.
  * @param ctx - Client root context.
  */
@@ -51,7 +53,15 @@ export function apply(ctx: ClientContext): void {
       // The list registration requires an id; StoredEntry erases the slot kind.
       const id = options.id as MainPanelId
       return { id, order: options.order ?? 0, label: resolveSlotLabel(options.label) ?? id }
-    }).sort((a, b) => a.order - b.order)
+    })
+    // Bots deliberately has no global-panel row: its roster replaces the
+    // existing workspace browser, while the main `bots` panel remains the
+    // selected center occupant. Keep a hidden metadata sentinel so the shell
+    // can expose the mode switch only when the Bot plugin is mounted.
+    if (ctx.slots.entriesOfSlot('sidebar.bots').length > 0 && !next.some(panel => panel.id === BOT_PANEL_ID)) {
+      next.push({ id: BOT_PANEL_ID, order: Number.MAX_SAFE_INTEGER, label: 'Bots' })
+    }
+    next.sort((a, b) => a.order - b.order)
     const previous = panels.getSnapshot()
     if (previous.length === next.length && previous.every((panel, index) => {
       const candidate = next[index] as SidebarPanelMetadata
@@ -60,6 +70,7 @@ export function apply(ctx: ClientContext): void {
     panels.set(next)
   }
   ctx.effect(() => ctx.slots.subscribe('sidebar.panellist', syncPanels), 'ui-sidebar: panel entries')
+  ctx.effect(() => ctx.slots.subscribe('sidebar.bots', syncPanels), 'ui-sidebar: bot mode')
   ctx.effect(() => ctx.locale.subscribe(syncPanels), 'ui-sidebar: panel labels')
 
   const injectProps = (): SidebarRootInjected => ({
@@ -82,6 +93,7 @@ export function apply(ctx: ClientContext): void {
       'sidebar.toggle.badge': { kind: 'single', scope: 'root' },
       'sidebar.panellist': { kind: 'list', scope: 'root' },
       'sidebar.workspaces': { kind: 'single', scope: 'root' },
+      'sidebar.bots': { kind: 'single', scope: 'root' },
       'sidebar.settings': { kind: 'single', scope: 'root' },
       'sidebar.footer.action': { kind: 'list', scope: 'root' },
     },

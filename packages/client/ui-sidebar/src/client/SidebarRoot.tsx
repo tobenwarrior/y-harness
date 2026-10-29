@@ -19,9 +19,11 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  IconNewChatOutlineMedium, IconNewChatOutlineRegular, IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
+  IconAgentPresetOutlineRegular, IconCodeOutlineRegular, IconNewChatOutlineMedium, IconNewChatOutlineRegular,
+  IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {
   SidebarPanelMetadata, SidebarRootComponentProps, SidebarRootInjected, SidebarSectionOwnerProps,
 } from './contract/slots.ts'
@@ -71,6 +73,46 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
   )
 }
 
+const BOT_PANEL_ID = 'bots' as MainPanelId
+
+/** Compact Code/Bots switch that reuses the current sidebar column. */
+function SidebarModeSwitch({ botMode, wide, selectCodePanel, selectPanel, t }: {
+  botMode: boolean
+  wide: boolean
+  selectCodePanel: () => void
+  selectPanel: SidebarRootInjected['selectPanel']
+  t: SidebarRootComponentProps['t']
+}) {
+  return (
+    <div className={css.modeSwitch} role="group" aria-label={t('mode.label')}>
+      <Tooltip label={t('mode.code')} delayMs={500} disabled={wide}>
+        <button
+          type="button"
+          className={clsx(css.modeButton, !botMode && css.modeButtonActive)}
+          aria-pressed={!botMode}
+          aria-label={t('mode.code')}
+          onClick={selectCodePanel}
+        >
+          <IconCodeOutlineRegular size={wide ? 15 : 18} />
+          {wide && <span>{t('mode.code')}</span>}
+        </button>
+      </Tooltip>
+      <Tooltip label={t('mode.bots')} delayMs={500} disabled={wide}>
+        <button
+          type="button"
+          className={clsx(css.modeButton, botMode && css.modeButtonActive)}
+          aria-pressed={botMode}
+          aria-label={t('mode.bots')}
+          onClick={() => { selectPanel(BOT_PANEL_ID) }}
+        >
+          <IconAgentPresetOutlineRegular size={wide ? 15 : 18} />
+          {wide && <span>{t('mode.bots')}</span>}
+        </button>
+      </Tooltip>
+    </div>
+  )
+}
+
 /**
  * Render the sidebar column shell.
  * @param props - composed slot props (runtime share + injected callbacks, contract/slots.ts).
@@ -89,6 +131,11 @@ export function SidebarRoot({
   renderSlot,
 }: SidebarRootComponentProps) {
   const panels = usePanels(snapshot => snapshot)
+  const botsAvailable = panels.some(panel => panel.id === BOT_PANEL_ID)
+  const activePanelId = usePanelInfo(info => info.activePanelId)
+  const botMode = botsAvailable && activePanelId === BOT_PANEL_ID
+  const previousCodePanel = useRef<Parameters<SidebarRootInjected['selectPanel']>[0]>(null)
+  if (activePanelId !== BOT_PANEL_ID) previousCodePanel.current = activePanelId
   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
   const toggleLabel = collapsed ? t('toggle.open') : t('toggle.collapse')
@@ -211,7 +258,7 @@ export function SidebarRoot({
               </span>
             </span>
           )
-          return darwinDesktop
+          return darwinDesktop || botMode
             ? <span className={clsx(css.brand, css.wide)}>{identity}</span>
             : (
               <button
@@ -229,7 +276,15 @@ export function SidebarRoot({
       </div>
 
       {/* The label fades before the hover/focus shortcut, including on translucent backgrounds. */}
-      <Tooltip label={t('session.new.label')} shortcutKeys={newShortcut?.keys} delayMs={500} side={captionTooltipSide} disabled={wide}>
+      {botsAvailable && <SidebarModeSwitch
+        botMode={botMode}
+        wide={wide}
+        selectCodePanel={() => { selectPanel(previousCodePanel.current) }}
+        selectPanel={selectPanel}
+        t={t}
+      />}
+
+      {!botMode && <Tooltip label={t('session.new.label')} shortcutKeys={newShortcut?.keys} delayMs={500} side={captionTooltipSide} disabled={wide}>
         <button
           type="button"
           className={css.newSession}
@@ -248,11 +303,11 @@ export function SidebarRoot({
             <ShortcutKeys keys={newShortcut.keys} />
           </span>}
         </button>
-      </Tooltip>
+      </Tooltip>}
 
-      {panels.length > 0 && (
+      {!botMode && panels.filter(({ id }) => id !== BOT_PANEL_ID).length > 0 && (
         <nav className={css.panelList} data-yh-part="sidebar-nav" aria-label={t('panels.label')}>
-          {panels.map(({ id, label }) => (
+          {panels.filter(({ id }) => id !== BOT_PANEL_ID).map(({ id, label }) => (
             <PanelRow
               key={id}
               id={id}
@@ -269,10 +324,15 @@ export function SidebarRoot({
       {/* The browsing region fills the column between the controls and the
           foot in both states; its rail icon column rides the same slot. */}
       <div className={css.regionArea}>
-        {renderSlot('sidebar.workspaces', {
-          wide,
-          expandSidebar: () => { if (collapsed) toggleSidebar() },
-        })}
+        {botMode
+          ? renderSlot('sidebar.bots', {
+            wide,
+            expandSidebar: () => { if (collapsed) toggleSidebar() },
+          })
+          : renderSlot('sidebar.workspaces', {
+            wide,
+            expandSidebar: () => { if (collapsed) toggleSidebar() },
+          })}
       </div>
 
       {/* Footer actions stack above Settings in both sidebar widths. */}

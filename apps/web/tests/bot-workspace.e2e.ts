@@ -51,24 +51,40 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
 
   it('switches the roster while preserving each Bot-owned Conversation binding', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-workspace'))
-    const panelButton = page.getByRole('button', { name: 'Bots', exact: true })
-    await panelButton.click()
+    const sidebar = page.locator('[data-yh-part="sidebar"]')
+    await expect.poll(() => sidebar.count()).toBe(1)
+    const codeMode = sidebar.getByRole('button', { name: 'Code', exact: true })
+    const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
+    await expect.poll(() => codeMode.getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => botsMode.getAttribute('aria-pressed')).toBe('false')
+    await botsMode.click()
+    await expect.poll(() => botsMode.getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => codeMode.getAttribute('aria-pressed')).toBe('false')
 
-    const workspace = page.locator('section[aria-label="Bot workspace"]')
-    await workspace.waitFor({ state: 'visible', timeout: 15_000 })
-    const firstRow = workspace.locator(`[data-bot-id="${firstBot.id}"]`)
-    const secondRow = workspace.locator(`[data-bot-id="${secondBot.id}"]`)
+    const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
+    await roster.waitFor({ state: 'visible', timeout: 15_000 })
+    await expect.poll(() => page.locator('section[aria-label="Bot workspace"]').count()).toBe(0)
+    const firstRow = roster.locator(`[data-bot-id="${firstBot.id}"]`)
+    const secondRow = roster.locator(`[data-bot-id="${secondBot.id}"]`)
     await firstRow.waitFor({ state: 'visible', timeout: 15_000 })
     await secondRow.waitFor({ state: 'visible', timeout: 15_000 })
+    const firstPortrait = firstRow.locator('[style*="data:image/png"]')
+    await expect.poll(() => firstPortrait.count()).toBe(1)
+    await expect.poll(() => firstPortrait.isVisible()).toBe(true)
 
-    const firstDetail = workspace.locator(`section[aria-label="${firstBot.name}"]`)
+    const firstDetail = page.locator(`section[aria-label="${firstBot.name}"]`)
     await expect.poll(() => firstRow.getAttribute('aria-current')).toBe('page')
     await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
     await expect.poll(() => firstDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
+    const composer = firstDetail.locator('[data-yh-part="composer-controls"]')
+    await expect.poll(async () => {
+      const bounds = await composer.boundingBox()
+      return bounds === null ? null : page.viewportSize()!.height - (bounds.y + bounds.height)
+    }).toBeLessThan(100)
 
     await secondRow.click()
-    const secondDetail = workspace.locator(`section[aria-label="${secondBot.name}"]`)
+    const secondDetail = page.locator(`section[aria-label="${secondBot.name}"]`)
     await expect.poll(() => secondRow.getAttribute('aria-current')).toBe('page')
     await expect.poll(() => firstRow.getAttribute('aria-current')).toBeNull()
     await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
@@ -82,9 +98,27 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
 
+    await codeMode.click()
+    await expect.poll(() => codeMode.getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => botsMode.getAttribute('aria-pressed')).toBe('false')
+    await expect.poll(() => roster.count()).toBe(0)
+    await expect.poll(() => page.locator('section[aria-label="Bot workspace"]').count()).toBe(0)
+    await expect.poll(() => sidebar.locator('[data-yh-part="new-session"]').isVisible()).toBe(true)
+
+    await botsMode.click()
+    await expect.poll(() => botsMode.getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => roster.isVisible()).toBe(true)
+    await expect.poll(() => firstRow.getAttribute('aria-current')).toBe('page')
+    await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(firstBot.sessionId)
+
     await compareOrRefreshGolden(
       UI_EXPECTED,
-      await captureStableAria(page, 'section[aria-label="Bot workspace"]', scaffold.workspaceCwd),
+      [
+        await captureStableAria(page, '[role="group"][aria-label="Workspace mode"]', scaffold.workspaceCwd),
+        await captureStableAria(page, '[data-yh-part="sidebar"] aside[aria-label="Bot workspace"]', scaffold.workspaceCwd),
+        await captureStableAria(page, `section[aria-label="${firstBot.name}"]`, scaffold.workspaceCwd),
+      ].join('\n'),
       MODE,
     )
     expect(tripwire.pageErrors).toEqual([])

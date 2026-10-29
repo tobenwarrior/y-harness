@@ -68,6 +68,7 @@ describe('ui-sidebar apply', () => {
     expect(b.slots.spec('sidebar.brand.mark')).toEqual({ kind: 'single', scope: 'root' })
     expect(b.slots.spec('sidebar.brand.name')).toEqual({ kind: 'single', scope: 'root' })
     expect(b.slots.spec('sidebar.workspaces')).toEqual({ kind: 'single', scope: 'root' })
+    expect(b.slots.spec('sidebar.bots')).toEqual({ kind: 'single', scope: 'root' })
     expect(b.slots.spec('sidebar.settings')).toEqual({ kind: 'single', scope: 'root' })
     expect(b.slots.spec('sidebar.footer.action')).toEqual({ kind: 'list', scope: 'root' })
     expect(b.slots.spec('sidebar.panellist')).toEqual({ kind: 'list', scope: 'root' })
@@ -93,7 +94,7 @@ describe('ui-sidebar apply', () => {
     const panelId = 'custom-panel' as MainPanelId
     injected.selectPanel(panelId)
     expect(b.layout.selectPanel).toHaveBeenCalledExactlyOnceWith(panelId)
-    expectTypeOf<Parameters<SidebarRootInjected['selectPanel']>[0]>().toEqualTypeOf<MainPanelId>()
+    expectTypeOf<Parameters<SidebarRootInjected['selectPanel']>[0]>().toEqualTypeOf<MainPanelId | null>()
   })
 
   it('waits for the sidebar declaration before registering', async () => {
@@ -141,6 +142,32 @@ describe('ui-sidebar apply', () => {
     }
   })
 
+  it('exposes Bot mode when its roster slot is mounted without adding a nav row', async () => {
+    const b = await bench()
+    const sidebar = b.ctx.plugin({ inject: [...inject], apply })
+    await sidebar.await()
+    const injected = (b.slots.entries('sidebar')[0]!.inject as () => SidebarRootInjected)()
+    const bot = b.ctx.plugin({
+      inject: ['slots'],
+      apply(ctx: Context) {
+        ctx.slots.register({ name: 'sidebar.bots' }, () => null)
+      },
+    })
+    try {
+      await bot.await()
+      await vi.waitFor(() => {
+        expect(injected.hooks.panels.getSnapshot()).toEqual([
+          { id: 'bots', order: Number.MAX_SAFE_INTEGER, label: 'Bots' },
+        ])
+      })
+      await bot.dispose()
+      await vi.waitFor(() => { expect(injected.hooks.panels.getSnapshot()).toEqual([]) })
+    } finally {
+      await bot.dispose()
+      await sidebar.dispose()
+    }
+  })
+
   it('removes the entry and child declaration on teardown', async () => {
     const b = await bench()
     const fiber = b.ctx.plugin({ inject: [...inject], apply })
@@ -151,6 +178,7 @@ describe('ui-sidebar apply', () => {
     expect(b.slots.spec('sidebar.brand.mark')).toBeUndefined()
     expect(b.slots.spec('sidebar.brand.name')).toBeUndefined()
     expect(b.slots.spec('sidebar.workspaces')).toBeUndefined()
+    expect(b.slots.spec('sidebar.bots')).toBeUndefined()
     expect(b.slots.spec('sidebar.footer.action')).toBeUndefined()
     expect(b.slots.spec('sidebar.panellist')).toBeUndefined()
     expect(b.slots.entries('main')).toHaveLength(0)

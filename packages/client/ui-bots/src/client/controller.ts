@@ -80,6 +80,7 @@ export class BotWorkspaceController {
   private creating: Promise<void> | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private disposed = false
+  private selectionGeneration = 0
 
   constructor(
     private readonly remote: BotWorkspaceRemote,
@@ -91,6 +92,7 @@ export class BotWorkspaceController {
   /** Stop asynchronous reads and release the selected Session. */
   dispose(): void {
     this.disposed = true
+    this.selectionGeneration++
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.avatarLoads.clear()
@@ -150,6 +152,7 @@ export class BotWorkspaceController {
       this.fail(error instanceof Error ? error.message : String(error))
       return
     }
+    if (this.disposed) return
     const current = this.source.getSnapshot()
     const pendingBot = this.pendingCreation === undefined
       ? undefined
@@ -162,13 +165,23 @@ export class BotWorkspaceController {
     const selected = current.selectedBotId !== null && result.value.bots.some(bot => bot.id === current.selectedBotId)
       ? current.selectedBotId
       : result.value.bots[0]?.id ?? null
+    if (selected !== current.selectedBotId) this.selectionGeneration++
+    const selectionGeneration = this.selectionGeneration
     const currentBot = current.bots.find(bot => bot.id === selected)
     const nextBot = result.value.bots.find(bot => bot.id === selected)
     const needsReference = selected !== current.selectedBotId
       || this.selectedReference === undefined
       || currentBot?.sessionId !== nextBot?.sessionId
       || currentBot?.state !== nextBot?.state
-    const referenceError = needsReference ? this.retainSelected(selected, result.value.bots) : undefined
+    let referenceError = needsReference ? this.retainSelected(selected, result.value.bots) : undefined
+    if (this.shouldRefreshCatalog(selected, result.value.bots, referenceError)) {
+      referenceError = await this.retryRetainAfterCatalogRefresh(
+        selected,
+        result.value.bots,
+        () => !this.disposed && this.selectionGeneration === selectionGeneration,
+      )
+    }
+    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
     this.source.set({
       phase: 'ready',
       bots: result.value.bots,
@@ -188,8 +201,68 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     const bot = current.bots.find(candidate => candidate.id === id)
     if (bot === undefined || bot.id === current.selectedBotId) return
+    const selectionGeneration = ++this.selectionGeneration
     const referenceError = this.retainSelected(bot.id, current.bots)
     this.source.set({ ...current, selectedBotId: bot.id, error: referenceError ?? null })
+    if (this.shouldRefreshCatalog(bot.id, current.bots, referenceError)) {
+      void this.retrySelectionAfterCatalogRefresh(bot.id, selectionGeneration)
+    }
+  }
+
+  private async retrySelectionAfterCatalogRefresh(id: BotIdType, selectionGeneration: number): Promise<void> {
+    try {
+      await this.sessions.refresh()
+    } catch (error: unknown) {
+      if (this.disposed) return
+      const current = this.source.getSnapshot()
+      if (current.selectedBotId !== id || this.selectionGeneration !== selectionGeneration) return
+      this.source.set({ ...current, error: error instanceof Error ? error.message : String(error) })
+      return
+    }
+    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    const current = this.source.getSnapshot()
+    if (current.selectedBotId !== id) return
+    const referenceError = this.retainSelected(id, current.bots)
+    if (this.disposed || this.selectionGeneration !== selectionGeneration) {
+      this.selectedReference?.release()
+      this.selectedReference = undefined
+      return
+    }
+    this.source.set({ ...current, error: referenceError ?? null })
+  }
+
+  private async retainSelectedWithCatalogRetry(
+    id: BotIdType | null,
+    bots: readonly BotView[],
+    canCommit: () => boolean = () => !this.disposed,
+  ): Promise<string | undefined> {
+    const referenceError = this.retainSelected(id, bots)
+    if (!this.shouldRefreshCatalog(id, bots, referenceError)) return referenceError
+    return this.retryRetainAfterCatalogRefresh(id, bots, canCommit)
+  }
+
+  private async retryRetainAfterCatalogRefresh(
+    id: BotIdType | null,
+    bots: readonly BotView[],
+    canCommit: () => boolean = () => !this.disposed,
+  ): Promise<string | undefined> {
+    try {
+      await this.sessions.refresh()
+    } catch (error: unknown) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    if (!canCommit()) return undefined
+    return this.retainSelected(id, bots)
+  }
+
+  private shouldRefreshCatalog(
+    id: BotIdType | null,
+    bots: readonly BotView[],
+    error: string | undefined,
+  ): boolean {
+    if (error === undefined || id === null) return false
+    const bot = bots.find(candidate => candidate.id === id)
+    return bot?.state === 'active' && this.sessions.list.getSnapshot().byId[bot.sessionId] === undefined
   }
 
   private retainSelected(id: BotIdType | null, bots: readonly BotView[]): string | undefined {
@@ -327,7 +400,13 @@ export class BotWorkspaceController {
     const bots = current.bots.some(bot => bot.id === result.value.bot.id)
       ? current.bots.map(bot => bot.id === result.value.bot.id ? result.value.bot : bot)
       : [...current.bots, result.value.bot]
-    const referenceError = this.retainSelected(result.value.bot.id, bots)
+    const selectionGeneration = ++this.selectionGeneration
+    const referenceError = await this.retainSelectedWithCatalogRetry(
+      result.value.bot.id,
+      bots,
+      () => !this.disposed && this.selectionGeneration === selectionGeneration,
+    )
+    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
     this.pendingCreation = result.value.bot.state === 'active' ? undefined : request
     this.source.set({ phase: 'ready', bots, selectedBotId: result.value.bot.id, error: referenceError ?? null })
   }

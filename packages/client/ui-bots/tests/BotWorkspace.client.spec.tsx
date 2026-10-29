@@ -5,7 +5,7 @@ import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
-import { BotWorkspace } from '../src/client/BotWorkspace.tsx'
+import { BotDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
 
@@ -37,7 +37,7 @@ const bots: readonly BotSummary[] = [
   },
 ]
 
-function renderWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
+function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
   const props: BotWorkspaceProps = {
     bots,
     selectedBotId: 'research',
@@ -45,10 +45,71 @@ function renderWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: R
     onCreateBot: vi.fn(),
     ...overrides,
   }
-  return render(<BotWorkspace {...props} t={t}>{children}</BotWorkspace>)
+  const selectedBot = props.bots.find(bot => bot.id === props.selectedBotId)
+  return render(<>
+    <BotRoster {...props} t={t} />
+    <BotDetail
+      bot={selectedBot}
+      children={children}
+      t={t}
+      loadAvatar={props.loadAvatar}
+      loading={props.loading ?? false}
+    />
+  </>)
 }
 
-describe('BotWorkspace', () => {
+describe('Bot roster and detail', () => {
+  it('renders the roster as a standalone sidebar surface', () => {
+    const onSelectBot = vi.fn()
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={onSelectBot}
+      onCreateBot={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.getByRole('complementary', { name: 'Bot workspace' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Research partner, Working/ }).getAttribute('aria-current')).toBe('page')
+    expect(screen.queryByText('Persistent session surface')).toBeNull()
+  })
+
+  it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {
+    const onSelectBot = vi.fn()
+    const expandSidebar = vi.fn()
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={onSelectBot}
+      onCreateBot={vi.fn()}
+      expandSidebar={expandSidebar}
+      wide={false}
+      t={t}
+    />)
+
+    expect(screen.queryByRole('textbox', { name: 'Search bots' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Release captain, Idle/ }))
+    expect(onSelectBot).toHaveBeenCalledWith('release')
+    fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
+    expect(expandSidebar).toHaveBeenCalledOnce()
+    expect(screen.getByRole('dialog', { name: 'Create a bot' })).toBeTruthy()
+  })
+
+  it('renders the selected detail as a standalone main surface', () => {
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    expect(screen.getByRole('region', { name: 'Research partner' })).toBeTruthy()
+    expect(screen.getByText('Persistent session surface')).toBeTruthy()
+    expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {
     render(<div>
       <BotAvatar name="Bean" identity="agent" accent="violet" />
@@ -83,7 +144,7 @@ describe('BotWorkspace', () => {
       height: 1,
     }
     const loadAvatar = vi.fn().mockResolvedValue('data:image/png;base64,aW1n')
-    renderWorkspace({
+    renderSplitWorkspace({
       bots: [{ ...bots[0]!, avatar }],
       loadAvatar,
     })
@@ -93,9 +154,9 @@ describe('BotWorkspace', () => {
   })
 
   it('keeps the roster grouped while showing the selected bot session surface', () => {
-    renderWorkspace()
+    renderSplitWorkspace()
 
-    expect(screen.getByText('Bot workspace')).toBeTruthy()
+    expect(screen.getByText('Bots')).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Research' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Build' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Research partner, Working/ }).getAttribute('aria-current')).toBe('page')
@@ -103,7 +164,7 @@ describe('BotWorkspace', () => {
   })
 
   it('filters the roster without changing the selected bot session', () => {
-    renderWorkspace()
+    renderSplitWorkspace()
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Search bots' }), { target: { value: 'shipping' } })
 
@@ -117,7 +178,7 @@ describe('BotWorkspace', () => {
 
   it('reports roster selection to the owner', () => {
     const onSelectBot = vi.fn()
-    renderWorkspace({ onSelectBot })
+    renderSplitWorkspace({ onSelectBot })
 
     fireEvent.click(screen.getByRole('button', { name: /Release captain, Idle/ }))
 
@@ -126,7 +187,7 @@ describe('BotWorkspace', () => {
 
   it('returns the chosen identity and accent when a named bot is created', async () => {
     const onCreateBot = vi.fn()
-    renderWorkspace({ onCreateBot })
+    renderSplitWorkspace({ onCreateBot })
 
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
@@ -139,7 +200,7 @@ describe('BotWorkspace', () => {
   })
 
   it('offers every local identity and accent without a remote image dependency', () => {
-    renderWorkspace()
+    renderSplitWorkspace()
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
 
@@ -155,13 +216,13 @@ describe('BotWorkspace', () => {
   })
 
   it('renders only owner-supplied conversation content when a Session is unavailable', () => {
-    renderWorkspace({}, null)
+    renderSplitWorkspace({}, null)
 
     expect(screen.getByText('This bot is ready for its first message.')).toBeTruthy()
   })
 
   it('keeps a provisioning bot honest while its Session is being prepared', () => {
-    renderWorkspace({
+    renderSplitWorkspace({
       bots: [{ id: 'preparing', name: 'Preparing bot', status: 'preparing', identity: 'agent', accent: 'violet' }],
       selectedBotId: 'preparing',
     }, null)
@@ -177,7 +238,7 @@ describe('BotWorkspace', () => {
     ['preparing', 'Preparing'],
     ['offline', 'Offline'],
   ] as const)('uses the supplied %s state without inventing a fallback', (status, label) => {
-    renderWorkspace({
+    renderSplitWorkspace({
       bots: [{ id: 'state', name: 'State bot', status, identity: 'agent', accent: 'violet' }],
       selectedBotId: 'state',
     })
@@ -187,7 +248,7 @@ describe('BotWorkspace', () => {
   })
 
   it('keeps loading and owner-provided failures explicit', () => {
-    renderWorkspace({ bots: [], selectedBotId: null, loading: true })
+    renderSplitWorkspace({ bots: [], selectedBotId: null, loading: true })
     expect(screen.getByRole('status', { name: 'Loading bots' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Loading your bots' })).toBeTruthy()
     expect(screen.queryByText('Choose a bot to get started')).toBeNull()
@@ -195,14 +256,14 @@ describe('BotWorkspace', () => {
 
     cleanup()
     const onRetry = vi.fn()
-    renderWorkspace({ error: 'Network unavailable', onRetry })
+    renderSplitWorkspace({ error: 'Network unavailable', onRetry })
     expect(screen.getByRole('alert').textContent).toContain('Network unavailable')
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(onRetry).toHaveBeenCalledOnce()
   })
 
   it('offers a create action for an empty roster', () => {
-    renderWorkspace({ bots: [], selectedBotId: null })
+    renderSplitWorkspace({ bots: [], selectedBotId: null })
 
     expect(screen.getByText('Your workspace is ready')).toBeTruthy()
     const createButtons = screen.getAllByRole('button', { name: 'New bot' })
@@ -212,7 +273,7 @@ describe('BotWorkspace', () => {
 
   it('shows connections only when the owner supplies that capability', () => {
     const onConnectApps = vi.fn()
-    renderWorkspace({ onConnectApps })
+    renderSplitWorkspace({ onConnectApps })
 
     fireEvent.click(screen.getByRole('button', { name: 'Connect apps' }))
 
@@ -232,7 +293,7 @@ describe('BotWorkspace', () => {
     const generate = vi.fn().mockResolvedValue(generatedPreview)
     const commit = vi.fn().mockResolvedValue({ attachment: generatedAvatar })
     const update = vi.fn().mockResolvedValue(undefined)
-    renderWorkspace({ avatarEditor: { status, generate, commit, update } })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -257,7 +318,7 @@ describe('BotWorkspace', () => {
     const generate = vi.fn().mockResolvedValue(generatedPreview)
     const commit = vi.fn()
     const update = vi.fn()
-    renderWorkspace({ avatarEditor: { status, generate, commit, update } })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -279,7 +340,7 @@ describe('BotWorkspace', () => {
     const generate = vi.fn().mockResolvedValue(generatedPreview)
     const commit = vi.fn().mockRejectedValue(new Error('attachment storage unavailable'))
     const update = vi.fn()
-    renderWorkspace({ avatarEditor: { status, generate, commit, update } })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -307,7 +368,7 @@ describe('BotWorkspace', () => {
     const generate = vi.fn().mockResolvedValue(generatedPreview)
     const commit = vi.fn().mockResolvedValue({ attachment: generatedAvatar })
     const update = vi.fn().mockRejectedValueOnce(new Error('temporary update failure')).mockResolvedValueOnce(undefined)
-    renderWorkspace({ avatarEditor: { status, generate, commit, update } })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -336,7 +397,7 @@ describe('BotWorkspace', () => {
     const generate = vi.fn()
     const update = vi.fn()
     const onOpenAvatarSettings = vi.fn()
-    renderWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update }, onOpenAvatarSettings })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update }, onOpenAvatarSettings })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -350,7 +411,7 @@ describe('BotWorkspace', () => {
   it('keeps the editor open and explains a generation failure', async () => {
     const status = vi.fn().mockResolvedValue({ available: true, provider: 'openai', model: 'gpt-image-2.5-flare' })
     const generate = vi.fn().mockRejectedValue(new Error('provider unavailable'))
-    renderWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update: vi.fn() } })
+    renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update: vi.fn() } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
@@ -364,7 +425,7 @@ describe('BotWorkspace', () => {
   })
 
   it('uses the localized generic failure when the owner supplies no error text', () => {
-    renderWorkspace({ error: '' })
+    renderSplitWorkspace({ error: '' })
 
     expect(screen.getByRole('alert').textContent).toContain('Bots could not be loaded.')
   })

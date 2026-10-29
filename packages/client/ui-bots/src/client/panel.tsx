@@ -6,7 +6,7 @@ import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime,
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
-import { BotWorkspace } from './BotWorkspace.tsx'
+import { BotDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
@@ -26,6 +26,12 @@ export type BotsPanelProps =
 
 /** Props for the Session-bound embedded Conversation occurrence. */
 export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRenderFactories
+
+/** Props for the Bot roster occupying the shared application sidebar. */
+export type BotsRosterProps =
+  PropsRuntime<'sidebar.bots'>
+  & PropsLocale<'bots'>
+  & InjectFace<BotWorkspaceFace>
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
@@ -53,9 +59,34 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
   return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })
 }
 
-/** Render the roster and the selected Bot's one persistent Conversation. */
+/** Render the Bot roster inside the existing sidebar column. */
+export function BotsRoster({
+  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, retry, loadAvatar, avatarEditor, t,
+}: BotsRosterProps): ReactNode {
+  const state: BotWorkspaceState = useWorkspace(value => value)
+  const statuses = useSessionStatus(value => value)
+  const bots = state.bots.map(bot => summaryOf(bot, statuses))
+  return (
+    <BotRoster
+      bots={bots}
+      selectedBotId={state.selectedBotId}
+      onSelectBot={select}
+      onCreateBot={create}
+      onRetry={retry}
+      loadAvatar={loadAvatar}
+      avatarEditor={avatarEditor}
+      error={state.error}
+      loading={state.phase === 'loading' && bots.length === 0}
+      wide={wide}
+      expandSidebar={expandSidebar}
+      t={t}
+    />
+  )
+}
+
+/** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, select, create, retry, loadAvatar, avatarEditor, SessionProvider, renderSlot, t,
+  useWorkspace, useSessionStatus, reference, loadAvatar, SessionProvider, renderSlot, t,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -69,19 +100,12 @@ export function BotsPanel({
       </SessionProvider>
     )
   return (
-    <BotWorkspace
-      bots={bots}
-      selectedBotId={state.selectedBotId}
-      onSelectBot={select}
-      onCreateBot={create}
-      onRetry={retry}
-      loadAvatar={loadAvatar}
-      avatarEditor={avatarEditor}
-      error={state.error}
-      loading={state.phase === 'loading' && bots.length === 0}
+    <BotDetail
+      bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
+      children={conversation}
       t={t}
-    >
-      {conversation}
-    </BotWorkspace>
+      loadAvatar={loadAvatar}
+      loading={state.phase === 'loading' && bots.length === 0}
+    />
   )
 }
