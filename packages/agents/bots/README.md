@@ -47,7 +47,7 @@ Creation writes a `provisioning` row before it asks the Session controller to ac
 
 ### Visual identity and avatars
 
-The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own icon components and design tokens. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
+The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own icon components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping; generated avatars stay selected unless the request explicitly sets `clearAvatar: true`. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
 
 -----
 
@@ -102,7 +102,7 @@ The roster does not modify request prefixes. Cache reuse follows the selected Se
 
 These limits define the current Bot roster. They are package constraints, not a general Session lifecycle policy.
 
-- **No delete or archive operation** — the first roster API can create, rename, list, and update avatars, but it does not remove a Bot or archive its Session.
+- **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
 

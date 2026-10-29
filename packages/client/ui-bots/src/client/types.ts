@@ -52,16 +52,22 @@ export interface BotCreation {
   readonly accent: BotAccent
 }
 
-/** Async avatar capability owned by the Client composition. */
+/** Async avatar capabilities owned by the Client composition. */
 export interface BotAvatarEditorActions {
   /** Read whether the configured provider can generate an avatar now. */
-  readonly status: () => Promise<AvatarGenerationStatus>
-  /** Generate one validated, non-durable image preview. */
-  readonly generate: (request: AvatarGenerationRequest, signal?: AbortSignal) => Promise<AvatarGenerationValue>
-  /** Persist a preview after the user explicitly chooses it. */
-  readonly commit: (preview: AvatarGenerationValue) => Promise<AvatarGenerationCommitValue>
+  readonly status?: () => Promise<AvatarGenerationStatus>
+  /** Generate one validated, non-durable image preview when generation is mounted. */
+  readonly generate?: (request: AvatarGenerationRequest, signal?: AbortSignal) => Promise<AvatarGenerationValue>
+  /** Persist a preview after the user explicitly chooses it when avatar updates are mounted. */
+  readonly commit?: (preview: AvatarGenerationValue) => Promise<AvatarGenerationCommitValue>
   /** Persist the generated image, or clear it to restore the semantic avatar. */
-  readonly update: (botId: string, avatar: SharedBotAvatar | null) => Promise<void>
+  readonly update?: (botId: string, avatar: SharedBotAvatar | null) => Promise<void>
+  /** Persist a semantic character choice and optionally clear a generated image in the same update. */
+  readonly updateAppearance?: (botId: string, appearance: {
+    readonly identity: BotIdentity
+    readonly accent: BotAccent
+    readonly clearAvatar: boolean
+  }) => Promise<void>
 }
 
 /** Props for the presentational Bot workspace. */

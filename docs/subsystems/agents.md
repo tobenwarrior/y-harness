@@ -77,6 +77,15 @@ Host service that owns the durable roster and its Session mappings.
 @Remote('rename') async rename(request: BotRenameRequest): Promise<BotRenameValue>
 
 /**
+ * Update a Bot's semantic identity and/or accent without creating or changing
+ * its one backing Session. Generated avatars remain selected unless the
+ * caller explicitly sets `clearAvatar` to true.
+ * @param request - Bot id, optional appearance fields, and optional avatar clear.
+ * @returns the committed row.
+ */
+@Remote('updateAppearance') async updateAppearance(request: BotAppearanceUpdateRequest): Promise<BotAppearanceUpdateValue>
+
+/**
  * Persist or clear a generated avatar while preserving the Bot's Session mapping.
  * @param request - Bot id and generated avatar payload, or null to clear it.
  * @returns the updated Bot row.

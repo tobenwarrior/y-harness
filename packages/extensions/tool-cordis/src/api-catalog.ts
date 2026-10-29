@@ -599,6 +599,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the committed row.',
       },
       {
+        signature: '@Remote(\'updateAppearance\') async updateAppearance(request: BotAppearanceUpdateRequest): Promise<BotAppearanceUpdateValue>',
+        description: 'Update a Bot\'s semantic identity and/or accent without creating or changing its one backing Session. Generated avatars remain selected unless the caller explicitly sets `clearAvatar` to true.',
+        parameters: [{ name: 'request', description: 'Bot id, optional appearance fields, and optional avatar clear.' }],
+        returns: 'the committed row.',
+      },
+      {
         signature: '@Remote(\'updateAvatar\') async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue>',
         description: 'Persist or clear a generated avatar while preserving the Bot\'s Session mapping.',
         parameters: [{ name: 'request', description: 'Bot id and generated avatar payload, or null to clear it.' }],
@@ -5324,6 +5330,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BashEnvVariableInfo',
     declaration: 'export interface BashEnvVariableInfo extends BashEnvVariable {\n    contributor: string;\n    key: DshEnvironmentKey;\n}',
+  },
+  {
+    name: 'BotAppearanceUpdateRequest',
+    declaration: 'export interface BotAppearanceUpdateRequest {\n    readonly botId: BotId;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly clearAvatar?: boolean;\n}',
+  },
+  {
+    name: 'BotAppearanceUpdateValue',
+    declaration: 'export interface BotAppearanceUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
     name: 'BotAvailability',

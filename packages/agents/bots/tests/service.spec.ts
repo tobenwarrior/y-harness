@@ -216,4 +216,128 @@ describe('durable Bot roster', () => {
       await close(h.ctx)
     }
   })
+
+  it('updates identity and accent without replacing its Session or generated avatar, emits a change, and reloads', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const avatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`),
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 64,
+      height: 64,
+    }
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Appearance owner', cwd: '/tmp' })
+      await first.service.updateAvatar({ botId: created.bot.id, avatar })
+      const changes: number[] = []
+      first.ctx.on('bots/changed', () => { changes.push(changes.length + 1) })
+
+      await expect(first.service.updateAppearance({
+        botId: created.bot.id,
+        identity: 'browse',
+        accent: 'teal',
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          identity: 'browse',
+          accent: 'teal',
+          avatar,
+        },
+      })
+      expect(changes).toEqual([1])
+      expect(first.create).toHaveBeenCalledTimes(1)
+      await close(first.ctx)
+      firstClosed = true
+
+      const second = await harness(pool)
+      try {
+        await expect(second.service.list({})).resolves.toMatchObject({
+          bots: [{
+            id: created.bot.id,
+            sessionId: created.bot.sessionId,
+            identity: 'browse',
+            accent: 'teal',
+            avatar,
+          }],
+        })
+        expect(second.create).not.toHaveBeenCalled()
+      } finally {
+        await close(second.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('clears a generated avatar only when updateAppearance explicitly requests it', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Appearance clear', cwd: '/tmp' })
+      const avatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'bc'.repeat(32)}`),
+        mediaType: 'image/png',
+        bytes: 3,
+        width: 64,
+        height: 64,
+      }
+      await h.service.updateAvatar({ botId: created.bot.id, avatar })
+
+      await expect(h.service.updateAppearance({
+        botId: created.bot.id,
+        identity: 'skill',
+        clearAvatar: true,
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          identity: 'skill',
+          accent: 'violet',
+        },
+      })
+      const listed = await h.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('avatar')
+      await expect(h.service.readAvatar({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/avatar-missing' })
+      expect(h.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects invalid appearance fields without changing the Bot row or emitting a change', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Appearance guard', cwd: '/tmp' })
+      const changes: number[] = []
+      h.ctx.on('bots/changed', () => { changes.push(changes.length + 1) })
+      await expect(h.service.updateAppearance({
+        botId: created.bot.id,
+        identity: 'unknown' as never,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateAppearance({
+        botId: created.bot.id,
+        accent: 'unknown' as never,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateAppearance({
+        botId: created.bot.id,
+        clearAvatar: 'yes' as never,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateAppearance({ botId: created.bot.id })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          identity: 'agent',
+          accent: 'violet',
+        }],
+      })
+      expect(changes).toEqual([])
+      expect(h.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
 })

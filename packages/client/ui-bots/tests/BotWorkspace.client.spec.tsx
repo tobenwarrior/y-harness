@@ -192,11 +192,27 @@ describe('Bot roster and detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Docs guide' } })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Teal' }))
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Blink' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create bot' }))
 
     expect(onCreateBot).toHaveBeenCalledWith({ name: 'Docs guide', identity: 'browse', accent: 'teal' })
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a bot' })).toBeNull() })
+  })
+
+  it('applies the chosen color to every character without resetting it when choosing a shape', () => {
+    renderSplitWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
+    const characters = within(dialog).getByRole('radiogroup', { name: 'Character' })
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Amber' }))
+    for (const option of within(characters).getAllByRole('radio')) {
+      expect(option.getAttribute('data-accent')).toBe('amber')
+      expect(option.querySelector('[data-identity]')?.getAttribute('data-accent')).toBe('amber')
+    }
+    fireEvent.click(within(characters).getByRole('radio', { name: 'Blink' }))
+    expect(within(dialog).getByRole('radio', { name: 'Amber' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('offers every local identity and accent without a remote image dependency', () => {
@@ -297,6 +313,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
 
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Avatar description' }), {
@@ -322,6 +339,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Avatar description' }), { target: { value: 'A tiny moonlit fox' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate avatar' }))
@@ -344,6 +362,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Avatar description' }), { target: { value: 'A tiny moonlit fox' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate avatar' }))
@@ -372,6 +391,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Avatar description' }), { target: { value: 'A tiny moonlit fox' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate avatar' }))
@@ -401,6 +421,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('OpenAI') })
     expect(within(dialog).getByRole('button', { name: 'Generate avatar' }).hasAttribute('disabled')).toBe(true)
     expect(generate).not.toHaveBeenCalled()
@@ -415,6 +436,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
+    fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Avatar description' }), { target: { value: 'A tiny moonlit fox' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate avatar' }))

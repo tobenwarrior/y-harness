@@ -488,7 +488,7 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  padding: 2px;
   border: 1px solid transparent;
   border-radius: var(--yh-radius-md);
   background: transparent;
@@ -556,11 +556,11 @@
 }
 
 .accentSwatch[data-accent='blue'] { background: var(--yh-alias-state-business-primary); }
-.accentSwatch[data-accent='teal'] { background: var(--yh-alias-state-success-primary); }
+.accentSwatch[data-accent='teal'] { background: color-mix(in srgb, var(--yh-alias-state-success-primary) 58%, var(--yh-alias-state-business-primary)); }
 .accentSwatch[data-accent='amber'] { background: var(--yh-alias-state-warn-primary); }
-.accentSwatch[data-accent='violet'] { background: var(--yh-alias-graph-accent); }
-.accentSwatch[data-accent='rose'] { background: var(--yh-alias-state-error-primary); }
-.accentSwatch[data-accent='lime'] { background: var(--yh-alias-state-success-secondary); }
+.accentSwatch[data-accent='violet'] { background: color-mix(in srgb, var(--yh-alias-graph-accent) 58%, var(--yh-alias-state-error-primary)); }
+.accentSwatch[data-accent='rose'] { background: color-mix(in srgb, var(--yh-alias-state-error-primary) 84%, var(--yh-alias-graph-accent)); }
+.accentSwatch[data-accent='lime'] { background: color-mix(in srgb, var(--yh-alias-state-success-secondary) 72%, var(--yh-alias-state-warn-primary)); }
 
 .avatarEditorLayout {
   display: grid;
@@ -584,6 +584,10 @@
   --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+.avatarEditorTabs {
+  margin-bottom: 14px;
 }
 
 .avatarEditorModal > :last-child {
@@ -729,4 +733,8 @@
   .avatarEditorPreviewColumn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; }
   .avatarEditorPreviewColumn > .avatarEditorLabel { grid-column: 1 / -1; }
   .avatarPreviewCard[data-preview='generated'] { margin-top: 0; }
+}
+
+@media (max-width: 420px) {
+  .identityChoices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

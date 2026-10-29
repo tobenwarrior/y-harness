@@ -14,9 +14,9 @@ import { en, zh } from './locales.ts'
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
 
-/** Services required by the Bot roster and its Session-backed Conversation. */
+/** Services required by the Bot roster and its Session-backed Conversation; image generation is optional. */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.bots', 'remote.avatarGeneration', 'sessions',
+  'slots', 'locale', 'remote', 'remote.bots', 'sessions',
 ]
 
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
@@ -26,7 +26,7 @@ export function apply(ctx: Context): void {
     ctx.remote.bots,
     ctx.sessions,
     () => ctx.locale.bind('bots')('unexpectedResponse'),
-    ctx.remote.avatarGeneration,
+    ctx.get('remote.avatarGeneration') as typeof ctx.remote.avatarGeneration | undefined,
   )
 
   ctx.effect(() => {

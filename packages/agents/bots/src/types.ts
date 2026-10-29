@@ -134,6 +134,24 @@ export interface BotRenameValue {
   readonly bot: BotView
 }
 
+/** Change one Bot's semantic identity and/or accent without changing its Session. */
+export interface BotAppearanceUpdateRequest {
+  /** Bot whose visual identity should change. */
+  readonly botId: BotId
+  /** Optional semantic avatar family; omitted to retain the current family. */
+  readonly identity?: BotIdentity
+  /** Optional product accent family; omitted to retain the current family. */
+  readonly accent?: BotAccent
+  /** Remove a generated avatar in the same durable write when true. */
+  readonly clearAvatar?: boolean
+}
+
+/** Appearance update response. */
+export interface BotAppearanceUpdateValue {
+  /** Updated Bot row with its Session mapping intact. */
+  readonly bot: BotView
+}
+
 /** Replace or clear one Bot's generated avatar without changing its Session. */
 export interface BotAvatarUpdateRequest {
   /** Bot whose avatar should change. */

@@ -4,7 +4,7 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { BotId, type BotView } from '@deepseek-ai/dsh-bots/client'
-import { BotWorkspaceController, type BotWorkspaceRemote } from '../src/client/controller.ts'
+import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
 function bot(id: string, sessionId: string, patch: Partial<BotView> = {}): BotView {
   return {
@@ -277,6 +277,49 @@ describe('BotWorkspaceController', () => {
     await expect(controller.face().loadAvatar(persisted.id, persisted.avatar!)).rejects.toThrow('attachment unavailable')
     await expect(controller.face().loadAvatar(persisted.id, persisted.avatar!)).resolves.toBe('data:image/png;base64,aW1n')
     expect(readAvatar).toHaveBeenCalledTimes(2)
+  })
+
+  it('saves an existing bot character without changing its session', async () => {
+    const original = bot('bot-one', 'session-one')
+    const updated = { ...original, identity: 'sparkle' as const, accent: 'amber' as const }
+    const remote = remoteFixture([original])
+    const updateAppearance = vi.fn(async () => ({ ok: true as const, value: { bot: updated } }))
+    remote.updateAppearance = updateAppearance
+    remote.updateAvatar = vi.fn()
+    const generation: BotAvatarGenerationRemote = {
+      status: vi.fn(), generate: vi.fn(), commit: vi.fn(),
+    }
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response', generation)
+    await controller.load()
+
+    const editor = controller.face().avatarEditor
+    expect(editor?.updateAppearance).toBeDefined()
+    await editor?.updateAppearance?.(original.id, { identity: 'sparkle', accent: 'amber', clearAvatar: true })
+
+    expect(updateAppearance).toHaveBeenCalledWith({
+      botId: original.id, identity: 'sparkle', accent: 'amber', clearAvatar: true,
+    })
+    expect(controller.source.getSnapshot().bots[0]).toEqual(updated)
+    expect(controller.face().reference()?.sessionId).toBe(original.sessionId)
+  })
+
+  it('exposes the character editor when appearance persistence is available without image generation', async () => {
+    const original = bot('bot-appearance-only', 'session-appearance-only')
+    const remote = remoteFixture([original])
+    remote.updateAppearance = vi.fn()
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    await controller.load()
+
+    const editor = controller.face().avatarEditor
+    expect(editor).toBeDefined()
+    expect(editor?.updateAppearance).toBeDefined()
+    expect(editor?.status).toBeUndefined()
+    expect(editor?.generate).toBeUndefined()
+    expect(editor?.commit).toBeUndefined()
+    expect(editor?.update).toBeUndefined()
   })
 
   it('keeps an ambiguous create retry on one Bot id', async () => {

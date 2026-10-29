@@ -8,6 +8,7 @@ import {
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
+import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotAccent, BotIdentity, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
 
@@ -64,35 +65,6 @@ function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
 }
 
-type IdentityLabelKey = 'identity.agent' | 'identity.sparkle' | 'identity.goal' | 'identity.browse' | 'identity.skill' | 'identity.workspace'
-type AccentLabelKey = 'accent.blue' | 'accent.teal' | 'accent.amber' | 'accent.violet' | 'accent.rose' | 'accent.lime'
-
-const identityLabels: Readonly<Record<BotIdentity, IdentityLabelKey>> = {
-  agent: 'identity.agent',
-  sparkle: 'identity.sparkle',
-  goal: 'identity.goal',
-  browse: 'identity.browse',
-  skill: 'identity.skill',
-  workspace: 'identity.workspace',
-}
-
-function identityLabelKey(identity: BotIdentity): IdentityLabelKey {
-  return identityLabels[identity]
-}
-
-const accentLabels: Readonly<Record<BotAccent, AccentLabelKey>> = {
-  blue: 'accent.blue',
-  teal: 'accent.teal',
-  amber: 'accent.amber',
-  violet: 'accent.violet',
-  rose: 'accent.rose',
-  lime: 'accent.lime',
-}
-
-function accentLabelKey(accent: BotAccent): AccentLabelKey {
-  return accentLabels[accent]
-}
-
 function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
   bot: BotSummary
   selected: boolean
@@ -130,17 +102,6 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
     </button>
   )
 }
-const identityChoices: readonly [BotIdentity, BotAccent][] = [
-  ['agent', 'violet'],
-  ['sparkle', 'blue'],
-  ['goal', 'amber'],
-  ['browse', 'teal'],
-  ['skill', 'rose'],
-  ['workspace', 'lime'],
-]
-
-const accentChoices: readonly BotAccent[] = ['blue', 'teal', 'amber', 'violet', 'rose', 'lime']
-
 function NewBotDialog({ open, onClose, onCreate, error, t }: {
   open: boolean
   onClose: () => void
@@ -199,44 +160,14 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
           }}
         />
       </div>
-      <div className={css.dialogField}>
-        <span className={css.dialogLabel}>{t('identityLabel')}</span>
-        <div className={css.identityChoices} role="radiogroup" aria-label={t('identityLabel')}>
-          {identityChoices.map(([choice, choiceAccent]) => (
-            <button
-              key={choice}
-              type="button"
-              className={clsx(css.identityChoice, identity === choice && css.identityChoiceSelected)}
-              data-accent={choiceAccent}
-              role="radio"
-              aria-checked={identity === choice}
-              aria-label={t(identityLabelKey(choice))}
-              onClick={() => { setIdentity(choice); setAccent(choiceAccent) }}
-            >
-              <BotAvatar name={t(identityLabelKey(choice))} identity={choice} accent={choiceAccent} />
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={css.dialogField}>
-        <span className={css.dialogLabel}>{t('accentLabel')}</span>
-        <div className={css.accentChoices} role="radiogroup" aria-label={t('accentLabel')}>
-          {accentChoices.map(choice => (
-            <button
-              key={choice}
-              type="button"
-              className={clsx(css.accentChoice, accent === choice && css.accentChoiceSelected)}
-              role="radio"
-              aria-checked={accent === choice}
-              aria-label={t(accentLabelKey(choice))}
-              onClick={() => { setAccent(choice) }}
-            >
-              <span className={css.accentSwatch} data-accent={choice} aria-hidden="true" />
-              <span>{t(accentLabelKey(choice))}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+      <BotAppearancePicker
+        identity={identity}
+        accent={accent}
+        onIdentityChange={setIdentity}
+        onAccentChange={setAccent}
+        disabled={submitting}
+        t={t}
+      />
     </Modal>
   )
 }

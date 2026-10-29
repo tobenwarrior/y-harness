@@ -2,6 +2,8 @@
 
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type {
+  BotAppearanceUpdateRequest,
+  BotAppearanceUpdateValue,
   BotAvatar,
   BotAvatarUpdateValue,
   BotCreateRequest,
@@ -20,13 +22,14 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
-import type { BotAvatarEditorActions, BotCreation } from './types.ts'
+import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
+  updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
 }
 
@@ -108,9 +111,12 @@ export class BotWorkspaceController {
       select: (id) => { this.select(id) },
       create: creation => this.create(creation),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
-      ...(this.avatarGeneration === undefined || this.remote.updateAvatar === undefined
-        ? {}
-        : { avatarEditor: this.avatarEditor() }),
+      ...(
+        this.remote.updateAppearance !== undefined
+        || (this.avatarGeneration !== undefined && this.remote.updateAvatar !== undefined)
+          ? { avatarEditor: this.avatarEditor() }
+          : {}
+      ),
       retry: () => {
         void this.retry().catch((error: unknown) => {
           this.fail(error instanceof Error ? error.message : String(error))
@@ -314,37 +320,56 @@ export class BotWorkspaceController {
   private avatarEditor(): BotAvatarEditorActions {
     const generation = this.avatarGeneration
     const updateAvatar = this.remote.updateAvatar
-    if (generation === undefined || updateAvatar === undefined) {
-      throw new Error()
-    }
+    const updateAppearance = this.remote.updateAppearance
+    const generationActions: BotAvatarEditorActions = generation === undefined || updateAvatar === undefined
+      ? {}
+      : {
+        status: async () => {
+          const result = await generation.status()
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+        generate: async (request, signal) => {
+          const result = await generation.generate(request, signal)
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+        commit: async (preview) => {
+          const result = await generation.commit(preview)
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+        update: async (botId, avatar) => {
+          const result = await updateAvatar({ botId: brandString<BotIdType>(botId), avatar })
+          if (!result.ok) throw new Error(result.error.message)
+          if (String(result.value.bot.id) !== botId) {
+            throw new Error(this.unexpectedResponse())
+          }
+          const current = this.source.getSnapshot()
+          const bots = current.bots.some(bot => bot.id === botId)
+            ? current.bots.map(bot => bot.id === botId ? result.value.bot : bot)
+            : [...current.bots, result.value.bot]
+          this.source.set({ ...current, bots, error: null })
+        },
+      }
     return {
-      status: async () => {
-        const result = await generation.status()
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value
-      },
-      generate: async (request, signal) => {
-        const result = await generation.generate(request, signal)
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value
-      },
-      commit: async (preview) => {
-        const result = await generation.commit(preview)
-        if (!result.ok) throw new Error(result.error.message)
-        return result.value
-      },
-      update: async (botId, avatar) => {
-        const result = await updateAvatar({ botId: brandString<BotIdType>(botId), avatar })
-        if (!result.ok) throw new Error(result.error.message)
-        if (String(result.value.bot.id) !== botId) {
-          throw new Error(this.unexpectedResponse())
-        }
-        const current = this.source.getSnapshot()
-        const bots = current.bots.some(bot => bot.id === botId)
-          ? current.bots.map(bot => bot.id === botId ? result.value.bot : bot)
-          : [...current.bots, result.value.bot]
-        this.source.set({ ...current, bots, error: null })
-      },
+      ...generationActions,
+      ...(updateAppearance === undefined ? {} : {
+        updateAppearance: async (botId: string, appearance: {
+          readonly identity: BotIdentity
+          readonly accent: BotAccent
+          readonly clearAvatar: boolean
+        }) => {
+          const result = await updateAppearance({ botId: brandString<BotIdType>(botId), ...appearance })
+          if (!result.ok) throw new Error(result.error.message)
+          if (String(result.value.bot.id) !== botId) throw new Error(this.unexpectedResponse())
+          const current = this.source.getSnapshot()
+          const bots = current.bots.some(bot => bot.id === botId)
+            ? current.bots.map(bot => bot.id === botId ? result.value.bot : bot)
+            : [...current.bots, result.value.bot]
+          this.source.set({ ...current, bots, error: null })
+        },
+      }),
     }
   }
 

@@ -14,6 +14,8 @@ import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type {
   BotAvailability,
   BotAccent,
+  BotAppearanceUpdateRequest,
+  BotAppearanceUpdateValue,
   BotAvatarUpdateRequest,
   BotAvatarUpdateValue,
   BotAvatarReadRequest,
@@ -104,6 +106,24 @@ function normalizeAccent(value: BotCreateRequest['accent']): BotAccent {
   const accent = value ?? 'violet'
   if (!BOT_ACCENTS.includes(accent)) return badRequest(`Unknown Bot accent '${String(accent)}'`)
   return accent
+}
+
+function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
+  if (value === undefined) return undefined
+  if (!BOT_IDENTITIES.includes(value)) return badRequest(`Unknown Bot identity '${String(value)}'`)
+  return value
+}
+
+function normalizeAppearanceAccent(value: BotAppearanceUpdateRequest['accent']): BotAccent | undefined {
+  if (value === undefined) return undefined
+  if (!BOT_ACCENTS.includes(value)) return badRequest(`Unknown Bot accent '${String(value)}'`)
+  return value
+}
+
+function normalizeClearAvatar(value: BotAppearanceUpdateRequest['clearAvatar']): boolean {
+  if (value === undefined) return false
+  if (typeof value !== 'boolean') return badRequest('Bot clearAvatar must be a boolean')
+  return value
 }
 
 function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
@@ -294,6 +314,52 @@ export class BotService extends TypertRemoteService {
         throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
       }
       const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      await bots.put(id, next)
+      this.emitChanged()
+      return { bot: this.view(next) }
+    })
+  }
+
+  /**
+   * Update a Bot's semantic identity and/or accent without creating or changing
+   * its one backing Session. Generated avatars remain selected unless the
+   * caller explicitly sets `clearAvatar` to true.
+   * @param request - Bot id, optional appearance fields, and optional avatar clear.
+   * @returns the committed row.
+   */
+  @Remote('updateAppearance')
+  async updateAppearance(request: BotAppearanceUpdateRequest): Promise<BotAppearanceUpdateValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot appearance request must be an object')
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const identity = normalizeAppearanceIdentity(request.identity)
+      const accent = normalizeAppearanceAccent(request.accent)
+      const clearAvatar = normalizeClearAvatar(request.clearAvatar)
+      if (identity === undefined && accent === undefined && !clearAvatar) {
+        return badRequest('Bot appearance request must change identity or accent, or clear its avatar')
+      }
+
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(id)
+      if (current === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      }
+      const updatedAt = Math.max(Date.now(), current.updatedAt)
+      const withAppearance: BotRecord = {
+        ...current,
+        ...(identity === undefined ? {} : { identity }),
+        ...(accent === undefined ? {} : { accent }),
+        updatedAt,
+      }
+      let next: BotRecord
+      if (clearAvatar) {
+        const { avatar: ignoredAvatar, ...withoutAvatar } = withAppearance
+        void ignoredAvatar
+        next = withoutAvatar
+      } else {
+        next = withAppearance
+      }
       await bots.put(id, next)
       this.emitChanged()
       return { bot: this.view(next) }
