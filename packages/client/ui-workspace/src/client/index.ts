@@ -140,6 +140,30 @@ export function apply(ctx: Context): void {
     subscribe: listener => ctx.on('connection/reset', listener),
   }
   const pickerFlowSource = flowSource('conversation.hero.workspace.directoryFlow')
+  const botSessionIds = createSnapshotStore<readonly SessionId[]>([])
+  const botsRemote = ctx.get('remote.bots') as typeof ctx.remote.bots | undefined
+  let botRosterRequest = 0
+  const refreshBotSessionIds = async (): Promise<void> => {
+    const request = ++botRosterRequest
+    if (botsRemote === undefined) return
+    try {
+      const result = await botsRemote.list({})
+      if (request !== botRosterRequest || !result.ok) return
+      botSessionIds.set(result.value.bots.map(bot => bot.sessionId))
+    } catch (error: unknown) {
+      // Keep the last known ownership set until the remote roster is readable again.
+      // A connection reset below retries this path, instead of exposing Bot rows permanently.
+      void error
+    }
+  }
+  void refreshBotSessionIds()
+  const disposeBotRoster = ctx.remote.$on('bots/changed', () => { void refreshBotSessionIds() })
+  const disposeBotRosterReset = ctx.on('connection/reset', () => { void refreshBotSessionIds() })
+  ctx.effect(() => () => {
+    botRosterRequest++
+    disposeBotRoster()
+    disposeBotRosterReset()
+  }, 'ui-workspace: Bot Session filter')
   const openSession: WorkspaceBrowserInjected['open'] = (sessionId) => {
     uiWorkspace.openSession(sessionId)
   }
@@ -249,7 +273,13 @@ export function apply(ctx: Context): void {
     closeAddWorkspace: shortcutControls.closeAdd,
     setDirectoryBusy: shortcutControls.directoryBusy,
     dismissForkError: shortcutControls.dismissForkError,
-    hooks: { directoryFlow: browserFlowSource, hostInfo, workspaceShortcuts: shortcutControls.state, shortcuts: ctx.shortcuts.catalog },
+    hooks: {
+      directoryFlow: browserFlowSource,
+      hostInfo,
+      botSessionIds,
+      workspaceShortcuts: shortcutControls.state,
+      shortcuts: ctx.shortcuts.catalog,
+    },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({
     createWorkspace: input => workspaces.create(input),

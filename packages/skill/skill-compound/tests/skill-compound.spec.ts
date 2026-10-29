@@ -234,14 +234,14 @@ describe('bundled Compound skills', () => {
       ctx.baseUrl = pathToFileURL(root).href + '/'
       await ctx.plugin(Loader)
       ctx.loader.builtins.include = Include
-      ctx.loader.internal = {
+      ctx.loader.internal = Object.assign(Object.create(null) as NonNullable<typeof ctx.loader.internal>, {
         version: 'v2',
         async import(specifier: string) {
           if (specifier === '@deepseek-ai/dsh-skill') return SkillRegistry
           if (specifier === '@deepseek-ai/dsh-skill-compound') return SkillCompound
           throw new Error(`Unexpected Loader import: ${specifier}`)
         },
-      } as unknown as NonNullable<typeof ctx.loader.internal>
+      })
       await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
       await ctx.loader.await()
       await treeStarted.promise
@@ -405,13 +405,13 @@ describe('bundled Compound skills', () => {
         ['@deepseek-ai/dsh-skill', SkillRegistry],
         ['@deepseek-ai/dsh-skill-compound', SkillCompound],
       ])
-      const internal = {
+      const internal = Object.assign(Object.create(null) as NonNullable<typeof ctx.loader.internal>, {
         version: 'v2',
         async import(specifier: string) {
           if (!modules.has(specifier)) throw new Error(`Unexpected Loader import: ${specifier}`)
           return modules.get(specifier)
         },
-      } as unknown as NonNullable<typeof ctx.loader.internal>
+      })
       ctx.loader.internal = internal
       await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
       await ctx.loader.await()

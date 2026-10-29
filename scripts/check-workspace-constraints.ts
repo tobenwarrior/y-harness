@@ -205,8 +205,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // also shares its generated FFI code through a hashed runtime chunk.
   '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js', 'assets'],
   '@deepseek-ai/dsh-skill-badge': ['assets'],
-  // The vendored Compound skills ship as instruction and script assets read at runtime.
-  '@deepseek-ai/dsh-skill-compound': ['assets'],
+  // The vendored Compound skills ship as instruction and script assets read at runtime;
+  // the release record is loaded by the updater and Host at runtime as well.
+  '@deepseek-ai/dsh-skill-compound': ['assets', 'UPSTREAM.md'],
   '@deepseek-ai/dsh-skill-office': ['assets'],
   '@deepseek-ai/dsh-subprocess': ['lib/control.js'],
   // SSH launches a private helper and shares wire definitions and TLS setup

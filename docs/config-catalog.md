@@ -384,6 +384,34 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-attachment-local -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-avatar-generation -->
+<a id="deepseek-aidsh-avatar-generation"></a>
+
+## `@deepseek-ai/dsh-avatar-generation`
+
+- `source`: [`packages/agents/avatar-generation/src/index.ts:29`](../packages/agents/avatar-generation/src/index.ts)
+
+```ts config-catalog
+/** Deployment configuration for the OpenAI Images API adapter. */
+export interface Config {
+  /** Existing credential-reference name used by an explicit OpenAI route. */
+  readonly credentialRef?: string
+  /** OpenAI-compatible Images API base URL. */
+  readonly baseURL?: string
+  /** Image model accepted by the configured endpoint. */
+  readonly model?: string
+  /** Upper bound for one provider request. */
+  readonly timeoutMs?: number
+  /** Maximum user description length sent to the provider. */
+  readonly maxDescriptionChars?: number
+  /** Maximum decoded provider image bytes admitted before attachment validation. */
+  readonly maxImageBytes?: number
+  /** Maximum encoded HTTP response bytes read from the provider. */
+  readonly maxResponseBytes?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-avatar-generation -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-bash-local -->
 <a id="deepseek-aidsh-bash-local"></a>
 
@@ -4585,6 +4613,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
 | `@deepseek-ai/dsh-api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@deepseek-ai/dsh-authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
+| `@deepseek-ai/dsh-bots` | `agents` · `storageDomain` · `sessionController` · `attachments` | [`packages/agents/bots/src/index.ts`](../packages/agents/bots/src/index.ts) |
 | `@deepseek-ai/dsh-browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |
 | `@deepseek-ai/dsh-client-file-upload` | `agents` · `attachments` · `commands` · `connection` | [`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts) |
 | `@deepseek-ai/dsh-client-locale` | — | [`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts) |
@@ -4593,6 +4622,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-client-ui-agent-preset` | — | [`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-approval` | — | [`packages/client/ui-approval/src/index.ts`](../packages/client/ui-approval/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-attachment` | — | [`packages/client/ui-attachment/src/index.ts`](../packages/client/ui-attachment/src/index.ts) |
+| `@deepseek-ai/dsh-client-ui-bots` | — | [`packages/client/ui-bots/src/index.ts`](../packages/client/ui-bots/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-brand-official` | — | [`packages/client/ui-brand-official/src/index.ts`](../packages/client/ui-brand-official/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-chat` | — | [`packages/client/ui-chat/src/index.ts`](../packages/client/ui-chat/src/index.ts) |
 | `@deepseek-ai/dsh-client-ui-commands` | — | [`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts) |

@@ -1,0 +1,9 @@
+version: 1
+name: avatar-openai-timeout
+slug: avatar-openai-timeout
+protocol: http
+port: 4512
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

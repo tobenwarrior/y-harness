@@ -193,6 +193,7 @@ export function ConversationContent(props: ConversationContentProps) {
       data-conversation-session={sessionId}
       data-conversation-region="chat"
       data-content-phase={phase}
+      data-composer-placement={props.variant === 'embedded' && phase === 'active' ? 'bottom' : undefined}
     >
       <div className={css.scrollBody} data-conversation-scroll="">
         {sessionId === undefined ? null : <Views />}

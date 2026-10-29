@@ -184,6 +184,11 @@ flowchart LR
   pkg_client_ui_settings_coding_sessions["client-ui-settings-coding-sessions"]
   svc_agents["ctx.agents<br/>Agent service"]
   pkg_acp["acp"]
+  pkg_bots["bots"]
+  svc_bots["ctx.bots<br/>Durable user-owned Bot roster"]
+  pkg_client_ui_bots["client-ui-bots"]
+  pkg_avatar_generation["avatar-generation"]
+  svc_avatarGeneration["ctx.avatarGeneration<br/>Host avatar generation"]
   svc_agentDefaultModel["ctx.agentDefaultModel<br/>Default Agent model selection"]
   pkg_headless["headless"]
   svc_agentLoop["ctx.agentLoop<br/>Concrete loop driver"]
@@ -308,8 +313,10 @@ flowchart LR
   pkg_attachment --> svc_attachments
   pkg_attachment_local --> svc_attachments
   pkg_authorization --> svc_authorization
+  pkg_avatar_generation --> svc_avatarGeneration
   pkg_bash_local --> svc_shell
   pkg_bash_sandbox --> svc_shell
+  pkg_bots --> svc_bots
   pkg_browser_use --> svc_browserUse
   pkg_client_connection --> svc_connection
   pkg_client_file_upload --> svc_fileUploads
@@ -460,6 +467,8 @@ flowchart LR
   svc_attachments --> pkg_llm_pi_ai
   svc_attachments --> pkg_tool_fs
   svc_authorization --> pkg_llm_pi_ai
+  svc_avatarGeneration --> pkg_client_ui_bots
+  svc_bots --> pkg_client_ui_bots
   svc_browserUse --> pkg_experimental_browser_use_chrome_devtools_mcp
   svc_browserUse --> pkg_experimental_browser_use_playwright_mcp
   svc_browserUse --> pkg_experimental_browser_use_stagehand_native
@@ -669,6 +678,8 @@ flowchart LR
 | `ctx.skillLibrary` | `service` | [`skill-library`](../packages/skill/skill-library) | - | [`client-ui-skill-library`](../packages/client/ui-skill-library), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | Serves project and shared inventory, explicit references, durable evidence and reviewed reversible managed changes. |
 | `ctx.codingSessions` | `service` | [`coding-session`](../packages/session/coding-session) | - | [`client-ui-settings-coding-sessions`](../packages/client/ui-settings-coding-sessions), [`web-app`](../packages/bundle/web-app), [`sdk-app`](../packages/bundle/sdk-app) | - | Registers original native provider profiles, reads bounded native histories, and retains independent read-only mirrors; continuation requires an enforceable exclusive provider adapter. |
 | `ctx.agents` | `core` | [`agent`](../packages/core/agent) | - | [`agent-loop`](../packages/core/agent-loop), [`acp`](../packages/acp/acp), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) | - | Owns live Agent handles, the create/resume factory seam, and process-local initiator propagation. |
+| `ctx.bots` | `service` | [`bots`](../packages/agents/bots) | - | [`client-ui-bots`](../packages/client/ui-bots) | - | Owns one durable Bot row and one ordinary Session mapping per user-owned Bot; the Client workspace presents the roster and selected Session. |
+| `ctx.avatarGeneration` | `service` | [`avatar-generation`](../packages/agents/avatar-generation) | - | [`client-ui-bots`](../packages/client/ui-bots) | - | Generates bounded transparent PNG previews through the configured OpenAI route and stores only the preview the owner explicitly commits. |
 | `ctx.agentDefaultModel` | `core` | [`agent-default-model`](../packages/core/agent-default-model) | - | [`api-session-controller`](../packages/api/session-controller), [`headless`](../packages/bundle/headless) | - | Reads the default ModelSelection from volatile Config and saves selections through the profile editor. |
 | `ctx.agentLoop` | `bundle` | [`agent-loop`](../packages/core/agent-loop) | - | [`base`](../packages/bundle/base), [`sdk-minimal`](../packages/bundle/sdk-minimal) | - | The one concrete loop plugin; extension packages depend on dsh-agent events and services, not on this package. |
 | `ctx.schedule` | `core` | [`schedule`](../packages/schedule/schedule) | - | - | - | Stores tasks independently of Session activation and queues due messages in the original Session. |

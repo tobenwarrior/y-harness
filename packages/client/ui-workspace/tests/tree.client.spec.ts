@@ -10,6 +10,7 @@ import {
   type ArchivedFilter,
   deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
+  withoutBotSessions,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
 
@@ -70,6 +71,21 @@ describe('owningGroupKey', () => {
     const workspaces = [workspace('first', ['owned'])]
     expect(owningGroupKey(workspaces, sid('owned'))).toBe('first')
     expect(owningGroupKey(workspaces, sid('loose'))).toBe(UNGROUPED_KEY)
+  })
+})
+
+describe('withoutBotSessions', () => {
+  it('removes Bot-owned Sessions from browser rows while preserving ordinary Sessions', () => {
+    const ordinary = summary('ordinary', 2)
+    const bot = summary('bot-session-1', 3)
+    const state = list(ordinary, bot)
+
+    const filtered = withoutBotSessions(state, [bot.id])
+
+    expect(filtered.ids).toEqual([ordinary.id])
+    expect(filtered.byId).toEqual({ [ordinary.id]: ordinary })
+    expect(filtered.projectionsBySession).toEqual({})
+    expect(state.ids).toEqual([ordinary.id, bot.id])
   })
 })
 

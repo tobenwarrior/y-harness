@@ -549,6 +549,70 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'avatarGeneration',
+    summary: 'Host service that discovers the configured OpenAI credential per operation.',
+    description: 'Host service that discovers the configured OpenAI credential per operation.',
+    methods: [
+      {
+        signature: '@Remote async status(): Promise<AvatarGenerationStatus>',
+        description: 'Read current capability state without resolving or returning a secret.',
+        parameters: [],
+        returns: 'whether the existing OpenAI provider can generate an avatar now.',
+      },
+      {
+        signature: '@Remote async generate(request: AvatarGenerationRequest, signal: AbortSignal): Promise<AvatarGenerationValue>',
+        description: 'Generate one validated PNG avatar preview through the configured OpenAI route.',
+        parameters: [{ name: 'request', description: 'bounded natural-language avatar description.' }, { name: 'signal', description: 'caller cancellation signal.' }],
+        returns: 'exact preview bytes for immediate Client display; persistence waits for {@link commit}.',
+        throws: ['{RemoteError} when configuration, provider, response, or attachment admission fails.'],
+      },
+      {
+        signature: '@Remote async commit(request: AvatarGenerationCommitRequest): Promise<AvatarGenerationCommitValue>',
+        description: 'Persist one preview after the user explicitly chooses it.',
+        parameters: [{ name: 'request', description: 'canonical preview bytes returned by {@link generate}.' }],
+        returns: 'the durable image reference for Bot assignment.',
+        throws: ['{RemoteError} when the preview is malformed or attachment admission fails.'],
+      },
+    ],
+  },
+  {
+    key: 'bots',
+    summary: 'Host service that owns the durable roster and its Session mappings.',
+    description: 'Host service that owns the durable roster and its Session mappings.',
+    methods: [
+      {
+        signature: '@Remote(\'list\') async list(_request: BotListRequest): Promise<BotListValue>',
+        description: 'List the durable Bot roster without activating cold Sessions.',
+        parameters: [{ name: '_request', description: 'Empty list request reserved for future paging.' }],
+        returns: 'one row per Bot, ordered by creation time and id.',
+      },
+      {
+        signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
+        description: 'Create one durable Bot and its exactly-one ordinary Session.\n\nA provisioning row is committed before Session creation. If Session creation or activation cannot finish, the row remains visible and the same Bot id can be retried safely; no second Session is allocated for that Bot.',
+        parameters: [{ name: 'request', description: 'Name, visual identity, optional working directory, and preset.' }],
+        returns: 'the active row or a retryable provisioning row.',
+      },
+      {
+        signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
+        description: 'Rename one Bot while preserving its one Session mapping and visual identity.',
+        parameters: [{ name: 'request', description: 'Bot id and new display name.' }],
+        returns: 'the committed row.',
+      },
+      {
+        signature: '@Remote(\'updateAvatar\') async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue>',
+        description: 'Persist or clear a generated avatar while preserving the Bot\'s Session mapping.',
+        parameters: [{ name: 'request', description: 'Bot id and generated avatar payload, or null to clear it.' }],
+        returns: 'the updated Bot row.',
+      },
+      {
+        signature: '@Remote(\'readAvatar\') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>',
+        description: 'Read the current Bot avatar through the Host attachment store.',
+        parameters: [{ name: 'request', description: 'Bot id whose selected avatar should be returned.' }],
+        returns: 'canonical reference and bytes for a Client preview.',
+      },
+    ],
+  },
+  {
     key: 'browserUse',
     summary: 'Owns one optional provider registration in the shared browser-use service.',
     description: 'Owns one optional provider registration in the shared browser-use service.',
@@ -4450,6 +4514,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'key', description: 'the credential record the finished attempt was authorizing.' }, { name: 'settlement', description: 'how it ended, including the `failed` case its caller sees as a thrown error.' }],
   },
   {
+    name: 'bots/changed',
+    mode: 'emit',
+    signature: '\'bots/changed\'(): void',
+    summary: 'Post-commit notification for roster writes; listeners refetch `bots.list`.',
+    description: 'Post-commit notification for roster writes; listeners refetch `bots.list`.',
+    parameters: [],
+  },
+  {
     name: 'claude-code/tool-observations',
     mode: 'emit',
     signature: '\'claude-code/tool-observations\': (observations: readonly ClaudeCodeToolObservation[], parent: Session) => void',
@@ -5214,6 +5286,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
   },
   {
+    name: 'AvatarGenerationCommitRequest',
+    declaration: 'export interface AvatarGenerationCommitRequest {\n    readonly data: string;\n    readonly mediaType: \'image/png\';\n}',
+  },
+  {
+    name: 'AvatarGenerationCommitValue',
+    declaration: 'export interface AvatarGenerationCommitValue {\n    readonly attachment: ImageAttachmentRef;\n}',
+  },
+  {
+    name: 'AvatarGenerationRequest',
+    declaration: 'export interface AvatarGenerationRequest {\n    readonly description: string;\n}',
+  },
+  {
+    name: 'AvatarGenerationStatus',
+    declaration: 'export type AvatarGenerationStatus = {\n    readonly available: true;\n    readonly provider: \'openai\';\n    readonly model: string;\n} | {\n    readonly available: false;\n    readonly provider: \'openai\' | null;\n    readonly model: string;\n    readonly reason: AvatarGenerationUnavailableReason;\n};',
+  },
+  {
+    name: 'AvatarGenerationUnavailableReason',
+    declaration: 'export type AvatarGenerationUnavailableReason = \'openai-provider-not-configured\' | \'openai-credential-not-configured\' | \'credential-store-unavailable\' | \'invalid-credential-reference\' | \'attachments-unavailable\';',
+  },
+  {
+    name: 'AvatarGenerationValue',
+    declaration: 'export interface AvatarGenerationValue {\n    readonly data: string;\n    readonly mediaType: \'image/png\';\n}',
+  },
+  {
     name: 'BackendRegistry',
     declaration: 'export class BackendRegistry {\n    register(name: string, backend: StorageBackend): () => void;\n    get(name: string): StorageBackend;\n    names(): string[];\n}',
   },
@@ -5228,6 +5324,70 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BashEnvVariableInfo',
     declaration: 'export interface BashEnvVariableInfo extends BashEnvVariable {\n    contributor: string;\n    key: DshEnvironmentKey;\n}',
+  },
+  {
+    name: 'BotAvailability',
+    declaration: 'export type BotAvailability = \'running\' | \'idle\' | \'offline\';',
+  },
+  {
+    name: 'BotAvatar',
+    declaration: 'export type BotAvatar = ImageAttachmentRef;',
+  },
+  {
+    name: 'BotAvatarReadRequest',
+    declaration: 'export interface BotAvatarReadRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotAvatarReadValue',
+    declaration: 'export interface BotAvatarReadValue {\n    readonly avatar: ImageAttachmentRef;\n    readonly data: string;\n}',
+  },
+  {
+    name: 'BotAvatarUpdateRequest',
+    declaration: 'export interface BotAvatarUpdateRequest {\n    readonly botId: BotId;\n    readonly avatar: BotAvatar | null;\n}',
+  },
+  {
+    name: 'BotAvatarUpdateValue',
+    declaration: 'export interface BotAvatarUpdateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotCreateRequest',
+    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
+  },
+  {
+    name: 'BotCreateValue',
+    declaration: 'export interface BotCreateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotId',
+    declaration: 'export type BotId = Branded<\'BotId\'>;',
+  },
+  {
+    name: 'BotListRequest',
+    declaration: 'export interface BotListRequest {\n    readonly cursor?: string;\n}',
+  },
+  {
+    name: 'BotListValue',
+    declaration: 'export interface BotListValue {\n    readonly bots: readonly BotView[];\n}',
+  },
+  {
+    name: 'BotProvisioningState',
+    declaration: 'export type BotProvisioningState = \'provisioning\' | \'active\';',
+  },
+  {
+    name: 'BotRecord',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotRenameRequest',
+    declaration: 'export interface BotRenameRequest {\n    readonly botId: BotId;\n    readonly name: string;\n}',
+  },
+  {
+    name: 'BotRenameValue',
+    declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotView',
+    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n};',
   },
   {
     name: 'BoxProps',

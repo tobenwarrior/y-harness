@@ -26,6 +26,8 @@ export const remoteDefaultResponses: RemoteTable = {
     }),
     // ui-agent-preset hero chip and header label on first mount.
     'agentPresets/list': ok({ presets: [] }),
+    // ui-bots roster load with no durable Bot rows.
+    'bots/list': ok({ bots: [] }),
     // ui-settings-coding-sessions controller at apply and on connection/reset.
     'codingSessions/getState': ok({ sources: [], mirrors: [] }),
     // cordis-client-runner `ClientCordisInspectRegistry.sync` at apply and on `connection/reset`.

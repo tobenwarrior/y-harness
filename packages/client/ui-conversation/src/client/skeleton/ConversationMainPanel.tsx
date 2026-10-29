@@ -1,4 +1,4 @@
-import type { ConversationSlotProps } from '../contract/slots.ts'
+import type { ConversationPanelProps } from '../contract/slots.ts'
 import { conversationPhase } from '../contract/snapshot.ts'
 import { ConversationWidthControls } from './ConversationWidthControls.tsx'
 import css from './ConversationRoot.module.css'
@@ -6,12 +6,12 @@ import css from './ConversationRoot.module.css'
 const CONTENT_SLOTS = { widthControls: ConversationWidthControls }
 
 /**
- * Render the existing main Conversation frame around the extracted content.
- * @param props - the original `main.conversation` Slot props.
- * @returns the unchanged root, Header, content, and width-control subtree.
+ * Render one full Conversation frame around the extracted content.
+ * @param props - occurrence inputs and the Session-scoped Conversation sources.
+ * @returns the existing Header, transcript, and Composer subtree.
  */
-export function ConversationMainPanel(props: ConversationSlotProps) {
-  const { sessionId, useSession, useSessions, useConversation, renderSlot, renderFactorySlot } = props
+export function ConversationMainPanel(props: ConversationPanelProps) {
+  const { variant, sessionId, useSession, useSessions, useConversation, renderSlot, renderFactorySlot } = props
   const session = useSession(s => s)
   const conversation = useConversation(s => s)
   const shellPhase = session === undefined || conversation === undefined
@@ -46,12 +46,10 @@ export function ConversationMainPanel(props: ConversationSlotProps) {
     <div className={css.root} data-yh-part="conversation" data-phase={phase}>
       {renderSlot('conversation.header', {})}
       {renderFactorySlot('conversation.content', {
-        variant: 'main',
+        variant,
         phase,
         hero,
-      }, {
-        slots: CONTENT_SLOTS,
-      })}
+      }, variant === 'main' ? { slots: CONTENT_SLOTS } : undefined)}
     </div>
   )
 }

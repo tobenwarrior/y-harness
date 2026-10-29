@@ -221,6 +221,8 @@ export type WorkspaceBrowserInjected = {
      * saw. Select the field the surface needs (`info => info.home`).
      */
     hostInfo: HostObservable<RemoteHostFacts>
+    /** Current Bot-owned Session ids; normal Workspace rows exclude these. */
+    botSessionIds: HostObservable<readonly SessionId[]>
     workspaceShortcuts: HostObservable<WorkspaceShortcutState>
     shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>
   }

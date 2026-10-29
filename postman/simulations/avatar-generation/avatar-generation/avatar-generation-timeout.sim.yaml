@@ -1,0 +1,7 @@
+simulation: avatar-generation-timeout
+routing: path
+mocks:
+  - name: avatar-openai-timeout
+    routeKey: avatar
+    origin: api.openai.com
+    path: postman/mocks/avatar-openai-timeout

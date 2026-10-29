@@ -1,0 +1,10 @@
+version: 1
+id: a3c5b773-b6e7-411a-8214-cd8aa058eb6a
+name: avatar-openai
+slug: avatar-openai
+protocol: http
+port: 4510
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

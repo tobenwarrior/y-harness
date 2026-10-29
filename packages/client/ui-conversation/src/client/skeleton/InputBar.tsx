@@ -415,6 +415,7 @@ export const InputBar = memo(function InputBar({
           workspacePickerOpen={workspacePickerOpen}
           onWorkspaceKeyDown={onWorkspaceKeyDown}
           hint={hint}
+          ghostHint={t('input.ghost.accept')}
           showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
         />
         <div ref={rowRef} className={css.row} data-yh-part="composer-controls">

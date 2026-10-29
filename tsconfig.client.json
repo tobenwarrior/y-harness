@@ -106,6 +106,7 @@
     { "path": "./packages/client/ui-skill-library" },
     { "path": "./packages/client/ui-compound-update" },
     { "path": "./packages/client/ui-compound-map" },
+    { "path": "./packages/client/ui-bots" },
     { "path": "./packages/client/ui-settings-coding-sessions" },
     { "path": "./packages/client/ui-reference" },
     { "path": "./packages/client/ui-subagent" },

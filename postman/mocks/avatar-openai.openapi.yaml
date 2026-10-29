@@ -1,0 +1,33 @@
+openapi: 3.0.3
+info:
+  title: Local OpenAI Images stand-in
+  version: 1.0.0
+servers:
+  - url: https://api.openai.com/v1
+paths:
+  /images/generations:
+    post:
+      operationId: generateAvatar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt, n, size, background, output_format, quality]
+              properties:
+                model: { type: string }
+                prompt: { type: string }
+                n: { type: integer }
+                size: { type: string }
+                background: { type: string }
+                output_format: { type: string }
+                quality: { type: string }
+      responses:
+        '200':
+          description: Generated avatar PNG
+          content:
+            application/json:
+              example:
+                data:
+                  - b64_json: AQIDBA==

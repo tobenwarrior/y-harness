@@ -169,18 +169,21 @@ describe('OverlayDocking position memory', () => {
   it('deregisters its IPC handler', () => {
     const handled = new Map<string, unknown>()
     const removed: string[] = []
-    const ipc = {
+    const ipc = Object.assign(Object.create(null) as IpcMain, {
       handle: vi.fn((channel: string, listener: unknown) => { handled.set(channel, listener) }),
       removeHandler: vi.fn((channel: string) => {
         removed.push(channel)
         handled.delete(channel)
       }),
-    }
-    const window = { ...windowStub([0, 0]), webContents: { mainFrame: {} } }
+    })
+    const window = Object.assign(
+      Object.create(null) as Parameters<typeof registerOverlayDockingIpc>[1],
+      { ...windowStub([0, 0]), webContents: { mainFrame: {} } },
+    )
     const docking = new OverlayDocking(window, screenStub([display(AREA)]), memoryStore())
     const dispose = registerOverlayDockingIpc(
-      ipc as unknown as IpcMain,
-      window as unknown as Parameters<typeof registerOverlayDockingIpc>[1],
+      ipc,
+      window,
       docking,
     )
     expect(ipc.handle).toHaveBeenCalledOnce()

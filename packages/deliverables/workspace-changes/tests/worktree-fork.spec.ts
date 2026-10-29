@@ -40,7 +40,7 @@ function result(exitCode: number, stdout = '', stderr = ''): GitRunResult {
 /** Scripted runner: matches on the joined args prefix. */
 function gitStub(script: readonly (readonly [string, GitRunResult])[]): GitRunner & { calls: Call[] } {
   const calls: Call[] = []
-  return {
+  return Object.assign(Object.create(null) as GitRunner, {
     calls,
     async run(args: readonly string[], options: GitRunOptions): Promise<GitRunResult> {
       calls.push({ args, cwd: options.cwd })
@@ -49,7 +49,7 @@ function gitStub(script: readonly (readonly [string, GitRunResult])[]): GitRunne
       }
       return result(0, '')
     },
-  } as unknown as GitRunner & { calls: Call[] }
+  })
 }
 
 const SIGNAL = new AbortController().signal
@@ -280,7 +280,9 @@ describe('canForkIntoWorktree', () => {
   })
 
   it('is false when git cannot spawn', async () => {
-    const broken = { run: vi.fn(async () => { throw new Error('ENOENT') }) } as unknown as GitRunner
+    const broken = Object.assign(Object.create(null) as GitRunner, {
+      run: vi.fn(async () => { throw new Error('ENOENT') }),
+    })
     expect(await canForkIntoWorktree(broken, SOURCE, SIGNAL)).toBe(false)
   })
 })

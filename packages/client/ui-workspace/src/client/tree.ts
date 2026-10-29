@@ -18,6 +18,35 @@ import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
 export const UNGROUPED_KEY = ''
 
 /**
+ * Remove Bot-owned Sessions from the normal Workspace projection.
+ * Bot ownership is a live Client concern, not durable Session metadata, so
+ * the caller supplies the current Bot Session ids and the source snapshot is
+ * left untouched for the Bot panel and direct Session navigation.
+ * @param list - complete Client Session catalog.
+ * @param botSessionIds - current Bot-owned Session identities.
+ * @returns a catalog projection containing ordinary Sessions only.
+ */
+export function withoutBotSessions(
+  list: SessionListState,
+  botSessionIds: readonly SessionId[],
+): SessionListState {
+  if (botSessionIds.length === 0) return list
+  const hiddenIds = new Set(botSessionIds)
+  const ids = list.ids.filter(id => !hiddenIds.has(id))
+  const byId: SessionListState['byId'] = {}
+  for (const [id, summary] of Object.entries(list.byId)) {
+    const sessionId = id as SessionId
+    if (!hiddenIds.has(sessionId)) byId[sessionId] = summary
+  }
+  const projectionsBySession: Record<SessionId, SessionListState['projectionsBySession'][SessionId]> = {}
+  for (const [id, projection] of Object.entries(list.projectionsBySession)) {
+    const sessionId = id as SessionId
+    if (!hiddenIds.has(sessionId)) projectionsBySession[sessionId] = projection
+  }
+  return { ...list, ids, byId, projectionsBySession }
+}
+
+/**
  * Resolve the Workspace browser group that owns one Session.
  * @param workspaces - authoritative Workspace membership.
  * @param sessionId - Session whose browser group is required.

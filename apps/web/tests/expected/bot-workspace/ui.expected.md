@@ -1,0 +1,23 @@
+- region "Bot workspace":
+  - complementary:
+    - text: Bot workspace Your agents, in one calm place
+    - button "New bot"
+    - textbox "Search bots"
+    - region "General":
+      - heading "General" [level=2]
+      - button "Scout, Idle":
+        - img "Scout"
+        - text: Scout Idle
+      - button "Orbit, Idle":
+        - img "Orbit"
+        - text: Orbit Idle
+  - region "Scout":
+    - img "Scout"
+    - text: Scout
+    - button "Edit avatar"
+    - text: Idle
+    - textbox "Message or run a task, / commands, @ files or sessions"
+    - button "Add files or run commands"
+    - 'button "Access mode, current: Approve for me"': Approve for me
+    - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
+    - button "Send message" [disabled]

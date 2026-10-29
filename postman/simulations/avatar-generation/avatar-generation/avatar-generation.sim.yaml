@@ -1,0 +1,10 @@
+# The dedicated rate-limit and timeout manifests use separate handlers because
+# the installed Postman CLI does not apply scenario overrides in this format.
+
+simulation: avatar-generation
+routing: path
+mocks:
+  - name: avatar-openai
+    routeKey: avatar
+    origin: api.openai.com
+    path: postman/mocks/avatar-openai

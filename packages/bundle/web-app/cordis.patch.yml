@@ -127,6 +127,15 @@
     - id: session-controller
       name: '@deepseek-ai/dsh-api-session-controller'
 
+    # Durable Bot roster: one named Bot owns exactly one ordinary Session.
+    - id: agent-bots
+      name: '@deepseek-ai/dsh-bots'
+
+    # Optional avatar generation through the configured OpenAI Images route;
+    # the Host keeps credentials and attachment writes off the Client plane.
+    - id: avatar-generation
+      name: '@deepseek-ai/dsh-avatar-generation'
+
     # One background job's observation record streamed over Typert Remote;
     # the roster rides the session control stream above.
     - id: job-controller
@@ -279,6 +288,11 @@
 
     - id: ui-sidebar
       name: '@deepseek-ai/dsh-client-ui-sidebar'
+
+    # Bot workspace: one durable Session per named Bot, with a dedicated
+    # roster and the embedded conversation surface.
+    - id: ui-bots
+      name: '@deepseek-ai/dsh-client-ui-bots'
 
     # The right Sidebar: one docking surface per session over ui-dockkit.
     - id: ui-sidebar-right

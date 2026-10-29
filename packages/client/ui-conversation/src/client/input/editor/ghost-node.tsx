@@ -1,7 +1,7 @@
 /**
  * Lexical decorator node carrying the ghost prediction: renders the
  * suggested text as non-editable, screen-reader-hidden ghost plus the
- * "Press Tab to accept" hint pill. Removed by the binding whenever the
+ * translated accept hint pill. Removed by the binding whenever the
  * draft is non-empty, the prediction clears, or the suggestion is accepted.
  */
 import type { LexicalNode, NodeKey, SerializedLexicalNode } from 'lexical'
@@ -159,7 +159,7 @@ export function GhostPredictionFace({ text }: { readonly text: string }): React.
   return (
     <span className="ghost-prediction-face" data-ghost-prediction-face="">
       <span className="ghost-prediction-text">{text}</span>
-      <span className="ghost-prediction-hint">Press Tab to accept</span>
+      <span className="ghost-prediction-hint" data-ghost-prediction-hint="" />
     </span>
   )
 }

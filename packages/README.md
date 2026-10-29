@@ -27,6 +27,7 @@ Every package lives in exactly one group; new packages join existing groups, and
 | Group | Role |
 |---|---|
 | [`core/`](core/README.md) | Product API spine: sessions, prompts, tools, agent services, and the concrete loop |
+| [`agents/`](agents/README.md) | Durable user-owned Bot roster and Host-side Bot avatar capabilities |
 | [`api/`](api/README.md) | Remote BFF assembly and Typert RPC gateway |
 | [`typert/`](typert/README.md) | Type graph generation, artifact loading, and runtime registry |
 | [`goal/`](goal/README.md) | Same-session goal persistence and lifecycle |

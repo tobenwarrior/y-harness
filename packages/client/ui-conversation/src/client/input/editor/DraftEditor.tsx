@@ -20,6 +20,8 @@ export interface DraftEditorProps {
   readonly workspacePickerOpen: boolean
   readonly onWorkspaceKeyDown: KeyboardEventHandler<HTMLDivElement>
   readonly hint: string | null
+  /** Translated keyboard hint shown beside a live ghost prediction. */
+  readonly ghostHint: string
   readonly showPlaceholder: boolean
 }
 
@@ -30,11 +32,15 @@ export interface DraftEditorProps {
  */
 export function DraftEditor({
   classNames: css, editor, scrollRef, editable, editorDisabled, phase, placeholderText, ariaLabel,
-  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, showPlaceholder,
+  workspaceTrigger, workspacePickerOpen, onWorkspaceKeyDown, hint, ghostHint, showPlaceholder,
 }: DraftEditorProps): ReactNode {
   return (
     <div ref={scrollRef} className={css.scroll} data-input-scroll>
-      <div className={css.grow} data-yh-part="composer-editor">
+      <div
+        className={css.grow}
+        data-yh-part="composer-editor"
+        style={{ '--dsh-ghost-prediction-hint': JSON.stringify(ghostHint) } as CSSProperties}
+      >
         <span className={css.terminalPrompt} data-yh-terminal="prompt" aria-hidden="true">{'>'}</span>
         <ComposerContentEditable
           editor={workspaceTrigger ? null : editor}

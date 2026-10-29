@@ -33,6 +33,8 @@ import sessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import jobRemote from '@deepseek-ai/dsh-api-job-controller/remote'
 import workspaceRemote from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import terminalRemote from '@deepseek-ai/dsh-api-terminal-controller/remote'
+import botsRemote from '@deepseek-ai/dsh-bots/remote'
+import avatarGenerationRemote from '@deepseek-ai/dsh-avatar-generation/remote'
 import workspaceFilesRemote from '@deepseek-ai/dsh-api-workspace-files/remote'
 import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 
@@ -73,6 +75,10 @@ export type {} from '@deepseek-ai/dsh-api-workspace-files/remote'
 export type * from '@deepseek-ai/dsh-api-workspace-files/types'
 export type {} from '@deepseek-ai/dsh-api-terminal-controller/remote'
 export type * from '@deepseek-ai/dsh-api-terminal-controller/types'
+export type {} from '@deepseek-ai/dsh-bots/remote'
+export type * from '@deepseek-ai/dsh-bots/types'
+export type {} from '@deepseek-ai/dsh-avatar-generation/remote'
+export type * from '@deepseek-ai/dsh-avatar-generation/types'
 // The forwarded-event allowlist's selection seat: without it in the consumer's
 // compilation face `TypertRemoteEvent` is `never` and every `$on` call fails.
 export type { ApiRemoteForwardedEvent } from '../types.ts'
@@ -191,7 +197,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
       pluginInventoryRemote, pluginManagerRemote, pluginRegistryProbeRemote, messageFeedbackRemote, sessionFeedbackRemote,
       fileUploadsRemote, sessionReferencesRemote,
       permissionPresetsRemote, subagentsRemote, sessionRemote, jobRemote, workspaceRemote, workspaceFilesRemote, terminalRemote,
-      officeToPdfRemote, userQuestionsRemote, skillLibraryRemote, codingSessionsRemote,
+      officeToPdfRemote, userQuestionsRemote, skillLibraryRemote, codingSessionsRemote, botsRemote, avatarGenerationRemote,
     ]) {
       disposers.push(await ctx.remote.$mount(contribution))
     }

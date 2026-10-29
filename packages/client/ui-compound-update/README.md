@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-The sidebar foot shows a small status badge only when a Compound revision is pending or its latest check failed. A successful current check stays quiet so the app-update affordance remains the only persistent update signal; the Compound updater checks and applies revisions automatically in the Host. Opening a pending or failed badge explains the result and keeps the deliberate refresh/apply actions available. When an update is available, one button applies it: the Host downloads the commit-pinned skill tree into a private overlay, verifies every file, and publishes the complete revision atomically. A failed attempt leaves the active revision untouched and reports why.
+The sidebar foot shows a badge when a Compound revision is pending or its latest check failed. A successful current check stays quiet so the app-update affordance remains the only persistent update signal; the Compound updater checks and applies revisions automatically in the Host. Opening a pending or failed badge explains the result and offers refresh/apply actions. When an update is available, one button applies it: the Host downloads the commit-pinned skill tree into a private overlay, verifies every file, and publishes the complete revision atomically. A failed attempt leaves the active revision untouched and reports why.
 
 ## Table of Contents
 

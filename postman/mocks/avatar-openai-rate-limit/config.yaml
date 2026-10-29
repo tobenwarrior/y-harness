@@ -1,0 +1,9 @@
+version: 1
+name: avatar-openai-rate-limit
+slug: avatar-openai-rate-limit
+protocol: http
+port: 4511
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true

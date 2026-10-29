@@ -118,6 +118,7 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     wide: true,
     expandSidebar: vi.fn(),
     useSessions: hook(sessionState([])),
+    useBotSessionIds: hook<readonly SessionId[]>([]),
     useSessionStatus: hook(noPendingInteraction),
     useSessionRetainInfo: () => undefined,
     usePanelInfo, useResource,
@@ -151,6 +152,21 @@ function rerender(b: ReturnType<typeof mount>, overrides: Partial<WorkspaceBrows
 }
 
 describe('WorkspaceBrowser', () => {
+  it('keeps Bot-owned Sessions out of the normal Workspace rows', () => {
+    const ordinary = summary('ordinary', 2)
+    const botSession = summary('bot-session-1', 3)
+    const b = mount({
+      useSessions: hook(sessionState([ordinary, botSession])),
+      useBotSessionIds: hook<readonly SessionId[]>([botSession.id]),
+      useWorkspaces: hook(workspaceState([])),
+    })
+    act(() => { b.store.actions.setGroupExpanded(UNGROUPED_KEY, true) })
+
+    expect(screen.getByText('ordinary')).toBeTruthy()
+    expect(screen.queryByText('bot-session-1')).toBeNull()
+    b.view.unmount()
+  })
+
   it.each([{ messages: en, common: commonEn }, { messages: zh, common: commonZh }])('shows localized fork failures and dismisses them', ({ messages, common }) => {
     const b = mount({ t: makeTranslate(messages, common) })
     act(() => { b.controls.forkFailed('unavailable') })

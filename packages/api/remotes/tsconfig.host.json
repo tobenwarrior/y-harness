@@ -78,6 +78,12 @@
       "path": "../terminal-controller/tsconfig.host.json"
     },
     {
+      "path": "../../agents/bots"
+    },
+    {
+      "path": "../../agents/avatar-generation"
+    },
+    {
       "path": "../../boot/plugin-manager"
     },
     {

@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../../vendor/cosmokit" },
+    { "path": "../../../vendor/schemastery" },
+    { "path": "../../../vendor/cordis" },
+    { "path": "../../attachment/attachment" },
+    { "path": "../../util/brand" },
+    { "path": "../../core/agent" },
+    { "path": "../../core/session" },
+    { "path": "../../api/session-controller/tsconfig.host.json" },
+    { "path": "../../storage/storage-domain" },
+    { "path": "../../typert/protocol" }
+  ]
+}

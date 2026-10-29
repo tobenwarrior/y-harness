@@ -1,0 +1,7 @@
+simulation: avatar-generation-rate-limit
+routing: path
+mocks:
+  - name: avatar-openai-rate-limit
+    routeKey: avatar
+    origin: api.openai.com
+    path: postman/mocks/avatar-openai-rate-limit

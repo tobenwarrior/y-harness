@@ -224,6 +224,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 
   interface SlotFactoryMap {
+    /** Reusable full Conversation frame for resident and embedded hosts. */
+    'conversation.panel': {
+      scope: 'session-maybe'
+      props: ConversationPanelInputProps
+      children: {
+        'conversation.header': { kind: 'single'; scope: 'session-maybe' }
+      }
+    }
     /** Reusable Conversation content instantiated by presentation hosts. */
     'conversation.content': {
       scope: 'session-maybe'
@@ -452,8 +460,16 @@ export interface HeroBrandMarkOwnerProps {
 /** Full props of the resident optional-Session Conversation shell. */
 export type ConversationSlotProps =
   PropsRuntime<'main.conversation'>
-  & PropsRenderSlots<'conversation.header'>
   & PropsRenderFactories
+
+/** Inputs for one reusable full Conversation frame occurrence. */
+export interface ConversationPanelInputProps {
+  /** Main keeps width handles; embedded hosts use the compact body treatment. */
+  variant: 'main' | 'embedded'
+}
+
+/** Full props of the reusable Conversation frame Factory definition. */
+export type ConversationPanelProps = FactoryComponentPropsOf<'conversation.panel'>
 
 /** Inputs shared by main and embedded Conversation content occurrences. */
 export interface ConversationContentInputProps {

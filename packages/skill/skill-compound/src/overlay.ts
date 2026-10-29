@@ -90,7 +90,7 @@ function olderVersion(left: string, right: string): boolean {
 }
 
 function abortError(signal: AbortSignal): Error {
-  const reason: unknown = signal.reason as unknown
+  const reason: unknown = signal.reason
   return reason instanceof Error ? reason : new Error(typeof reason === 'string' ? reason : 'The operation was aborted')
 }
 
@@ -131,7 +131,8 @@ async function boundedBody(response: Response, limit: number): Promise<Buffer> {
 }
 
 async function json(url: string, signal?: AbortSignal): Promise<unknown> {
-  return JSON.parse((await boundedBody(await request(url, signal), maxTotal)).toString('utf8')) as unknown
+  const body = (await boundedBody(await request(url, signal), maxTotal)).toString('utf8')
+  return JSON.parse(body)
 }
 
 function validateTreeEntries(entries: readonly Record<string, unknown>[]): readonly TreeEntry[] {

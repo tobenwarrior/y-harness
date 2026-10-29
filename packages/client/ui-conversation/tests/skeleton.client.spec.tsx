@@ -32,6 +32,7 @@ import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
   ComposerBarOwnerProps, ConversationContentInputProps, ConversationContentProps,
+  ConversationPanelProps,
   ConversationHeaderLineageOwnerProps, ConversationSessionHeaderSlotProps, ConversationSessionSlotProps, ConversationSlotProps,
   ConversationViewsProps,
 } from '../src/client/contract/slots.ts'
@@ -126,6 +127,10 @@ function mount(
   options: {
     /** Explicit undefined exercises the shell before a Session is selected. */
     sessionId?: SessionId | undefined
+    /** Render the Conversation as an embedded occurrence when testing host layout. */
+    variant?: 'main' | 'embedded'
+    /** Override the factory phase to exercise host-owned embedded states. */
+    contentPhase?: 'settling' | 'hero' | 'active'
     /** When true, mimic overlay:true chain siblings (hidden fallback + takeover). */
     overlayTakeover?: boolean
     /** The session list summary's `blank` flag — independent of the snapshot's. */
@@ -324,6 +329,17 @@ function mount(
   const renderFactorySlot = ((_name: string, input: ConversationContentInputProps, factoryOptions?: {
     slots?: Record<string, (props: never) => ReactNode>
   }) => {
+    if (_name === 'conversation.panel') {
+      return (
+        <ConversationMainPanel
+          {...runtimeProps}
+          variant={(input as { variant: 'main' | 'embedded' }).variant}
+          renderSlot={renderSlot as never}
+          renderFactorySlot={renderFactorySlot as never}
+          useFactorySlot={((_name: string, fallback: (props: never) => ReactNode) => fallback) as never}
+        />
+      )
+    }
     const common: ConversationViewsProps = {
       sessionId: SID,
       SessionProvider,
@@ -347,16 +363,19 @@ function mount(
       selectWorkspace: retargetWorkspace,
       t,
     }
+    const contentInput = options.contentPhase === undefined
+      ? input
+      : { ...input, phase: options.contentPhase, hero: options.contentPhase === 'hero' }
     const useFactorySlot = ((name: string, fallback: (props: never) => ReactNode) => (
       name === 'views' ? StableConversationViews : factoryOptions?.slots?.[name] ?? fallback
     )) as ConversationContentProps['useFactorySlot']
     return (
       <FactoryViewsTestContext.Provider value={common}>
-        <ConversationContent {...({ ...common, ...runtimeProps, ...input, useFactorySlot })} />
+        <ConversationContent {...({ ...common, ...runtimeProps, ...contentInput, useFactorySlot })} />
       </FactoryViewsTestContext.Provider>
     )
   }) as ConversationSlotProps['renderFactorySlot']
-  const runtimeProps: PropsRuntime<'main.conversation'> & Pick<ConversationSlotProps, 'SessionProvider'> = {
+  const runtimeProps: PropsRuntime<'main.conversation'> & { SessionProvider: ConversationContentProps['SessionProvider'] } = {
     usePanelInfo: selector => selector({ activePanelId: null }),
     sessionId,
     SessionProvider,
@@ -371,12 +390,24 @@ function mount(
     useInput,
     inputActions,
   }
-  const props: ConversationSlotProps = { ...runtimeProps, renderSlot, renderFactorySlot }
-  const view = render(<ConversationMainPanel {...props} />)
+  const props = { ...runtimeProps, renderFactorySlot }
+  const usePanelFactorySlot: ConversationPanelProps['useFactorySlot'] = <N extends never>(
+    _name: N,
+    _fallback: (...args: never[]) => ReactNode,
+  ) => {
+    throw new Error('conversation.panel has no local factories')
+  }
+  const panelProps = {
+    ...props,
+    variant: options.variant ?? 'main',
+    useFactorySlot: usePanelFactorySlot,
+    renderSlot,
+  }
+  const view = render(<ConversationMainPanel {...panelProps} />)
   return {
     view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
-    rerender: () => { view.rerender(<ConversationMainPanel {...props} />) },
+    rerender: () => { view.rerender(<ConversationMainPanel {...panelProps} />) },
   }
 }
 
@@ -531,6 +562,19 @@ describe('ConversationRoot resident composer', () => {
     expect(b.slotCalls).toContain('conversation.session.header.actions')
     expect(b.slotCalls).toContain('conversation.session.header.utilities')
     expect(b.slotCalls).toContain('conversation.session.header.corner')
+  })
+
+  it('marks an embedded blank active Session for bottom-docked composition', () => {
+    const b = mount(
+      sessionSnapshotOf({ blank: true }),
+      undefined,
+      undefined,
+      { variant: 'embedded', contentPhase: 'active' },
+    )
+    const content = b.view.container.querySelector('[data-conversation-content]')
+    expect(content?.getAttribute('data-content-phase')).toBe('active')
+    expect(content?.getAttribute('data-composer-placement')).toBe('bottom')
+    expect(content?.querySelector('[data-composer-seat]')).not.toBeNull()
   })
 
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {

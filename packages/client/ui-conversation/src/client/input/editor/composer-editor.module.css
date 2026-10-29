@@ -34,6 +34,9 @@
   border-radius: 7px;
   opacity: 0.5;
 }
+:global(.ghost-prediction-hint)::before {
+  content: var(--dsh-ghost-prediction-hint);
+}
 
 .textRef {
   display: inline-block;
