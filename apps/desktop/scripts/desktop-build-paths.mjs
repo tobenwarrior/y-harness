@@ -75,6 +75,16 @@ export function desktopTargetPlatform(target) {
 }
 
 /**
+ * Return pnpm overrides that install optional native dependencies for the target payload.
+ * @param {'mac-arm64' | 'mac-x64' | 'win-x64'} target - Supported Desktop target name.
+ * @returns {string[]} Pnpm CLI arguments for target-native optional dependencies.
+ */
+export function desktopTargetPnpmNativeArguments(target) {
+  const { platform, arch } = desktopTargetPlatform(target)
+  return ['--os', platform, '--cpu', arch]
+}
+
+/**
  * Resolve the paths owned by the target selected in a packaging environment.
  * @param {NodeJS.ProcessEnv} env - Packaging environment.
  * @param {NodeJS.Platform} hostPlatform - Build-host platform used when no target override exists.

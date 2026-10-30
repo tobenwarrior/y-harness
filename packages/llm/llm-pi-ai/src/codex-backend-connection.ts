@@ -10,11 +10,12 @@ import { launchEnvironmentOf } from '@yharness/launch-environment'
 import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
 import { CodexBackendAdapter, CodexBackendRuntime } from './codex-backend.ts'
 import type { CodexPreferences } from './codex-backend.ts'
-import { startCodexProcess } from './codex-backend-process.ts'
+import { prepareCodexHomeDirectories, startCodexProcess, type CodexProcessOptions } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
 import type {} from '@yharness/skill-library'
 import type {} from '@yharness/workspace'
+import type {} from '@yharness/subprocess'
 import { createCodexSkillLibraryProvider } from './codex-skill-library.ts'
 
 import type {} from '@yharness/coding-session'
@@ -30,7 +31,7 @@ export interface CodexBackendConnectionConfig {
 declare module '@yharness/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
 /** Independent optional model family. */
 export class CodexBackendConnection extends TypertRemoteService {
-  static inject = ['llm']
+  static inject = ['llm', 'subprocess']
   static Config = Schema.object({ nativeEvidenceMaxItems: Schema.natural().min(1).default(64) })
   private runtime: CodexBackendRuntime | undefined
   private initialization: Promise<CodexBackendRuntime> | undefined
@@ -56,7 +57,7 @@ export class CodexBackendConnection extends TypertRemoteService {
     this.initialization ??= (async () => {
       const env = launchEnvironmentOf(this.ctx)
       const required = (key: string): string => { const value = env.get(key)?.value; if (!value) throw new Error('This deployment has no isolated Codex backend configured.'); return value }
-      const options = { binary: required('DSH_CODEX_BINARY'), home: required('DSH_CODEX_HOME'), shellHome: required('DSH_CODEX_SHELL_HOME'), cwd: required('DSH_CODEX_CWD'), nodePath: required('DSH_CODEX_NODE') }
+      const options: CodexProcessOptions = { binary: required('DSH_CODEX_BINARY'), home: required('DSH_CODEX_HOME'), shellHome: required('DSH_CODEX_SHELL_HOME'), cwd: required('DSH_CODEX_CWD'), nodePath: required('DSH_CODEX_NODE') }
       const file = join(options.home, 'harness-backend.json')
       let preferences: CodexPreferences = { enabled: false, models: [], tiers: {}, auto: true }
       try {
@@ -92,28 +93,31 @@ export class CodexBackendConnection extends TypertRemoteService {
         if (registration === undefined) { if (routes.length > 0) registration = this.ctx.llm.registerAdapter(routes, adapter) }
         else registration.replace(routes)
       }
-      const runtime = new CodexBackendRuntime({ connect: handleRequest => Promise.resolve(startCodexProcess(options, handleRequest)),
-        resolveAccess: request => resolveCodexAccess(this.ctx, request), preferences,
-        resolveAttachments: () => this.ctx.get('attachments'),
-        resolveObservationProjectRoot: (request) => {
-          const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
-          if (session?.header.cwd === undefined) return undefined
-          return this.ctx.get('workspaceRegistry')?.list().find(project => project.path === session.header.cwd)?.path
-        },
-        connectionId: createHash('sha256').update(JSON.stringify([options.home, options.binary])).digest('hex'),
-        nativeEvidenceMaxItems: this.config.nativeEvidenceMaxItems,
-        observeNativeItem: (request, item) => {
-          const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
-          if (session === undefined) return
-          session.append('skill/native-item', item, { ignorable: true })
-        },
-        persist: async (next) => {
-          await mkdir(options.home, { recursive: true, mode: 0o700 })
-          const temporary = `${file}.${randomUUID()}.tmp`
-          await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 }); await rename(temporary, file)
-          register()
-          this.ctx.emit('llm/adapters-updated')
-        } })
+      const runtime = new CodexBackendRuntime({ connect: async (handleRequest) => {
+        await prepareCodexHomeDirectories(options)
+        return startCodexProcess(options, handleRequest, spec => this.ctx.subprocess.spawn(spec))
+      },
+      resolveAccess: request => resolveCodexAccess(this.ctx, request), preferences,
+      resolveAttachments: () => this.ctx.get('attachments'),
+      resolveObservationProjectRoot: (request) => {
+        const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
+        if (session?.header.cwd === undefined) return undefined
+        return this.ctx.get('workspaceRegistry')?.list().find(project => project.path === session.header.cwd)?.path
+      },
+      connectionId: createHash('sha256').update(JSON.stringify([options.home, options.binary])).digest('hex'),
+      nativeEvidenceMaxItems: this.config.nativeEvidenceMaxItems,
+      observeNativeItem: (request, item) => {
+        const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
+        if (session === undefined) return
+        session.append('skill/native-item', item, { ignorable: true })
+      },
+      persist: async (next) => {
+        await mkdir(options.home, { recursive: true, mode: 0o700 })
+        const temporary = `${file}.${randomUUID()}.tmp`
+        await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 }); await rename(temporary, file)
+        register()
+        this.ctx.emit('llm/adapters-updated')
+      } })
       this.runtime = runtime
       const adapter = new CodexBackendAdapter(runtime)
       register()

@@ -48,6 +48,13 @@ export function desktopTargetPlatform(target: DesktopAutoUpdateTarget): {
 }
 
 /**
+ * Return pnpm overrides that install optional native dependencies for the target payload.
+ * @param target - Supported Desktop target name.
+ * @returns Pnpm CLI arguments for target-native optional dependencies.
+ */
+export function desktopTargetPnpmNativeArguments(target: DesktopAutoUpdateTarget): readonly string[]
+
+/**
  * Resolve the paths owned by the target selected in a packaging environment.
  * @param env - Packaging environment.
  * @param hostPlatform - Build-host platform used when no target override exists.

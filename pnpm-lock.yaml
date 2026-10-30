@@ -10400,6 +10400,9 @@ importers:
       '@earendil-works/pi-ai':
         specifier: ^0.87.1
         version: 0.87.1(patch_hash=b9bcce474fb2ac44633dff0fa722816a5bff5451b4575d5874035ea14ba70a4f)(@modelcontextprotocol/sdk@1.29.0(supports-color@9.4.0)(zod@4.4.3))(supports-color@9.4.0)(ws@8.21.0)(zod@4.4.3)
+      '@openai/codex':
+        specifier: 0.153.4
+        version: 0.153.4
       '@yharness/brand':
         specifier: workspace:*
         version: link:../../util/brand

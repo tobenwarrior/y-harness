@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareDevelopmentProject } from '../scripts/development-project.ts'
+import { DESKTOP_CODEX_ENVIRONMENT_NAMES, desktopCodexNodePath, resolveDesktopCodexEnvironment } from '../src/codex-environment.ts'
 import { DesktopHostProcess } from '../src/host-process.ts'
 import { DESKTOP_HOST_PROTOCOL_VERSION } from '../src/host-protocol.ts'
 import { DesktopProjectManager } from '../src/project-manager.ts'
@@ -54,16 +55,71 @@ describe.skipIf(!existsSync(builtHost))('built Desktop development boot', () => 
 
     // The real Host composition expects the development primary-runtime support tree.
     cpSync(join(repository, 'packages/skill/skill-office/assets'), join(root, 'runtime/office-skills'), { recursive: true })
-    const nodeBin = join(root, 'runtime/primary-runtime/dependencies/node/bin')
+    const primaryRuntime = join(root, 'runtime/primary-runtime')
+    const nodeBin = join(primaryRuntime, 'dependencies/node/bin')
     mkdirSync(nodeBin, { recursive: true })
     cpSync(process.execPath, join(nodeBin, process.platform === 'win32' ? 'node.exe' : 'node'))
 
     const paths = resolveDesktopPaths(home)
     await new DesktopProjectManager(paths, { dsh: project }).applyRelease()
-    const host = new DesktopHostProcess(process.execPath, project, paths.profile)
+    const codex = resolveDesktopCodexEnvironment({
+      runtimeDir: project,
+      trustedDevelopmentRoot: repository,
+      dshHome: home,
+      cwd: paths.profile,
+      nodePath: desktopCodexNodePath(primaryRuntime),
+    })
+    expect(codex.reason).toBeUndefined()
+    expect(codex.environment).toMatchObject({
+      DSH_CODEX_NODE: desktopCodexNodePath(primaryRuntime),
+      DSH_CODEX_HOME: join(home, 'native-codex'),
+      DSH_CODEX_SHELL_HOME: join(home, 'native-codex-shell'),
+      DSH_CODEX_CWD: paths.profile,
+    })
+    for (const name of DESKTOP_CODEX_ENVIRONMENT_NAMES) expect(codex.environment[name]).toEqual(expect.any(String))
+    expect(realpathSync(codex.environment.DSH_CODEX_BINARY!)).toContain(realpathSync(repository))
+    expect(codex.environment.DSH_CODEX_BINARY).toContain('@openai/codex')
+
+    const hostEnvironment = {
+      ...process.env,
+      DSH_HOME: home,
+      DSH_TELEMETRY_MODE: 'DISABLED',
+      ...codex.environment,
+    }
+    const host = new DesktopHostProcess(process.execPath, project, paths.profile, undefined, hostEnvironment)
     try {
       const ready = await host.start()
       expect(new URL(ready.url).hostname).toBe('127.0.0.1')
+
+      // Exchange the one-time process token for the normal browser cookie before using the API.
+      const authorization = await fetch(ready.url, { redirect: 'manual' })
+      expect(authorization.status).toBe(303)
+      const cookie = authorization.headers.get('set-cookie')?.split(';', 1)[0]
+      expect(cookie).toBeDefined()
+      const endpoint = new URL(ready.url)
+      endpoint.pathname = '/api/codexBackend/getState'
+      endpoint.search = ''
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: cookie! },
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'development-boot-codex-state',
+          method: 'codexBackend/getState',
+          payload: { args: {} },
+        }),
+      })
+      expect(response.status).toBe(200)
+      const envelope = await response.json() as {
+        readonly type: string
+        readonly rpcId: string
+        readonly result: { readonly ok: boolean; readonly value?: unknown }
+      }
+      expect(envelope).toMatchObject({
+        type: 'server-response',
+        rpcId: 'development-boot-codex-state',
+        result: { ok: true, value: { enabled: false, connected: false, busy: false, running: 0, tiers: {} } },
+      })
     } finally {
       await host.stop()
     }

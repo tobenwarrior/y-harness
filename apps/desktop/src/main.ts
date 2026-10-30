@@ -4,7 +4,7 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -59,6 +59,7 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
 import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
+import { applyDesktopCodexEnvironment, desktopCodexNodePath, resolveDesktopCodexEnvironment } from './codex-environment.ts'
 
 let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => {}
@@ -158,6 +159,10 @@ function runtimeResources(): RuntimeResources {
   const dsh = (development ? process.env.DSH_DESKTOP_DSH_DIR : undefined)
     ?? (development ? join(app.getAppPath(), '.desktop-build', 'development', 'project') : join(app.getAppPath(), 'dsh'))
   return { node, nodeBin, pnpm, dsh }
+}
+
+function packagedCodexRuntimeDirectory(): string {
+  return join(process.resourcesPath, 'app.asar.unpacked', 'dsh')
 }
 
 function desktopWebFrontendDirectory(runtime: string): string {
@@ -330,6 +335,21 @@ async function main(): Promise<void> {
     : join(process.resourcesPath, 'runtime', 'primary-runtime')
   const activeProject = paths.profile
   const manager = new DesktopProjectManager(paths, resources)
+  const configuredTargetArch = development ? process.env.DSH_DESKTOP_TARGET_ARCH : undefined
+  const codexTargetArch = configuredTargetArch === 'arm64' || configuredTargetArch === 'x64'
+    ? configuredTargetArch
+    : process.arch
+  const codexEnvironment = resolveDesktopCodexEnvironment({
+    runtimeDir: resources.dsh,
+    ...(development ? {} : { unpackedRuntimeDir: packagedCodexRuntimeDirectory() }),
+    ...(development ? { trustedDevelopmentRoot: resolve(app.getAppPath(), '..', '..') } : {}),
+    dshHome: resolve(activeProject, '..', '..'),
+    cwd: activeProject,
+    nodePath: desktopCodexNodePath(primaryRuntime),
+    targetPlatform: process.platform,
+    targetArch: codexTargetArch,
+  })
+  if (codexEnvironment.reason !== undefined) console.warn(`desktop Codex backend unavailable: ${codexEnvironment.reason}`)
   // Dock and Finder launches inherit only launchd's environment; every Host shares one login-shell read.
   const loginShellRead = new AbortController()
   // The probe runs in its own process group, which outlives Desktop unless the read is aborted.
@@ -449,8 +469,12 @@ async function main(): Promise<void> {
     () => 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
   const backend = new DesktopBackendController((onFailure) => {
     const hostInspectPort = developmentHostInspectPort(development)
+    const launchEnvironment = {
+      ...applyDesktopCodexEnvironment(hostEnvironment, codexEnvironment),
+      DSH_CLIENT_VERSION: desktopClientVersion(),
+    }
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
+      hostInspectPort, launchEnvironment, onFailure,
       primaryRuntime,
       resources, (next) => { platformView.setSession(next) })
     return {
@@ -649,7 +673,7 @@ async function main(): Promise<void> {
     // A confirmation on a hidden window would go unseen, so it waits for the next show; the mandatory
     // flow keeps its own taskbar and Dock attention instead.
     if (!isMandatory()) await windowShown()
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- A quit can begin while the show is awaited.
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- A quit can begin while the show is awaited.
     if (quitting) return state
     return updates.install(version)
   }
@@ -782,6 +806,7 @@ async function main(): Promise<void> {
     if (window === undefined || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
       || typeof next !== 'string') return
     const current = resolveDesktopStartupLocale(next, systemLanguages)
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- Keep the guard when additional locales are enabled.
     if (current.id === locale.id) return
     locale = current
     platformView.notifyLocaleChanged()

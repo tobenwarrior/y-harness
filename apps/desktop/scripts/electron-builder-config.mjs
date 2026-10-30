@@ -72,7 +72,12 @@ export function createElectronBuilderConfig(
   let primaryRuntimeDestination
   let dshDestination
   let windowsCode = []
+  // The standalone primary-runtime Node cannot read JavaScript or extensionless native files
+  // through Electron's ASAR virtual filesystem. Keep the Codex wrapper, its target package,
+  // and the adapter manifest on the physical side of app.asar; the shell and Host still use
+  // the ordinary archived dsh tree.
   const unpack = ['**/*.{node,dylib,dll,so,exe}', '**/*.so.*', '**/spawn-helper', '**/@vscode/ripgrep-*/bin/rg',
+    '**/node_modules/@yharness/llm-pi-ai/package.json', '**/node_modules/@openai/codex/**', '**/node_modules/@openai/codex-*/**',
     `**/node_modules/@deepseek-ai/libreoffice-kit-${resolvedPlatform}-${resolvedArch}/**/*`]
   const windowsSigner = packagesWindows && !unsigned
     ? createWindowsTokenSigner({

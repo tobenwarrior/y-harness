@@ -2,6 +2,7 @@ import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   desktopTargetBuildPaths,
+  desktopTargetPnpmNativeArguments,
   desktopTargetPlatform,
   developmentRuntimeDirectory,
   resolveDesktopBuildTarget,
@@ -55,6 +56,12 @@ describe('desktop build paths', () => {
     expect(desktopTargetPlatform('mac-x64')).toEqual({ platform: 'darwin', arch: 'x64' })
     expect(desktopTargetPlatform('win-x64')).toEqual({ platform: 'win32', arch: 'x64' })
     expect(() => desktopTargetPlatform('linux-x64' as 'mac-x64')).toThrow(/unsupported target/u)
+  })
+
+  it('selects the target native optional dependencies during pnpm installation', () => {
+    expect(desktopTargetPnpmNativeArguments('mac-arm64')).toEqual(['--os', 'darwin', '--cpu', 'arm64'])
+    expect(desktopTargetPnpmNativeArguments('mac-x64')).toEqual(['--os', 'darwin', '--cpu', 'x64'])
+    expect(desktopTargetPnpmNativeArguments('win-x64')).toEqual(['--os', 'win32', '--cpu', 'x64'])
   })
 
   it('resolves environment overrides and rejects unsupported targets', () => {

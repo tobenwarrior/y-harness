@@ -70,6 +70,7 @@
     "@yharness/workspace": "workspace:*"
   },
   "dependencies": {
+    "@openai/codex": "0.153.4",
     "@yharness/brand": "workspace:*",
     "@yharness/util-values": "workspace:*",
     "@yharness/schemastery": "workspace:~",
