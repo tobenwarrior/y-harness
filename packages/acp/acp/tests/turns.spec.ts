@@ -1,8 +1,8 @@
-import { createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type StreamChunk } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@yharness/session'
 import {
   errorResponse,
   makeBridgeHarness,
@@ -11,7 +11,7 @@ import {
   type BridgeHarness,
 } from './harness.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

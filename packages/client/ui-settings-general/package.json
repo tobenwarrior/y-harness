@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-settings-general",
+  "name": "@yharness/client-ui-settings-general",
   "description": "Settings ownerless-copy and product onboarding plugin: the General section, shell trigger/header chrome content, settings dictionaries, and the versioned welcome notice",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/ui-settings-general"
   },
   "type": "module",
@@ -31,12 +31,12 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-api-remotes",
-        "@deepseek-ai/dsh-client-ui-sidebar",
-        "@deepseek-ai/dsh-client-shortcuts"
+        "@yharness/client-ui-settings",
+        "@yharness/client-locale",
+        "@yharness/client-connection",
+        "@yharness/api-remotes",
+        "@yharness/client-ui-sidebar",
+        "@yharness/client-shortcuts"
       ],
       "platform": "web"
     }
@@ -47,32 +47,32 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-api-remotes": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-client-locale": "workspace:*",
-    "@deepseek-ai/dsh-client-store": "workspace:*",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-primitives": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-renderer": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-session": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-settings": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-sidebar": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-slots": "workspace:*",
-    "@deepseek-ai/dsh-remote-mock": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/api-remotes": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/client-locale": "workspace:*",
+    "@yharness/client-store": "workspace:*",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/client-ui-primitives": "workspace:*",
+    "@yharness/client-ui-renderer": "workspace:*",
+    "@yharness/client-ui-session": "workspace:*",
+    "@yharness/client-ui-settings": "workspace:*",
+    "@yharness/client-ui-sidebar": "workspace:*",
+    "@yharness/client-ui-slots": "workspace:*",
+    "@yharness/remote-mock": "workspace:*",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
     "clsx": "^2.0.0",
     "react": "^18.2.0",
-    "@deepseek-ai/dsh-settings": "workspace:*",
+    "@yharness/settings": "workspace:*",
     "react-dom": "^18.2.0",
-    "@deepseek-ai/dsh-client-shortcuts": "workspace:*"
+    "@yharness/client-shortcuts": "workspace:*"
   },
   "files": [
     "lib/index.js",

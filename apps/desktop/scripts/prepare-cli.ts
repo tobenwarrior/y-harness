@@ -1,4 +1,4 @@
-/** Package terminal launch scripts that reuse the installed Electron runtime. */
+/** Package canonical and legacy terminal launch scripts that reuse the installed Electron runtime. */
 
 import { chmodSync, copyFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -9,9 +9,11 @@ import { join } from 'node:path'
  * @param platform - Target Desktop operating system.
  */
 export function prepareDesktopCli(destination: string, platform: 'darwin' | 'win32'): void {
-  const name = platform === 'win32' ? 'dsh.cmd' : 'dsh'
-  const command = join(destination, 'bin', name)
   mkdirSync(join(destination, 'bin'), { recursive: true })
-  copyFileSync(join(import.meta.dirname, '..', 'cli', name), command)
-  if (platform === 'darwin') chmodSync(command, 0o755)
+  const names = platform === 'win32' ? ['yharness.cmd', 'dsh.cmd'] : ['yharness', 'dsh']
+  for (const name of names) {
+    const command = join(destination, 'bin', name)
+    copyFileSync(join(import.meta.dirname, '..', 'cli', name), command)
+    if (platform === 'darwin') chmodSync(command, 0o755)
+  }
 }

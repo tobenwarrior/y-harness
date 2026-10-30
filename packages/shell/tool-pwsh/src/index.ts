@@ -1,7 +1,7 @@
 /**
  * Model-facing PowerShell Consumer of the `ctx.shell` capability seam. Intended for
  * Windows compositions where a PowerShell executor (e.g.
- * `@deepseek-ai/dsh-pwsh-local`) backs `ctx.shell`; the tool contract is
+ * `@yharness/pwsh-local`) backs `ctx.shell`; the tool contract is
  * PowerShell-dialect: native `C:\...` paths and `$env:NAME` variables.
  *
  * Behavior mirrors `dsh-tool-bash` call-for-call: foreground and
@@ -15,32 +15,32 @@
  * `ctx.approval`), and the bash marker/truncation rendering story. UI
  * presentation mirrors the bash tool's too: a completed foreground call is
  * a terminal card with the parsed exit-status pill, using the shared
- * exit-status parse from `@deepseek-ai/dsh-shell`.
+ * exit-status parse from `@yharness/shell`.
  *
- * @module @deepseek-ai/dsh-tool-pwsh
+ * @module @yharness/tool-pwsh
  */
 
 import { isAbsolute, resolve as resolvePath } from 'node:path'
-import { FiberState } from '@deepseek-ai/cordis'
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { defineTool, TOOL_ABORTED } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, TerminalCallView, ToolDefinition, ToolExecution, ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools'
-import { HarnessError } from '@deepseek-ai/dsh-llm'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { JobId, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
-import type {} from '@deepseek-ai/dsh-shell-env'
-import type {} from '@deepseek-ai/dsh-user-approval'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
-import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
-import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
-import { parseExitStatus } from '@deepseek-ai/dsh-shell'
+import { FiberState } from '@yharness/cordis'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { defineTool, TOOL_ABORTED } from '@yharness/tools'
+import type { GenericCallView, TerminalCallView, ToolDefinition, ToolExecution, ToolResult, ToolResultView } from '@yharness/tools'
+import { HarnessError } from '@yharness/llm'
+import type { Agent } from '@yharness/agent'
+import type { JobId, JobRegistry, JobView } from '@yharness/jobs'
+import type {} from '@yharness/shell-env'
+import type {} from '@yharness/user-approval'
+import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
+import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@yharness/sandbox'
+import type { SandboxPolicyService } from '@yharness/sandbox-policy'
+import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@yharness/shell'
+import { parseExitStatus } from '@yharness/shell'
 import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
 import { renderPwshJobRead, renderPwshPromoted, renderPwshResult } from './render.ts'
 import type { RenderablePwshResult } from './render.ts'
 
-declare module '@deepseek-ai/dsh-jobs' {
+declare module '@yharness/jobs' {
   interface JobKindMap {
     pwsh: 'pwsh'
   }
@@ -520,7 +520,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             throw new Error('run_in_background is disabled for this deployment (enableRunInBackground: false)')
           }
           if (jobs === undefined) {
-            throw new Error('background jobs unavailable: load @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs')
+            throw new Error('background jobs unavailable: load @yharness/jobs and @yharness/tool-jobs')
           }
           // The caller owns cancellation until ctx.jobs commits detached ownership.
           if (exec.signal.aborted) throw toolAborted()

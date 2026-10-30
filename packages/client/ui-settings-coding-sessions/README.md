@@ -3,7 +3,7 @@ description: "Native coding-session mirrors, reviewed ordinary-Y linked imports,
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-settings-coding-sessions
+# @yharness/client-ui-settings-coding-sessions
 
 ## Summary
 

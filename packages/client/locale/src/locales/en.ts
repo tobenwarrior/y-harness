@@ -1,6 +1,4 @@
-import type { CommonKey } from './zh.ts'
-
-/** en base dictionary for the common namespace, checked complete against the zh key set. */
+/** English base dictionary for the common namespace. */
 export const en = {
   'ok': 'OK',
   'cancel': 'Cancel',
@@ -43,4 +41,7 @@ export const en = {
   'markdown.truncatedCharacters': '… truncated at {total} characters',
   'number.thousand': '{value}K',
   'number.million': '{value}M',
-} satisfies Record<CommonKey, string>
+} satisfies Record<string, string>
+
+/** Common namespace keys used by typed dictionary consumers. */
+export type CommonKey = keyof typeof en

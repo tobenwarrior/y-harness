@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { createSessionFormatCatalog } from '@deepseek-ai/dsh-session-format'
-import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
-import { releasedV0SessionFormatCodec, releasedV1SessionFormatCodec, sessionFormatV0ToV1 } from '@deepseek-ai/dsh-session-format-v0-to-v1'
-import { sessionFormatV1ToV2 } from '@deepseek-ai/dsh-session-format-v1-to-v2'
+import { createSessionFormatCatalog } from '@yharness/session-format'
+import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonObject } from '@yharness/session-format'
+import { releasedV0SessionFormatCodec, releasedV1SessionFormatCodec, sessionFormatV0ToV1 } from '@yharness/session-format-v0-to-v1'
+import { sessionFormatV1ToV2 } from '@yharness/session-format-v1-to-v2'
 import { assertReleasedV3Header, releasedV2SessionFormatCodec, releasedV3SessionFormatCodec, restoreReleasedV3Artifact, sessionFormatV2ToV3 } from '../src/index.ts'
 
 const header = { version: 2, id: 'canonical:code:session', createdAt: 1, isSeeded: false, delegationDepth: 0 }
@@ -38,7 +38,7 @@ function reopen(artifact: SessionFormatArtifact): SessionFormatArtifact {
 const opening = [event('turn/start', 0, { turn: 1 }), event('step/start', 1, { turn: 1, step: 1 })]
 const message = {
   id: 'message:code:1', role: 'user', source: { kind: 'plugin', plugin: 'tools-code-mode' },
-  content: [{ type: 'text', text: 'tools-code-mode tool/code-dispatch code 图片' }],
+  content: [{ type: 'text', text: 'tools-code-mode tool/code-dispatch code \u{56FE}\u{7247}' }],
 }
 const dispatch = {
   rootCallId: 'root:code:1', parentCallId: 'root:code:1', subCallId: 'root:code:1:code:2',

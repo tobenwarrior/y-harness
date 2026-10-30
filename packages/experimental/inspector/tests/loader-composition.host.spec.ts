@@ -4,13 +4,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
-import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
-import type { BrowserAuth } from '@deepseek-ai/dsh-client-connection/src/browser-auth.ts'
+import { Context } from '@yharness/cordis'
+import Include from '@yharness/cordis-plugin-include'
+import Loader from '@yharness/cordis-plugin-loader'
+import WebServer from '@yharness/host-webserver'
+import { HostConnectionService } from '@yharness/client-connection'
+import { composeEntries, loadOverlayPatches } from '@yharness/app-boot'
+import type { BrowserAuth } from '@yharness/client-connection/src/browser-auth.ts'
 import open from 'open'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Inspector from '../src/index.ts'
@@ -38,7 +38,7 @@ describe('experimental Inspector through a real Loader composition', () => {
     ))])
     const inspector = entries.find(entry => entry.id === 'experimental-inspector')!
     await writeFile(configPath, JSON.stringify([
-      { name: '@deepseek-ai/dsh-host-webserver', config: { host: '127.0.0.1', port: 0 } },
+      { name: '@yharness/host-webserver', config: { host: '127.0.0.1', port: 0 } },
       { name: 'fixture:connection' },
     ]))
 
@@ -56,9 +56,9 @@ describe('experimental Inspector through a real Loader composition', () => {
     })
     context.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
-      ['@deepseek-ai/dsh-host-webserver', WebServer],
+      ['@yharness/host-webserver', WebServer],
       ['fixture:connection', (ctx: Context) => { new HostConnectionService(ctx, [], {} as BrowserAuth) }],
-      ['@deepseek-ai/dsh-experimental-inspector', Inspector],
+      ['@yharness/experimental-inspector', Inspector],
     ])
     context.loader.internal = {
       version: 'v2',
@@ -80,7 +80,7 @@ describe('experimental Inspector through a real Loader composition', () => {
       .filter(entry => entry.fiber === undefined && !entry.disabled))
       .toEqual([])
     const inspectorEntry = [...context.loader.entries()]
-      .find(entry => entry.options.name === '@deepseek-ai/dsh-experimental-inspector')
+      .find(entry => entry.options.name === '@yharness/experimental-inspector')
     expect(inspectorEntry?.disabled).toBe(false)
     expect(open).toHaveBeenCalledTimes(flag ? 1 : 0)
     const api = (context.connection as HostConnectionService).createSharedFetchHandler('/api')

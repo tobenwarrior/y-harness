@@ -29,7 +29,7 @@ describe('BootPage', () => {
     expect(el.textContent).toContain('Loading plugins…')
   })
 
-  it.each(['Y Harness', 'Atlas', '星图 $&'])('keeps the literal %s wordmark through progress, failure and retry', async (name) => {
+  it.each(['Y Harness', 'Atlas', 'Étoile $&'])('keeps the literal %s wordmark through progress, failure and retry', async (name) => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', name)
     const { el, page } = mount()
     const wordmark = el.firstElementChild?.firstElementChild?.firstElementChild
@@ -78,11 +78,11 @@ describe('BootPage', () => {
 
   it('lists failed entries', () => {
     const { el, page } = mount()
-    page.setState('@deepseek-ai/dsh-client-ui-layout', 'failed')
+    page.setState('@yharness/client-ui-layout', 'failed')
     page.setState('ok', 'active')
-    page.setState('@deepseek-ai/dsh-client-ui-tool', 'failed')
-    expect(el.textContent).toContain('@deepseek-ai/dsh-client-ui-layout')
-    expect(el.textContent).toContain('@deepseek-ai/dsh-client-ui-tool')
+    page.setState('@yharness/client-ui-tool', 'failed')
+    expect(el.textContent).toContain('@yharness/client-ui-layout')
+    expect(el.textContent).toContain('@yharness/client-ui-tool')
     expect(el.textContent).not.toContain('ok')
     expect(el.textContent).not.toContain('Loading plugins…')
   })
@@ -102,18 +102,18 @@ describe('BootPage', () => {
     expect(el.childNodes).toHaveLength(0)
   })
 
-  it('keeps localized retry available while plugin locale services are absent', async () => {
+  it('falls back to English for a legacy Chinese document locale while plugin locale services are absent', async () => {
     document.documentElement.lang = 'zh-CN'
     const { el, page } = mount()
-    expect(el.textContent).toContain('正在加载插件')
+    expect(el.textContent).toContain('Loading plugins…')
     const retry = vi.fn(async () => { throw new Error('retry failed') })
     page.fail('layout failed', retry)
     const button = el.querySelector<HTMLButtonElement>('[data-dsh-boot-retry]')
-    expect(button?.textContent).toBe('重试')
+    expect(button?.textContent).toBe('Retry')
     button?.click()
     expect(button?.disabled).toBe(true)
     await vi.waitFor(() => { expect(el.textContent).toContain('retry failed') })
     expect(retry).toHaveBeenCalledOnce()
-    expect(el.textContent).toContain('插件加载失败')
+    expect(el.textContent).toContain('Failed to load plugins')
   })
 })

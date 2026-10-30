@@ -1,13 +1,13 @@
 ---
-description: "Shared resolution of the DeepSeek Harness home and user-data paths for packages that need one consistent root, tilde expansion, and stable watch paths."
+description: "Shared resolution of the Y Harness home and user-data paths for packages that need one consistent root, tilde expansion, migration, and stable watch paths."
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-home-paths
+# @yharness/home-paths
 
 ## Summary
 
-`@deepseek-ai/dsh-home-paths` lets package authors resolve one DeepSeek Harness data root and derive child paths from it. An explicit path wins over `$DSH_HOME`, which wins over `~/.dsh`; blank environment values are ignored. Its public helpers can render the root without revealing an absolute machine path, expand only bare or current-user tilde forms, and canonicalize watch targets whose final components do not yet exist. Use it as a direct library dependency, not through `cordis.yml`.
+`@yharness/home-paths` lets package authors resolve one Y Harness data root and derive child paths from it. New callers use `$YH_HOME` and `~/.yharness`; existing `$DSH_HOME` values and `~/.dsh` homes remain readable. An explicit migration copies a legacy home without deleting or overwriting data. Use it as a direct library dependency, not through `cordis.yml`.
 
 ## Table of Contents
 
@@ -27,20 +27,35 @@ Use these helpers wherever a package must agree with the rest of the harness abo
 ### Resolving the home
 
 ```ts
-import { resolveDshHome, dshHomePath, dshCachePath } from '@deepseek-ai/dsh-home-paths'
+import { resolveYhHome, yhHomePath, yhCachePath } from '@yharness/home-paths'
 
-const home = resolveDshHome()                // configured path, else $DSH_HOME, else ~/.dsh
-const settings = dshHomePath('settings')     // join one child onto the resolved home
-const cache = dshCachePath('models')         // $DSH_HOME/cache/models, default ~/.dsh/cache/models
+const home = resolveYhHome()                // configured path, else $YH_HOME, then legacy values, then ~/.yharness
+const settings = yhHomePath('settings')     // join one child onto the resolved home
+const cache = yhCachePath('models')         // $YH_HOME/cache/models, default ~/.yharness/cache/models
 ```
 
-An explicit configured path has the highest precedence, then `$DSH_HOME`, then the default `~/.dsh`. An empty or whitespace-only `$DSH_HOME` is treated as unset, so a blank override never resolves the home to the current working directory.
+For the canonical resolver, an explicit configured path has the highest precedence, followed by a non-empty `$YH_HOME`, a non-empty `$DSH_HOME`, and safe default selection. A populated `~/.dsh` wins over a missing, empty, or partially-created `~/.yharness`, so a failed first launch cannot hide existing data. A populated `~/.yharness` wins when the legacy default is absent or empty. If both roots contain data, the resolver keeps using the legacy root until the caller explicitly selects or migrates the canonical root. Blank environment values are ignored.
 
-`dshCachePath(...segments)` derives paths from the resolved home's `cache` directory. With no segments it returns the cache directory itself. Pass an initial options object, `dshCachePath({ dshHome: home }, ...segments)`, to use an explicit configured home with the same precedence and tilde expansion. It returns an absolute path without creating directories.
+`resolveDshHome`, `dshHomePath`, and `dshCachePath` remain available to old package consumers. They now delegate the shared canonical default selection, so existing callers follow `$YH_HOME` and `~/.yharness` without creating a second root; an explicit `dshHome` option and `$DSH_HOME` still work.
+
+`yhCachePath(...segments)` derives paths from the resolved home's `cache` directory. With no segments it returns the cache directory itself. Pass an initial options object, `yhCachePath({ yhHome: home }, ...segments)`, to use an explicit configured home with the same precedence and tilde expansion. The compatibility `dshCachePath` accepts its existing `{ dshHome }` option. Both helpers return an absolute path without creating directories.
+
+### Migrating an existing home
+
+```ts
+import { migrateLegacyHome } from '@yharness/home-paths'
+
+const result = await migrateLegacyHome()
+if (result.status === 'conflicts') {
+  // Resolve each result.conflicts path before using the canonical home.
+}
+```
+
+`migrateLegacyHome` copies `~/.dsh` to `~/.yharness` by default. It never removes the source or overwrites an existing destination file. Existing directories are traversed, identical files are counted as unchanged, and differing files are returned as conflicts. Pass `{ source, target }` for an explicit migration; the helper rejects identical or nested source and target paths and reports a missing source without creating a destination. The helper does not lock either home, so the caller must fully stop old and new writers before copying. A failed copy may leave a partial destination; rerun it after resolving conflicts.
 
 ### Displaying a home
 
-For user-facing paths, render the root symbolically rather than as a machine path: the default home displays as `~/.dsh` and any configured home displays as `$DSH_HOME`. The display form never leaks an absolute machine path.
+For user-facing paths, render the root symbolically rather than as a machine path. `yhHomeDisplay` returns `~/.yharness` for the canonical default, `~/.dsh` for the legacy default, and `$YH_HOME` for a configured home. The display form never leaks an absolute machine path. `dshHomeDisplay` retains its legacy labels.
 
 ### Expanding user paths
 
@@ -68,7 +83,7 @@ The package is built on one principle: all harness user data lives under one roo
 
 ### Resolution rules
 
-`resolveDshHome` reads the explicit override, then `$DSH_HOME`, then falls back to the operating-system home joined with `.dsh`. The chosen value is tilde-expanded and normalized to an absolute path; `dshHomePath` joins child segments with Node's platform path rules. `dshHomeDisplay` compares the resolved path against the default root and returns the symbolic label, so a configured home never leaks its absolute path.
+`resolveYhHome` reads the explicit override, then canonical and legacy environment overrides, then inspects both default roots. It selects the populated legacy root whenever the canonical root might be partial, and otherwise selects the canonical root. The chosen value is tilde-expanded and normalized to an absolute path; `yhHomePath` joins child segments with Node's platform path rules. `migrateLegacyHome` is deliberately separate from resolution, so merely starting a new build cannot delete or rewrite existing user data. The `dsh`-named helpers call this same resolver for source compatibility.
 
 ### Canonicalization mechanics
 

@@ -3,7 +3,7 @@ description: "Settings domain base plugin: shared configuration forms, schema se
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-settings
+# @yharness/client-ui-settings
 
 ## Summary
 

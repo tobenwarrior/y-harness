@@ -22,7 +22,7 @@ afterEach(async () => {
 type PolicyBehavior =
   | { kind: 'result'; value: unknown }
   | { kind: 'throw'; message: string; diagnostic: string }
-async function fixture(summary = 'Original coding session · 雪', policy: PolicyBehavior = {
+async function fixture(summary = 'Original coding session · \u{96EA}', policy: PolicyBehavior = {
   kind: 'result', value: { effective: {}, provenance: {}, sources: [] },
 }) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'y-built-claude-source-'))); roots.push(root)
@@ -40,7 +40,7 @@ async function observe(operation, options) {
 }
 export async function listSessions(options) { await observe('listSessions', options); return [metadata] }
 export async function getSessionInfo(id, options) { if (id !== metadata.sessionId) throw new Error('fixture ID mismatch'); await observe('getSessionInfo', options); return metadata }
-export async function getSessionMessages(id, options) { if (id !== metadata.sessionId) throw new Error('fixture ID mismatch'); await observe('getSessionMessages', options); return [{ type: 'user', uuid: 'native-event', session_id: id, message: { content: 'Original message · 雪' }, parent_tool_use_id: null, parent_agent_id: null }] }
+export async function getSessionMessages(id, options) { if (id !== metadata.sessionId) throw new Error('fixture ID mismatch'); await observe('getSessionMessages', options); return [{ type: 'user', uuid: 'native-event', session_id: id, message: { content: 'Original message · \u{96EA}' }, parent_tool_use_id: null, parent_agent_id: null }] }
 export async function resolveSettings(options) {
   if (process.env.CLAUDE_CONFIG_DIR !== scope.profileRoot || process.env.HOME !== scope.shellHome || options.cwd !== scope.directory
     || !Array.isArray(options.settingSources) || options.settingSources.length !== 0
@@ -110,7 +110,7 @@ describe.skipIf(!existsSync(worker))('built original Claude metadata worker (pla
       ok: true, value: { sessionId: 'native-original' },
     })
     expect(parse(await run(f, { operation: 'getSessionMessages', sessionId: 'native-original', limit: 2, offset: 0 }, 10000, signal)))
-      .toMatchObject({ ok: true, value: [{ uuid: 'native-event', session_id: 'native-original', message: { content: 'Original message · 雪' } }] })
+      .toMatchObject({ ok: true, value: [{ uuid: 'native-event', session_id: 'native-original', message: { content: 'Original message · \u{96EA}' } }] })
     const calls = (await readFile(f.callsPath, 'utf8')).trim().split('\n').map(line => z.object({
       operation: z.string(), options: z.object({ dir: z.string() }).loose(),
     }).parse(JSON.parse(line)))
@@ -126,7 +126,7 @@ describe.skipIf(!existsSync(worker))('built original Claude metadata worker (pla
     await expect(readFile(f.callsPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
   it('bounds complete multibyte replies and tiny error wrappers', { retry: 0 }, async ({ signal }) => {
-    const f = await fixture('雪'.repeat(2000))
+    const f = await fixture('\u{96EA}'.repeat(2000))
     const bounded = await run(f, { operation: 'listSessions', limit: 2, offset: 0 }, 2048, signal)
     expect(parse(bounded)).toEqual({ protocol: 1, ok: false, error: 'response-limit' })
     expect(Buffer.byteLength(bounded, 'utf8')).toBeLessThanOrEqual(2048)
@@ -165,11 +165,11 @@ describe.skipIf(!existsSync(worker))('built original Claude metadata worker (pla
     })
   }
   it('sanitizes failed policy inspection while keeping SDK diagnostic bytes out of the wire reply', { retry: 0 }, async ({ signal }) => {
-    const f = await fixture(undefined, { kind: 'throw', message: 'PRIVATE_POLICY_EXCEPTION · 雪', diagnostic: 'PRIVATE_POLICY_DIAGNOSTIC · 雪' })
+    const f = await fixture(undefined, { kind: 'throw', message: 'PRIVATE_POLICY_EXCEPTION · \u{96EA}', diagnostic: 'PRIVATE_POLICY_DIAGNOSTIC · \u{96EA}' })
     const result = await runCaptured(f, { operation: 'inspectSequentialPolicy' }, 10000, signal)
     expect(parse(result.stdout)).toEqual({ protocol: 1, ok: false, error: 'sdk-policy' })
-    expect(result.stderr).toBe('PRIVATE_POLICY_DIAGNOSTIC · 雪\n')
-    expect(result.stdout).not.toContain('PRIVATE_POLICY'); expect(result.stdout).not.toContain('雪')
+    expect(result.stderr).toBe('PRIVATE_POLICY_DIAGNOSTIC · \u{96EA}\n')
+    expect(result.stdout).not.toContain('PRIVATE_POLICY'); expect(result.stdout).not.toContain('\u{96EA}')
   })
   it('refuses policy-operation extras before invoking the SDK resolver', { retry: 0 }, async ({ signal }) => {
     const f = await fixture()

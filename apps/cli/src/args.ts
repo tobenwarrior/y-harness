@@ -1,21 +1,22 @@
 /**
- * Commander adapter for the `dsh` command line.
+ * Commander adapter for the `yharness` command line.
  *
  * The launcher parses only what it owns — which profile to boot, which extra
  * patch overlays to apply, and the config dumps — and hands **everything after
  * its own flags** to the booted tree verbatim, where injected app plugins parse
  * their own flag families and print their own `--help` (see
- * `@deepseek-ai/dsh-cmdline`). Launcher flags therefore come first: the first
+ * `@yharness/cmdline`). Launcher flags therefore come first: the first
  * token this parser does not recognize starts the inner arguments, so
- * `dsh --profile tui --resume abc` boots the tui profile with `--resume abc`,
- * and `dsh --profile web -h` prints the web app's help, not this one's.
+ * `yharness --profile tui --resume abc` boots the tui profile with `--resume abc`,
+ * and `yharness --profile web -h` prints the web app's help, not this one's.
  *
- * `dsh <name>` abbreviates `dsh --profile <name>`; `plugin` manages a profile's
+ * `yharness <name>` abbreviates `yharness --profile <name>`; `plugin` manages a profile's
  * plugin dependencies by forwarding to pnpm.
- * @module @deepseek-ai/dsh/args
+ * @module @yharness/cli/args
  */
 
 import { Command, CommanderError, InvalidArgumentError } from 'commander'
+import { CLI_NAME } from './cli-name.ts'
 
 /** Boot a named profile and hand it the invocation's inner arguments. */
 interface ProfileInvocation {
@@ -57,7 +58,7 @@ interface PluginInvocation {
   args: string[]
 }
 
-/** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
+/** The resolved Y Harness invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | DumpConfigSchemaInvocation | PluginInvocation
 
 /** Launcher flags for profile boot and configuration dumps. */
@@ -89,14 +90,15 @@ function rejectElectronProfile(program: Command, profile: string): void {
 /** The launcher's own help text; each app prints its own. */
 const HELP_EXAMPLES = `
 Examples:
-  dsh web                                   boot the web profile (same as: dsh --profile web)
-  dsh rescue --from-default-profile web
+  ${CLI_NAME} web                             boot the web profile (same as: ${CLI_NAME} --profile web)
+  ${CLI_NAME} rescue --from-default-profile web
                                             create rescue from the shipped web template, then boot it
-  dsh headless "run the tests"              answer one task, print the result, and exit
-  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
-  dsh tui --resume <session>                arguments after the launcher flags reach the app
-  dsh web --help                            the web app's own flags and help
-  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+  ${CLI_NAME} headless "run the tests"      answer one task, print the result, and exit
+  ${CLI_NAME} tui --patch ./extra.yml       boot a custom profile with one extra overlay
+  ${CLI_NAME} tui --resume <session>         arguments after the launcher flags reach the app
+  ${CLI_NAME} web --help                     the web app's own flags and help
+  ${CLI_NAME} plugin --profile tui add <package>
+                                            install a plugin into the tui profile
 `
 
 /**
@@ -150,22 +152,22 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
   // inferred type would be circular through its own chain.
   const program: Command = new Command()
   program
-    .name('dsh')
+    .name(CLI_NAME)
     .version(version, '-V, --version', 'output the version number')
-    .usage('[--profile] <name> [options] [app-args...]\n       dsh plugin --profile <name> <pnpm-args...>')
-    .description('dsh: boot a Y Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.')
+    .usage(`[--profile] <name> [options] [app-args...]\n       ${CLI_NAME} plugin --profile <name> <pnpm-args...>`)
+    .description(`${CLI_NAME}: boot a Y Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.`)
     .addHelpText('after', HELP_EXAMPLES)
     .exitOverride()
     // The launcher's flags come first and end at the first token it does not
     // know; everything from there on belongs to the booted app, including
-    // its -h. `dsh -h` with no profile still prints this help, below.
+    // its -h. `yharness -h` with no profile still prints this help, below.
     .helpOption(false)
     .helpCommand(false)
     .allowUnknownOption()
     .passThroughOptions()
     .enablePositionalOptions()
-    .argument('[args...]', 'arguments for the booted profile\'s app (see: dsh --profile <name> --help)')
-    .option('--profile <name>', 'the profile under $DSH_HOME/profiles to boot', selectProfile)
+    .argument('[args...]', `arguments for the booted profile's app (see: ${CLI_NAME} --profile <name> --help)`)
+    .option('--profile <name>', 'the profile under $YH_HOME/profiles to boot', selectProfile)
     .option('--from-default-profile <name>', 'initialize a new custom profile from a shipped profile template')
     .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
     .option('--dump-config', 'print the composed profile tree and exit')
@@ -173,7 +175,7 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
     .option('--dump-default-config', 'print the profile tree without its user layer or --patch overlays and exit')
     .action((args: string[], options: BootOptions & { profile?: string }) => {
       // With the app owning -h, the launcher's own help is what a bare
-      // `dsh -h` (no profile to hand it to) must print.
+      // `yharness -h` (no profile to hand it to) must print.
       if (options.profile === undefined) {
         if (args.some(argument => argument === '-h' || argument === '--help')) program.help()
         program.error('error: --profile <name> is required')
@@ -207,6 +209,6 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
     return process.exit(error instanceof CommanderError ? error.exitCode : 1)
   }
   /* v8 ignore next -- an action resolves or Commander throws */
-  if (resolved === undefined) throw new Error('dsh: no invocation resolved')
+  if (resolved === undefined) throw new Error(`${CLI_NAME}: no invocation resolved`)
   return resolved
 }

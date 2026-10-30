@@ -1,7 +1,7 @@
 /** Client Cordis plugin that publishes browser observations directly to the Inspector Worker. */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-connection/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-connection/client'
 import type { InspectorClientBootstrap } from '../shared/bridge/messages/control.ts'
 import { INSPECTOR_BOOTSTRAP_ROUTE } from '../shared/web.ts'
 import { parseInspectorClientBootstrap } from '../shared/bridge/control-codec.ts'
@@ -29,7 +29,7 @@ declare global {
   var __DSH_INSPECTOR__: unknown
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Publish Client-realm observations and query the shared Inspector state. */
     inspector: InspectorService

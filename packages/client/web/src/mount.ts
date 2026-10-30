@@ -1,9 +1,9 @@
 /**
  * Shell-owned React lifetime follows settled client entry activation.
- * @module @deepseek-ai/dsh-client-web/src/mount
+ * @module @yharness/client-web/src/mount
  */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-ui-renderer/client'
 import { assertEntriesActive } from './boot-client.ts'
 import { BootPage } from './boot-page.ts'
 import { clearBootstrapReloadGuard, isBootstrapStalenessOnly, reloadOnceForStaleness } from './bootstrap-staleness.ts'

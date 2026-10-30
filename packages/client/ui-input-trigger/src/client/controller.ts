@@ -7,12 +7,12 @@
  * only the source roster. One controller per session scope; the service
  * disposes it with the scope fiber.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { Context as ClientContext } from '@yharness/cordis'
+import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type {
   ArbitrateKey, ArbitrateOutcome, PickOutcome, ReferenceInsert,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+} from '@yharness/client-ui-conversation/client'
+import type { SessionId } from '@yharness/session/types'
 import { detectTrigger } from '../core/detect.ts'
 import { MENU_CLOSED, menuReduce, seedGroups } from '../core/menu.ts'
 import type { MenuEvent, MenuState, TriggerHit } from '../core/contract.ts'

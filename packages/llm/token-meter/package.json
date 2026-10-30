@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-token-meter",
-  "description": "Replay-aware token measurement service (ctx.tokenMeter) for the DeepSeek Harness",
+  "name": "@yharness/token-meter",
+  "description": "Replay-aware token measurement service (ctx.tokenMeter) for the Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/llm/token-meter"
   },
   "type": "module",
@@ -36,26 +36,26 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-compaction": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-retry": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-compaction-image-offload": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/compaction": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-retry": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/compaction-image-offload": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-util-values": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/util-values": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-compaction": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-retry": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-compaction-image-offload": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/compaction": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-retry": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/compaction-image-offload": "workspace:*"
   }
 }

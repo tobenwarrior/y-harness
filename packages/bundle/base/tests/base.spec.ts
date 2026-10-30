@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
-import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
-import { evaluate } from '@deepseek-ai/cordis-plugin-loader'
+import { entryListSchema } from '@yharness/cordis-plugin-include'
+import { evaluate } from '@yharness/cordis-plugin-loader'
 
 describe('dsh-base bundle', () => {
   it('declares a parseable patch list through the dsh.bundle.patch manifest field', () => {
@@ -32,7 +32,9 @@ describe('dsh-base bundle', () => {
     )
     expect(rows.length).toBeGreaterThan(50)
     expect(rows.some(row => row.id === 'agent-loop')).toBe(true)
-    expect(rows.find(row => row.id === 'session-telemetry-otel')?.disabled).toBeUndefined()
+    expect(rows.find(row => row.id === 'session-telemetry-otel')?.disabled).toEqual({
+      __jsExpr: "process.env.DSH_TELEMETRY_MODE !== 'DISABLED' && !(process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim())",
+    })
     expect(rows.find(row => row.id === 'session-telemetry-otel')?.config?.['mode']).toEqual({
       __jsExpr: "process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'",
     })
@@ -44,9 +46,39 @@ describe('dsh-base bundle', () => {
     expect(rows.find(row => row.id === 'web')?.config).toMatchObject({ fetchProvider: 'http' })
     expect(rows.find(row => row.id === 'web-fetch-http')).toBeDefined()
     expect(rows.find(row => row.id === 'tool-web')?.config).toMatchObject({ fetch: true })
-    expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-codex')
-    expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-claude-code')
-    expect(manifest.dependencies).toHaveProperty('@deepseek-ai/dsh-web-fetch-http')
+    expect(manifest.dependencies).not.toHaveProperty('@yharness/subagent-codex')
+    expect(manifest.dependencies).not.toHaveProperty('@yharness/subagent-claude-code')
+    expect(manifest.dependencies).toHaveProperty('@yharness/web-fetch-http')
+  })
+
+  it('keeps telemetry opt-in and gives the canonical URL precedence over the legacy one', () => {
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    const parsed = yaml.load(
+      readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8'),
+      { schema: entryListSchema },
+    )
+    if (!Array.isArray(parsed)) throw new TypeError('base patch must parse to a patch list')
+    const row = parsed.flatMap(patch => patch.insert ?? []).find(candidate => candidate.id === 'session-telemetry-otel')
+    if (row === undefined) throw new Error('base patch must mount session telemetry')
+    const disabled = row.disabled as { __jsExpr?: string } | undefined
+    const exporter = row.config?.['exporter'] as { url?: { __jsExpr?: string } } | undefined
+    if (disabled?.__jsExpr === undefined || exporter?.url?.__jsExpr === undefined) {
+      throw new Error('base telemetry row must expose endpoint and disabled expressions')
+    }
+    const evaluateTelemetry = (env: Record<string, string | undefined>) => ({
+      disabled: Boolean(evaluate({ process: { env } }, disabled.__jsExpr!)),
+      endpoint: evaluate({ process: { env } }, exporter.url!.__jsExpr!),
+    })
+    expect(evaluateTelemetry({})).toEqual({ disabled: true, endpoint: undefined })
+    expect(evaluateTelemetry({ YH_TELEMETRY_OTLP_URL: '   ' })).toEqual({ disabled: true, endpoint: undefined })
+    expect(evaluateTelemetry({ DSH_TELEMETRY_OTLP_URL: '  https://legacy.example/v1/logs  ' })).toEqual({
+      disabled: false, endpoint: 'https://legacy.example/v1/logs',
+    })
+    expect(evaluateTelemetry({
+      YH_TELEMETRY_OTLP_URL: '  https://canonical.example/v1/logs  ',
+      DSH_TELEMETRY_OTLP_URL: 'https://legacy.example/v1/logs',
+    })).toEqual({ disabled: false, endpoint: 'https://canonical.example/v1/logs' })
+    expect(evaluateTelemetry({ DSH_TELEMETRY_MODE: 'DISABLED' })).toEqual({ disabled: false, endpoint: undefined })
   })
 
   it('gates each shell stack by platform with a symmetric disabled expression', () => {

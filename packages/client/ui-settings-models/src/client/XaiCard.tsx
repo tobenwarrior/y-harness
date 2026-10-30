@@ -1,9 +1,9 @@
 /** xAI subscription device sign-in and Grok model publication. */
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SettingsNamespaceView, XaiConnectionView, XaiDeviceVerification, XaiModelView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { Button, Tag } from '@yharness/client-ui-primitives'
+import type { SettingsNamespaceView, XaiConnectionView, XaiDeviceVerification, XaiModelView } from '@yharness/api-remotes/client'
+import type { JsonValue } from '@yharness/util-values'
 import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'

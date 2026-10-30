@@ -1,9 +1,9 @@
 /** Excel previews use ordinary authorized file bytes without Office conversion. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import type {} from '../index.ts'
 import type { Config } from '../../config.ts'
 import { LazyExcelBody } from './LazyExcelBody.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 /**
  * Register the browser Excel viewer and its lifecycle-owned slot.
@@ -11,8 +11,8 @@ import { en, zh } from './locales.ts'
  * @param limits - Resolved parser limits.
  */
 export function apply(ctx: Context, limits: Config['excel']): void {
-  const id = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/excel'
-  ctx.effect(() => ctx.locale.register('sidebarExcel', { zh, en }))
+  const id = '@yharness/client-ui-sidebar-documentpreview/excel'
+  ctx.effect(() => ctx.locale.register('sidebarExcel', { en }))
   const t = ctx.locale.bind('sidebarExcel')
   ctx.effect(() => ctx.documentPreviews.register({
     id, extensions: ['xlsx', 'xls', 'csv', 'tsv'], binaryExtensions: ['xlsx', 'xls'], priority: 'builtin',

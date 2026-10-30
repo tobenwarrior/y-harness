@@ -1,14 +1,14 @@
 /** Host skill management Remote service; existing instruction files stay authoritative. */
 import { join } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { } from '@deepseek-ai/dsh-tools'
-import type { } from '@deepseek-ai/dsh-workspace'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { } from '@deepseek-ai/dsh-agent-preset-registry'
+import { Context, Service } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { resolveDshHome } from '@yharness/home-paths'
+import { FileSystemSkillProvider } from '@yharness/skill-filesystem'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import type { } from '@yharness/tools'
+import type { } from '@yharness/workspace'
+import type { Agent } from '@yharness/agent'
+import type { } from '@yharness/agent-preset-registry'
 import { createRegistryInventory } from './registry-inventory.ts'
 import { SkillLibrary } from './library.ts'
 import { skillLibraryDomain } from './record.ts'
@@ -123,7 +123,7 @@ type ResolvedConfig = Config & {
   sequentialLearningMaxTaskBytes: number
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context { /** Project skill inventory and reversible managed maintenance. */ skillLibrary: SkillLibraryController }
 }
 

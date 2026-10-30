@@ -3,17 +3,17 @@ import { mkdtemp, rm, writeFile, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
-import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
-import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import { unsupportedInbox } from '@yharness/agent-loop-testkit'
+import LocalFileSystem from '@yharness/fs-local'
+import { createScope, type Scope } from '@yharness/scope'
+import { ToolCallId } from '@yharness/llm'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import { turnBoundaryProjectionDefinition } from '@yharness/agent-loop'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime, { defineTool } from '@yharness/tools'
 import type { PresentedFile } from '../src/types.ts'
 import * as Present from '../src/index.ts'
 
@@ -77,15 +77,15 @@ describe('present', () => {
   it('declares binary files without reading or copying contents, and records one delivery', async () => {
     const { ctx, owner, root, execute, fiber } = await setup()
     const data = Uint8Array.of(80, 75, 0, 255)
-    await writeFile(join(root, '报告.docx'), data)
+    await writeFile(join(root, '\u{62A5}\u{544A}.docx'), data)
     const read = vi.spyOn(ctx.fs, 'readBytes')
-    const result = await execute([{ path: '报告.docx', description: 'Report' }])
+    const result = await execute([{ path: '\u{62A5}\u{544A}.docx', description: 'Report' }])
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('present failed')
     const files = (result.value as unknown as { files: PresentedFile[] }).files
     expect(files).toHaveLength(1)
     expect(owner.session.snapshotEvents().find(event => event.type === 'deliverables/presented')?.data.files).toEqual(files)
-    expect(files).toEqual([{ path: '报告.docx', description: 'Report' }])
+    expect(files).toEqual([{ path: '\u{62A5}\u{544A}.docx', description: 'Report' }])
     expect(read).not.toHaveBeenCalled()
     expect(ctx.get('attachments')).toBeUndefined()
     await fiber.dispose()

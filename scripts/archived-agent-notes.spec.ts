@@ -4,6 +4,7 @@ import {
   gitBlobHash,
   parseArchiveManifest,
   renderArchiveManifest,
+  rewriteArchiveEnglishOnlySource,
   validateArchiveArtifacts,
   validateArchiveManifestExtension,
   type ArchiveManifest,
@@ -12,8 +13,8 @@ import { isArchivedAgentNotePath } from './repo-files.ts'
 
 function fixture(): Map<string, Buffer> {
   const base = '2026-07-26-example'
-  const source = Buffer.from(`# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\nEnglish | [中文](${base}.zh.md)\n\n## Problem\n\nExample.\n`)
-  const zh = Buffer.from(`# Agent Note: 示例\n\nStatus: implemented\nArchived: 2026-07-26\n\n[English](${base}.md) | 中文\n\n## 问题\n\n示例。\n`)
+  const source = Buffer.from(`# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\nEnglish | [translation](${base}.zh.md)\n\n## Problem\n\nExample.\n`)
+  const zh = Buffer.from(`# Agent Note: Translated Example\n\nStatus: implemented\nArchived: 2026-07-26\n\n[English](${base}.md) | translation\n\n## Problem\n\nTranslated example.\n`)
   const meta = Buffer.from(`${base}.md: ${gitBlobHash(source)}\n${base}.zh.md: ${gitBlobHash(zh)}\n`)
   return new Map([
     [`process/${base}.md`, source],
@@ -33,10 +34,10 @@ describe('archived Agent Notes', () => {
     expect(validateArchiveArtifacts(fixture())).toEqual([])
   })
 
-  it.each(['# Agent Note：示例', '# Historical decision'])('preserves historical formatting: %s', (title) => {
+  it.each(['# Agent Note: Example', '# Historical decision'])('preserves historical formatting: %s', (title) => {
     const artifacts = fixture()
     const base = '2026-07-26-example'
-    const source = Buffer.from(`${title}\nStatus: implemented\nArchived: 2026-07-26\n[中文版本](${base}.zh.md)\n`)
+    const source = Buffer.from(`${title}\nStatus: implemented\nArchived: 2026-07-26\n[translation](${base}.zh.md)\n`)
     artifacts.set(`process/${base}.md`, source)
     const zh = artifacts.get(`process/${base}.zh.md`)!
     artifacts.set(`process/${base}.i18n.yaml`, Buffer.from(`${base}.md: ${gitBlobHash(source)}\n${base}.zh.md: ${gitBlobHash(zh)}\n`))
@@ -112,6 +113,77 @@ describe('archived Agent Notes', () => {
     )
   })
 
+  it('rewrites only the exact English-only migration surface', () => {
+    const source = Buffer.from('# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\nEnglish | [translation](2026-07-26-example.zh.md)\n\n## Problem\n\nExample.\n')
+    expect(rewriteArchiveEnglishOnlySource('feature/example.md', source).toString()).toBe(
+      '# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\n## Problem\n\nExample.\n',
+    )
+    expect(() => rewriteArchiveEnglishOnlySource('feature/example.md', Buffer.from('no switcher\n'))).toThrow(
+      'expected exactly one English translation switcher',
+    )
+  })
+
+  it('rewrites retained Han evidence to its sealed English equivalent', () => {
+    const source = Buffer.from('# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\nEnglish | [translation](2026-07-30-web-context-injection-disclosure.zh.md)\n\n`MessageItem` routes context nodes to `ContextInjectionRow`. The row starts collapsed, names the presentation `\u{4E0A}\u{4E0B}\u{6587}\u{6CE8}\u{5165}`, uses the existing browse glyph, and exposes the whole 24px header as one pointer and keyboard disclosure target. Its expanded body begins 4px below the header at the shared 22px content indent and renders the design\'s 141px scrollport with 8px radius, code-block background, 11/16 code text, and no border.\n')
+    expect(rewriteArchiveEnglishOnlySource('feature/2026-07-30-web-context-injection-disclosure.md', source).toString()).toBe(
+      '# Agent Note: Example\n\nStatus: implemented\nArchived: 2026-07-26\n\n`MessageItem` routes context nodes to `ContextInjectionRow`. The row starts collapsed, names the presentation `Context injection`, uses the existing browse glyph, and exposes the whole 24px header as one pointer and keyboard disclosure target. Its expanded body begins 4px below the header at the shared 22px content indent and renders the design\'s 141px scrollport with 8px radius, code-block background, 11/16 code text, and no border.\n',
+    )
+  })
+
+  it('rejects Han text in a retained English-only note', () => {
+    const artifacts = new Map([
+      [
+        'process/2026-07-26-example.md',
+        Buffer.from('# Agent Note: Example\nStatus: implemented\nArchived: 2026-07-26\nEvidence: \u{6C49}\n'),
+      ],
+    ])
+    expect(validateArchiveArtifacts(artifacts, 'English-only archive')).toEqual([
+      'process/2026-07-26-example.md: English-only archived notes must not contain Han characters',
+    ])
+  })
+
+  it('accepts the complete one-time translation-artifact retirement', () => {
+    const baseline: ArchiveManifest = {
+      version: 1,
+      files: {
+        'feature/example.md': 'sha256:' + '1'.repeat(64),
+        'feature/example.zh.md': 'sha256:' + '2'.repeat(64),
+        'feature/example.i18n.yaml': 'sha256:' + '3'.repeat(64),
+      },
+    }
+    const current: ArchiveManifest = {
+      version: 2,
+      files: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+      retired: {
+        'feature/example.i18n.yaml': 'sha256:' + '3'.repeat(64),
+        'feature/example.zh.md': 'sha256:' + '2'.repeat(64),
+      },
+      rewritten: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+    }
+    expect(validateArchiveManifestExtension(baseline, current)).toEqual([])
+    expect(validateArchiveManifestExtension(baseline, {
+      ...current,
+      retired: { ...current.retired, 'feature/other.zh.md': 'sha256:' + '4'.repeat(64) },
+    })).toContain('manifest version 2 must retire exactly the baseline translation artifacts')
+  })
+
+  it('freezes retired translation seals after migration', () => {
+    const retired = { 'feature/example.zh.md': 'sha256:' + '2'.repeat(64) }
+    const baseline: ArchiveManifest = {
+      version: 2,
+      files: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+      retired,
+      rewritten: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+    }
+    const current: ArchiveManifest = {
+      version: 2,
+      files: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+      retired: { ...retired, 'feature/other.zh.md': 'sha256:' + '4'.repeat(64) },
+      rewritten: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
+    }
+    expect(validateArchiveManifestExtension(baseline, current)).toContain('retired archive seals changed after the one-time migration')
+  })
+
   it.each([
     {
       path: 'feature/2026-08-10-durable-workflow-runs-in-chat.md',
@@ -148,6 +220,23 @@ describe('archived Agent Notes', () => {
     expect(parseArchiveManifest(content)).toEqual({
       version: 1,
       files: { 'process/z.md': `sha256:${'a'.repeat(64)}` },
+    })
+  })
+
+  it('round-trips a version-2 migration manifest', () => {
+    const content = renderArchiveManifest(
+      { 'process/z.md': `sha256:${'a'.repeat(64)}` },
+      {
+        version: 2,
+        retired: { 'process/z.zh.md': `sha256:${'b'.repeat(64)}` },
+        rewritten: { 'process/z.md': `sha256:${'c'.repeat(64)}` },
+      },
+    )
+    expect(parseArchiveManifest(content)).toEqual({
+      version: 2,
+      files: { 'process/z.md': `sha256:${'a'.repeat(64)}` },
+      retired: { 'process/z.zh.md': `sha256:${'b'.repeat(64)}` },
+      rewritten: { 'process/z.md': `sha256:${'c'.repeat(64)}` },
     })
   })
 })

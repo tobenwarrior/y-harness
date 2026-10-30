@@ -1,6 +1,6 @@
 /** Durable ownership marker admission preserves exact operational acknowledgements and tool modes. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { codingSessionHandoffSchema } from '../src/handoff-record.ts'
 import type { CodingSessionHandoff } from '../src/types.ts'
 

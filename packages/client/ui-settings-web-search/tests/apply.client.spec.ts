@@ -1,12 +1,12 @@
 /** What the browser half registers, when, which credential it watches, and that it all leaves with the fiber. */
 
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { RemoteError, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
 import { apply, inject, NS } from '../src/client/index.ts'
 import type { WebSearchCardFace } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
@@ -63,7 +63,7 @@ describe('ui-settings-web-search apply', () => {
     await vi.waitFor(() => { expect(slots.entries('plugins.item')).toHaveLength(1) })
     const entry = slots.entries('plugins.item')[0]!
     expect(entry.options).toMatchObject({ id: 'web-search', order: 20 })
-    expect(resolveSlotLabel(entry.options.label)).toBe('网页搜索')
+    expect(resolveSlotLabel(entry.options.label)).toBe('Web search')
     expect(entry.locale).toBe(NS)
     const face = (entry.inject as () => Pick<WebSearchCardFace, 'hooks'>)()
     expect(Object.keys(face.hooks)).toEqual(['webSearchCard'])

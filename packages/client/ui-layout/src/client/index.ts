@@ -7,18 +7,18 @@
  * selection belongs to the Session Controller. A second effect seats the theme
  * presenter, which projects ctx.theme snapshots onto document.body.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
-import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-theme/client'
+import type { HostObservable, SnapshotSelectorHook } from '@yharness/client-ui-slots'
 import type { PanelInfo } from './service.ts'
 import { AppFrame } from './AppFrame.tsx'
 import { createLayoutStore } from './stores.ts'
 import { LayoutController } from './service.ts'
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import { en, zh } from './shortcut-locales.ts'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import { en } from './shortcut-locales.ts'
 import { ThemePresenter } from './theme-presenter.ts'
 
 // Contract exports only (export-convergence rule: cross-package consumers
@@ -32,17 +32,17 @@ export type { ILayout, MainPanelId, PanelInfo } from './service.ts'
 /** Selector hook over root-scoped panel selection. */
 export type UsePanelInfo = SnapshotSelectorHook<PanelInfo>
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** The outward face only; the concrete service stays inside this plugin. */
     layout: import('./service.ts').ILayout
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Layout keyboard command labels. */
-    'shortcuts.layout': keyof typeof zh
+    'shortcuts.layout': keyof typeof en
   }
 
   interface GlobalStandardProps {
@@ -156,7 +156,7 @@ export const inject = ['slots', 'theme', 'locale', 'shortcuts']
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register('shortcuts.layout', { zh, en }), 'layout: command labels')
+  ctx.effect(() => ctx.locale.register('shortcuts.layout', { en }), 'layout: command labels')
   const t = ctx.locale.bind('shortcuts.layout')
 
   ctx.effect(() => {

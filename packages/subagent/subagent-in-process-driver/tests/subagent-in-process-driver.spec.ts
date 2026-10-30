@@ -1,17 +1,17 @@
-import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { type Agent, type AgentOptions } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import SubagentRuntime, { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import { type Agent, type AgentOptions } from '@yharness/agent'
+import { SessionId } from '@yharness/session'
+import AgentLoop from '@yharness/agent-loop'
+import { mountAgentLoopTestDependencies } from '@yharness/agent-loop-testkit'
+import SubagentRuntime, { snapshotSubagentDescriptor } from '@yharness/subagent'
+import { defineContentToolFixture } from '@yharness/tools'
 import { maxTokensResponse, MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { startInProcessRun } from '../src/index.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'late-metadata': { kind: 'late-metadata' } & ContextFormed
   }

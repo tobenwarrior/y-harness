@@ -6,11 +6,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { RemoteErrorCode } from '@deepseek-ai/dsh-api-remotes/client'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { RemoteErrorCode } from '@yharness/api-remotes/client'
+import { RemoteError } from '@yharness/client-test-runtime'
+import type { SessionSummary } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import {
   AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController,
   writeDefaultPreset,
@@ -116,7 +116,7 @@ describe('the agent-preset roster store', () => {
 
   it('carries the display metadata a preset published', async () => {
     const controller = derivedController(fakeApi([
-      { id: 'standard', isDefault: true, name: '标准模式', description: '完整的编码 agent。' },
+      { id: 'standard', isDefault: true, name: '\u6807\u51c6\u6a21\u5f0f', description: '\u5b8c\u6574\u7684\u7f16\u7801 agent\u3002' },
     ] as never))
 
     await controller.load()
@@ -124,7 +124,7 @@ describe('the agent-preset roster store', () => {
     // Surfaces beyond this row read the same options; the id alone never said
     // what a preset does.
     expect(controller.store.getSnapshot().options).toEqual([
-      { id: 'standard', name: '标准模式', description: '完整的编码 agent。' },
+      { id: 'standard', name: '\u6807\u51c6\u6a21\u5f0f', description: '\u5b8c\u6574\u7684\u7f16\u7801 agent\u3002' },
     ])
   })
 
@@ -292,13 +292,13 @@ describe('the new-session chip controller', () => {
 
   it('carries the display metadata into the menu rows', async () => {
     const controller = chip([
-      { id: 'standard', isDefault: true, name: '标准模式', description: '完整的编码 agent。' },
+      { id: 'standard', isDefault: true, name: '\u6807\u51c6\u6a21\u5f0f', description: '\u5b8c\u6574\u7684\u7f16\u7801 agent\u3002' },
     ] as never, undefined)
 
     await controller.load()
 
     expect(controller.store.getSnapshot().options).toEqual([
-      { id: 'standard', name: '标准模式', description: '完整的编码 agent。' },
+      { id: 'standard', name: '\u6807\u51c6\u6a21\u5f0f', description: '\u5b8c\u6574\u7684\u7f16\u7801 agent\u3002' },
     ])
   })
 

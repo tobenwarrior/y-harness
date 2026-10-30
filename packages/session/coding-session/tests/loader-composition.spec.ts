@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import { brandString } from '@yharness/brand'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Typert from '@yharness/typert-registry'
 import * as CodingSessions from '../src/index.ts'
 import type { CodingSessionSnapshot } from '../src/types.ts'
 let context: Context | undefined
@@ -43,9 +43,9 @@ describe('coding sessions real Loader composition', () => {
       }), 'fixture-native-reader: registration')
     } }
     const path = join(root, 'cordis.yml')
-    await writeFile(path, JSON.stringify([{ name: '@deepseek-ai/dsh-storage' }, { name: '@deepseek-ai/dsh-storage-json', config: { root: join(root, 'storage') } }, { name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'json' } }, { name: '@deepseek-ai/dsh-typert-registry' }, { name: '@deepseek-ai/dsh-coding-session', config: { enableClaudeDiscovery: false } }, { name: 'fixture-native-reader' }]))
+    await writeFile(path, JSON.stringify([{ name: '@yharness/storage' }, { name: '@yharness/storage-json', config: { root: join(root, 'storage') } }, { name: '@yharness/storage-domain', config: { backend: 'json' } }, { name: '@yharness/typert-registry' }, { name: '@yharness/coding-session', config: { enableClaudeDiscovery: false } }, { name: 'fixture-native-reader' }]))
     context = new Context(); context.baseUrl = pathToFileURL(root).href + '/'; await context.plugin(Loader); context.loader.builtins.include = Include
-    const modules = new Map<string, unknown>([['@deepseek-ai/dsh-storage', Storage], ['@deepseek-ai/dsh-storage-json', JsonStorage], ['@deepseek-ai/dsh-storage-domain', Domain], ['@deepseek-ai/dsh-typert-registry', Typert], ['@deepseek-ai/dsh-coding-session', CodingSessions], ['fixture-native-reader', fixture]])
+    const modules = new Map<string, unknown>([['@yharness/storage', Storage], ['@yharness/storage-json', JsonStorage], ['@yharness/storage-domain', Domain], ['@yharness/typert-registry', Typert], ['@yharness/coding-session', CodingSessions], ['fixture-native-reader', fixture]])
     const internal = context.loader.internal
     if (internal === undefined) throw new Error('Fixture needs Loader module resolution')
     context.loader.internal = new Proxy(internal, { get(target, property, receiver): unknown {

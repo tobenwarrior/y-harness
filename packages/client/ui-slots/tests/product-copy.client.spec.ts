@@ -4,9 +4,9 @@ import { withProductDisplayName } from '../src/product-copy.ts'
 afterEach(() => { vi.unstubAllEnvs() })
 
 describe('selected product copy', () => {
-  it('preserves the dictionary value when the display name is unset', () => {
+  it('uses Y Harness when the display name is unset', () => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', undefined)
-    expect(withProductDisplayName('DeepSeek Harness 与 Y Harness')).toBe('DeepSeek Harness 与 Y Harness')
+    expect(withProductDisplayName('DeepSeek Harness \u{4E0E} Y Harness')).toBe('Y Harness \u{4E0E} Y Harness')
   })
 
   it('replaces every exact product mention with the configured name', () => {
@@ -15,8 +15,8 @@ describe('selected product copy', () => {
   })
 
   it('keeps Unicode and replacement-string syntax literal', () => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', '星图 $& $` $\'')
-    expect(withProductDisplayName('Y Harness')).toBe('星图 $& $` $\'')
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', '\u{661F}\u{56FE} $& $` $\'')
+    expect(withProductDisplayName('Y Harness')).toBe('\u{661F}\u{56FE} $& $` $\'')
   })
 
   it('leaves provider names and protocol identifiers unchanged', () => {

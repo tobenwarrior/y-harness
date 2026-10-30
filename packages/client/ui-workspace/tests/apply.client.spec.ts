@@ -1,17 +1,17 @@
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { Context } from '@deepseek-ai/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type {
   SessionListState, SessionReference, SessionSummary,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceId, WorkspaceSnapshot, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { RemoteError, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { apply, inject } from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from '@deepseek-ai/dsh-client-ui-workspace/client'
+} from '@yharness/api-session-controller/client'
+import type { WorkspaceId, WorkspaceSnapshot, WorkspaceView } from '@yharness/api-workspace-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import type { StoredEntry } from '@yharness/client-ui-slots'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { apply, inject } from '@yharness/client-ui-workspace/client'
+import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from '@yharness/client-ui-workspace/client'
 import {
   type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
   type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected, type SessionRenameDialogInjected,
@@ -126,10 +126,9 @@ async function bench() {
   Object.assign(new TestRemote(ctx), { directoryPicker })
   ctx.provide('remote.directoryPicker', directoryPicker as never)
   const locale = new LocaleRuntime(ctx)
-  // These specs assert the shipped Chinese copy. There is no jsdom `window`
-  // in this lane, so browser-language detection never runs and the locale
-  // comes from FALLBACK_LOCALE (en): state the asserted locale explicitly.
-  locale.setLocale('zh')
+  // This lane has no browser language detection, so state the English
+  // product default explicitly.
+  locale.setLocale('en')
   ctx.provide('locale', locale)
   return {
     ctx, slots: ctx.get('slots') as SlotRegistry, locale, create, rename,
@@ -210,7 +209,7 @@ describe('ui-workspace apply', () => {
     // Copy rides the standard locale seat: the entry declares the namespace
     // and apply registered both dictionaries.
     expect(before.slots.entries('sidebar.workspaces')[0]!.locale).toBe('workspace')
-    expect(before.locale.bind('workspace')('session.new')).toBe('新会话')
+    expect(before.locale.bind('workspace')('session.new')).toBe('New Session')
 
     const after = await bench()
     await after.ctx.plugin({ inject: [...inject], apply }).await()

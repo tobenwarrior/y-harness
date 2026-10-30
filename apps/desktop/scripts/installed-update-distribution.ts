@@ -5,6 +5,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dump, load } from 'js-yaml'
 import { readInstalledUpdateRun } from './installed-update-qualification.ts'
+import { desktopArtifactFilename } from './desktop-artifact-name.mjs'
 
 /** A local immutable object, with its final test-only destination and digest. */
 export interface InstalledUpdateBinary {
@@ -52,7 +53,7 @@ export async function planInstalledUpdateDistribution(manifest: string, version:
     throw new Error('installed update: feed must describe exactly the selected version and installer')
   }
   const info = record(metadata.files[0])
-  const filename = `deepseek-harness-${version}-win-x64.exe`
+  const filename = desktopArtifactFilename(version, 'win', 'x64', 'exe')
   if (info.url !== filename || (metadata.path !== undefined && metadata.path !== filename)) {
     throw new Error('installed update: feed filename must identify the selected local Windows installer')
   }

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { AddressInfo } from 'node:net'
-import { Context } from '@deepseek-ai/cordis'
-import WebRuntime from '@deepseek-ai/dsh-web'
-import { HttpFetchProvider, LOCAL_FETCH_PROVIDER_ID } from '@deepseek-ai/dsh-web-fetch-http'
-import type { HttpFetchLimits, HttpFetchResolver } from '@deepseek-ai/dsh-web-fetch-http'
-import * as fetchPlugin from '@deepseek-ai/dsh-web-fetch-http'
+import { Context } from '@yharness/cordis'
+import WebRuntime from '@yharness/web'
+import { DEFAULT_USER_AGENT, HttpFetchProvider, LOCAL_FETCH_PROVIDER_ID } from '@yharness/web-fetch-http'
+import type { HttpFetchLimits, HttpFetchResolver } from '@yharness/web-fetch-http'
+import * as fetchPlugin from '@yharness/web-fetch-http'
 import { createPinnedLookup, isPublicIpAddress, publicHttpNetwork, requestPinned, resolvePublicAddresses } from '../src/network.ts'
 import {
   classifyContentType,
@@ -285,6 +285,13 @@ describe('HttpFetchProvider success', () => {
     handler = (req, res) => { seen = req.headers['user-agent']; res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok') }
     await provider().fetch({ url: base })
     expect(seen).toBe('test-agent/1.0')
+  })
+
+  it('uses the Y Harness default user agent when configured with the package default', async () => {
+    let seen: string | undefined
+    handler = (req, res) => { seen = req.headers['user-agent']; res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok') }
+    await new HttpFetchProvider({ ...limits, userAgent: DEFAULT_USER_AGENT }).fetch({ url: base })
+    expect(seen).toBe('y-harness/0.0.1 (+https://github.com/tobenwarrior/y-harness)')
   })
 
   it('returns a non-2xx response as a result, not an error', async () => {

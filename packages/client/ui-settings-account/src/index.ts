@@ -1,9 +1,9 @@
 /** Host configuration for the account settings client. */
-import type { Context, Volatile } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-host-webserver'
-import type {} from '@deepseek-ai/dsh-settings'
+import type { Context, Volatile } from '@yharness/cordis'
+import type {} from '@yharness/host-webserver'
+import type {} from '@yharness/settings'
 import { type ContactConfig, ContactConfigFields, CONTACT_CONFIG_GLOBAL } from './contact-config.ts'
-import z from '@deepseek-ai/schemastery'
+import z from '@yharness/schemastery'
 import { OnboardingSettingsFields, type OnboardingStep, type OnboardingPurpose, type OnboardingProcess } from './onboarding-settings.ts'
 /** Public contact options and live device-local onboarding progress. */
 export interface Config extends ContactConfig {

@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { CodexBackendCard } from '../src/client/CodexBackendCard.tsx'
-import type { CodexBackendModelView, CodexBackendView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { CodexBackendModelView, CodexBackendView } from '@yharness/api-remotes/client'
 import type { ModelsOperations } from '../src/client/operations.ts'
 import { en } from '../src/client/locales.ts'
 afterEach(cleanup)

@@ -223,16 +223,16 @@ export async function connectFreshWorkspace(page: Page, root: string, name = 'wo
  */
 export async function connectFreshWorkspaceZh(page: Page, root: string, name = 'workspace', modelAvailable = true): Promise<void> {
   mkdirSync(join(root, name), { recursive: true })
-  await page.getByRole('textbox', { name: '选择工作区' }).click()
-  const dialog = page.getByRole('dialog', { name: '选择工作区目录' })
+  await page.getByRole('textbox', { name: '\u{9009}\u{62E9}\u{5DE5}\u{4F5C}\u{533A}' }).click()
+  const dialog = page.getByRole('dialog', { name: '\u{9009}\u{62E9}\u{5DE5}\u{4F5C}\u{533A}\u{76EE}\u{5F55}' })
   await dialog.waitFor({ timeout: 10_000 })
-  await dialog.getByRole('button', { name: '编辑路径' }).click()
-  const pathInput = dialog.getByRole('textbox', { name: '编辑路径' })
+  await dialog.getByRole('button', { name: '\u{7F16}\u{8F91}\u{8DEF}\u{5F84}' }).click()
+  const pathInput = dialog.getByRole('textbox', { name: '\u{7F16}\u{8F91}\u{8DEF}\u{5F84}' })
   await pathInput.fill(join(root, name))
   await pathInput.press('Enter')
-  await dialog.getByRole('button', { name: '打开', exact: true }).click()
+  await dialog.getByRole('button', { name: '\u{6253}\u{5F00}', exact: true }).click()
   const editable = modelAvailable ? '[contenteditable="true"]' : ''
-  await page.locator(`[data-composer-input]${editable}[data-placeholder="描述你想要构建的内容, / 调用指令, @ 文件或对话"]`)
+  await page.locator(`[data-composer-input]${editable}[data-placeholder="\u{63CF}\u{8FF0}\u{4F60}\u{60F3}\u{8981}\u{6784}\u{5EFA}\u{7684}\u{5185}\u{5BB9}, / \u{8C03}\u{7528}\u{6307}\u{4EE4}, @ \u{6587}\u{4EF6}\u{6216}\u{5BF9}\u{8BDD}"]`)
     .waitFor({ timeout: 15_000 })
 }
 
@@ -323,9 +323,9 @@ export function conversationContextKey(kind: string, id: string): string {
  * @param locale - current UI language.
  */
 export async function openSettings(page: Page, locale: 'en' | 'zh'): Promise<void> {
-  const label = locale === 'zh' ? '设置' : 'Settings'
+  const label = locale === 'zh' ? '\u{8BBE}\u{7F6E}' : 'Settings'
   if (await page.evaluate(() => 'dshDesktop' in globalThis)) {
-    await page.getByRole('button', { name: locale === 'zh' ? '账号菜单' : 'Account menu', exact: true }).click()
+    await page.getByRole('button', { name: locale === 'zh' ? '\u{8D26}\u{53F7}\u{83DC}\u{5355}' : 'Account menu', exact: true }).click()
     await page.getByRole('menuitem', { name: label, exact: true }).click()
   } else {
     await page.getByRole('button', { name: label, exact: true }).click()

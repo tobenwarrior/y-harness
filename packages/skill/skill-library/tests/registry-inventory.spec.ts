@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import type { SkillDefinition, SkillSummary } from '@deepseek-ai/dsh-skill'
+import type { SkillDefinition, SkillSummary } from '@yharness/skill'
 import { createRegistryInventory, type RegistryInventoryReader } from '../src/registry-inventory.ts'
 
 const projects = [

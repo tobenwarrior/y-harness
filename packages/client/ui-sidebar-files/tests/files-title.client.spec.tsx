@@ -2,7 +2,7 @@
 /** The chip title: the folder sheet, then the type's label. */
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRuntime } from '@yharness/client-ui-slots'
 import { FilesTitle } from '../src/client/FilesTitle.tsx'
 
 afterEach(cleanup)
@@ -13,10 +13,10 @@ function props(title: string): PropsRuntime<'sidebar.right.pane.tab.title'> {
 
 describe('FilesTitle', () => {
   it('draws the folder sheet before the title text, sized to the chip line', () => {
-    const { container } = render(<FilesTitle {...props('文件')} />)
+    const { container } = render(<FilesTitle {...props('Workspace files')} />)
     const svg = container.querySelector('svg')
     expect(svg?.getAttribute('width')).toBe('16')
     expect(svg?.getAttribute('aria-hidden')).toBe('true')
-    expect(container.textContent).toBe('文件')
+    expect(container.textContent).toBe('Workspace files')
   })
 })

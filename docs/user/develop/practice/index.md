@@ -32,7 +32,7 @@ One Service Definition can have multiple providers selected through `cordis.yml`
 
 ```yaml
 # Local execution
-- name: '@deepseek-ai/dsh-bash-local'
+- name: '@yharness/bash-local'
 
 # Replace this row with another package that provides the same service.
 ```
@@ -59,9 +59,9 @@ The [capability-seam reference](../../../capability-seams.md) owns the current b
 
 ```ts ignore-check
 // packages/my-cap/my-cap/src/index.ts
-import { Service, type Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@yharness/cordis'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     myCap: MyCapService
   }
@@ -89,8 +89,8 @@ export interface MyCapResult {
 
 ```ts ignore-check
 // packages/my-cap/my-cap-local/src/index.ts
-import type { Context } from '@deepseek-ai/cordis'
-import { MyCapService, type MyCapRequest, type MyCapResult } from '@deepseek-ai/dsh-my-cap'
+import type { Context } from '@yharness/cordis'
+import { MyCapService, type MyCapRequest, type MyCapResult } from '@yharness/my-cap'
 
 class MyCapLocal extends MyCapService {
   async execute(request: MyCapRequest): Promise<MyCapResult> {
@@ -110,8 +110,8 @@ export function apply(ctx: Context) {
 
 ```ts ignore-check
 // packages/my-cap/tool-my-cap/src/index.ts
-import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { Context } from '@yharness/cordis'
+import { defineTool } from '@yharness/tools'
 
 export const name = 'tool-my-cap'
 export const inject = ['tools', 'myCap']
@@ -138,8 +138,8 @@ export function apply(ctx: Context) {
 ### Compose them in cordis.yml
 
 ```yaml
-- name: '@deepseek-ai/dsh-my-cap-local'
-- name: '@deepseek-ai/dsh-tool-my-cap'
+- name: '@yharness/my-cap-local'
+- name: '@yharness/tool-my-cap'
 ```
 
 ## Design points

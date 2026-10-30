@@ -1,14 +1,14 @@
 /** Deterministic Messages fixtures and loopback transport with explicit teardown. */
-import { Context } from '@deepseek-ai/cordis'
-import AttachmentStore from '@deepseek-ai/dsh-attachment'
-import type { ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import { Context } from '@yharness/cordis'
+import AttachmentStore from '@yharness/attachment'
+import type { ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import type { AnonymousUserId } from '@yharness/anonymous-user-id'
 import { createServer } from 'node:http'
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http'
 import { once } from 'node:events'
 import { object } from '../src/replay.ts'
-import { BlockAssembler, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { BlockAssembler, createAssistantMessage, createUserMessage } from '@yharness/llm'
+import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import { resolveAdapterOptions } from '../src/index.ts'
 import { DeepSeekAdapter } from '../src/adapter.ts'
 import type { Options as Config } from '../src/config.ts'
@@ -27,7 +27,7 @@ export const end = (reason = 'end_turn') => [
 ]
 export const textEvents = [start,
   { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello 世界' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello \u{4E16}\u{754C}' } },
   { type: 'content_block_stop', index: 0 }, ...end()]
 export const sse = (events: unknown[]) => events.map(event => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 export async function* events(values: Record<string, unknown>[]) { yield* values }

@@ -4,15 +4,15 @@
  */
 
 import { describe, expect, onTestFinished, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
-import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
-import { SessionSeq } from '@deepseek-ai/dsh-session/types'
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
+import type { SessionId } from '@yharness/api-remotes/client'
+import type { SubagentAddress } from '@yharness/subagent/client'
+import { SessionSeq } from '@yharness/session/types'
+import { RemoteError } from '@yharness/typert-protocol'
+import { ok, type RemoteMock } from '@yharness/remote-mock'
 import {
   createClientTest, type ClientTestFixtures, webApp,
-} from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
-import type {} from '@deepseek-ai/dsh-session-title/client'
+} from '@yharness/client-test-runtime/src/assembly/index.ts'
+import type {} from '@yharness/session-title/client'
 import { SessionManager } from '../src/client/sessions/manager.ts'
 import type { SessionRemotes } from '../src/client/sessions/remotes.ts'
 import { entries, plainTurn } from './event-script.client.ts'
@@ -21,7 +21,7 @@ import { FOLLOW, err, followScript, sessionWorld } from './remote/session.client
 const S1 = 'fk-m1' as SessionId
 const S2 = 'fk-m2' as SessionId
 /** Gateway Client cone used by the subagent-catalog and connected-generation cases. */
-const API_ROSTER = webApp.closure(['@deepseek-ai/dsh-api-gateway'])
+const API_ROSTER = webApp.closure(['@yharness/api-gateway'])
 const it = createClientTest({ roster: API_ROSTER })
 
 type SummaryOver = Partial<{
@@ -719,8 +719,8 @@ describe('Host Remote event routing', () => {
     expect(session.getSnapshot().running).toBe(true)
     expect(manager.getListSnapshot().items[0]?.running).toBe(true)
 
-    manager.handleSessionError(S1, '炸了')
-    expect(session.getSnapshot().lastAgentError).toBe('炸了')
+    manager.handleSessionError(S1, '\u{70B8}\u{4E86}')
+    expect(session.getSnapshot().lastAgentError).toBe('\u{70B8}\u{4E86}')
 
     manager.handleSessionRemoved(S1)
     expect(manager.getListSnapshot().items).toHaveLength(0)
@@ -1121,7 +1121,7 @@ describe('remaining branches', () => {
   it('ignores Host status and error events for sessions without an instance', ({ mock, remote }) => {
     const manager = makeManager(mock, remote)
     manager.handleSessionStatus(S2, true)
-    manager.handleSessionError(S2, '无实例')
+    manager.handleSessionError(S2, '\u{65E0}\u{5B9E}\u{4F8B}')
   })
 
   it('keeps list-entry identity for unchanged rows across an unrelated list change', async ({ mock, remote }) => {

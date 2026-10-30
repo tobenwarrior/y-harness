@@ -24,6 +24,11 @@ export interface DesktopUploadConfig extends DesktopAutoUpdateConfig {
   readonly secretKeyEnvName: string
 }
 
+/** Updater configuration embedded in a packaged application. */
+export type DesktopPackagedUpdateConfig =
+  | (DesktopAutoUpdateConfig & { readonly provider: 'generic'; readonly channel: 'nightly' })
+  | import('./desktop-github-release.mjs').DesktopGitHubReleaseConfig
+
 /**
  * Resolve the update deployment, defaulting local release work to test.
  * @param env - Packaging or upload environment.
@@ -75,6 +80,13 @@ export function resolveDesktopAutoUpdateConfig(
   platform: NodeJS.Platform,
   arch: string,
 ): DesktopAutoUpdateConfig
+
+/** Resolve the generic test feed or public GitHub Releases provider used by a signed package. */
+export function resolveDesktopPackagedUpdateConfig(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  arch: string,
+): DesktopPackagedUpdateConfig
 
 /**
  * Resolve the public updater URL and private COS destination for one upload target.

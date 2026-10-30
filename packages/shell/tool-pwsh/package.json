@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-pwsh",
+  "name": "@yharness/tool-pwsh",
   "description": "Model-facing pwsh tool over the bash executor seam",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/shell/tool-pwsh"
   },
   "type": "module",
@@ -27,41 +27,41 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-shell": "workspace:*",
-    "@deepseek-ai/dsh-shell-env": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-user-approval": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/shell": "workspace:*",
+    "@yharness/shell-env": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/user-approval": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-app-boot": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-jobs-local": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-loader-smoke": "workspace:*",
-    "@deepseek-ai/dsh-pwsh-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-shell": "workspace:*",
-    "@deepseek-ai/dsh-shell-env": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-tool-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-user-approval": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/app-boot": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/jobs-local": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/loader-smoke": "workspace:*",
+    "@yharness/pwsh-local": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/shell": "workspace:*",
+    "@yharness/shell-env": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/tool-jobs": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/user-approval": "workspace:*"
   }
 }

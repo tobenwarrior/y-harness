@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import { Context } from '@yharness/cordis'
+import { createUserMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import SessionStore, { SessionId } from '@yharness/session'
 import { RuntimeContextProjection } from '../src/runtime-context.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test-compaction': { kind: 'test-compaction' } & ContextFormed
   }

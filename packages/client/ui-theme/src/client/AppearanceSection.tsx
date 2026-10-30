@@ -1,5 +1,5 @@
 /** Appearance section containing feature-owned style, color mode, and font-size rows. */
-import type { PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsRenderSlots, PropsRuntime } from '@yharness/client-ui-slots'
 import css from './AppearanceSection.module.css'
 
 /** Section owner values and its declared item renderer. */

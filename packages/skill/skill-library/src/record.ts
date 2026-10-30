@@ -1,7 +1,7 @@
 /** Schema-validated local management state; skill files remain authoritative. */
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { brandString } from '@yharness/brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
 import type { SkillLibraryId, SkillRevisionId } from './types.ts'
 
 const id = z.string().transform(value => brandString<SkillLibraryId>(value))

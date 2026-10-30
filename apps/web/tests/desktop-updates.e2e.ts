@@ -48,10 +48,10 @@ describe('web e2e: Desktop update workspace chrome', () => {
           await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
           await page.waitForSelector('[class*="frame"]')
           await expect.poll(() => page.evaluate(() => (window as FixtureWindow).updateFixture.listeners.size)).toBe(1)
-          const availableLabel = locale === 'zh-CN' ? '新版本' : 'Update'
-          const retryLabel = locale === 'zh-CN' ? '重试更新' : 'Retry update'
-          const errorDetail = locale === 'zh-CN' ? '下载更新失败，请重试。' : 'Could not download the update. Please try again.'
-          const readyLabel = locale === 'zh-CN' ? '安装并重启' : 'Install and Restart'
+          const availableLabel = locale === 'zh-CN' ? '\u{65B0}\u{7248}\u{672C}' : 'Update'
+          const retryLabel = locale === 'zh-CN' ? '\u{91CD}\u{8BD5}\u{66F4}\u{65B0}' : 'Retry update'
+          const errorDetail = locale === 'zh-CN' ? '\u{4E0B}\u{8F7D}\u{66F4}\u{65B0}\u{5931}\u{8D25}，\u{8BF7}\u{91CD}\u{8BD5}。' : 'Could not download the update. Please try again.'
+          const readyLabel = locale === 'zh-CN' ? '\u{5B89}\u{88C5}\u{5E76}\u{91CD}\u{542F}' : 'Install and Restart'
           const version = '0.1.5-nightly.20260911'
           // The carrier classification deliberately uses English shell copy; Web copy follows its own locale.
           const available = presentDesktopUpdate({ phase: 'available', version }, en)
@@ -82,8 +82,8 @@ describe('web e2e: Desktop update workspace chrome', () => {
           expect(await opens()).toBe(1)
           await page.screenshot({ path: join(evidence, 'downloading.png') })
 
-          const collapse = locale === 'zh-CN' ? '收起侧边栏' : 'Collapse sidebar'
-          const expand = locale === 'zh-CN' ? '打开侧边栏' : 'Open sidebar'
+          const collapse = locale === 'zh-CN' ? '\u{6536}\u{8D77}\u{4FA7}\u{8FB9}\u{680F}' : 'Collapse sidebar'
+          const expand = locale === 'zh-CN' ? '\u{6253}\u{5F00}\u{4FA7}\u{8FB9}\u{680F}' : 'Open sidebar'
           await page.getByRole('button', { name: collapse, exact: true }).click()
           const toggle = page.getByRole('button', { name: expand, exact: true })
           const badge = page.getByRole('button', { name: '58%', exact: true })

@@ -1,7 +1,7 @@
 /**
  * Framework-free boot page and failure report. It remains available when a
  * client plugin fails because React arrives only with the UI renderer.
- * @module @deepseek-ai/dsh-client-web/src/boot-page
+ * @module @yharness/client-web/src/boot-page
  */
 import type { LoaderEntryState } from './loader-status.ts'
 import { bootMessages, type BootMessages } from './boot-locales.ts'

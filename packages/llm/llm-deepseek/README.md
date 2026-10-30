@@ -3,7 +3,7 @@ description: "Configure DeepSeek Messages, reasoning, and image input."
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-llm-deepseek
+# @yharness/llm-deepseek
 
 ## Summary
 
@@ -37,7 +37,7 @@ Choose this adapter for DeepSeek's official API or a Messages-compatible gateway
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+- name: '@yharness/llm-deepseek-api-key'
   config:
     apiKeyEnv: DEEPSEEK_API_KEY  # credential reference, resolved per request
     reasoningEffort: high        # optional; off | low | high | max
@@ -71,7 +71,7 @@ A request selects the route with `provider: deepseek-official`; the model id pas
 | `fileQuotaCleanupBatch` | `100` | Oldest harness-owned files removed before one quota retry |
 | `retryPolicy` | normal, 5 retries | Provider-owned retry policy executed by `dsh-llm-retry` |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-deepseek-api-key) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessllm-deepseek-api-key) is the exhaustive source for every accepted field and its JSDoc.
 
 When [proactive compaction](../../compaction/compaction-basic/README.md#use-this-package) is enabled, `models[].contextWindow` (or `defaultContextWindow` when absent) must exceed the effective request `maxTokens` plus the compaction policy’s `headroomTokens`. Requests without an explicit output cap use the model’s `maxTokens` or the adapter default. For small-window deployments, configure headroom within that capacity; lower `thresholdRatio` to compact earlier.
 

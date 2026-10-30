@@ -4,11 +4,11 @@
  */
 import assert from 'node:assert/strict'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { createScope } from '@deepseek-ai/dsh-scope'
-import type { Config } from '@deepseek-ai/dsh-mcp-client'
+import { Context } from '@yharness/cordis'
+import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import { createScope } from '@yharness/scope'
+import type { Config } from '@yharness/mcp-client'
 
 // ---- Mock MCP SDK ----
 
@@ -48,7 +48,7 @@ vi.mock('@modelcontextprotocol/client/stdio', () => ({
 
 // vi.mock is hoisted above static imports, so the module under test sees the
 // mocked SDK even through a static import.
-import { apply, name, inject, Config as ConfigSchema } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
+import { apply, name, inject, Config as ConfigSchema } from '@yharness/mcp-client/src/index.ts'
 
 // ---- Helpers ----
 
@@ -449,7 +449,7 @@ describe('apply (plugin lifecycle)', () => {
 describe('server instruction limits', () => {
   it('counts the complete attributed UTF-8 text before publishing tools', async () => {
     const ctx = await mountRegistry()
-    const text = '服务器指南'
+    const text = '\u{670D}\u{52A1}\u{5668}\u{6307}\u{5357}'
     const spy = vi.spyOn(MockClient.prototype, 'getInstructions').mockReturnValue(text)
     const exactBytes = Buffer.byteLength(`### MCP server: srv\n\n${text}`)
     try {

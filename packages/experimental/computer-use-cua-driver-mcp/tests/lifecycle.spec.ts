@@ -1,10 +1,10 @@
 /** The external MCP process is replaced by barriers to pin disposal ordering. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import ComputerUse from '@deepseek-ai/dsh-computer-use'
-import { ComputerUseProviderName } from '@deepseek-ai/dsh-computer-use/brand'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import ComputerUse from '@yharness/computer-use'
+import { ComputerUseProviderName } from '@yharness/computer-use/brand'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
 
 const fake = vi.hoisted(() => ({
   start: vi.fn<() => Promise<void>>(),
@@ -12,8 +12,8 @@ const fake = vi.hoisted(() => ({
   configurations: [] as unknown[],
 }))
 
-vi.mock('@deepseek-ai/dsh-mcp-client', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@deepseek-ai/dsh-mcp-client')>()
+vi.mock('@yharness/mcp-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@yharness/mcp-client')>()
   return {
     ...original,
     async apply(ctx: Context, config: unknown) {

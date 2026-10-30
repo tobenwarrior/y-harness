@@ -270,9 +270,9 @@ describe('PartialArguments', () => {
       expect(joins).toBe(0)
       expect(settled).toBe(view)
       expect(view).toEqual(PartialArguments.fromText(finalText))
-      expect(view.text('command')).toBe('a中')
+      expect(view.text('command')).toBe('a\u{4E2D}')
       expect(view.stringLength('command')).toBe(2)
-      expect(view.textPrefix('command', 2)).toBe('a中')
+      expect(view.textPrefix('command', 2)).toBe('a\u{4E2D}')
       expect(view.complete('command')).toBe(true)
       expect(view.value('todos')).toBe(todos)
       expect(view.closed()).toBe(true)
@@ -572,20 +572,20 @@ describe('PartialArguments', () => {
     it('decodes \\uXXXX escapes in either hex case', () => {
       const view = streamed([String.raw`{"file_path":"\u4E2D\u00e9"}`])
       expect(view.stringLength('file_path')).toBe(2)
-      expect(view.text('file_path')).toBe('中é')
+      expect(view.text('file_path')).toBe('\u{4E2D}é')
     })
 
     it('decodes a \\uXXXX escape split across appends, whether the text was read before or only after', () => {
       const chunkings = [[String.raw`{"file_path":"\u4e`, '2d"}'], ['{"file_path":"\\', 'u', '4', 'e2', 'd"}']]
       for (const chunks of chunkings) {
         const lazy = streamed(chunks)
-        expect(lazy.text('file_path')).toBe('中')
+        expect(lazy.text('file_path')).toBe('\u{4E2D}')
         expect(lazy.stringLength('file_path')).toBe(1)
 
         const eager = new PartialArguments()
         expect(eager.text('file_path')).toBeUndefined()
         for (const chunk of chunks) appendAndRefresh(eager, chunk)
-        expect(eager.text('file_path')).toBe('中')
+        expect(eager.text('file_path')).toBe('\u{4E2D}')
         expect(eager.stringLength('file_path')).toBe(1)
       }
     })
@@ -606,18 +606,18 @@ describe('PartialArguments', () => {
     it('decodes the streamed prefix on first read, including complete escapes, then keeps it current', () => {
       const view = new PartialArguments()
       view.append(String.raw`{"file_path":"a\n\u4e2d\"x`)
-      expect(view.text('file_path')).toBe('a\n中"x')
+      expect(view.text('file_path')).toBe('a\n\u{4E2D}"x')
       expect(view.stringLength('file_path')).toBe(5)
       view.append('y"}')
-      expect(view.text('file_path')).toBe('a\n中"xy')
+      expect(view.text('file_path')).toBe('a\n\u{4E2D}"xy')
       expect(view.complete('file_path')).toBe(true)
     })
 
     it.each<[string, string, string]>([
       // Plain strings: a raw template cannot end in a backslash without escaping its closing backtick.
       ['{"file_path":"a\\', 'n"}', 'a\n'],
-      ['{"file_path":"a\\u', '4e2d"}', 'a中'],
-      [String.raw`{"file_path":"a\u4e`, '2d"}', 'a中'],
+      ['{"file_path":"a\\u', '4e2d"}', 'a\u{4E2D}'],
+      [String.raw`{"file_path":"a\u4e`, '2d"}', 'a\u{4E2D}'],
     ])('drops an escape still in flight from the first read of %j and completes it from %j', (head, tail, decoded) => {
       const view = new PartialArguments()
       view.append(head)
@@ -631,8 +631,8 @@ describe('PartialArguments', () => {
 
     it('decodes a closed string in one step on first read', () => {
       const view = PartialArguments.fromText(String.raw`{"file_path":"a\n\u4e2d\ud83d\ude00"}`)
-      expect(view.text('file_path')).toBe('a\n中😀')
-      expect(view.text('file_path')).toBe('a\n中😀')
+      expect(view.text('file_path')).toBe('a\n\u{4E2D}😀')
+      expect(view.text('file_path')).toBe('a\n\u{4E2D}😀')
       expect(view.stringLength('file_path')).toBe(5)
     })
 
@@ -884,9 +884,9 @@ describe('PartialArguments', () => {
     })
 
     it('bounds decoded prefixes across JSON escapes and parsed objects', () => {
-      expect(PartialArguments.fromText('{"command":"\\u4e2d tail"}').textPrefix('command', 1)).toBe('中')
+      expect(PartialArguments.fromText('{"command":"\\u4e2d tail"}').textPrefix('command', 1)).toBe('\u{4E2D}')
       expect(PartialArguments.EMPTY.textPrefix('missing', 4)).toBeUndefined()
-      expect(PartialArguments.fromText(String.raw`{"command":"a\n\u4e2d😀z"}`).textPrefix('command', 4)).toBe('a\n中\ud83d')
+      expect(PartialArguments.fromText(String.raw`{"command":"a\n\u4e2d😀z"}`).textPrefix('command', 4)).toBe('a\n\u{4E2D}\ud83d')
       expect(PartialArguments.fromObject({ command: 'abcdef' }).textPrefix('command', 3)).toBe('abc')
       expect(PartialArguments.fromObject({ command: 'abcdef' }).stringExceeds('command', 3)).toBe(true)
       expect(PartialArguments.fromObject({ command: 'abcdef' }).stringExceeds('command', 6)).toBe(false)
@@ -906,8 +906,8 @@ describe('PartialArguments', () => {
         ['x"', '\ud83d', true, false],
         [',"command":"', '', false, true],
         [String.raw`\u4e`, '', false, false],
-        ['2d', '中', false, true],
-        ['x"', '中', true, true],
+        ['2d', '\u{4E2D}', false, true],
+        ['x"', '\u{4E2D}', true, true],
         [',"command":0}', undefined, false, true],
       ] as const) {
         view.append(fragment)
@@ -1062,7 +1062,7 @@ describe('PartialArguments', () => {
         'import { a } from "./a.ts"',
         '',
         'export const x = `${a}\\n`\t// "quoted" and C:\\path',
-        'bell \u0007 中文 😀',
+        'bell \u0007 \u{4E2D}\u{6587} 😀',
         '',
       ].join('\n')
       const text = JSON.stringify({ file_path: 'src/a.ts', content, overwrite: true })

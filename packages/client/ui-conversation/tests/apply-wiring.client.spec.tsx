@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   SlotTestRuntime, stubConfigForm, usePinnedBrowserLanguages,
-} from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { apply, inject, type ViewTab } from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
+import { apply, inject, type ViewTab } from '@yharness/client-ui-conversation/client'
 
-usePinnedBrowserLanguages('zh-CN')
+usePinnedBrowserLanguages('en-US')
 
 const SID = 'session-1' as SessionId
 
@@ -123,13 +123,15 @@ describe('target-neutral Conversation apply wiring', () => {
       label: () => b.runtime.ctx.locale.getSnapshot().active,
     }, (() => null) as never)
     await vi.waitFor(() => {
-      expect(source?.getSnapshot()).toEqual([{ id: 'probe', label: 'zh' }])
+      expect(source?.getSnapshot()).toEqual([{ id: 'probe', label: 'en' }])
     })
-    const chinese = source?.getSnapshot()
+    const initial = source?.getSnapshot()
 
-    b.runtime.ctx.locale.setLocale('en')
-    expect(source?.getSnapshot()).toEqual([{ id: 'probe', label: 'en' }])
-    expect(source?.getSnapshot()).not.toBe(chinese)
+    const removeTestLanguage = b.runtime.ctx.locale.addLanguage({ id: 'test', label: 'Test', fallback: 'en' })
+    onTestFinished(removeTestLanguage)
+    b.runtime.ctx.locale.setLocale('test')
+    expect(source?.getSnapshot()).toEqual([{ id: 'probe', label: 'test' }])
+    expect(source?.getSnapshot()).not.toBe(initial)
 
     disposeView()
     await vi.waitFor(() => { expect(source?.getSnapshot()).toEqual([]) })

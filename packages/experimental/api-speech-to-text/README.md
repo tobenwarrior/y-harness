@@ -3,7 +3,7 @@ description: "Expose bounded transient transcription through the authenticated W
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-experimental-api-speech-to-text
+# @yharness/experimental-api-speech-to-text
 
 ## Summary
 

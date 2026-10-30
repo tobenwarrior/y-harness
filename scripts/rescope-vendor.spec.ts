@@ -1,7 +1,7 @@
 /** Recorded npm evidence stays intact while authored files and exact edits remain checked. */
 
 import { describe, expect, it } from 'vitest'
-import { exactEditState, isRescopeExcluded } from './rescope-vendor.ts'
+import { exactEditState, isRescopeExcluded, RENAMES } from './rescope-vendor.ts'
 
 const ANCHOR = '\n## Sync procedure'
 const INSERTED = `\n15. **rescope**: one log entry.\n${ANCHOR}`
@@ -19,6 +19,35 @@ describe('rescope file selection', () => {
     'packages/example/package.json',
   ])('keeps %s subject to upstream package-name checks', (file) => {
     expect(isRescopeExcluded(file)).toBe(false)
+  })
+})
+
+describe('canonical Cordis scope', () => {
+  it('publishes every vendored package under the Y Harness scope while retaining upstream names', () => {
+    expect(RENAMES).toHaveLength(9)
+    expect(RENAMES.every(rename => rename.scoped.startsWith('@yharness/'))).toBe(true)
+    expect(RENAMES.map(rename => rename.upstream)).toEqual([
+      'cordis',
+      'cosmokit',
+      'schemastery',
+      '@cordisjs/plugin-loader',
+      '@cordisjs/plugin-include',
+      '@cordisjs/plugin-group',
+      '@cordisjs/plugin-timer',
+      '@cordisjs/plugin-hmr',
+      '@cordisjs/plugin-logger-console',
+    ])
+    expect(RENAMES.map(rename => rename.scoped)).toEqual([
+      '@yharness/cordis',
+      '@yharness/cosmokit',
+      '@yharness/schemastery',
+      '@yharness/cordis-plugin-loader',
+      '@yharness/cordis-plugin-include',
+      '@yharness/cordis-plugin-group',
+      '@yharness/cordis-plugin-timer',
+      '@yharness/cordis-plugin-hmr',
+      '@yharness/cordis-plugin-logger-console',
+    ])
   })
 })
 

@@ -1,13 +1,13 @@
 /** Desktop-only analytics RPC and live compaction collection. */
-import { type Context, type Volatile } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type {} from '@deepseek-ai/dsh-host-product-telemetry-otel'
-import type {} from '@deepseek-ai/dsh-deepseek-account'
-import type {} from '@deepseek-ai/dsh-settings'
-import type {} from '@deepseek-ai/cordis-plugin-loader'
-import type {} from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-compaction/types'
+import { type Context, type Volatile } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import type {} from '@yharness/host-product-telemetry-otel'
+import type {} from '@yharness/deepseek-account'
+import type {} from '@yharness/settings'
+import type {} from '@yharness/cordis-plugin-loader'
+import type {} from '@yharness/session'
+import type {} from '@yharness/compaction/types'
 import type { ProductEvent } from './events.ts'
 
 /** Application-owned collection policy; no user settings surface. */
@@ -18,7 +18,7 @@ export interface Config {
   appVersion?: string
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     productAnalytics: ProductAnalytics
   }

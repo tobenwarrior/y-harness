@@ -27,4 +27,4 @@
       name: '@local/y-session-tools'
 
     - id: tool-session-query
-      name: '@deepseek-ai/dsh-tool-session-query'
+      name: '@yharness/tool-session-query'

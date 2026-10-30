@@ -1,48 +1,62 @@
 /**
- * Bundled `dsh-badge` skill provider.
+ * Bundled Y Harness badge skill provider.
  *
- * @module @deepseek-ai/dsh-skill-badge
+ * The old `dsh-badge` name remains a user-invocable alias so existing
+ * compositions can migrate without losing the packaged skill.
+ *
+ * @module @yharness/skill-badge
  */
 
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import {
   BUNDLED_SKILL_RANK,
   type SkillCandidate,
   type SkillDefinition,
   type SkillProvider,
-} from '@deepseek-ai/dsh-skill'
+} from '@yharness/skill'
 
-const PROVIDER_NAME = 'dsh-badge'
-const SKILL_BODY_URL = new URL('../assets/dsh-badge.md', import.meta.url)
+const PROVIDER_NAME = 'y-harness-badge'
+const SKILL_NAME = 'y-harness-badge'
+const LEGACY_SKILL_NAME = 'dsh-badge'
+const SKILL_BODY_URL = new URL('../assets/y-harness-badge.md', import.meta.url)
 const RESOURCE_BASE = {
   kind: 'directory',
   path: fileURLToPath(new URL('../assets/', import.meta.url)),
 } as const
 const INVOCATION = { modelInvocable: true, userInvocable: true } as const
-const DESCRIPTION = 'Add the official “powered by dsh” badge to documents, pull requests, merge requests, and other content produced with DeepSeek Harness. Use whenever creating a pull request or merge request. Also use when the user asks for a dsh badge, powered-by-dsh attribution, or a reusable dsh badge asset or snippet.'
-const CANDIDATE: SkillCandidate = {
-  name: 'dsh-badge',
-  description: DESCRIPTION,
-  invocation: INVOCATION,
-  provider: PROVIDER_NAME,
-  source: 'bundled',
-  resourceBase: RESOURCE_BASE,
-  rank: BUNDLED_SKILL_RANK,
-  locator: SKILL_BODY_URL,
+const DESCRIPTION = 'Add the official Y Harness badge to documents, pull requests, merge requests, and other content produced with Y Harness. Use whenever creating a pull request or merge request. Also use when the user asks for a Y Harness badge, Y Harness attribution, or a reusable Y Harness badge asset or snippet.'
+const LEGACY_DESCRIPTION = 'Legacy alias for the Y Harness badge skill. Use y-harness-badge for new references.'
+
+function candidate(name: string, description: string, invocation: SkillCandidate['invocation']): SkillCandidate {
+  return {
+    name,
+    description,
+    invocation,
+    provider: PROVIDER_NAME,
+    source: 'bundled',
+    resourceBase: RESOURCE_BASE,
+    rank: BUNDLED_SKILL_RANK,
+    locator: SKILL_BODY_URL,
+  }
 }
+
+const CANDIDATES: readonly SkillCandidate[] = [
+  candidate(SKILL_NAME, DESCRIPTION, INVOCATION),
+  candidate(LEGACY_SKILL_NAME, LEGACY_DESCRIPTION, { modelInvocable: false, userInvocable: true }),
+]
 
 const provider: SkillProvider = {
   name: PROVIDER_NAME,
-  list: () => Promise.resolve([CANDIDATE]),
-  async get(_candidate): Promise<SkillDefinition> {
+  list: () => Promise.resolve(CANDIDATES),
+  async get(selected): Promise<SkillDefinition> {
     return {
-      name: CANDIDATE.name,
-      description: CANDIDATE.description,
-      invocation: CANDIDATE.invocation,
-      provider: CANDIDATE.provider,
-      source: CANDIDATE.source,
+      name: selected.name,
+      description: selected.description,
+      invocation: selected.invocation,
+      provider: selected.provider,
+      source: selected.source,
       resourceBase: RESOURCE_BASE,
       content: await readFile(SKILL_BODY_URL, 'utf8'),
     }
@@ -54,7 +68,7 @@ export const name = 'skill-badge'
 /** Service required by the bundled provider. */
 export const inject = ['skills']
 
-/** Register the bundled `dsh-badge` provider on `ctx.skills`. */
+/** Register the bundled Y Harness badge provider on `ctx.skills`. */
 export function apply(ctx: Context): void {
   ctx.skills.registerProvider(() => provider)
 }

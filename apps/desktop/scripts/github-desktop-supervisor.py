@@ -297,9 +297,9 @@ def main(argv=None):
             pnpm = config['pnpm']
             cancel = threading.Event()
             updater = _engine.SourceUpdater(support / 'managed',
-                install=[[pnpm, 'install', '--frozen-lockfile'], [pnpm, '--filter', '@deepseek-ai/dsh-desktop', 'exec', 'install-electron']],
-                build=[[pnpm, 'run', 'build'], [pnpm, '--filter', '@deepseek-ai/dsh-desktop', 'run', 'build'],
-                         [pnpm, '--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime']],
+                install=[[pnpm, 'install', '--frozen-lockfile'], [pnpm, '--filter', '@yharness/desktop', 'exec', 'install-electron']],
+                build=[[pnpm, 'run', 'build'], [pnpm, '--filter', '@yharness/desktop', 'run', 'build'],
+                         [pnpm, '--filter', '@yharness/desktop', 'run', 'prepare:primary-runtime']],
                 runner=lambda argv, cwd, timeout: runtime_run(argv, cwd, timeout, config, cancel))
             updater.bootstrap()
             return Supervisor(updater, support, config, cancel=cancel).serve()

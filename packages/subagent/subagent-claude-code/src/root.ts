@@ -1,20 +1,20 @@
 /** Opt-in normal root Claude turns over a long-lived, confined official SDK query. */
 import { randomUUID } from 'node:crypto'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { query as officialQuery, type Query, type SDKMessage, type SDKUserMessage, type CanUseTool, type PermissionResult } from '@anthropic-ai/claude-agent-sdk'
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionId } from '@deepseek-ai/dsh-session'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
-import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import type {} from '@deepseek-ai/dsh-user-approval'
-import type {} from '@deepseek-ai/dsh-workspace'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import z from '@deepseek-ai/schemastery'
+import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@yharness/llm'
+import type { Agent } from '@yharness/agent'
+import type { SessionId } from '@yharness/session'
+import type { SandboxExecutionPolicy } from '@yharness/sandbox'
+import type {} from '@yharness/sandbox-policy'
+import type {} from '@yharness/user-approval'
+import type {} from '@yharness/workspace'
+import { scrubbedParentEnv } from '@yharness/subprocess'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import z from '@yharness/schemastery'
 import { z as jsonSchema } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId } from '@deepseek-ai/dsh-skill-library/types'
+import { brandString } from '@yharness/brand'
+import type { SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId } from '@yharness/skill-library/types'
 import type { ClaudeRootProtocolRecord } from './root-types.ts'
 import { nativeProfile } from './root-profile.ts'
 import { ClaudeRootProcess } from './root-process.ts'
@@ -515,7 +515,7 @@ class ClaudeRootAdapter extends LlmAdapter {
 export async function apply(ctx: Context, config: ClaudeCodeRootConfig): Promise<void> {
   const resolved = Config(config) as Required<ClaudeCodeRootConfig>
   if (!nativeIdentity(resolved.connectionId)) throw new Error('Claude root connection identity must be bounded alphanumeric metadata.')
-  const { writableRoots } = await import('@deepseek-ai/dsh-sandbox').catch((error: unknown) => {
+  const { writableRoots } = await import('@yharness/sandbox').catch((error: unknown) => {
     throw new Error('The enabled Claude root route requires the sandbox package.', { cause: error })
   })
   const adapter = new ClaudeRootAdapter(ctx, resolved, writableRoots)

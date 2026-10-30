@@ -3,7 +3,7 @@ description: "Tool-result retention with a shared text/image token budget and re
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-spill-policy
+# @yharness/spill-policy
 
 ## Summary
 
@@ -30,8 +30,8 @@ Mount the policy alongside a spill backend. Text and images share the configured
 Load a spill backend and set `maxInlineTokens` in estimated tokens:
 
 ```yaml
-- name: '@deepseek-ai/dsh-spill-local'
-- name: '@deepseek-ai/dsh-spill-policy'
+- name: '@yharness/spill-local'
+- name: '@yharness/spill-policy'
   config:
     maxInlineTokens: 12500
 ```
@@ -40,7 +40,7 @@ Load a spill backend and set `maxInlineTokens` in estimated tokens:
 |---|---|---|
 | `maxInlineTokens` | omitted | Estimated token cap for retained text, images, image descriptions, and notices; omission disables retention |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-spill-policy) is the exhaustive source for every accepted field. A negative or fractional cap fails plugin load rather than corrupting per-call behavior.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessspill-policy) is the exhaustive source for every accepted field. A negative or fractional cap fails plugin load rather than corrupting per-call behavior.
 
 ### What the model sees
 

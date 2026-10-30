@@ -3,17 +3,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import LlmRuntime, { createUserMessage, LlmAdapter, LlmError, resolveRetryPolicy  } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, ResolvedRetryPolicy, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import AgentRegistry from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
+import LlmRuntime, { createUserMessage, LlmAdapter, LlmError, resolveRetryPolicy  } from '@yharness/llm'
+import type { GenerateOptions, ResolvedRetryPolicy, StreamChunk } from '@yharness/llm'
+import SessionStore, { SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
 import * as retry from '../src/index.ts'
 
 let root: string | undefined
@@ -59,14 +59,14 @@ async function loadYaml(lines: readonly string[]): Promise<Context> {
   await context.plugin(Loader)
   context.loader.builtins.include = Include
   const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-llm', LlmRuntime],
-    ['@deepseek-ai/dsh-session', SessionStore],
-    ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
-    ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
-    ['@deepseek-ai/dsh-tools', ToolRuntime],
-    ['@deepseek-ai/dsh-agent', AgentRegistry],
-    ['@deepseek-ai/dsh-llm-retry', retry],
-    ['@deepseek-ai/dsh-agent-loop', AgentLoop],
+    ['@yharness/llm', LlmRuntime],
+    ['@yharness/session', SessionStore],
+    ['@yharness/session-projection', SessionProjectionRegistry],
+    ['@yharness/system-prompt', SystemPrompt],
+    ['@yharness/tools', ToolRuntime],
+    ['@yharness/agent', AgentRegistry],
+    ['@yharness/llm-retry', retry],
+    ['@yharness/agent-loop', AgentLoop],
   ])
   context.loader.internal = {
     version: 'v2',
@@ -89,14 +89,14 @@ describe('real Loader composition', () => {
   // to trip the default 5s budget on cold caches.
   it('loads provider-supplied policy and records recovery through the shipping loop', { timeout: 60_000 }, async () => {
     const loaded = await loadYaml([
-      "- name: '@deepseek-ai/dsh-llm'",
-      "- name: '@deepseek-ai/dsh-session'",
-      "- name: '@deepseek-ai/dsh-session-projection'",
-      "- name: '@deepseek-ai/dsh-system-prompt'",
-      "- name: '@deepseek-ai/dsh-tools'",
-      "- name: '@deepseek-ai/dsh-agent'",
-      "- name: '@deepseek-ai/dsh-llm-retry'",
-      "- name: '@deepseek-ai/dsh-agent-loop'",
+      "- name: '@yharness/llm'",
+      "- name: '@yharness/session'",
+      "- name: '@yharness/session-projection'",
+      "- name: '@yharness/system-prompt'",
+      "- name: '@yharness/tools'",
+      "- name: '@yharness/agent'",
+      "- name: '@yharness/llm-retry'",
+      "- name: '@yharness/agent-loop'",
     ])
 
     const unloaded = [...loaded.loader.entries()]

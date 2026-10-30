@@ -1,22 +1,22 @@
 /** Read-only Host plugin inventory registered into Web Settings. */
 
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-modules/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-modules/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/client-ui-settings/client'
+import type {} from '@yharness/client-ui-renderer/client'
 // Type-only: pulls the 'settings.agentPreset' LocaleNamespaceMap merge, whose
 // dictionaries the shipped-preset name resolution below reads.
-import type {} from '@deepseek-ai/dsh-client-ui-agent-preset/client'
+import type {} from '@yharness/client-ui-agent-preset/client'
 // Inline-safe shared fold: shipped ids map to dictionary keys in one home.
-import { presetDisplayText } from '@deepseek-ai/dsh-agent-preset-registry/display'
+import { presetDisplayText } from '@yharness/agent-preset-registry/display'
 import { PluginInventorySettingsTab, type PluginInventorySettingsTabInjected } from './PluginInventorySettingsTab.tsx'
-import { en, zh, type PluginInventoryLocaleKey } from './locales.ts'
+import { en, type PluginInventoryLocaleKey } from './locales.ts'
 
 export type { PluginInventorySettingsTabInjected, PluginInventorySettingsTabProps } from './PluginInventorySettingsTab.tsx'
 export type { PluginInventoryLocaleKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Read-only Host plugin inventory copy. */
     'settings.pluginInventory': PluginInventoryLocaleKey
@@ -31,7 +31,7 @@ export const inject = ['slots', 'locale', 'remote', 'remote.pluginInventory', 'm
 
 /** Contribute the lazy inventory tab to the Plugins settings section. */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-plugin-inventory: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-settings-plugin-inventory: dictionaries')
 
   const t = ctx.locale.bind(NS)
   const list: PluginInventorySettingsTabInjected['list'] = async () => {

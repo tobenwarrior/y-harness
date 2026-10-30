@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import { entryListSchema, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
-import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
+import { Context } from '@yharness/cordis'
+import { entryListSchema, type PatchOptions } from '@yharness/cordis-plugin-include'
+import type { EntryOptions } from '@yharness/cordis-plugin-loader'
 import { load } from 'js-yaml'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import {

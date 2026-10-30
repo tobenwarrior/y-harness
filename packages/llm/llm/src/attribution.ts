@@ -4,7 +4,7 @@
  * `docs/subsystems/llm-streaming.md#appidentity--app-attribution`.
  *
  * App-attribution vocabulary for provider requests.
- * @module @deepseek-ai/dsh-llm/attribution
+ * @module @yharness/llm/attribution
  */
 
 import { createRequire } from 'node:module'
@@ -38,9 +38,9 @@ export interface AppIdentity {
  * can suppress attribution entirely.
  */
 export const APP_IDENTITY: AppIdentity = {
-  product: 'deepseek-harness',
+  product: 'y-harness',
   version,
-  url: 'https://github.com/deepseek-ai/deepseek-harness',
+  url: 'https://github.com/tobenwarrior/y-harness',
 }
 
 /**

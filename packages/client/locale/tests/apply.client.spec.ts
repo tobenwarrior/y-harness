@@ -1,15 +1,15 @@
 /** locale apply wiring: service + dictionaries provision, declaration-aware
  * Language row registration, snapshot projection into the row store, and
  * recovery after an HMR collapse of the declaring entry. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import { TestRemote } from '@yharness/client-test-runtime'
 import {
   apply, inject, SETTINGS_NS,
-} from '@deepseek-ai/dsh-client-locale/client'
-import type { LanguageRowInjected, LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+} from '@yharness/client-locale/client'
+import type { LanguageRowInjected, LocaleRuntime } from '@yharness/client-locale/client'
 import { LOCALE_SETTINGS_NAMESPACE, LocaleSettingsSchema } from '../src/locale-settings.ts'
 import { LanguageRow } from '../src/client/LanguageRow.tsx'
 import type { createLanguageRowStore } from '../src/client/settings-store.ts'
@@ -97,13 +97,13 @@ describe('locale apply', () => {
       ready.resolve({ languages: ['en-US'], preference: 'zh' })
       await fiber.await()
       const locale = b.ctx.get('locale') as LocaleRuntime
-      expect(locale.getSnapshot().active).toBe('zh')
-      expect(onChange).toHaveBeenLastCalledWith('zh')
+      expect(locale.getSnapshot().active).toBe('en')
+      expect(onChange).toHaveBeenLastCalledWith('en')
       locale.setLocale('en')
       expect(onChange).toHaveBeenLastCalledWith('en')
       await fiber.dispose()
       const calls = onChange.mock.calls.length
-      b.ctx.emit('locale/change', { active: 'zh', locales: [], revision: 99 })
+      b.ctx.emit('locale/change', { active: 'en', locales: [], revision: 99 })
       expect(onChange).toHaveBeenCalledTimes(calls)
     } finally {
       ready.resolve({ languages: ['en-US'], preference: 'zh' })
@@ -125,13 +125,14 @@ describe('locale apply', () => {
     declareItems(before.slots)
     await before.ctx.plugin({ inject: [...inject], apply }).await()
     const locale = before.ctx.get('locale') as LocaleRuntime
-    // Base dictionaries are registered: the (ns, locale) seats are occupied.
-    expect(() => locale.register('common', 'zh', {})).toThrow('already has locale')
+    // First-party boot owns only English; an external pack may still register
+    // the retired id, while the English seat remains occupied.
+    expect(() => locale.register('common', 'zh', {})).not.toThrow()
     expect(() => locale.register('common', 'en', {})).toThrow('already has locale')
     // The lane has no jsdom `window`, so detection never runs and a fresh
-    // service opens on FALLBACK_LOCALE (en); read the zh side explicitly.
+    // service opens on FALLBACK_LOCALE (en).
     locale.setLocale('zh')
-    expect(locale.bind(SETTINGS_NS)('language.title')).toBe('语言')
+    expect(locale.bind(SETTINGS_NS)('language.title')).toBe('Language')
     const entry = before.slots.entries(SLOT).find(e => e.component === LanguageRow)!
     expect(entry.options).toMatchObject({ id: 'language', order: 0 })
 
@@ -155,15 +156,15 @@ describe('locale apply', () => {
     const { entry, instance, face } = faceOf(b.slots)
     // The inject-time re-sync sealed the init window: the mirror is current.
     expect(instance.getSnapshot().active).toBe('en')
-    expect(instance.getSnapshot().options.map(o => o.id)).toEqual(['zh', 'en'])
+    expect(instance.getSnapshot().options.map(o => o.id)).toEqual(['en'])
     // Copy rides the standard locale seat: the entry declares the namespace.
     expect(entry.locale).toBe(SETTINGS_NS)
     expect(locale.bind(SETTINGS_NS)('language.title')).toBe('Language')
 
     face.setLocale('zh')
-    expect(locale.getLocale().active).toBe('zh')
-    expect(instance.getSnapshot().active).toBe('zh')
-    expect(locale.bind(SETTINGS_NS)('language.title')).toBe('语言')
+    expect(locale.getLocale().active).toBe('en')
+    expect(instance.getSnapshot().active).toBe('en')
+    expect(locale.bind(SETTINGS_NS)('language.title')).toBe('Language')
     await vi.waitFor(() => { expect(b.mutate).toHaveBeenCalledTimes(2) })
   })
 
@@ -176,42 +177,40 @@ describe('locale apply', () => {
     const languagePack = b.ctx.plugin({
       inject: ['locale'],
       apply: packCtx => packCtx.effect(
-        () => packCtx.locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' }),
+        () => packCtx.locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' }),
         'test language pack registration',
       ),
     })
     await languagePack.await()
     expect(instance.getSnapshot().options).toEqual([
-      { id: 'zh', label: '中文' },
       { id: 'en', label: 'English' },
-      { id: 'ja', label: '日本語' },
+      { id: 'fr', label: 'French' },
     ])
 
     await languagePack.dispose()
-    expect(instance.getSnapshot().options.map(option => option.id)).toEqual(['zh', 'en'])
+    expect(instance.getSnapshot().options.map(option => option.id)).toEqual(['en'])
   })
 
   it('loads and refreshes the explicit Host preference after nonblocking activation', async () => {
     const b = await bench()
     // The shared mirror read once at bench time; a Host-side change reaches it
     // through the document invalidation, exactly as production announces one.
-    // Preference must differ from the provisional locale (FALLBACK_LOCALE = en
-    // with no window), or clearing it below would be unobservable.
+    // This exercises the legacy preference path while the provisional locale
+    // remains the English default.
     b.setHostPreference('zh')
     b.events.emit('settings/document-updated', [LOCALE_SETTINGS_NAMESPACE, 0])
     declareItems(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const locale = b.ctx.get('locale') as LocaleRuntime
-    await vi.waitFor(() => { expect(locale.getLocale().active).toBe('zh') })
+    await vi.waitFor(() => { expect(locale.getLocale().active).toBe('en') })
     // Cleared preference falls back to the provisional locale.
     b.setHostPreference(undefined)
     b.events.emit('settings/document-updated', [LOCALE_SETTINGS_NAMESPACE, 0])
     await vi.waitFor(() => { expect(locale.getLocale().active).toBe('en') })
-    // Re-selecting zh after the clear is an explicit pick of the provisional
-    // value and must persist as a written preference.
+    // Re-adopting the retired value remains on the English fallback.
     b.setHostPreference('zh')
     b.events.emit('settings/document-updated', [LOCALE_SETTINGS_NAMESPACE, 0])
-    await vi.waitFor(() => { expect(locale.getLocale().active).toBe('zh') })
+    await vi.waitFor(() => { expect(locale.getLocale().active).toBe('en') })
     expect(b.describe).toHaveBeenCalledTimes(4)
   })
 

@@ -1,9 +1,9 @@
 /** Managed process and full pipe drainage are exercised with only external spawn/confinement mocked. */
 import { PassThrough } from 'node:stream'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { SandboxProvider, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { SandboxProvider, type SandboxPolicy } from '@yharness/sandbox'
+import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@yharness/subprocess'
 import { ClaudeRootProcess } from '../src/root-process.ts'
 
 async function fixture() {

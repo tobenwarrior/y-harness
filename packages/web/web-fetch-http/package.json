@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-web-fetch-http",
-  "description": "Anonymous public HTTP(S) fetch provider for the DeepSeek Harness web capability seam (ctx.web)",
+  "name": "@yharness/web-fetch-http",
+  "description": "Anonymous public HTTP(S) fetch provider for the Y Harness web capability seam (ctx.web)",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/web/web-fetch-http"
   },
   "type": "module",
@@ -29,20 +29,20 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-web": "workspace:*",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/web": "workspace:*",
+    "@yharness/http-proxy": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "ipaddr.js": "^2.5.0",
     "undici": "8.11.2"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-web": "workspace:*",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/web": "workspace:*",
+    "@yharness/http-proxy": "workspace:*"
   }
 }

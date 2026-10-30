@@ -10,8 +10,8 @@ import { newEnglishPage, REPO_ROOT, saveFailureShot } from './support.ts'
 const SESSION_SEED = fileURLToPath(new URL('../../../snapshots/web/seeded-history/session.v3.jsonl', import.meta.url))
 const SESSION_TITLE = 'Client HMR recovery'
 const CLIENTS = [
-  { id: '@deepseek-ai/dsh-client-ui-layout', file: 'packages/client/ui-layout/lib/client.js', key: 'hmrLayout' },
-  { id: '@deepseek-ai/dsh-api-session-controller', file: 'packages/api/session-controller/lib/client.js', key: 'hmrSessions' },
+  { id: '@yharness/client-ui-layout', file: 'packages/client/ui-layout/lib/client.js', key: 'hmrLayout' },
+  { id: '@yharness/api-session-controller', file: 'packages/api/session-controller/lib/client.js', key: 'hmrSessions' },
 ] as const
 
 /** Wrap the compiled apply function with counters and one event-released Cordis cleanup. */

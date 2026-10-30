@@ -3,7 +3,7 @@ description: "Model selection for the Web GUI: the /model popup and the composer
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-model-selection
+# @yharness/client-ui-model-selection
 
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "会话工具",
-    "description": "为每个会话行的菜单添加“复制会话 ID / 引用 / 路径”以及永久“删除会话”操作。"
+    "title": "Session tools",
+    "description": "Adds Copy session ID / reference / path and a permanent Delete session action to every session row's menu."
   }
 }

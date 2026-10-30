@@ -9,11 +9,11 @@
  * belongs to ui-tool's generic keyed tool view, so this package contributes
  * only the Turn-level card.
  */
-import { isAppendSurfaceEvent } from '@deepseek-ai/dsh-session/surface'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { isAppendSurfaceEvent } from '@yharness/session/surface'
+import { PartialArguments } from '@yharness/util-values'
 import type {
   ConversationMatch, ConversationNodeDefinition, ToolResultNode, TurnLocation,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-ui-conversation/client'
 import { scheduleCreateCardModel } from './schedule-create-card.ts'
 
 /** Wire Tool name whose settled result carries one created task. */
@@ -27,7 +27,7 @@ export interface ScheduleTurnData {
   readonly created: readonly ScheduleCreatedTask[]
 }
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@yharness/client-ui-conversation/client' {
   interface ConversationTurnDataMap {
     /** `schedule_create` results settled in this Turn, in settlement order. */
     'schedule-created': ScheduleTurnData

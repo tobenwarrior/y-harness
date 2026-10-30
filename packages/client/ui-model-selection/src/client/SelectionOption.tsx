@@ -1,7 +1,7 @@
 /** Provider, effort, and processing-tier radio rows share selection and pending feedback. */
 import type { ReactNode, Ref } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, StateDot } from '@yharness/client-ui-primitives'
 import css from './ModelSelect.module.css'
 
 /**

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-workflow",
+  "name": "@yharness/tool-workflow",
   "description": "Model-facing workflow tool: run a JavaScript orchestration script over ctx.workflowEngine",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/workflow/tool-workflow"
   },
   "type": "module",
@@ -32,32 +32,32 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-workflow": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/workflow": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-jobs-local": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-tool-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-workflow": "workspace:*",
-    "@deepseek-ai/dsh-workflow-ptc": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/jobs-local": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/tool-jobs": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/workflow": "workspace:*",
+    "@yharness/workflow-ptc": "workspace:*"
   }
 }

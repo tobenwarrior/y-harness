@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "NodeJS 诊断",
-    "description": "按 Ctrl/Cmd+Shift+. 在底部面板打开 Chrome DevTools 进行开发调试"
+    "title": "NodeJS Inspector",
+    "description": "Press Ctrl/Cmd+Shift+. to open Chrome DevTools in the bottom panel for development debugging."
   }
 }

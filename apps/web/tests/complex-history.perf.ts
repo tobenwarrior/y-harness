@@ -9,7 +9,7 @@ import { performance } from 'node:perf_hooks'
 import type { Browser, CDPSession, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { StreamChunk } from '@yharness/llm'
 import {
   ToolCallId,
   createAssistantMessage,
@@ -17,16 +17,16 @@ import {
   createToolResultMessage,
   createUserMessage,
   expandAssistantStream,
-} from '@deepseek-ai/dsh-llm'
-import type { ReplayEntry, ReplayOverrideDoc } from '@deepseek-ai/dsh-llm-replay'
-import type { SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
+} from '@yharness/llm'
+import type { ReplayEntry, ReplayOverrideDoc } from '@yharness/llm-replay'
+import type { SessionEvent, SessionSeq } from '@yharness/session'
 import {
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
-} from '@deepseek-ai/dsh-session'
+} from '@yharness/session'
 // Carries the session/title event declaration into the fixture builder.
-import type {} from '@deepseek-ai/dsh-session-title'
+import type {} from '@yharness/session-title'
 import {
   launchWebScaffold,
   seedSession,
@@ -71,7 +71,7 @@ const LIVE_PROMPT = [
   ...Array.from(
     { length: 48 },
     (_, index) =>
-      `Context ${String(index + 1).padStart(2, '0')}: 用户正在检查长会话中的增量渲染性能。`
+      `Context ${String(index + 1).padStart(2, '0')}: \u{7528}\u{6237}\u{6B63}\u{5728}\u{68C0}\u{67E5}\u{957F}\u{4F1A}\u{8BDD}\u{4E2D}\u{7684}\u{589E}\u{91CF}\u{6E32}\u{67D3}\u{6027}\u{80FD}。`
       + ` Preserve item ${String(index)} and compare ${'payload'.repeat(8)}.`,
   ),
   '```ts',
@@ -425,7 +425,7 @@ function textStream(deltas: readonly string[], inputTokens: number): StreamChunk
 function comparisonPrompt(index: number): string {
   if (index === COMPARISON_TURNS) return LIVE_PROMPT
   return (`${LONG_CONTINUATION_USER_PREFIX}_${String(index)} `
-    + `继续分析这个长会话的第 ${String(index)} 个增量问题，并保留当前滚动和输入响应。 `
+    + `\u{7EE7}\u{7EED}\u{5206}\u{6790}\u{8FD9}\u{4E2A}\u{957F}\u{4F1A}\u{8BDD}\u{7684}\u{7B2C} ${String(index)} \u{4E2A}\u{589E}\u{91CF}\u{95EE}\u{9898}，\u{5E76}\u{4FDD}\u{7559}\u{5F53}\u{524D}\u{6EDA}\u{52A8}\u{548C}\u{8F93}\u{5165}\u{54CD}\u{5E94}。 `
     + 'context '.repeat(80)).trimEnd()
 }
 
@@ -467,7 +467,7 @@ function soakTurn(index: number): ConversationTurnSpec {
     : undefined
   return {
     prompt: (`${SOAK_USER_PREFIX}_${suffix} `
-      + `持续对话第 ${String(index)} 轮，检查增量渲染与保留状态。 `
+      + `\u{6301}\u{7EED}\u{5BF9}\u{8BDD}\u{7B2C} ${String(index)} \u{8F6E}，\u{68C0}\u{67E5}\u{589E}\u{91CF}\u{6E32}\u{67D3}\u{4E0E}\u{4FDD}\u{7559}\u{72B6}\u{6001}。 `
       + 'context '.repeat(20)).trimEnd(),
     deltas: Array.from({ length: SOAK_DELTA_COUNT }, (_, chunkIndex) => {
       if (chunkIndex === 0) return `${SOAK_FIRST_PREFIX}_${suffix} `

@@ -7,10 +7,10 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import { internals, provideCmdline } from '@deepseek-ai/dsh-cmdline'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import { internals, provideCmdline } from '@yharness/cmdline'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apply, WEB_STARTUP_SERVICE, type WebStartupValues } from '../src/startup.ts'
 
@@ -124,7 +124,10 @@ describe('web command-line provider', () => {
 
   it('prints its own help and leaves the consumer pending', async () => {
     const { values, observed } = await bootProvider(['--help'])
-    expect(observed.out).toContain('dsh --profile web')
+    expect(observed.out).toContain('yharness --profile web')
+    expect(observed.out).not.toContain('dsh --profile web')
+    expect(observed.out).not.toContain('YH_WEB_URL')
+    expect(observed.out).not.toContain('DSH_WEB_URL')
     expect(observed.out).toContain('--no-open')
     expect(observed.out).toContain('--public-url')
     expect(observed.out).toContain('--trusted-host')

@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   id: '@fixture/layout-bottom',
   factory(require) {
     const React = require('react')
-    const { Button } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Button } = require('@yharness/client-ui-primitives')
     const h = React.createElement
     function Bottom({ t }) {
       const [height, setHeight] = React.useState(240)

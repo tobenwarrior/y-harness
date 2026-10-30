@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId } from '@yharness/session/types'
 import type { DraftSnapshot } from '../src/client/contract/draft-editor.ts'
 import { createConversationStore, readConversationDraft, readConversationViewPreference } from '../src/client/stores.ts'
 

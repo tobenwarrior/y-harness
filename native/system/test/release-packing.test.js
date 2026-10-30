@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-const publicRepository = 'git+https://github.com/deepseek-ai/deepseek-harness.git';
+const publicRepository = 'git+https://github.com/tobenwarrior/y-harness.git';
 const workspaceLicense = 'Fixture workspace license.\n';
 const packageManager = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).packageManager;
 

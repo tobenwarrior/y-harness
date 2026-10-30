@@ -64,7 +64,7 @@ describe('tierExternalDeps', () => {
     }
     for (const dependency of [
       { name: 'unrelated-library', license: 'MPL-2.0' },
-      { name: '@deepseek-ai/dsh-libreoffice-kit', license: 'MPL-2.0' },
+      { name: '@yharness/libreoffice-kit', license: 'MPL-2.0' },
       { name: '@deepseek-ai/libreoffice-kit-unreviewed', license: 'MPL-2.0' },
       { name: '@deepseek-ai/libreoffice-kit', license: 'GPL-3.0-only' },
       { name: '@deepseek-ai/libreoffice-kit', license: 'UNKNOWN' },
@@ -109,12 +109,12 @@ describe('tierExternalDeps', () => {
     const { manifests, names } = workspace({
       // Root tooling and test infrastructure never ship, whichever section declares them.
       'package.json': { dependencies: { 'root-runtime-looking': '^1' }, devDependencies: { 'lint-tool': '^1' } },
-      'packages/test-support/loader-smoke/package.json': { name: '@deepseek-ai/dsh-loader-smoke', dependencies: { 'smoke-helper': '^1' } },
-      'packages/test-support/client-runtime/package.json': { name: '@deepseek-ai/dsh-client-test-runtime', dependencies: { 'test-lib': '^1' } },
+      'packages/test-support/loader-smoke/package.json': { name: '@yharness/loader-smoke', dependencies: { 'smoke-helper': '^1' } },
+      'packages/test-support/client-runtime/package.json': { name: '@yharness/client-test-runtime', dependencies: { 'test-lib': '^1' } },
       'website/package.json': { devDependencies: { 'site-tool': '^1' } },
       // A plugin package's runtime dependency ships even when no app mounts it by default.
-      'packages/mcp/mcp-client/package.json': { name: '@deepseek-ai/dsh-mcp-client', dependencies: { 'protocol-sdk': '^1' }, devDependencies: { 'protocol-fixture-server': '^1' } },
-      'apps/cli/package.json': { name: '@deepseek-ai/dsh-cli', dependencies: { 'cli-lib': '^1', '@deepseek-ai/dsh-mcp-client': 'workspace:^' } },
+      'packages/mcp/mcp-client/package.json': { name: '@yharness/mcp-client', dependencies: { 'protocol-sdk': '^1' }, devDependencies: { 'protocol-fixture-server': '^1' } },
+      'apps/cli/package.json': { name: '@yharness/cli', dependencies: { 'cli-lib': '^1', '@yharness/mcp-client': 'workspace:^' } },
     })
 
     expect(tierExternalDeps(manifests, names)).toEqual(new Map([
@@ -133,12 +133,12 @@ describe('tierExternalDeps', () => {
   it('keeps a package runtime when any shipping area declares it, and excludes workspace links', () => {
     const { manifests, names } = workspace({
       'package.json': { devDependencies: { shared: '^1' } },
-      'packages/interaction/tui/package.json': { name: '@deepseek-ai/dsh-tui', dependencies: { shared: '^1', '@deepseek-ai/dsh-cli': 'workspace:^' } },
-      'apps/cli/package.json': { name: '@deepseek-ai/dsh-cli' },
+      'packages/interaction/tui/package.json': { name: '@yharness/tui', dependencies: { shared: '^1', '@yharness/cli': 'workspace:^' } },
+      'apps/cli/package.json': { name: '@yharness/cli' },
     })
 
     expect(tierExternalDeps(manifests, names).get('shared')).toBe(true)
-    expect(tierExternalDeps(manifests, names).has('@deepseek-ai/dsh-cli')).toBe(false)
+    expect(tierExternalDeps(manifests, names).has('@yharness/cli')).toBe(false)
   })
 })
 
@@ -216,7 +216,7 @@ describe('parseVendoredRows', () => {
 
     expect(rows.length).toBeGreaterThan(0)
     expect(rows).toContainEqual({
-      npmName: '@deepseek-ai/cordis',
+      npmName: '@yharness/cordis',
       upstreamName: 'cordis',
       upstream: 'https://github.com/cordiverse/cordis',
     })
@@ -225,7 +225,7 @@ describe('parseVendoredRows', () => {
   })
 
   it('yields nothing when the table columns change, so the generator fails loud', () => {
-    expect(parseVendoredRows('| `cordis/` | `@deepseek-ai/cordis` | cordis | 4.0.0 | https://example.com | `abc123` |\n')).toEqual([])
+    expect(parseVendoredRows('| `cordis/` | `@yharness/cordis` | cordis | 4.0.0 | https://example.com | `abc123` |\n')).toEqual([])
   })
 
   it('covers every vendored directory, so no package can drop out of the notices', () => {

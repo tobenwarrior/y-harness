@@ -4,14 +4,14 @@
  * registration follows the slot declaration, resolves the per-session controller from the slot's
  * sessionId, and unregisters on fiber teardown.
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it } from 'vitest'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createScope, scopeOf } from '@deepseek-ai/dsh-api-session-controller/client'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { apply, inject, InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
-import type { MenuViewInjected } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createScope, scopeOf } from '@yharness/api-session-controller/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import type { SessionId } from '@yharness/session/types'
+import { apply, inject, InputTriggerService } from '@yharness/client-ui-input-trigger/client'
+import type { MenuViewInjected } from '@yharness/client-ui-input-trigger/client'
 
 const sid = (k: string): SessionId => k as SessionId
 
@@ -54,7 +54,7 @@ describe('apply', () => {
     const { ctx, locale } = await bench()
     await ctx.plugin({ inject: [...inject], apply }).await()
     const t = locale.bind('slash.menu')
-    expect(t('command')).toBe('指令')
+    expect(t('command')).toBe('Commands')
     locale.setLocale('en')
     expect(t('skill')).toBe('Skills')
     expect(t('subagent')).toBe('Subagents')

@@ -1,9 +1,9 @@
 /** Authenticated Remote operations for account UI consumers. */
-import { Context } from '@deepseek-ai/cordis'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { isRunningAccountTask } from '@deepseek-ai/dsh-deepseek-account'
-import type {} from '@deepseek-ai/dsh-agent'
-import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
+import { Context } from '@yharness/cordis'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import { isRunningAccountTask } from '@yharness/deepseek-account'
+import type {} from '@yharness/agent'
+import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountDetails, AccountUserId } from '@yharness/deepseek-account/types'
 import type { AccountView, SignInAttemptId } from './types.ts'
 
 /** Account commands and reconnect-safe state stream. */

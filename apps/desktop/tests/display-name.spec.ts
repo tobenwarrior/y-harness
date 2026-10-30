@@ -46,7 +46,7 @@ it('refreshes only the development bundle display label when the configuration c
   const launcher = readFileSync(executable, 'utf8')
   expect(executable).toBe(join(bundle, 'MacOS', 'YHarness'))
   expect(original).toMatchObject({ CFBundleIdentifier: 'com.deepseek.harness.dev.5b4a44c1d7c6',
-    CFBundleName: 'Y harness', CFBundleDisplayName: 'Y harness', CFBundleIconFile: 'electron.icns',
+    CFBundleName: 'Y harness', CFBundleDisplayName: 'Y Harness', CFBundleIconFile: 'electron.icns',
     CFBundleExecutable: 'YHarness', CFBundleURLTypes: [{ CFBundleURLName: 'Y harness',
       CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }] })
   expect(readFileSync(join(bundle, 'Resources', 'electron.icns')).subarray(0, 4).toString('ascii')).toBe('icns')

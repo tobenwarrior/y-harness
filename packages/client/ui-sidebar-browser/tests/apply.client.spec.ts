@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 /** Browser type, Slot, locale, and HMR disposal through the real registries. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ShortcutRegistry } from '@deepseek-ai/dsh-client-shortcuts/src/client/registry.ts'
-import type { ShortcutCommand, ShortcutPlatform } from '@deepseek-ai/dsh-client-shortcuts/client'
-import { Context } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { SidebarRightTabRegistry } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/tab-registry.ts'
+import { ShortcutRegistry } from '@yharness/client-shortcuts/src/client/registry.ts'
+import type { ShortcutCommand, ShortcutPlatform } from '@yharness/client-shortcuts/client'
+import { Context } from '@yharness/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
 import { BrowserBody } from '../src/client/view/BrowserBody.tsx'
 import { BrowserTitle } from '../src/client/view/BrowserTitle.tsx'
 import type { BrowserInjected } from '../src/client/browser/BrowserController.ts'
 import { BROWSER_ID, BROWSER_KIND } from '../src/client/definition.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { en, zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 import { createBrowserStore } from '../src/client/browser/store.ts'
-import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { TabId } from '@yharness/client-ui-dockkit'
 import type { DesktopBrowserBridge, DesktopBrowserLeaseId } from '../src/types.ts'
 
 const contexts: Context[] = []
@@ -125,9 +125,8 @@ describe('ui-sidebar-browser apply', () => {
     expect(definition?.title('sidebar://browser')).toBe('type.label')
     expect(definition?.guide?.map(entry => [entry.order, entry.title(), entry.description?.()]))
       .toEqual([[30, 'guide.title', 'guide.description']])
-    expect(dictionaries.get('sidebarBrowser')).toEqual({ zh, en })
+    expect(dictionaries.get('sidebarBrowser')).toEqual({ en })
     expect(dictionaries.get('sidebarBrowser')).toMatchObject({
-      zh: { 'guide.description': '浏览网页' },
       en: { 'guide.description': 'Browse web pages' },
     })
     expect(registered.map(entry => [entry.name, entry.key, entry.locale, entry.component])).toEqual([

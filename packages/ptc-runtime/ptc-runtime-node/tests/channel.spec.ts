@@ -27,9 +27,9 @@ describe('bounded process frames', () => {
     const received = Promise.withResolvers<unknown>()
     const channel = new JsonChannel(a, 1000, (value) => { received.resolve(value) }, (error) => { received.reject(error) })
     onTestFinished(() => { channel.close() })
-    const bytes = frame({ text: '你好🙂' })
+    const bytes = frame({ text: '\u{4F60}\u{597D}🙂' })
     for (const byte of bytes) b.write(Buffer.from([byte]))
-    expect(await received.promise).toEqual({ text: '你好🙂' })
+    expect(await received.promise).toEqual({ text: '\u{4F60}\u{597D}🙂' })
   })
 
   it('accepts consecutive frames and writes complete responses', async () => {

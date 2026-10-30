@@ -1,8 +1,8 @@
 /** Durable model-selection intent and request-use projection. */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { Context } from '@yharness/cordis'
+import type { SessionEvent } from '@yharness/session'
+import type { ProjectionDefinition } from '@yharness/session-projection'
 import { z } from 'zod'
 import type {
   ModelSelection,

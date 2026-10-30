@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-terminal-bash",
-  "description": "Persistent shell PTY backend over the DeepSeek Harness subprocess terminal primitive",
+  "name": "@yharness/terminal-bash",
+  "description": "Persistent shell PTY backend over the Y Harness subprocess terminal primitive",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/terminal/terminal-bash"
   },
   "type": "module",
@@ -27,30 +27,30 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-terminal": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/agent": "workspace:*",
+    "@yharness/terminal": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-lazy-require": "workspace:*",
-    "@deepseek-ai/dsh-pwsh-local": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/lazy-require": "workspace:*",
+    "@yharness/pwsh-local": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "@xterm/headless": "^6.0.0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-terminal": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/terminal": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

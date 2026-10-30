@@ -7,25 +7,25 @@
  * `turn.complete` on `turn/end`, `session.end` on `agent/disposed`, and
  * `command.run` from the commands a mod registers. The `$` a hook receives is
  * served by {@link createHostOps} over the composed harness services.
- * @module @deepseek-ai/dsh-experimental-claude-code-mods
+ * @module @yharness/experimental-claude-code-mods
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { AssistantMessage, ContentBlock, TokenUsage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import type { UserMessage } from '@deepseek-ai/dsh-session'
-import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
-import type { PostToolDecision, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import type { Agent, PreStepDecision } from '@yharness/agent'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import type { AssistantMessage, ContentBlock, TokenUsage } from '@yharness/llm'
+import { SessionId } from '@yharness/session'
+import type { UserMessage } from '@yharness/session'
+import { scopeOf } from '@yharness/scope'
+import { validateJsonSchemaValue } from '@yharness/tools'
+import type { PostToolDecision, ToolExecutionResult, ToolExecutionToken } from '@yharness/tools'
 import type { LoadedMod } from './chain.ts'
 import { RewriteRefusedError } from './chain.ts'
 import { ModsEngine } from './engine.ts'
 import { createHostOps, toolCallResultOf } from './host-ops.ts'
 import type { AgentBinding } from './host-ops.ts'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import type { JsonValue } from '@yharness/util-values'
 import { SurfaceTable } from './surfaces.ts'
 import { createToolNameAliases } from './tool-names.ts'
 import { messageOf, record, stringify } from './values.ts'
@@ -35,7 +35,7 @@ import type {
   SurfaceSnapshot, TurnStartResult, TurnUsage, UiRenderInput, UiRenderResult,
 } from './types.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     claudeCodeMods: ClaudeCodeMods
   }

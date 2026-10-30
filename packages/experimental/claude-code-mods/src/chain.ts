@@ -7,7 +7,7 @@
  * @module
  */
 
-import { deepFreeze } from '@deepseek-ai/dsh-util-values'
+import { deepFreeze } from '@yharness/util-values'
 import { messageOf } from './values.ts'
 import type { AnyHook, HookFailure, HookOrigin, HookMatcher, ModsApi, HookNext, PluginOptions } from './types.ts'
 import { matcherMatches } from './matcher.ts'

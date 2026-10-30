@@ -1,5 +1,5 @@
 /** Tool-category and live-detail interpretation owned by Chat grouping. */
-import type { ToolArgs } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ToolArgs } from '@yharness/client-ui-conversation/client'
 import type { ProcessActivity, ProcessActivitySummary } from '../contract/process-groups.ts'
 import type { ChatNode } from '../contract/chat-nodes.ts'
 import { isRunningTool } from '../contract/chat-nodes.ts'

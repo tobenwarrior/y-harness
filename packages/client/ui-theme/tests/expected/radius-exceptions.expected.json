@@ -1,4 +1,10 @@
 {
+  "ui-conversation/src/client/dock/SessionDock.module.css": [
+    ".preview: border-radius: 8px"
+  ],
+  "ui-conversation/src/client/input/editor/composer-editor.module.css": [
+    ":global(.ghost-prediction-hint): border-radius: 7px"
+  ],
   "ui-deliverables/src/client/ChangedFiles.module.css": [
     ".tile: border-radius: 10px"
   ],

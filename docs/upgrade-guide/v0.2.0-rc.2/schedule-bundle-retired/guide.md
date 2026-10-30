@@ -7,11 +7,11 @@ description: "The Automation tasks optional bundle is removed; the Web compositi
 
 ## Change
 
-In v0.2.0-rc.2, switching on Automation tasks in the Plugins page appended `@deepseek-ai/dsh-experimental-schedule-bundle` to `dsh.profile.bundles` in `$DSH_HOME/profiles/<name>/package.json`. That bundle inserted the `time-context`, `schedule`, and `ui-schedule` rows.
+In v0.2.0-rc.2, switching on Automation tasks in the Plugins page appended `@yharness/experimental-schedule-bundle` to `dsh.profile.bundles` in `$DSH_HOME/profiles/<name>/package.json`. That bundle inserted the `time-context`, `schedule`, and `ui-schedule` rows.
 
-The next release removes the bundle. `@deepseek-ai/dsh-web-app` mounts `schedule` and `ui-schedule` in every Web profile, and the `standard`, `cordis`, and `ptc` presets declare the clock reading and the four `schedule_*` tools; `minimal` declares neither ([details](../../../subsystems/schedule.md)).
+The next release removes the bundle. `@yharness/web-app` mounts `schedule` and `ui-schedule` in every Web profile, and the `standard`, `cordis`, and `ptc` presets declare the clock reading and the four `schedule_*` tools; `minimal` declares neither ([details](../../../subsystems/schedule.md)).
 
-Loading a profile removes `@deepseek-ai/dsh-experimental-schedule-bundle` from its `dsh.profile.bundles` and rewrites `package.json`; other manifest fields are kept. Stored tasks and delivery records stay on disk and remain in use.
+Loading a profile removes `@yharness/experimental-schedule-bundle` from its `dsh.profile.bundles` and rewrites `package.json`; other manifest fields are kept. Stored tasks and delivery records stay on disk and remain in use.
 
 ## Migration
 

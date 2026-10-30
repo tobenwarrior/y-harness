@@ -15,8 +15,8 @@ import {
   sandboxDenialMarker,
   sandboxPermissionsDescription,
   validateEscalationArgs,
-} from '@deepseek-ai/dsh-sandbox'
-import type { EscalationApprover, EscalationOutcome } from '@deepseek-ai/dsh-sandbox'
+} from '@yharness/sandbox'
+import type { EscalationApprover, EscalationOutcome } from '@yharness/sandbox'
 
 describe('the strictly-wider ladder', () => {
   it('read-only escalates to either wider mode; workspace-write only to full access', () => {
@@ -88,7 +88,7 @@ describe('approveEscalation', () => {
     expect(seen[0]).toMatchObject({
       displayReason: {
         en: 'Allow this operation with workspace-write permissions: the user asked to write in the workspace',
-        zh: '允许本次操作使用 workspace-write 权限：the user asked to write in the workspace',
+        zh: 'Allow this operation with workspace-write permissions: the user asked to write in the workspace',
       },
     })
   })

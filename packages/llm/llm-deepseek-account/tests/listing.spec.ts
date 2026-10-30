@@ -2,8 +2,8 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { APP_IDENTITY } from '@deepseek-ai/dsh-llm'
-import { deadline } from '@deepseek-ai/dsh-timeout'
+import { APP_IDENTITY } from '@yharness/llm'
+import { deadline } from '@yharness/timeout'
 import { LISTING_TIMEOUT, parseModelListing, requestModelListing } from '../src/listing.ts'
 import type { ListedCapabilities } from '../src/listing.ts'
 

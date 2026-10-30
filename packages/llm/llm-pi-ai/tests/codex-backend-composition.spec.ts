@@ -1,19 +1,19 @@
 /** Native request forwarding through Loader-owned policies and the production agent loop. */
 import { expect, it, onTestFinished } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import Llm from '@deepseek-ai/dsh-llm'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import Sessions, { SessionId } from '@deepseek-ai/dsh-session'
-import Projections from '@deepseek-ai/dsh-session-projection'
-import Prompt from '@deepseek-ai/dsh-system-prompt'
-import Tools from '@deepseek-ai/dsh-tools'
-import Agents from '@deepseek-ai/dsh-agent'
-import Loop from '@deepseek-ai/dsh-agent-loop'
-import Sandbox from '@deepseek-ai/dsh-sandbox-policy'
-import Approval from '@deepseek-ai/dsh-user-approval'
-import Questions from '@deepseek-ai/dsh-user-questions'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import Llm from '@yharness/llm'
+import { createUserMessage } from '@yharness/llm'
+import Sessions, { SessionId } from '@yharness/session'
+import Projections from '@yharness/session-projection'
+import Prompt from '@yharness/system-prompt'
+import Tools from '@yharness/tools'
+import Agents from '@yharness/agent'
+import Loop from '@yharness/agent-loop'
+import Sandbox from '@yharness/sandbox-policy'
+import Approval from '@yharness/user-approval'
+import Questions from '@yharness/user-questions'
 import { CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
 import { resolveCodexAccess } from '../src/codex-backend-access.ts'
 
@@ -23,11 +23,11 @@ it('routes native approvals and questions to the calling session through a real 
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-llm', Llm], ['@deepseek-ai/dsh-session', Sessions],
-    ['@deepseek-ai/dsh-session-projection', Projections], ['@deepseek-ai/dsh-system-prompt', Prompt],
-    ['@deepseek-ai/dsh-tools', Tools], ['@deepseek-ai/dsh-agent', Agents],
-    ['@deepseek-ai/dsh-sandbox-policy', Sandbox], ['@deepseek-ai/dsh-user-approval', Approval],
-    ['@deepseek-ai/dsh-user-questions', Questions], ['@deepseek-ai/dsh-agent-loop', Loop],
+    ['@yharness/llm', Llm], ['@yharness/session', Sessions],
+    ['@yharness/session-projection', Projections], ['@yharness/system-prompt', Prompt],
+    ['@yharness/tools', Tools], ['@yharness/agent', Agents],
+    ['@yharness/sandbox-policy', Sandbox], ['@yharness/user-approval', Approval],
+    ['@yharness/user-questions', Questions], ['@yharness/agent-loop', Loop],
   ])
   const internal: ModuleLoaderV2 = {
     version: 'v2', loadCache: new Map(),

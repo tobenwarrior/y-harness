@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "电脑操作（Cua Driver）",
-    "description": "让模型使用内置的 Cua Driver 运行时操作桌面；需要为启动 dsh 的应用授予桌面权限。"
+    "title": "Computer Use (Cua Driver)",
+    "description": "Let the model operate the desktop through the built-in Cua Driver runtime; grant desktop permission to the application that launches dsh."
   }
 }

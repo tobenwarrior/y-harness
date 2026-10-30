@@ -1,15 +1,15 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { AssistantStreamAccumulator, createAssistantMessage, createUserMessage, createSystemMessage, ToolCallId, createMessage } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, Message, TokenUsage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, SessionSeq, canonicalHeader } from '@deepseek-ai/dsh-session'
-import type { EpochHeader, SessionEvent, SessionSeq as SessionSeqType } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import type { TokenMeasurement, TokenMeterConfig } from '@deepseek-ai/dsh-token-meter'
+import { Context } from '@yharness/cordis'
+import { AssistantStreamAccumulator, createAssistantMessage, createUserMessage, createSystemMessage, ToolCallId, createMessage } from '@yharness/llm'
+import type { ContentBlock, Message, TokenUsage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import SessionStore, { Session, SessionId, SessionSeq, canonicalHeader } from '@yharness/session'
+import type { EpochHeader, SessionEvent, SessionSeq as SessionSeqType } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import TokenMeter from '@yharness/token-meter'
+import type { TokenMeasurement, TokenMeterConfig } from '@yharness/token-meter'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

@@ -1,13 +1,13 @@
 import { byteResult } from './fixtures.client.ts'
 /** HTML metadata and keyed slot contributions share one identity and unwind with their fiber. */
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { sessionFileAddress } from '@deepseek-ai/dsh-util-workspace-path'
+import { Context } from '@yharness/cordis'
+import { sessionFileAddress } from '@yharness/util-workspace-path'
 import { DocumentPreviewRegistry } from '../src/client/document/registry.ts'
 import { apply, HTML_BODY_ID, htmlBodyDefinition } from '../src/client/html/index.ts'
 import { HtmlBody } from '../src/client/html/HtmlBody.tsx'
-import { en, zh } from '../src/client/html/locales.ts'
+import { en } from '../src/client/html/locales.ts'
 import type { HtmlBodyProps } from '../src/client/html/HtmlBody.tsx'
 
 type Registration = {
@@ -54,7 +54,7 @@ describe('HTML registration', () => {
     await fiber.await()
     expect(registry.candidates('INDEX.HTM').map(entry => entry.id)).toEqual([HTML_BODY_ID])
     expect(registry.getSnapshot()[0]?.title()).toBe(en.title)
-    expect(dictionaries.get('documentHtml')).toEqual({ zh, en })
+    expect(dictionaries.get('documentHtml')).toEqual({ en })
     expect(register).toHaveBeenCalledOnce()
     const registration = register.mock.calls[0]?.[0]
     expect(registration).toMatchObject({ name: 'sidebar.right.tab.document', key: HTML_BODY_ID, locale: 'documentHtml' })

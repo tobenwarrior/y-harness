@@ -1,29 +1,29 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PassThrough } from 'node:stream'
 import { resolve } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import SandboxProvider from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SandboxPolicyService, { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import TerminalSessionService, { TerminalBackendCleanupError, TerminalSessionId } from '@deepseek-ai/dsh-terminal'
-import type { TerminalSendRequest, TerminalWaitReason } from '@deepseek-ai/dsh-terminal'
-import { BashTerminalBackend, PWSH_PROMPT_SETUP } from '@deepseek-ai/dsh-terminal-bash'
-import { ENCODING_PREAMBLE } from '@deepseek-ai/dsh-pwsh-local'
-import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
-import type { ResolvedConfig } from '@deepseek-ai/dsh-terminal-bash/src/config.ts'
-import type { LocalPtySession } from '@deepseek-ai/dsh-terminal-bash/src/session.ts'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import SandboxProvider from '@yharness/sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@yharness/sandbox'
+import SandboxPolicyService, { setSandboxMode } from '@yharness/sandbox-policy'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import TerminalSessionService, { TerminalBackendCleanupError, TerminalSessionId } from '@yharness/terminal'
+import type { TerminalSendRequest, TerminalWaitReason } from '@yharness/terminal'
+import { BashTerminalBackend, PWSH_PROMPT_SETUP } from '@yharness/terminal-bash'
+import { ENCODING_PREAMBLE } from '@yharness/pwsh-local'
+import * as ptyLocal from '@yharness/terminal-bash'
+import type { ResolvedConfig } from '@yharness/terminal-bash/src/config.ts'
+import type { LocalPtySession } from '@yharness/terminal-bash/src/session.ts'
+import { SubprocessRuntime } from '@yharness/subprocess'
 import type {
   SubprocessHandle,
   SubprocessSpawnSpec,
   SubprocessTerminalHandle,
   SubprocessTerminalSpawnSpec,
-} from '@deepseek-ai/dsh-subprocess'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
+} from '@yharness/subprocess'
+import { unsupportedInbox } from '@yharness/agent-loop-testkit'
 
 class EmptySandbox extends SandboxProvider {
   async confine(_argv: readonly string[], _policy: SandboxPolicy): Promise<ConfinedArgv> {
@@ -279,8 +279,8 @@ describe('BashTerminalBackend startup rollback', () => {
       cwd: '/work',
       graceMs: 10,
       env: {
-        TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat', PS1: 'dsh> ', BASH_SILENCE_DEPRECATION_WARNING: '1',
-        PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"; PS1=\'dsh> \'',
+        TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat', PS1: 'yharness> ', BASH_SILENCE_DEPRECATION_WARNING: '1',
+        PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"; PS1=\'yharness> \'',
         DSH_SHELL: '1', DSH_SESSION_ID: 'agent', DSH_PTY_SESSION_ID: 'pty-1',
       },
     })
@@ -406,14 +406,14 @@ describe('BashTerminalBackend startup rollback', () => {
         outcome.resolve({ exitCode: null, signal: 'SIGTERM' })
       },
     }
-    queueMicrotask(() => { output.write(Buffer.from('\x1b]133;D;0\x07dsh> ')) })
+    queueMicrotask(() => { output.write(Buffer.from('\x1b]133;D;0\x07yharness> ')) })
     const backend = new BashTerminalBackend(
       ctx,
       config(),
       async () => terminal,
     )
     const session = await backend.spawn(spec(agent(ctx)))
-    expect(session.motd).toBe('dsh> ')
+    expect(session.motd).toBe('yharness> ')
     await session.close('test complete')
   })
 
@@ -430,7 +430,7 @@ describe('BashTerminalBackend startup rollback', () => {
         sent = request
         return {
           done: Promise.resolve({
-            viewport: 'setup-echo dsh> ', waitReason: 'stdin_read' as const,
+            viewport: 'setup-echo yharness> ', waitReason: 'stdin_read' as const,
             sessionStatus: { kind: 'running' as const }, truncated: false,
           }),
           readOutput: () => ({ delta: '', truncated: false }),
@@ -447,7 +447,7 @@ describe('BashTerminalBackend startup rollback', () => {
     )
     expect(await backend.spawn(spec(agent(ctx)))).toBe(session)
     expect(sent).toMatchObject({ text: ENCODING_PREAMBLE + PWSH_PROMPT_SETUP, submit: true })
-    expect(session.motd).toBe('setup-echo dsh> ')
+    expect(session.motd).toBe('setup-echo yharness> ')
     expect(spawned?.env).toMatchObject({
       TERM: 'dumb', NO_COLOR: '1', DSH_SHELL: '1', DSH_SESSION_ID: 'agent', DSH_PTY_SESSION_ID: 'pty-1',
     })
@@ -468,7 +468,7 @@ describe('BashTerminalBackend startup rollback', () => {
         const second = sends.length > 1
         return {
           done: Promise.resolve({
-            viewport: second ? 'dsh> ' : "function prompt { 'dsh> ' }\n",
+            viewport: second ? 'yharness> ' : "function prompt { 'yharness> ' }\n",
             waitReason: second ? 'stdin_read' as const : 'inferred_idle' as const,
             sessionStatus: { kind: 'running' as const }, truncated: false,
           }),
@@ -487,7 +487,7 @@ describe('BashTerminalBackend startup rollback', () => {
     await backend.spawn(spec(agent(ctx)))
     expect(sends).toHaveLength(2)
     expect(sends[1]).toMatchObject({ text: '', submit: false })
-    expect(session.motd).toBe('dsh> ')
+    expect(session.motd).toBe('yharness> ')
   })
 
   it('rejects a pwsh bootstrap whose shell exits or times out', async () => {
@@ -580,7 +580,7 @@ describe('BashTerminalBackend startup rollback', () => {
         sends.push(request)
         return {
           done: Promise.resolve({
-            viewport: 'dsh> ', waitReason: 'stdin_read' as const,
+            viewport: 'yharness> ', waitReason: 'stdin_read' as const,
             sessionStatus: { kind: 'running' as const }, truncated: false,
           }),
           readOutput: () => ({ delta: '', truncated: false }),
@@ -597,7 +597,7 @@ describe('BashTerminalBackend startup rollback', () => {
     )
     const signal = new AbortController().signal
     const spawned = await backend.spawn({ ...spec(agent(ctx)), signal })
-    expect(spawned.motd).toBe('dsh> ')
+    expect(spawned.motd).toBe('yharness> ')
     expect(sends).toHaveLength(1)
     expect(sends[0]?.signal).toBe(signal)
   })

@@ -5,28 +5,28 @@
  * decoration that opens the dialog from the composer menu or a bare typed
  * command. The feedbackUi service opens the same dialog for other plugins.
  * One FeedbackSurface per Session backs every entry in that Session.
- * @module @deepseek-ai/dsh-client-ui-message-feedback/client
+ * @module @yharness/client-ui-message-feedback/client
  */
 
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { SessionId } from '@yharness/session/types'
 // Type-only: pulls the generated Remote API and ctx.remote merge through the Client assembly boundary.
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@yharness/api-remotes/client'
 // Type-only: pulls the ui-conversation SlotMap merge (the assistant-actions and overlay entries).
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@yharness/client-ui-conversation/client'
 // Type-only: pulls the command UI's Context merge (ctx.commandUi).
-import type {} from '@deepseek-ai/dsh-client-ui-commands/client'
+import type {} from '@yharness/client-ui-commands/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-chat/client'
+import type {} from '@yharness/client-ui-session/client'
 import { FeedbackDialog } from './FeedbackDialog.tsx'
 import { MessageFeedbackActions } from './MessageFeedbackActions.tsx'
 import type { FeedbackDialogInjected, MessageFeedbackInjected } from './slots.ts'
 import { FeedbackSurface } from './surface.ts'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 export type {
   MessageFeedbackActionFailure, MessageFeedbackActionResult, MessageFeedbackStatus,
@@ -47,7 +47,7 @@ export interface FeedbackUi {
   openSession(sessionId: SessionId): void
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     feedbackUi: FeedbackUi
   }
@@ -66,7 +66,7 @@ export const inject = ['slots', 'remote', 'remote.messageFeedback', 'remote.sess
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-message-feedback: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-message-feedback: dictionaries')
 
   const surfaces = new Map<SessionId, FeedbackSurface>()
   const surfaceFor = (sessionId: SessionId): FeedbackSurface => {

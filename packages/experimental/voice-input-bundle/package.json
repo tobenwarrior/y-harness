@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-experimental-voice-input-bundle",
+  "name": "@yharness/experimental-voice-input-bundle",
   "description": "Experimental voice input with local SenseVoice; downloads its runtime on first use",
   "version": "0.2.1-rc.2",
   "icon": "./icon.svg",
@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/experimental/voice-input-bundle"
   },
   "type": "module",
@@ -33,17 +33,17 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-experimental-speech-to-text": "workspace:*",
-    "@deepseek-ai/dsh-experimental-speech-to-text-sensevoice": "workspace:*",
-    "@deepseek-ai/dsh-experimental-api-speech-to-text": "workspace:*",
-    "@deepseek-ai/dsh-experimental-client-ui-voice-input": "workspace:*"
+    "@yharness/experimental-speech-to-text": "workspace:*",
+    "@yharness/experimental-speech-to-text-sensevoice": "workspace:*",
+    "@yharness/experimental-api-speech-to-text": "workspace:*",
+    "@yharness/experimental-client-ui-voice-input": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-include": "workspace:~",
     "js-yaml": "^4.2.0"
   },
   "dsh": {

@@ -3,11 +3,11 @@ description: "Typed Client-to-Host calls and streams: dispatch, validation, canc
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-api-gateway
+# @yharness/api-gateway
 
 ## Summary
 
-Two-sided Typert RPC endpoint for Host and Client Cordis environments. The Host entry provides `ctx.typertGateway`, while `@deepseek-ai/dsh-api-gateway/client` provides `ctx.remote`; both consume the same generated `InvocationDescriptor` contract and leave business selection to API Remotes. Connection carries unary request correlation, trust, and response envelopes, while Gateway owns multiplexed Remote streams, each carrying a Client-to-Host uplink on the same logical stream.
+Two-sided Typert RPC endpoint for Host and Client Cordis environments. The Host entry provides `ctx.typertGateway`, while `@yharness/api-gateway/client` provides `ctx.remote`; both consume the same generated `InvocationDescriptor` contract and leave business selection to API Remotes. Connection carries unary request correlation, trust, and response envelopes, while Gateway owns multiplexed Remote streams, each carrying a Client-to-Host uplink on the same logical stream.
 
 ## Table of Contents
 

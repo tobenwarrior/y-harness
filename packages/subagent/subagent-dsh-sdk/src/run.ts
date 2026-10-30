@@ -1,17 +1,17 @@
 /**
- * Fresh-process SDK subagent client. Drives one child DeepSeek Harness
- * runtime over stdio JSON-RPC through `@deepseek-ai/dsh-sdk-client` and owns
+ * Fresh-process SDK subagent client. Drives one child Y Harness
+ * runtime over stdio JSON-RPC through `@yharness/sdk-client` and owns
  * cancellation and quiescent disposal. It publishes after the child
  * handshake, maps child failures to stop reasons, and tears down to
  * quiescence. The SDK client spawns the child rather than using
  * `ctx.subprocess` — the subprocess seam's documented exception for
  * SDK-managed transports — so this driver applies the seam's shared env scrub.
  *
- * @module @deepseek-ai/dsh-subagent-dsh-sdk/run
+ * @module @yharness/subagent-dsh-sdk/run
  */
 
 import { randomUUID } from 'node:crypto'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import {
   DeepSeekHarness,
   type DeepSeekHarnessOptions,
@@ -19,12 +19,12 @@ import {
   JsonRpcResponseError,
   SdkProtocolError,
   TransportClosedError,
-} from '@deepseek-ai/dsh-sdk-client'
-import type { ContentBlock, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, SessionId, TurnEndReason } from '@deepseek-ai/dsh-session'
-import type { SubagentResult, SubagentRun, SubagentStartRequest, SubagentStopReason } from '@deepseek-ai/dsh-subagent'
-import { AssistantOutputFold, settleRunResult, subprocessRunHandle } from '@deepseek-ai/dsh-subagent'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+} from '@yharness/sdk-client'
+import type { ContentBlock, ReasoningEffortId } from '@yharness/llm'
+import type { SessionEvent, SessionId, TurnEndReason } from '@yharness/session'
+import type { SubagentResult, SubagentRun, SubagentStartRequest, SubagentStopReason } from '@yharness/subagent'
+import { AssistantOutputFold, settleRunResult, subprocessRunHandle } from '@yharness/subagent'
+import { scrubbedParentEnv } from '@yharness/subprocess'
 
 /** Resolved spawn spec for an SDK runtime child process (no defaults — see Config). */
 export interface SdkRunSpec {

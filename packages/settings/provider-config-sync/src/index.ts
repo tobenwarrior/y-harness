@@ -1,16 +1,16 @@
 /** Optional Host-owned sharing of ordinary provider catalogs, with local access. */
 import { join, resolve } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
+import { Context, Service } from '@yharness/cordis'
+import z from '@yharness/schemastery'
 import { watch, type FSWatcher } from 'chokidar'
-import type {} from '@deepseek-ai/dsh-settings'
-import type {} from '@deepseek-ai/dsh-app-boot'
-import type {} from '@deepseek-ai/dsh-hmr'
+import type {} from '@yharness/settings'
+import type {} from '@yharness/app-boot'
+import type {} from '@yharness/hmr'
 import { ProviderSyncEngine } from './engine.ts'
 import type { LocalNamespace, SyncStatus } from './engine.ts'
 import { schemaFingerprint } from './profile.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Optional ordinary provider configuration sharing; no credential transport. */
     providerConfigSync: ProviderConfigSync

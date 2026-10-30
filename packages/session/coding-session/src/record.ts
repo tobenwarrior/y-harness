@@ -1,7 +1,7 @@
 /** Durable read-only native history; a mirror is never a runnable Harness Session. */
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { brandString } from '@yharness/brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
 import type { CodingSessionEventId, CodingSessionMirrorId, CodingSessionNativeId, CodingSessionProfileId } from './types.ts'
 
 const source = z.object({ provider: z.enum(['codex', 'claude']), profileId: z.string().min(1).transform(value => brandString<CodingSessionProfileId>(value)), nativeSessionId: z.string().min(1).transform(value => brandString<CodingSessionNativeId>(value)) })

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
 import type { DesktopUpdateRowProps } from '../src/client/DesktopUpdateRow.tsx'
 import { DesktopUpdateRow } from '../src/client/DesktopUpdateRow.tsx'
 import type { DesktopUpdateView } from '../src/types.ts'

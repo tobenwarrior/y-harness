@@ -4,26 +4,26 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
-import * as Sandbox from '@deepseek-ai/dsh-sandbox-policy'
-import * as Approval from '@deepseek-ai/dsh-user-approval'
-import * as Questions from '@deepseek-ai/dsh-user-questions'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
-import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import * as Llm from '@yharness/llm'
+import * as Sessions from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
+import * as Sandbox from '@yharness/sandbox-policy'
+import * as Approval from '@yharness/user-approval'
+import * as Questions from '@yharness/user-questions'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
+import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@yharness/launch-environment'
 import * as Library from '../src/index.ts'
 import { CodexBackendConnection } from '../../../llm/llm-pi-ai/src/codex-backend-connection.ts'
 import type { CodexPeer } from '../../../llm/llm-pi-ai/src/codex-backend.ts'
@@ -55,7 +55,7 @@ it('automatically creates only a newly managed project procedure and updates it 
     ['fixture-codex-connection', { default: CodexBackendConnection }],
   ]
   const modules = new Map<string, unknown>(moduleEntries.map(([name, module]): [string, unknown] => [
-    `@deepseek-ai/dsh-${name}`, module,
+    `@yharness/${name}`, module,
   ]))
   const configs: Record<string, object> = {
     'storage-json': { root: join(root, 'storage') }, 'storage-domain': { backend: 'json' },
@@ -64,7 +64,7 @@ it('automatically creates only a newly managed project procedure and updates it 
     'skill-library': { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 },
   }
   const configPath = join(root, 'cordis.yml')
-  await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@deepseek-ai/dsh-', '')] }))))
+  await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@yharness/', '')] }))))
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader); ctx.loader.builtins.include = Include
   const internal: ModuleLoaderV2 = {

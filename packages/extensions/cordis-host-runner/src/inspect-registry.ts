@@ -1,12 +1,12 @@
 /** Host registry for model-visible, read-only Cordis capability queries. */
 
-import { Service } from '@deepseek-ai/cordis'
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-api-gateway'
-import { snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
-import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
-import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
+import { Service } from '@yharness/cordis'
+import type { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type {} from '@yharness/api-gateway'
+import { snapshotJsonValue, type JsonValue } from '@yharness/util-values'
+import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@yharness/tools'
+import type { JsonSchemaNode } from '@yharness/tools'
 import type {
   CordisInspectMethodManifest, CordisInspectPlatform, CordisInspectProviderManifest,
   CordisInspectProviderView, CordisInspectQueryRequest, CordisInspectQueryResolution,
@@ -36,7 +36,7 @@ interface PendingClientQuery {
   settle(resolution: CordisInspectQueryResolution): void
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Host registry for Cordis inspect providers and Client manifest/query routing. */
     cordisInspect: CordisInspectRegistryService

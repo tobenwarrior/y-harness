@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
-import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { entryListSchema } from '@yharness/cordis-plugin-include'
 
 function packageName(specifier: string): string {
   return specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]!
@@ -26,33 +26,33 @@ describe('dsh-sdk-minimal bundle', () => {
     expect(patches).toHaveLength(1)
     const rows = patches[0]?.insert ?? []
     expect(rows.map(row => [row.id, row.name])).toEqual([
-      ['sdk-app-startup', '@deepseek-ai/dsh-sdk-app'],
-      ['sdk-jsonrpc-server', '@deepseek-ai/dsh-sdk-jsonrpc-server'],
-      ['deepseek-llm-api-extensions', '@deepseek-ai/dsh-deepseek-llm-api-extensions'],
-      ['session-log-deepseek', '@deepseek-ai/dsh-session-log-deepseek'],
-      ['plugin-package-inventory-deepseek', '@deepseek-ai/dsh-plugin-package-inventory-deepseek'],
-      ['llm-deepseek', '@deepseek-ai/dsh-llm-deepseek-api-key'],
-      ['sandbox', '@deepseek-ai/dsh-sandbox-local'],
-      ['session-projection', '@deepseek-ai/dsh-session-projection'],
-      ['sandbox-policy', '@deepseek-ai/dsh-sandbox-policy'],
-      ['subprocess', '@deepseek-ai/dsh-subprocess-local'],
-      ['pty', '@deepseek-ai/dsh-terminal'],
-      ['terminal-bash', '@deepseek-ai/dsh-terminal-bash'],
-      ['terminal-pwsh', '@deepseek-ai/dsh-terminal-bash'],
-      ['timer', '@deepseek-ai/cordis-plugin-timer'],
-      ['llm', '@deepseek-ai/dsh-llm'],
-      ['session', '@deepseek-ai/dsh-session'],
-      ['session-title', '@deepseek-ai/dsh-session-title'],
-      ['system-prompt', '@deepseek-ai/dsh-system-prompt'],
-      ['tools', '@deepseek-ai/dsh-tools'],
-      ['mcp-resources', '@deepseek-ai/dsh-mcp-resources'],
-      ['agent', '@deepseek-ai/dsh-agent'],
-      ['llm-retry', '@deepseek-ai/dsh-llm-retry'],
-      ['jobs', '@deepseek-ai/dsh-jobs-local'],
-      ['agent-loop', '@deepseek-ai/dsh-agent-loop'],
-      ['persistent-bash', '@deepseek-ai/dsh-tool-bash-persistent'],
-      ['persistent-pwsh', '@deepseek-ai/dsh-tool-pwsh-persistent'],
-      ['sessions', '@deepseek-ai/dsh-session-persistence-jsonl'],
+      ['sdk-app-startup', '@yharness/sdk-app'],
+      ['sdk-jsonrpc-server', '@yharness/sdk-jsonrpc-server'],
+      ['deepseek-llm-api-extensions', '@yharness/deepseek-llm-api-extensions'],
+      ['session-log-deepseek', '@yharness/session-log-deepseek'],
+      ['plugin-package-inventory-deepseek', '@yharness/plugin-package-inventory-deepseek'],
+      ['llm-deepseek', '@yharness/llm-deepseek-api-key'],
+      ['sandbox', '@yharness/sandbox-local'],
+      ['session-projection', '@yharness/session-projection'],
+      ['sandbox-policy', '@yharness/sandbox-policy'],
+      ['subprocess', '@yharness/subprocess-local'],
+      ['pty', '@yharness/terminal'],
+      ['terminal-bash', '@yharness/terminal-bash'],
+      ['terminal-pwsh', '@yharness/terminal-bash'],
+      ['timer', '@yharness/cordis-plugin-timer'],
+      ['llm', '@yharness/llm'],
+      ['session', '@yharness/session'],
+      ['session-title', '@yharness/session-title'],
+      ['system-prompt', '@yharness/system-prompt'],
+      ['tools', '@yharness/tools'],
+      ['mcp-resources', '@yharness/mcp-resources'],
+      ['agent', '@yharness/agent'],
+      ['llm-retry', '@yharness/llm-retry'],
+      ['jobs', '@yharness/jobs-local'],
+      ['agent-loop', '@yharness/agent-loop'],
+      ['persistent-bash', '@yharness/tool-bash-persistent'],
+      ['persistent-pwsh', '@yharness/tool-pwsh-persistent'],
+      ['sessions', '@yharness/session-persistence-jsonl'],
     ])
     expect(rows.find(row => row.id === 'sdk-app-startup')?.config).toEqual({ profile: 'sdk-minimal' })
     expect(rows.find(row => row.id === 'sdk-jsonrpc-server')).toMatchObject({

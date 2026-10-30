@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-subagent",
+  "name": "@yharness/tool-subagent",
   "description": "Model-facing subagent delegation tool over the ctx.subagents seam",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/subagent/tool-subagent"
   },
   "type": "module",
@@ -32,37 +32,37 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-jobs-local": "workspace:*",
-    "@deepseek-ai/dsh-tool-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/subagent-spawn-in-process": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/jobs-local": "workspace:*",
+    "@yharness/tool-jobs": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   }
 }

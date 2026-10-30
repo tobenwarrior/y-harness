@@ -1,12 +1,12 @@
 import { useCallback } from 'react'
-import { IconQuestionOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-agent/types'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconQuestionOutlineRegular } from '@yharness/client-ui-primitives'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/agent/types'
+import type { InjectFace, PropsLocale } from '@yharness/client-ui-slots'
 // Also merges the userQuestions key into SessionProjectionMap for useProjection.
 import type {
   AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionOption,
-} from '@deepseek-ai/dsh-user-questions/types'
+} from '@yharness/user-questions/types'
 import type { ToolCallViewProps, UserQuestionRecord } from '../../contract/slots.ts'
 import type { AskQuestionCardModel } from '../models/ask-question-card-model.ts'
 import { singleResultText } from '../models/raw-tool-call.ts'

@@ -1,6 +1,6 @@
 /** Credential-scoped `/models` cache with single-flight loads, background refresh, and last-known-good retention. */
 import { createHash } from 'node:crypto'
-import { deadline } from '@deepseek-ai/dsh-timeout'
+import { deadline } from '@yharness/timeout'
 import type { CatalogSettings } from './config.ts'
 import { LISTING_TIMEOUT } from './listing.ts'
 import type { ModelListing } from './listing.ts'

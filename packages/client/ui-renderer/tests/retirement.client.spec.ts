@@ -1,9 +1,9 @@
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@yharness/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { LocaleFace, PropsRenderSlots, SlotScopeAdapter, StandardSourceBinding } from '@deepseek-ai/dsh-client-ui-slots'
+import type { LocaleFace, PropsRenderSlots, SlotScopeAdapter, StandardSourceBinding } from '@yharness/client-ui-slots'
 import * as UiRenderer from '../src/client/index.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface SlotMap {
     'retirement.leaves': { kind: 'list'; scope: 'root' }
   }

@@ -55,12 +55,16 @@ process.on('message', message => {
 })
 `
 
-function projectWithHost(source = HTTP_HOST): string {
+function projectWithHost(source = HTTP_HOST, layout: 'canonical' | 'legacy' = 'canonical'): string {
   const project = mkdtempSync(join(tmpdir(), 'dsh-desktop-host-test-'))
   roots.push(project)
-  const packageRoot = join(project, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
+  const packageRoot = layout === 'canonical'
+    ? join(project, 'node_modules', '@yharness', 'desktop-host')
+    : join(project, 'node_modules', '@deepseek-ai', 'dsh-desktop-host')
   mkdirSync(join(packageRoot, 'lib'), { recursive: true })
-  writeFileSync(join(packageRoot, 'package.json'), '{"name":"@deepseek-ai/dsh-desktop-host","type":"module"}\n')
+  writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+    name: layout === 'canonical' ? '@yharness/desktop-host' : '@deepseek-ai/dsh-desktop-host', type: 'module',
+  }) + '\n')
   writeFileSync(join(packageRoot, 'lib', 'index.js'), source)
   return project
 }
@@ -146,6 +150,13 @@ describe('desktop host process', () => {
     expect(existsSync(join(runtime, 'stopped'))).toBe(true)
     await expect(fetch(ready.url)).rejects.toThrow()
     expect(failure).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the legacy Host package layout for existing runtimes', async () => {
+    const host = hostProcess(projectWithHost(HTTP_HOST, 'legacy'))
+    const ready = await host.start()
+    expect(new URL(ready.url).searchParams.get('token')).toBe('fixture')
+    await host.stop()
   })
 
   it('passes external dependencies and package-manager paths to the Host', async () => {

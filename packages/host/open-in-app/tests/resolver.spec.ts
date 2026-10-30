@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
+import type { NativeCommandRunner } from '@yharness/native-command'
 import { OPEN_IN_APP_CATALOG, type OpenInAppApp } from '../src/catalog.ts'
 import {
   execCommand, launchDetachedApp, launchResolved, parseDesktopEntry, parseRegistryDump, resolveInternals,
@@ -469,7 +469,7 @@ describe('registry and desktop parsing', () => {
     const dump = [
       'ignored preamble',
       'HKEY_CURRENT_USER\\...\\App Paths\\Code.exe',
-      '    (默认)    REG_SZ    C:\\Code.exe',
+      '    (\u{9ED8}\u{8BA4})    REG_SZ    C:\\Code.exe',
       '    Path    REG_EXPAND_SZ    %LOCALAPPDATA%\\Code',
       '    Flags    REG_DWORD    0x1',
       '',

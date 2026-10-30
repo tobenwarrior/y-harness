@@ -3,12 +3,12 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
-import SkillRegistry from '@deepseek-ai/dsh-skill'
-import * as SkillCompound from '@deepseek-ai/dsh-skill-compound'
+import { Context } from '@yharness/cordis'
+import Include from '@yharness/cordis-plugin-include'
+import Loader from '@yharness/cordis-plugin-loader'
+import type { ConnectionFetchRoute } from '@yharness/client-connection'
+import SkillRegistry from '@yharness/skill'
+import * as SkillCompound from '@yharness/skill-compound'
 import { activeOverlay } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
 import { VENDORED_VERSION } from '../src/upstream.ts'
@@ -43,10 +43,11 @@ async function writeSkill(root: string, content: string): Promise<void> {
 
 describe('bundled Compound skills', () => {
   it('registers every vendored skill and serves its body with the runtime paths', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-bundled-'))
     const ctx = new Context()
     try {
       await ctx.plugin(SkillRegistry)
-      await ctx.plugin(SkillCompound)
+      await ctx.plugin(SkillCompound, { overlayRoot: root })
       const catalog = await ctx.skills.list()
       expect(catalog.map(skill => skill.name)).toEqual(names)
       for (const skill of catalog) {
@@ -67,6 +68,7 @@ describe('bundled Compound skills', () => {
       }
     } finally {
       await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
     }
   })
 
@@ -94,7 +96,7 @@ describe('bundled Compound skills', () => {
         await writeFile(join(external, name, 'SKILL.md'), `---\nname: ${name}\ndescription: "relocated ${name}"\n---\n\nBody for ${name}.\n`)
       }
       await ctx.plugin(SkillRegistry)
-      await ctx.plugin(SkillCompound, { assetRoot: external })
+      await ctx.plugin(SkillCompound, { assetRoot: external, overlayRoot: root })
       const catalog = await ctx.skills.list()
       expect(catalog.map(skill => skill.description)).toEqual(names.map(name => `relocated ${name}`))
       const loaded = await ctx.skills.get('map')
@@ -221,8 +223,8 @@ describe('bundled Compound skills', () => {
       return Promise.resolve(new Response(path === undefined ? 'missing' : files.get(path)))
     })
     await writeFile(configPath, [
-      "- name: '@deepseek-ai/dsh-skill'",
-      "- name: '@deepseek-ai/dsh-skill-compound'",
+      "- name: '@yharness/skill'",
+      "- name: '@yharness/skill-compound'",
       '  config:',
       `    overlayRoot: ${JSON.stringify(root)}`,
       '',
@@ -237,8 +239,8 @@ describe('bundled Compound skills', () => {
       ctx.loader.internal = {
         version: 'v2',
         async import(specifier: string) {
-          if (specifier === '@deepseek-ai/dsh-skill') return SkillRegistry
-          if (specifier === '@deepseek-ai/dsh-skill-compound') return SkillCompound
+          if (specifier === '@yharness/skill') return SkillRegistry
+          if (specifier === '@yharness/skill-compound') return SkillCompound
           throw new Error(`Unexpected Loader import: ${specifier}`)
         },
       } as unknown as NonNullable<typeof ctx.loader.internal>
@@ -392,18 +394,19 @@ describe('bundled Compound skills', () => {
       }
       const configPath = join(root, 'cordis.yml')
       await writeFile(configPath, [
-        "- name: '@deepseek-ai/dsh-skill'",
-        "- name: '@deepseek-ai/dsh-skill-compound'",
+        "- name: '@yharness/skill'",
+        "- name: '@yharness/skill-compound'",
         '  config:',
         `    assetRoot: ${JSON.stringify(external)}`,
+        `    overlayRoot: ${JSON.stringify(root)}`,
         '',
       ].join('\n'))
       ctx.baseUrl = pathToFileURL(root).href + '/'
       await ctx.plugin(Loader)
       ctx.loader.builtins.include = Include
       const modules = new Map<string, unknown>([
-        ['@deepseek-ai/dsh-skill', SkillRegistry],
-        ['@deepseek-ai/dsh-skill-compound', SkillCompound],
+        ['@yharness/skill', SkillRegistry],
+        ['@yharness/skill-compound', SkillCompound],
       ])
       const internal = {
         version: 'v2',

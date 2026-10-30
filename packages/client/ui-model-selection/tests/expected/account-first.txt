@@ -1,4 +1,4 @@
-DeepSeek 账号
+DeepSeek Account
 deepseek-official
 custom
 another

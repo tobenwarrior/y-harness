@@ -18,21 +18,21 @@
  */
 
 // Type-only: pulls the Session Controller service merge (ctx.sessions).
-import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { WeakMapWithValues } from '@deepseek-ai/dsh-util-values'
+import type { SessionBinding } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { WeakMapWithValues } from '@yharness/util-values'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: pulls the ctx.remote merge and the forwarded-event key face
 // (the settings invalidation rides the allowlist) into this program.
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@yharness/api-remotes/client'
 // Type-only: pulls the settings shell's SlotMap merge (the 'settings.section' entry).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-settings/client'
+import type {} from '@yharness/client-ui-renderer/client'
 // Type-only: pulls the Workspace UI navigation service merge (ctx.uiWorkspace).
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@yharness/client-ui-workspace/client'
+import type {} from '@yharness/client-ui-plugin-manager/client'
+import type { Context as ClientContext } from '@yharness/cordis'
 import { AgentPresetLabel } from './AgentPresetLabel.tsx'
 import { CreatePluginMenuItem } from './CreatePluginMenuItem.tsx'
 import type { AgentPresetLabelInjected } from './AgentPresetLabel.tsx'
@@ -42,10 +42,10 @@ import { AgentPresetSection } from './AgentPresetSection.tsx'
 import type { AgentPresetSectionInjected } from './AgentPresetSection.tsx'
 import { AgentPresetSeatController, type AgentPresetStage } from './seat-store.ts'
 import { AgentPresetSectionController } from './section-store.ts'
-import { en, zh, type AgentPresetSettingsKey } from './locales.ts'
+import { en, type AgentPresetSettingsKey } from './locales.ts'
 import { AGENT_PRESET_SETTINGS_NS, AgentPresetSettingsController } from './settings-store.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Agent-preset surface copy. */
     'settings.agentPreset': AgentPresetSettingsKey
@@ -127,7 +127,7 @@ export function apply(ctx: ClientContext): void {
     return binding === undefined ? undefined : seatFor(binding)
   }
 
-  ctx.effect(() => ctx.locale.register('settings.agentPreset', { zh, en }), 'ui-agent-preset: settings row dictionaries')
+  ctx.effect(() => ctx.locale.register('settings.agentPreset', { en }), 'ui-agent-preset: settings row dictionaries')
 
   ctx.effect(() => {
     let requested = 0

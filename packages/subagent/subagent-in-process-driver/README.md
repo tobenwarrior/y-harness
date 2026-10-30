@@ -3,7 +3,7 @@ description: "Shared in-process subagent run driver for maintainers and backend 
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-subagent-in-process-driver
+# @yharness/subagent-in-process-driver
 
 ## Summary
 

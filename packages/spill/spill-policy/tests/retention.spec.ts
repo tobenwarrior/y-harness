@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId } from '@yharness/attachment'
 import { retainContent, type RetainableBlock } from '../src/retention.ts'
 
 const text = (value: string): RetainableBlock => ({ type: 'text', text: value })
@@ -43,7 +43,7 @@ describe('ordered mixed-content retention', () => {
   })
 
   it('omits everything when the notices consume the budget', () => {
-    expect(retainContent([text('雪'), image('a')], 0, price)).toEqual({
+    expect(retainContent([text('\u{96EA}'), image('a')], 0, price)).toEqual({
       head: [], tail: [], omittedBytes: 3, omittedImages: 1,
     })
   })

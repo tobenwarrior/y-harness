@@ -10,17 +10,17 @@
  * it draws (`FilesBody.tsx`, `FilesTitle.tsx`), what it says (`locales.ts`),
  * and this module, which only wires them together.
  */
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/api-remotes/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
 import { FILES_ID, filesDefinition } from './definition.tsx'
 import { createList, createWatch, filesFace } from './face.ts'
 import { FilesBody } from './FilesBody.tsx'
 import { FilesTitle } from './FilesTitle.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 import { createFilesStore } from './store.ts'
 
 export type { SidebarFilesKey } from './locales.ts'
@@ -28,7 +28,7 @@ export type { DirLevel, FilesState, FilesTabState, LevelState } from './store.ts
 export type { FilesInjected, ListWorkspaceDirectory, WorkspaceFilesListRemote } from './face.ts'
 export type { FilesBodyProps } from './FilesBody.tsx'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface SlotMap {
     /** Workspace directory actions after the file tree's reload control. */
     'sidebar.right.tab.files.actions': {
@@ -79,7 +79,7 @@ export function apply(ctx: ClientContext): void {
     }), 'ui-sidebar-files: shortcut')
   })
   ctx.effect(() => ctx.sidebarRightTabs.register(filesDefinition(t)), 'ui-sidebar-files: files type')
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar-files: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar-files: dictionaries')
 
   const store = createFilesStore()
   const inject = filesFace(createList(ctx.remote), createWatch(ctx.remote))

@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_harness import DeepSeekHarness, HarnessClient, HarnessConfig
-from deepseek_harness.errors import JsonRpcError, TransportClosedError
-from deepseek_harness_runtime import RUNTIME_MODE_ENV_VAR, resolve_bundled_launch_args
+from yharness import YHarness, HarnessClient, HarnessConfig
+from yharness.errors import JsonRpcError, TransportClosedError
+from yharness_runtime import RUNTIME_MODE_ENV_VAR, resolve_bundled_launch_args
 
 _MODES = ("exe", "node")
 
@@ -56,8 +56,8 @@ def test_bundled_runtime_boots_the_sdk_profile(
     assert init.serverInfo.name == "deepseek-harness-sdk-runtime"
     profile = json.loads((tmp_path / "home" / "profiles" / "sdk" / "package.json").read_text())
     assert profile["dsh"]["profile"]["bundles"] == [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-sdk-app",
+        "@yharness/base",
+        "@yharness/sdk-app",
     ]
 
 
@@ -71,7 +71,7 @@ def test_python_sdk_applies_an_ordered_profile_patch(
         "id": "system-prompt",
         "config": {"persona": "Python SDK ordered patch marker."},
     }]))
-    harness = DeepSeekHarness(
+    harness = YHarness(
         model="deepseek-v4-pro",
         cwd=str(tmp_path),
         dsh_home=str(tmp_path / "home"),
@@ -92,7 +92,7 @@ def test_bundled_runtime_surfaces_unbundled_plugin_failure(
 ) -> None:
     patch = tmp_path / "missing.patch.yml"
     patch.write_text(json.dumps([{
-        "insert": [{"id": "missing", "name": "@deepseek-ai/dsh-does-not-exist"}],
+        "insert": [{"id": "missing", "name": "@yharness/does-not-exist"}],
     }]))
 
     client = _client(tmp_path, mode, monkeypatch, patch)
@@ -103,4 +103,4 @@ def test_bundled_runtime_surfaces_unbundled_plugin_failure(
     finally:
         client.close()
 
-    assert "@deepseek-ai/dsh-does-not-exist" in str(excinfo.value)
+    assert "@yharness/does-not-exist" in str(excinfo.value)

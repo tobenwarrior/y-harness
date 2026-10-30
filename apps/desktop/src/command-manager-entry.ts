@@ -11,12 +11,37 @@ const resources = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // This dedicated worker writes public command ownership metadata, not user secrets.
 if (process.platform === 'darwin') process.umask(0o022)
 
+type MacCommandOptions = Parameters<typeof inspectFileCommand>[0]
+
+function macCommandOptions(): { canonical: MacCommandOptions; legacy: MacCommandOptions } {
+  const linkHelper = join(resources, 'runtime', 'cli', 'link-entry')
+  return {
+    canonical: { destination: '/usr/local/bin/yharness', launcher: join(resources, 'runtime', 'cli', 'bin', 'yharness'), linkHelper,
+      receiptName: '.yharness-desktop-command.json' },
+    legacy: { destination: '/usr/local/bin/dsh', launcher: join(resources, 'runtime', 'cli', 'bin', 'dsh'), linkHelper },
+  }
+}
+
+async function selectMacCommand(operation: string, fingerprint: string): Promise<MacCommandOptions> {
+  const { canonical, legacy } = macCommandOptions()
+  const current = await inspectFileCommand(canonical)
+  if (operation === 'inspect') {
+    if (current.kind !== 'missing') return canonical
+    const old = await inspectFileCommand(legacy)
+    return old.kind === 'missing' ? canonical : legacy
+  }
+  if (current.fingerprint === fingerprint) return canonical
+  const old = await inspectFileCommand(legacy)
+  return old.fingerprint === fingerprint ? legacy : canonical
+}
+
 try {
-  if (!['inspect', 'install', 'remove'].includes(operation ?? '')) throw new CommandInstallationError('EINVAL', 'Invalid command-management operation.')
+  if (operation !== 'inspect' && operation !== 'install' && operation !== 'remove') {
+    throw new CommandInstallationError('EINVAL', 'Invalid command-management operation.')
+  }
   if (operation !== 'inspect' && !/^[a-f0-9]{64}$/u.test(fingerprint)) throw new CommandInstallationError('EINVAL', 'Missing command confirmation.')
   if (process.platform === 'darwin') {
-    const options = { destination: '/usr/local/bin/dsh', launcher: join(resources, 'runtime', 'cli', 'bin', 'dsh'),
-      linkHelper: join(resources, 'runtime', 'cli', 'link-entry') }
+    const options = await selectMacCommand(operation, fingerprint)
     const state = operation === 'inspect' ? await inspectFileCommand(options)
       : operation === 'install' ? await installFileCommand(options, fingerprint) : await removeFileCommand(options, fingerprint)
     process.stdout.write(JSON.stringify({ ok: true, state }) + '\n')

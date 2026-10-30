@@ -2,7 +2,7 @@
 /** Drafts and asynchronous candidates cannot change the applied filter without confirmation. */
 
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import { afterEach, expect, it, vi } from 'vitest'
 import { TypeFilter } from '../src/client/views/TypeFilter.tsx'
 import { en } from '../src/client/locales.ts'

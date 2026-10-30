@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-lazy-require",
+  "name": "@yharness/lazy-require",
   "description": "Caller-relative, success-cached lazy loading for CommonJS-compatible Host dependencies",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/util/lazy-require"
   },
   "type": "module",
@@ -27,9 +27,9 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

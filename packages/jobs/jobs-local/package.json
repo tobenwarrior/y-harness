@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-jobs-local",
-  "description": "Process-local implementation of the DeepSeek Harness background job registry seam",
+  "name": "@yharness/jobs-local",
+  "description": "Process-local implementation of the Y Harness background job registry seam",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/jobs/jobs-local"
   },
   "type": "module",
@@ -27,25 +27,25 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-jobs": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/jobs": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

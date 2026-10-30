@@ -10,23 +10,25 @@ import {
   renderTranslationRequest,
   renderTranslationResponse,
 } from './translation-prompt.ts'
+import { decodeUnicodeEscapes } from './legacy-unicode.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const document = readFileSync(join(root, 'docs/i18n/translation-prompt.md'), 'utf8')
-const terminology = '| English | 中文 |\n|---|---|\n| agent | agent |'
+const decodedDocument = decodeUnicodeEscapes(document)
+const terminology = '| English | \u{4E2D}\u{6587} |\n|---|---|\n| agent | agent |'
 
 const retainedExamples = [
-  ['### Colloquial verb → Professional verb', 'The repo pins pnpm@11.7.0 in package.json', '该仓库在 package.json 中固定使用 pnpm@11.7.0'],
-  ['### Run-on sentence → Natural phrasing with pause', 'Read docs/architecture.md before changing anything under packages/.', '在修改 packages/ 目录下的任何内容之前，请先阅读 docs/architecture.md。'],
-  ['### Stiff passive voice → Active and natural', 'a green gate means the pair was confirmed consistent at these exact contents, not that the confirmation was sound.', '门禁通过意味着这组文档在当前内容上的一致性得到了确认，不代表确认本身正确可靠。'],
-  ['### Invented word → Natural expression', 'A sidecar record of both blob hashes makes consistency checkable', '伴随记录保存两侧 blob hash，使一致性可检查'],
-  ['### Em-dash → Colon/period', 'FIXME — an issue that should block a new release.', 'FIXME：应当阻塞新版本发布的问题。'],
-  ['### Overly literal → Meaningful rendering', 'awkward phrasing is easier to notice when you read the translation without comparing it with the source', '不对照原文阅读译文时，更容易察觉别扭的表达'],
-  ['### Terminology — do not translate what should be kept in English', 'typed service seams, and explicit extension points', '类型化的服务 seam 与显式扩展点'],
-  ['### Slang/jargon → Professional phrasing', 'The committed agent workflow lives in .agents/skills/dsh-translate-docs', '仓库内置的 agent 工作流见 .agents/skills/dsh-translate-docs'],
-  ['### "For humans" — translate the intent, not the word', 'For humans, start with the development guide', '面向开发者：请先阅读开发指南'],
+  ['### Colloquial verb → Professional verb', 'The repo pins pnpm@11.7.0 in package.json', '\u{8BE5}\u{4ED3}\u{5E93}\u{5728} package.json \u{4E2D}\u{56FA}\u{5B9A}\u{4F7F}\u{7528} pnpm@11.7.0'],
+  ['### Run-on sentence → Natural phrasing with pause', 'Read docs/architecture.md before changing anything under packages/.', '\u{5728}\u{4FEE}\u{6539} packages/ \u{76EE}\u{5F55}\u{4E0B}\u{7684}\u{4EFB}\u{4F55}\u{5185}\u{5BB9}\u{4E4B}\u{524D}，\u{8BF7}\u{5148}\u{9605}\u{8BFB} docs/architecture.md。'],
+  ['### Stiff passive voice → Active and natural', 'a green gate means the pair was confirmed consistent at these exact contents, not that the confirmation was sound.', '\u{95E8}\u{7981}\u{901A}\u{8FC7}\u{610F}\u{5473}\u{7740}\u{8FD9}\u{7EC4}\u{6587}\u{6863}\u{5728}\u{5F53}\u{524D}\u{5185}\u{5BB9}\u{4E0A}\u{7684}\u{4E00}\u{81F4}\u{6027}\u{5F97}\u{5230}\u{4E86}\u{786E}\u{8BA4}，\u{4E0D}\u{4EE3}\u{8868}\u{786E}\u{8BA4}\u{672C}\u{8EAB}\u{6B63}\u{786E}\u{53EF}\u{9760}。'],
+  ['### Invented word → Natural expression', 'A sidecar record of both blob hashes makes consistency checkable', '\u{4F34}\u{968F}\u{8BB0}\u{5F55}\u{4FDD}\u{5B58}\u{4E24}\u{4FA7} blob hash，\u{4F7F}\u{4E00}\u{81F4}\u{6027}\u{53EF}\u{68C0}\u{67E5}'],
+  ['### Em-dash → Colon/period', 'FIXME — an issue that should block a new release.', 'FIXME：\u{5E94}\u{5F53}\u{963B}\u{585E}\u{65B0}\u{7248}\u{672C}\u{53D1}\u{5E03}\u{7684}\u{95EE}\u{9898}。'],
+  ['### Overly literal → Meaningful rendering', 'awkward phrasing is easier to notice when you read the translation without comparing it with the source', '\u{4E0D}\u{5BF9}\u{7167}\u{539F}\u{6587}\u{9605}\u{8BFB}\u{8BD1}\u{6587}\u{65F6}，\u{66F4}\u{5BB9}\u{6613}\u{5BDF}\u{89C9}\u{522B}\u{626D}\u{7684}\u{8868}\u{8FBE}'],
+  ['### Terminology — do not translate what should be kept in English', 'typed service seams, and explicit extension points', '\u{7C7B}\u{578B}\u{5316}\u{7684}\u{670D}\u{52A1} seam \u{4E0E}\u{663E}\u{5F0F}\u{6269}\u{5C55}\u{70B9}'],
+  ['### Slang/jargon → Professional phrasing', 'The committed agent workflow lives in .agents/skills/dsh-translate-docs', '\u{4ED3}\u{5E93}\u{5185}\u{7F6E}\u{7684} agent \u{5DE5}\u{4F5C}\u{6D41}\u{89C1} .agents/skills/dsh-translate-docs'],
+  ['### "For humans" — translate the intent, not the word', 'For humans, start with the development guide', '\u{9762}\u{5411}\u{5F00}\u{53D1}\u{8005}：\u{8BF7}\u{5148}\u{9605}\u{8BFB}\u{5F00}\u{53D1}\u{6307}\u{5357}'],
   ['### Code block comments — NEVER translate', '# full-screen TUI coding agent (needs DEEPSEEK_API_KEY)', 'keep exactly as-is, byte-for-byte'],
-  ['### Language switcher — flip direction', 'English | [中文](README.zh.md)', '[English](README.md) | 中文'],
+  ['### Language switcher — flip direction', 'English | [\u{4E2D}\u{6587}](README.zh.md)', '[English](README.md) | \u{4E2D}\u{6587}'],
 ]
 
 describe('translation prompt rendering', () => {
@@ -35,7 +37,7 @@ describe('translation prompt rendering', () => {
     expect(en).toContain('from English to Chinese')
     expect(en).toContain(terminology)
     expect(en).not.toContain('{{')
-    expect(en).toContain('plain source stays plain (必须)')
+    expect(en).toContain('plain source stays plain (\u{5FC5}\u{987B})')
     expect(en).toContain('For an English target, use the established English technical term')
     expect(en).toContain('does a Chinese target use an established Chinese rendering')
     expect(en).toContain('does an English target use the established English technical term')
@@ -46,7 +48,7 @@ describe('translation prompt rendering', () => {
 
   it('contains every embedded example', () => {
     for (const example of retainedExamples) {
-      for (const fragment of example) expect(document).toContain(fragment)
+      for (const fragment of example) expect(decodedDocument).toContain(fragment)
     }
   })
 
@@ -89,45 +91,45 @@ describe('translation prompt rendering', () => {
       sourceFilename: 'guide.md',
       sourceDocument: '# Guide\n\nNew source.',
       terminology,
-      examples: [{ english: '# Example\n\nEnglish.', chinese: '# 示例\n\n中文。' }],
+      examples: [{ english: '# Example\n\nEnglish.', chinese: '# \u{793A}\u{4F8B}\n\n\u{4E2D}\u{6587}。' }],
     })
     expect(request.targetFilename).toBe('guide.zh.md')
     expect(request.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user'])
     expect(request.messages.slice(1).map(message => message.content)).toEqual([
       '# Example\n\nEnglish.',
-      '# 示例\n\n中文。',
+      '# \u{793A}\u{4F8B}\n\n\u{4E2D}\u{6587}。',
       '# Guide\n\nNew source.',
     ])
 
     const reverse = renderTranslationRequest(document, {
       sourceLanguage: 'Chinese',
       sourceFilename: 'guide.zh.md',
-      sourceDocument: '# 指南\n\n新源文。',
+      sourceDocument: '# \u{6307}\u{5357}\n\n\u{65B0}\u{6E90}\u{6587}。',
       terminology,
-      examples: [{ english: '# Example\n\nEnglish.', chinese: '# 示例\n\n中文。' }],
+      examples: [{ english: '# Example\n\nEnglish.', chinese: '# \u{793A}\u{4F8B}\n\n\u{4E2D}\u{6587}。' }],
     })
     expect(reverse.targetFilename).toBe('guide.md')
     expect(reverse.messages.slice(1).map(message => message.content)).toEqual([
-      '# 示例\n\n中文。',
+      '# \u{793A}\u{4F8B}\n\n\u{4E2D}\u{6587}。',
       '# Example\n\nEnglish.',
-      '# 指南\n\n新源文。',
+      '# \u{6307}\u{5357}\n\n\u{65B0}\u{6E90}\u{6587}。',
     ])
   })
 })
 
 describe('translation response sections', () => {
   it('round-trips Markdown bodies', () => {
-    const response = { translation: '# 标题\n\n正文 **加粗**。', review: '- [Tone] 修正一处。\n- 无修正', final: '# 标题\n\n定稿。' }
+    const response = { translation: '# \u{6807}\u{9898}\n\n\u{6B63}\u{6587} **\u{52A0}\u{7C97}**。', review: '- [Tone] \u{4FEE}\u{6B63}\u{4E00}\u{5904}。\n- \u{65E0}\u{4FEE}\u{6B63}', final: '# \u{6807}\u{9898}\n\n\u{5B9A}\u{7A3F}。' }
     expect(parseTranslationResponse(renderTranslationResponse(response))).toEqual(response)
   })
 
   it('tolerates a fenced xml wrapper around the whole response', () => {
-    const fenced = '```xml\n<translation>\nA\n</translation>\n\n<review>\n- 无修正\n</review>\n\n<final>\nA\n</final>\n```'
+    const fenced = '```xml\n<translation>\nA\n</translation>\n\n<review>\n- \u{65E0}\u{4FEE}\u{6B63}\n</review>\n\n<final>\nA\n</final>\n```'
     expect(parseTranslationResponse(fenced).final).toBe('A')
   })
 
   it('keeps an inline close tag inside prose from terminating the section', () => {
-    const doc = { translation: 'the wire format uses </translation> as its close tag', review: '- 无修正', final: 'F' }
+    const doc = { translation: 'the wire format uses </translation> as its close tag', review: '- \u{65E0}\u{4FEE}\u{6B63}', final: 'F' }
     expect(parseTranslationResponse(renderTranslationResponse(doc))).toEqual(doc)
   })
 
@@ -158,32 +160,32 @@ describe('translation response sections', () => {
 
   it('inserts or corrects the target switcher after parsing a new-pair response', () => {
     const response = renderTranslationResponse({
-      translation: '# 指南\n\n初稿。',
-      review: '- 无修正',
-      final: '# 指南\n\nEnglish | [中文](guide.zh.md)\n\n定稿。',
+      translation: '# \u{6307}\u{5357}\n\n\u{521D}\u{7A3F}。',
+      review: '- \u{65E0}\u{4FEE}\u{6B63}',
+      final: '# \u{6307}\u{5357}\n\nEnglish | [\u{4E2D}\u{6587}](guide.zh.md)\n\n\u{5B9A}\u{7A3F}。',
     })
     expect(consumeTranslationResponse(response, { sourceLanguage: 'English', sourceFilename: 'guide.md' }).final).toBe([
-      '# 指南',
+      '# \u{6307}\u{5357}',
       '',
-      '[English](guide.md) | 中文',
+      '[English](guide.md) | \u{4E2D}\u{6587}',
       '',
-      '定稿。',
+      '\u{5B9A}\u{7A3F}。',
       '',
     ].join('\n'))
   })
 
   it('preserves YAML frontmatter before inserting the target switcher', () => {
     const response = renderTranslationResponse({
-      translation: '# 指南\n\n初稿。',
-      review: '- 无修正',
+      translation: '# \u{6307}\u{5357}\n\n\u{521D}\u{7A3F}。',
+      review: '- \u{65E0}\u{4FEE}\u{6B63}',
       final: [
         '---',
         'layout: home',
         '---',
         '',
-        '# 指南',
+        '# \u{6307}\u{5357}',
         '',
-        '定稿。',
+        '\u{5B9A}\u{7A3F}。',
       ].join('\n'),
     })
     expect(consumeTranslationResponse(response, { sourceLanguage: 'English', sourceFilename: 'guide.md' }).final).toBe([
@@ -191,20 +193,20 @@ describe('translation response sections', () => {
       'layout: home',
       '---',
       '',
-      '# 指南',
+      '# \u{6307}\u{5357}',
       '',
-      '[English](guide.md) | 中文',
+      '[English](guide.md) | \u{4E2D}\u{6587}',
       '',
-      '定稿。',
+      '\u{5B9A}\u{7A3F}。',
       '',
     ].join('\n'))
   })
 
   it('rejects unterminated YAML frontmatter before the target H1', () => {
     const response = renderTranslationResponse({
-      translation: '# 指南\n\n初稿。',
-      review: '- 无修正',
-      final: '---\nlayout: home\n\n# 指南\n\n定稿。',
+      translation: '# \u{6307}\u{5357}\n\n\u{521D}\u{7A3F}。',
+      review: '- \u{65E0}\u{4FEE}\u{6B63}',
+      final: '---\nlayout: home\n\n# \u{6307}\u{5357}\n\n\u{5B9A}\u{7A3F}。',
     })
     expect(() => consumeTranslationResponse(response, {
       sourceLanguage: 'English',
@@ -229,6 +231,6 @@ describe('translation response sections', () => {
     expect(consumeTranslationResponse(response, {
       sourceLanguage: 'Chinese',
       sourceFilename: 'guide.zh.md',
-    }).final).toContain('\n\nEnglish | [中文](guide.zh.md)\n\n')
+    }).final).toContain('\n\nEnglish | [\u{4E2D}\u{6587}](guide.zh.md)\n\n')
   })
 })

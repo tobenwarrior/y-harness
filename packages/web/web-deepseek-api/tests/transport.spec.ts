@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WebError } from '@deepseek-ai/dsh-web'
+import { WebError } from '@yharness/web'
 import { dispatchDeepSeekWeb, type DeepSeekWebAuth } from '../src/transport.ts'
 const options = { apiKey: 'ds-key', baseURL: 'https://api.deepseek.test/anthropic/v1' }
 function searchProvider(auth: DeepSeekWebAuth & { baseURL: string; recordRequest?: (endpoint: string) => void }) {

@@ -1,17 +1,17 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
-import type { ClientEntryState } from '@deepseek-ai/dsh-client-modules/client'
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { PluginInventorySnapshot } from '@deepseek-ai/dsh-api-remotes/client'
-import type { LocalizedText } from '@deepseek-ai/dsh-package-manifest'
+import type { ClientEntryState } from '@yharness/client-modules/client'
+import type { ObservableSnapshot } from '@yharness/client-store'
+import type { PluginInventorySnapshot } from '@yharness/api-remotes/client'
+import type { LocalizedText } from '@yharness/package-manifest'
 import {
   IconChevronDownOutlineRegular,
   IconSearchOutlineRegular,
   Menu,
   StateDot,
   Tag,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { StateDotState, TagTone } from '@deepseek-ai/dsh-client-ui-primitives'
-import { withProductDisplayName, type InjectFace, type PropsLocale, type PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-primitives'
+import type { StateDotState, TagTone } from '@yharness/client-ui-primitives'
+import { withProductDisplayName, type InjectFace, type PropsLocale, type PropsRuntime } from '@yharness/client-ui-slots'
 import type { PluginInventoryLocaleKey } from './locales.ts'
 import css from './PluginInventorySettingsTab.module.css'
 
@@ -72,7 +72,7 @@ function moduleShortName(moduleName: string): string {
   return unscoped
     .replace(/^cordis:/, '')
     .replace(/^cordis-plugin-/, '')
-    .replace(/^dsh-(?:host-|client-)?/, '')
+    .replace(/^(?:dsh-)?(?:host-|client-)?/, '')
 }
 
 /** Display an entry identity without the composition-only `include:` marker. */
@@ -98,7 +98,7 @@ function pluginText(row: PluginInventoryEntry | AgentPresetRow, resolveText: Plu
     : resolveText(row.meta.description) || undefined
   return {
     title: typeof title === 'object' ? resolveText(title) : moduleShortName(title ?? row.moduleName),
-    description: row.moduleName.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
+    description: row.moduleName.startsWith('@yharness/') && description?.includes('DeepSeek Harness')
       ? withProductDisplayName(description)
       : description,
   }

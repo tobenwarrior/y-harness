@@ -1,9 +1,9 @@
 /** The bundled skill owns its registry candidate and extracted resource directory. */
 
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import SkillRegistry from '@deepseek-ai/dsh-skill'
+import SkillRegistry from '@yharness/skill'
 import { describe, expect, it } from 'vitest'
 import { ACL_DIAGNOSIS_SKILL, registerAclDiagnosisSkill } from '../src/acl-skill.ts'
 

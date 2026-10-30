@@ -1,5 +1,5 @@
-Y harness is unavailable
+Y Harness is unavailable
 The application could not start or stopped unexpectedly.
-Another Y Harness instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running Y Harness instance, then restart.
+Another Y Harness instance (such as the web or desktop app) is running. They cannot start at the same time. Quit the other running Y Harness instance, then restart.
 Exit
 Restart

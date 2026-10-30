@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-shortcuts",
+  "name": "@yharness/client-shortcuts",
   "description": "Application keyboard command registry and physical-key routing",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/shortcuts"
   },
   "type": "module",
@@ -32,7 +32,7 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-locale"
+        "@yharness/client-locale"
       ],
       "platform": "web"
     }
@@ -43,16 +43,16 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-client-locale": "workspace:*",
-    "@deepseek-ai/dsh-client-store": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-primitives": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/client-locale": "workspace:*",
+    "@yharness/client-store": "workspace:*",
+    "@yharness/client-ui-primitives": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/host-webserver": "workspace:*"
   },
   "files": [
     "lib/index.js",
@@ -61,8 +61,8 @@
     "lib/types/**/*.d.ts"
   ],
   "dependencies": {
-    "@deepseek-ai/dsh-util-crypto": "workspace:*",
-    "@deepseek-ai/dsh-util-values": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/util-crypto": "workspace:*",
+    "@yharness/util-values": "workspace:*",
+    "@yharness/schemastery": "workspace:~"
   }
 }

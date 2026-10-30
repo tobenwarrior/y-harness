@@ -1,9 +1,9 @@
 /** Operational same-ID native continuation with confined file tools and observed saved-public-history release. */
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, relative, sep } from 'node:path'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type { CodingSessionNativeTurnId, CodingSessionProfileId, CodingSessionReadRequest, CodingSessionSequentialWriterProvider,
-  CodingSessionSequentialWriterLease, CodingSessionSequentialReleaseReceipt, CodingSessionSnapshot, CodingSessionSource } from '@deepseek-ai/dsh-coding-session/types'
+  CodingSessionSequentialWriterLease, CodingSessionSequentialReleaseReceipt, CodingSessionSnapshot, CodingSessionSource } from '@yharness/coding-session/types'
 import { z } from 'zod'
 import type { CodexTurnAccess } from './codex-backend-access.ts'
 import { declineCodexRequest } from './codex-backend.ts'
@@ -14,7 +14,7 @@ import type { CodexDisabledServers } from './codex-sequential-guards.ts'
 import type { CodexSequentialPeer, CodexSequentialPeerFactory } from './codex-sequential-process.ts'
 import { CodexSequentialProcessReleaseError } from './codex-sequential-process.ts'
 import { codexNativeItem } from './codex-native-evidence.ts'
-import type { SkillLearningNativeItem } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 
 type Obj = Record<string, unknown>
 const object = z.record(z.string(), z.unknown())

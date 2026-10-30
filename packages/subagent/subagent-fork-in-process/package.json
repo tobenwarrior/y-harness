@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-subagent-fork-in-process",
+  "name": "@yharness/subagent-fork-in-process",
   "description": "In-process fork subagent backend: runs a child agent seeded with a prefix of the parent's log",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/subagent/subagent-fork-in-process"
   },
   "type": "module",
@@ -27,26 +27,26 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-subagent-in-process-driver": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/subagent-in-process-driver": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-subagent-in-process-driver": "workspace:*",
-    "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/subagent-in-process-driver": "workspace:*",
+    "@yharness/subagent-spawn-in-process": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   }
 }

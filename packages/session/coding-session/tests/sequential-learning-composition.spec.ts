@@ -4,25 +4,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
-import * as Library from '@deepseek-ai/dsh-skill-library'
-import type { SkillLearningNativeItem, SkillLearningObservation, SkillLearningEvidence, SkillSequentialTaskSource, SkillSequentialTaskHooks, SkillCodexItemId, SkillCodexSessionId, SkillCodexTurnId, SkillNativeConnectionId } from '@deepseek-ai/dsh-skill-library/types'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import { brandString } from '@yharness/brand'
+import * as Llm from '@yharness/llm'
+import * as Sessions from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
+import * as Library from '@yharness/skill-library'
+import type { SkillLearningNativeItem, SkillLearningObservation, SkillLearningEvidence, SkillSequentialTaskSource, SkillSequentialTaskHooks, SkillCodexItemId, SkillCodexSessionId, SkillCodexTurnId, SkillNativeConnectionId } from '@yharness/skill-library/types'
 import { SequentialSkillLearning } from '../../../skill/skill-library/src/sequential-learning.ts'
 import type { SkillLearningRuntimeController } from '../../../skill/skill-library/src/learning-runtime.ts'
 import * as CodingSessions from '../src/index.ts'
@@ -114,13 +114,13 @@ async function fixture(initialMode: Mode = 'reads') {
     ['tools', Tools], ['agent', Agents], ['agent-loop', Loop], ['storage', Storage], ['storage-json', JsonStorage], ['storage-domain', Domain],
     ['session-persistence-jsonl', Jsonl], ['workspace', Workspace], ['typert-registry', Typert], ['skill-library', Library],
     ['coding-session', CodingSessions], ['fixture-sequential-source', nativePlugin], ['fixture-conversation', fixtureLlm]]
-  const modules = new Map(entries.map(([name, value]): [string, unknown] => [`@deepseek-ai/dsh-${name}`, value]))
+  const modules = new Map(entries.map(([name, value]): [string, unknown] => [`@yharness/${name}`, value]))
   const configs: Record<string, object> = { 'storage-json': { root: join(root, 'storage') }, 'storage-domain': { backend: 'json' },
     'session-persistence-jsonl': { root: join(root, 'sessions'), compression: 'none' }, 'agent-loop': { agents: [] },
     'skill-library': { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 },
     'coding-session': { enableClaudeDiscovery: false, enableSequentialHandoff: true } }
   const configPath = join(root, 'cordis.yml')
-  await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@deepseek-ai/dsh-', '')] }))))
+  await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@yharness/', '')] }))))
   ctx.baseUrl = pathToFileURL(root).href + '/'; await ctx.plugin(Loader); ctx.loader.builtins.include = Include
   const internal = ctx.loader.internal
   if (internal === undefined) throw new Error('Fixture Loader resolver absent')
@@ -223,7 +223,7 @@ it('rejects retained item callbacks after this exact sequential task has settled
 })
 it('aborts and joins an admitted sequential task before its learning service closes', async () => {
   const f = await fixture('cancellation'); const pending = f.run(); await f.entered.promise
-  const entry = [...f.ctx.loader.entries()].find(value => value.options.name === '@deepseek-ai/dsh-skill-library')
+  const entry = [...f.ctx.loader.entries()].find(value => value.options.name === '@yharness/skill-library')
   if (entry?.fiber === undefined) throw new Error('Fixture learning service fiber absent')
   let closed = false; const dispose = entry.fiber.dispose().then(() => { closed = true })
   await Promise.resolve(); expect(closed).toBe(false)

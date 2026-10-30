@@ -1,9 +1,9 @@
 /** Developer surface positions and admission remain distinct from unknown ignorable records. */
 import { describe, expect, it } from 'vitest'
-import { Session, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
-import { SessionFormatEventCollector } from '@deepseek-ai/dsh-session-format'
-import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonValue } from '@deepseek-ai/dsh-session-format'
+import { Session, SessionId, SessionLogOffset } from '@yharness/session'
+import type { SessionEvent, SessionHeader } from '@yharness/session'
+import { SessionFormatEventCollector } from '@yharness/session-format'
+import type { SessionFormatArtifact, SessionFormatEvent, SessionFormatJsonValue } from '@yharness/session-format'
 import { assertV4RowAdmission, releasedV4SessionFormatCodec as codec, restoreReleasedV4Artifact } from '../src/index.ts'
 
 type Row = {

@@ -1,12 +1,12 @@
 /** Temporary 1017 badge for the two official DeepSeek model routes. */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-model-selection/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-model-selection/client'
+import type {} from '@yharness/client-ui-renderer/client'
 import { DeepSeekModelLabel } from './DeepSeekModelLabel.tsx'
-import { en, zh, type LabelKey } from './locales.ts'
+import { en, type LabelKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** The temporary model release badge. */
     'deepseek-model-label-1017': LabelKey
@@ -22,7 +22,7 @@ export const inject = ['slots', 'locale']
  */
 export function apply(ctx: Context): void {
   const namespace = 'deepseek-model-label-1017'
-  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'deepseek-model-label-1017: dictionaries')
+  ctx.effect(() => ctx.locale.register(namespace, { en }), 'deepseek-model-label-1017: dictionaries')
   ctx.slots.inject('conversation.input.model.label', () => ctx.slots.register({
     name: 'conversation.input.model.label', locale: namespace,
   }, DeepSeekModelLabel))

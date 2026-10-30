@@ -22,6 +22,7 @@ import {
   PROFILE_COMPATIBILITY_FILENAME,
   PROFILE_PATCH_FILENAME,
   PROFILE_TEMPLATES,
+  bundlePackageNameCandidates,
   readProfileManifest,
   readProfilePatches,
   removeLinkProjections,
@@ -267,6 +268,76 @@ describe('resolveBundleDir', () => {
     writeFileSync(join(dir, 'cordis.patch.yml'), '[]\n')
     expect(resolveBundleDir('t', 'sealed-bundle', anchor, profileDir)).toBe(dir)
   })
+
+  it('resolves a legacy profile entry against a canonical package installation', () => {
+    const anchor = stageInstallation({ '@yharness/base': { patch: '[]\n' } })
+    const profileDir = tmp()
+    writeFileSync(join(profileDir, 'package.json'), '{}')
+
+    expect(resolveBundleDir('t', '@deepseek-ai/dsh-base', anchor, profileDir))
+      .toBe(join(dirname(anchor), 'node_modules', '@yharness', 'base'))
+  })
+
+  it('resolves a canonical profile entry against a legacy package installation', () => {
+    const anchor = stageInstallation({ '@deepseek-ai/dsh-base': { patch: '[]\n' } })
+    const profileDir = tmp()
+    writeFileSync(join(profileDir, 'package.json'), '{}')
+
+    expect(resolveBundleDir('t', '@yharness/base', anchor, profileDir))
+      .toBe(join(dirname(anchor), 'node_modules', '@deepseek-ai', 'dsh-base'))
+  })
+
+  it('aliases only the harness namespace and keeps the provider segment intact', () => {
+    expect(bundlePackageNameCandidates('@deepseek-ai/dsh-llm-deepseek')).toEqual([
+      '@yharness/llm-deepseek',
+      '@deepseek-ai/dsh-llm-deepseek',
+    ])
+    expect(bundlePackageNameCandidates('@yharness/llm-deepseek')).toEqual([
+      '@yharness/llm-deepseek',
+      '@deepseek-ai/dsh-llm-deepseek',
+    ])
+    expect(bundlePackageNameCandidates('@deepseek-ai/dsh')).toEqual([
+      '@yharness/cli',
+      '@deepseek-ai/dsh',
+    ])
+    expect(bundlePackageNameCandidates('@yharness/cli')).toEqual([
+      '@yharness/cli',
+      '@deepseek-ai/dsh',
+    ])
+    expect(bundlePackageNameCandidates('@yharness/cordis')).toEqual([
+      '@yharness/cordis',
+      '@yharness/cordis',
+    ])
+  })
+
+  it('preserves package subpaths while translating both package namespaces', () => {
+    expect(bundlePackageNameCandidates('@yharness/cordis-plugin-group/subpath')).toEqual([
+      '@yharness/cordis-plugin-group/subpath',
+      '@yharness/cordis-plugin-group/subpath',
+    ])
+    expect(bundlePackageNameCandidates('@yharness/cordis-plugin-group/subpath')).toEqual([
+      '@yharness/cordis-plugin-group/subpath',
+      '@yharness/cordis-plugin-group/subpath',
+    ])
+    expect(bundlePackageNameCandidates('@deepseek-ai/dsh-llm-deepseek/subpath')).toEqual([
+      '@yharness/llm-deepseek/subpath',
+      '@deepseek-ai/dsh-llm-deepseek/subpath',
+    ])
+    expect(bundlePackageNameCandidates('@yharness/llm-deepseek/subpath')).toEqual([
+      '@yharness/llm-deepseek/subpath',
+      '@deepseek-ai/dsh-llm-deepseek/subpath',
+    ])
+  })
+
+  it('loads a profile whose persisted bundle name predates the namespace rebrand', () => {
+    const anchor = stageInstallation({ '@yharness/base': { patch: '- id: base\n' } })
+    const dir = resolveProfileDir('legacy-profile', tmp())
+    initProfile(dir, ['@deepseek-ai/dsh-base'])
+
+    const profile = loadProfileDirectory('t', dir, anchor)
+    expect(profile.layers.map(layer => layer.packageName)).toEqual(['@deepseek-ai/dsh-base'])
+    expect(profile.layers[0]?.packageDir).toBe(join(dirname(anchor), 'node_modules', '@yharness', 'base'))
+  })
 })
 
 describe('loadProfile', () => {
@@ -341,15 +412,15 @@ describe('loadProfile', () => {
     const home = tmp()
     expect(() => loadProfile('t', 'custom', anchor, home))
       .toThrow('profile "custom" does not exist')
-    expect(PROFILE_TEMPLATES.web?.bundles).toContain('@deepseek-ai/dsh-base')
+    expect(PROFILE_TEMPLATES.web?.bundles).toContain('@yharness/base')
     expect(PROFILE_TEMPLATES.acp).toEqual({
-      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
+      bundles: ['@yharness/base', '@yharness/acp-app'],
     })
     expect(PROFILE_TEMPLATES.sdk).toEqual({
-      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
+      bundles: ['@yharness/base', '@yharness/sdk-app'],
     })
     expect(PROFILE_TEMPLATES['sdk-minimal']).toEqual({
-      bundles: ['@deepseek-ai/dsh-sdk-minimal'],
+      bundles: ['@yharness/sdk-minimal'],
     })
     loadProfile('t', 'web', anchor, home)
     expect(readProfileManifest('t', resolveProfileDir('web', home)).dsh?.profile?.bundles)
@@ -372,7 +443,7 @@ describe('loadProfile', () => {
     writeProfileManifest(stock, retiredManifest)
     loadProfile('t', 'headless', anchor, home)
     expect(readProfileManifest('t', stock).dsh?.profile).toEqual({
-      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
+      bundles: ['@yharness/base', '@yharness/headless'],
     })
 
     const customHome = tmp()
@@ -552,6 +623,29 @@ describe('createRuntimeResolution', () => {
     expect(withoutBundles.entries.some(entry => entry.name === '@scope/bundle-only')).toBe(false)
     expect(resolutionB.entries.find(entry => entry.name === '@scope/bundle-only')?.packageDir)
       .toBe(realpathSync.native(join(bundleB, '..', 'node_modules', '@scope', 'bundle-only')))
+  })
+
+  it('does not expose a canonical bundle root when its selected name is legacy', async () => {
+    const installationAnchor = stageInstallation({})
+    const home = tmp()
+    const bundleRoot = tmp()
+    const canonical = '@yharness/addon'
+    const legacy = '@deepseek-ai/dsh-addon'
+    const dependency = join(bundleRoot, 'node_modules', 'bundle-only')
+    mkdirSync(dependency, { recursive: true })
+    writeFileSync(join(bundleRoot, 'package.json'), JSON.stringify({
+      name: canonical, version: '0.0.0', dependencies: { 'bundle-only': '0.0.0' },
+    }))
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'bundle-only', version: '0.0.0' }))
+    const dir = resolveProfileDir('legacy-bundle', home)
+    const profile: Profile = { skippedBundles: [], name: 'legacy-bundle', dir,
+      layers: [{ packageName: legacy, packageDir: bundleRoot, patchPaths: [], patches: [] }],
+      patchPath: join(dir, PROFILE_PATCH_FILENAME), patches: [],
+    }
+
+    const resolution = await createRuntimeResolution({ installAnchor: installationAnchor, profile, home })
+    expect(resolution.entries.some(entry => entry.name === canonical)).toBe(false)
+    expect(resolution.entries.find(entry => entry.name === 'bundle-only')).toMatchObject({ scope: 'profile' })
   })
 
   it.each([false, true])('discovers dependencies beside a symlinked bundle real path (packaged: %s)', async (packaged) => {

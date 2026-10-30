@@ -3,7 +3,7 @@ description: "Pure adjacent Session format planning, lossless JSON value checks,
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-session-format
+# @yharness/session-format
 
 ## Summary
 

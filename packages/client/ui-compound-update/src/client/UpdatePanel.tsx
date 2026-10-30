@@ -3,8 +3,8 @@ import type { ReactNode } from 'react'
 import {
   Button, IconCheckCircleOutlineRegular, IconCloseOutlineRegular, IconDownloadOutlineRegular,
   IconLoadingOutlineRegular, IconRefreshOutlineRegular, IconWarningTriangleOutlineRegular, Modal,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale } from '@yharness/client-ui-slots'
 import type { CompoundUpdateFace } from './controller.ts'
 import css from './UpdatePanel.module.css'
 

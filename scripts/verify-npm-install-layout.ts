@@ -10,8 +10,18 @@ import {
   type RegistryIndex,
 } from './benchmark-npm-resolution.ts'
 
-const DSH_PACKAGE = '@deepseek-ai/dsh'
-const CORDIS_PACKAGE = '@deepseek-ai/cordis'
+const DSH_PACKAGE = '@yharness/cli'
+const CORDIS_PACKAGE = '@yharness/cordis'
+const HARNESS_PACKAGE_PREFIX = '@yharness/'
+const VENDORED_PACKAGE_NAMES = new Set([
+  CORDIS_PACKAGE,
+  '@yharness/cosmokit',
+  '@yharness/schemastery',
+])
+const VENDORED_PACKAGE_PREFIXES = [
+  '@yharness/cordis-plugin-',
+  '@yharness/node-addon-system',
+] as const
 const NESTED_DSH_ALIAS = 'dsh-previous'
 const NESTED_DSH_PATH = `node_modules/${NESTED_DSH_ALIAS}`
 const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const
@@ -68,7 +78,8 @@ export interface DshInstallLayoutSummary {
 }
 
 function isDshPackage(name: string): boolean {
-  return name === DSH_PACKAGE || name.startsWith(`${DSH_PACKAGE}-`)
+  if (!name.startsWith(HARNESS_PACKAGE_PREFIX) || VENDORED_PACKAGE_NAMES.has(name)) return false
+  return !VENDORED_PACKAGE_PREFIXES.some(prefix => name.startsWith(prefix))
 }
 
 function cloneForVersion(manifest: object, version: string): MutableRegistryManifest {

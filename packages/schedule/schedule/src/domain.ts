@@ -1,11 +1,11 @@
 /**
  * Strict Schedule decoding, replay, time validation, and framing.
- * @module @deepseek-ai/dsh-schedule
+ * @module @yharness/schedule
  */
 
 import { Temporal } from '@js-temporal/polyfill'
-import { SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionLogOffset as SessionLogOffsetType } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset } from '@yharness/session'
+import type { SessionEvent, SessionLogOffset as SessionLogOffsetType } from '@yharness/session'
 import type {
   AfterScheduleRecord,
   AtInput,

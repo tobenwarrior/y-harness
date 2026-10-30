@@ -6,7 +6,7 @@ import { dirname, isAbsolute, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import type { ClaudeSessionSdk } from './claude.ts'
-import type { ClaudeSequentialSdk } from '@deepseek-ai/dsh-subagent-claude-code'
+import type { ClaudeSequentialSdk } from '@yharness/subagent-claude-code'
 import type { ResolvedSettings, ResolveSettingsOptions } from '@anthropic-ai/claude-agent-sdk'
 
 const absolute = z.string().min(1).refine(isAbsolute)

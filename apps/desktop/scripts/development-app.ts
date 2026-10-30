@@ -50,7 +50,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
     const values = {
       CFBundleIdentifier: `com.deepseek.harness.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
       CFBundleName: 'Y harness',
-      CFBundleDisplayName: displayName ?? 'Y harness',
+      CFBundleDisplayName: displayName ?? 'Y Harness',
       CFBundleExecutable: 'YHarness',
       CFBundleIconFile: ICON_FILE,
       CFBundleURLTypes: options.managed === true ? [] : [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],

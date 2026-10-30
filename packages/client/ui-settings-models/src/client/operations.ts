@@ -5,12 +5,12 @@
  * failure codes and Remote namespaces stay in the apply world.
  */
 
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { Context as ClientContext } from '@yharness/cordis'
 import type {
   CodexBackendModelView, CodexBackendView, CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
   NousConnectionView, NousDeviceVerification, NousModelView, SettingsNamespaceView, SettingsPathOpView,
   XaiConnectionView, XaiDeviceVerification, XaiModelView,
-} from '@deepseek-ai/dsh-api-remotes/client'
+} from '@yharness/api-remotes/client'
 
 /** What one namespace write answered. */
 export type SettingsWriteOutcome =

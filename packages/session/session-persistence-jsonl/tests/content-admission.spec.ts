@@ -1,10 +1,10 @@
 /** V2 content admission refuses entire generations without publishing a valid prefix. */
 
-import { Context } from '@deepseek-ai/cordis'
-import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionFormatJsonObject } from '@deepseek-ai/dsh-session-format'
-import { SessionFormatUnsupportedError } from '@deepseek-ai/dsh-session-persistence'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { Context } from '@yharness/cordis'
+import { SESSION_FORMAT_VERSION, SessionId } from '@yharness/session'
+import type { SessionFormatJsonObject } from '@yharness/session-format'
+import { SessionFormatUnsupportedError } from '@yharness/session-persistence'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -13,7 +13,7 @@ import { generationLogPath, scanLog, type JsonlCompression } from '../src/format
 import { compressZstdFrame, decompressZstdFrame, scanZstdFrames } from '../src/zstd.ts'
 
 const id = SessionId('content-admission')
-const text = { type: 'text', text: 'Keep tool/code-dispatch and tools-code-mode literal. 图片' }
+const text = { type: 'text', text: 'Keep tool/code-dispatch and tools-code-mode literal. \u{56FE}\u{7247}' }
 const unknown = { type: 'future-block', seq: 2, text: 'Do not discard this content.' }
 const prefix: readonly (SessionFormatJsonObject & { readonly type: string })[] = [
   { type: 'turn/start', data: { turn: 1 } },

@@ -34,6 +34,7 @@ export async function createArtifactUpdateServer(files) {
   let corrupt = false
   let fault
   let origin
+  let release = { version: '1.0.1-nightly.1', filename: 'payload-1.0.1-nightly.1.exe' }
   const server = createServer((request, response) => {
     const path = new URL(request.url, origin).pathname
     const artifact = artifacts[selected]
@@ -43,19 +44,19 @@ export async function createArtifactUpdateServer(files) {
     response.setHeader('Cache-Control', 'no-store')
     if (path === '/nightly.yml') {
       response.setHeader('Content-Type', 'application/yaml')
-      response.end(dump({ version: '1.0.1-nightly.1', files: [{
-        url: `${origin}/payload-1.0.1-nightly.1.exe`, size: artifact.size, sha512: artifact.sha512,
-      }], path: 'payload-1.0.1-nightly.1.exe', sha512: artifact.sha512 }))
+      response.end(dump({ version: release.version, files: [{
+        url: `${origin}/${release.filename}`, size: artifact.size, sha512: artifact.sha512,
+      }], path: release.filename, sha512: artifact.sha512 }))
       return
     }
     const blockmap = path === '/payload-1.0.0.exe.blockmap' ? artifacts.oldBlockmap
-      : path === '/payload-1.0.1-nightly.1.exe.blockmap' ? artifacts.signedBlockmap : undefined
+      : path === `/${release.filename}.blockmap` ? artifacts.signedBlockmap : undefined
     if (blockmap && !(fault === 'missing-old-blockmap' && blockmap === artifacts.oldBlockmap)) {
       response.writeHead(200, { 'Content-Length': blockmap.size })
       track(pipeline(createReadStream(blockmap.file), response))
       return
     }
-    if (path !== '/payload-1.0.1-nightly.1.exe') { response.writeHead(404).end(); return }
+    if (path !== `/${release.filename}`) { response.writeHead(404).end(); return }
     const range = request.headers.range
     if (range && fault === 'reject-ranges') { response.writeHead(416).end(); return }
     const ranges = range?.replace(/^bytes=/u, '').split(',').map(part => part.trim().split('-').map(Number))
@@ -99,6 +100,7 @@ export async function createArtifactUpdateServer(files) {
   origin = `http://127.0.0.1:${server.address().port}`
   return {
     url: `${origin}/`, requests, failures, artifacts,
+    selectRelease(version, filename) { release = { version, filename } },
     select(name, damage = false, failure) { selected = name; corrupt = damage; fault = failure },
     async close() {
       const closed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))

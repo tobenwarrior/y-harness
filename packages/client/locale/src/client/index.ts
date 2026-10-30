@@ -4,26 +4,24 @@
  * preference row into the settings General section — the locale feature owns
  * its own settings surface.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { LocalizedText } from '@deepseek-ai/dsh-package-manifest'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { LocalizedText } from '@yharness/package-manifest'
 import {
   type BoundActions, type LocaleDictOf, type LocaleNamespaceMap, type Translate, type TranslateNS,
-} from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-slots'
 // Type-only: the ctx.configForms Context merge and the settings slot types.
 // Cross-plugin collaboration goes through the service, never a value import
 // (client bundle purity gate).
-import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@yharness/client-ui-settings/client'
 import { parseLocaleBootstrap, type LocaleBootstrap, type LocaleBridge } from './bootstrap.ts'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-renderer/client'
 import {
   LOCALE_ID_PATTERN, LOCALE_IDS, LOCALE_PREFERENCE_FIELD, LOCALE_SETTINGS_NAMESPACE,
   type BuiltInLocaleId, type LocaleId, type LocaleSettings,
 } from '../locale-settings.ts'
-import { en, zh, type CommonKey } from '../locales/index.ts'
-import {
-  en as settingsEn, zh as settingsZh, type SettingsLocaleKey,
-} from '../locales/settings.ts'
+import { en, type CommonKey } from '../locales/index.ts'
+import { en as settingsEn, type SettingsLocaleKey } from '../locales/settings.ts'
 import type { LanguageRowInjected } from './LanguageRow.tsx'
 import { LanguageRow } from './LanguageRow.tsx'
 import { createLanguageRowStore } from './settings-store.ts'
@@ -36,9 +34,9 @@ export type { BuiltInLocaleId, LocaleId, LocaleSettings } from '../locale-settin
 // The translate currency lives in ui-slots (the render machinery synthesizes
 // the seat); re-exported here so dictionary owners import one package.
 // TranslateNS<'model'> is the namespace-addressed developer-facing form.
-export type { Translate, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+export type { Translate, TranslateNS } from '@yharness/client-ui-slots'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Shared cross-feature vocabulary, consulted by the lookup chain after the entry's own namespace misses. */
     common: CommonKey
@@ -80,7 +78,7 @@ export interface LocaleSnapshot {
   revision: number
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     locale: LocaleRuntime
   }
@@ -97,15 +95,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/**
- * English is both the locale the UI opens in when the browser names no registered
- * language (and for non-browser runs), and the dictionary consulted after the
- * active locale misses a key. One constant serves both because the shipped
- * `zh`/`en` dictionaries carry identical key sets, so neither direction can
- * leave a key unresolved; the residual case points at English rather than
- * zh because a browser naming no registered language is the reader least
- * likely to read Chinese.
- */
+/** English is the product default and the dictionary fallback. */
 export const FALLBACK_LOCALE: BuiltInLocaleId = 'en'
 
 /** Shared namespace for shell-level texts. */
@@ -114,18 +104,26 @@ export const COMMON_NS = 'common'
 /** Namespace owning this feature's settings-row copy. */
 export const SETTINGS_NS = 'settings.locale'
 
-/** The two locales and dictionaries shipped by this package. */
+/** The locale and dictionary shipped by this package. */
 const BUILT_IN_LOCALE_METADATA = {
-  zh: { label: '中文', fallback: 'en' },
   en: { label: 'English' },
 } as const satisfies Record<BuiltInLocaleId, Omit<LocaleDefinition, 'id'>>
 const BUILT_IN_LOCALES: readonly LocaleDefinition[] = Object.freeze(
   LOCALE_IDS.map(id => Object.freeze({ id, ...BUILT_IN_LOCALE_METADATA[id] })),
 )
 
+/** Locale ids retired from the product but still present in saved settings. */
+const RETIRED_LOCALE_IDS = new Set(['zh'])
+
 /** Case-insensitive key for BCP 47-style ids. */
 function localeKey(value: string): string {
   return value.toLowerCase()
+}
+
+/** Return whether an id belongs to the retired locale family. */
+function isRetiredLocale(value: string): boolean {
+  const key = localeKey(value)
+  return RETIRED_LOCALE_IDS.has(key) || key.startsWith('zh-')
 }
 
 /** Validate and detach a language-pack contribution from its mutable input. */
@@ -148,8 +146,7 @@ function normalizeLanguage(input: LanguageRegistration): Readonly<LanguageRegist
 function syncDocumentLanguage(snapshot: LocaleSnapshot): void {
   // Non-browser runs (node boots of the client tree) have no document.
   if (typeof document === 'undefined') return
-  const language = snapshot.active === 'zh' ? 'zh-CN' : snapshot.active
-  if (document.documentElement.lang !== language) document.documentElement.lang = language
+  if (document.documentElement.lang !== snapshot.active) document.documentElement.lang = snapshot.active
 }
 
 /**
@@ -250,11 +247,19 @@ export class LocaleRuntime {
    * different browser sharing the same DSH home. Only the render notification
    * is conditional: republishing an unchanged locale would churn every
    * subscriber for nothing.
-   * @param id - a registered locale id; unknown ids throw.
+   * @param id - a registered locale id; unknown ids throw. Retired locale ids
+   * resolve to English and persist that replacement when no external language
+   * pack has registered the id.
    */
   setLocale(id: string): void {
     const match = this.catalog.get(localeKey(id))
-    if (match === undefined) throw new Error(`locale "${id}" is not registered`)
+    if (match === undefined) {
+      if (!isRetiredLocale(id)) throw new Error(`locale "${id}" is not registered`)
+      this.preference = FALLBACK_LOCALE
+      if (this.snapshot.active !== FALLBACK_LOCALE) this.publish(FALLBACK_LOCALE, true)
+      void this.host?.set(LOCALE_PREFERENCE_FIELD, FALLBACK_LOCALE)
+      return
+    }
     this.preference = match.id
     if (this.snapshot.active !== match.id) this.publish(match.id, true)
     void this.host?.set(LOCALE_PREFERENCE_FIELD, match.id)
@@ -319,10 +324,12 @@ export class LocaleRuntime {
     this.publish(active, active !== this.snapshot.active, locales)
   }
 
-  /** Resolve an explicit preference only while its definition is available. */
+  /** Resolve an explicit preference while preserving retired-setting fallback. */
   private resolveActive(): LocaleId {
     if (this.preference === undefined) return this.provisional
-    return this.catalog.get(localeKey(this.preference))?.id ?? this.provisional
+    const match = this.catalog.get(localeKey(this.preference))
+    if (match !== undefined) return match.id
+    return isRetiredLocale(this.preference) ? FALLBACK_LOCALE : this.provisional
   }
 
   /** Snapshot the catalog in registration order. */
@@ -376,17 +383,20 @@ export class LocaleRuntime {
 
   /**
    * Register a declared namespace's dictionaries, all locales in one call —
-   * the typed form: each dictionary is checked against the namespace's
-   * {@link LocaleNamespaceMap} key union (a missing or extra key is a
-   * compile error), and every shipped locale is required (bilingual balance
-   * enforced at registration). Duplicate (ns, locale) throws (single occupant; a
-   * namespace's texts have one owner). Registration bumps the revision so
-   * mounted outlets pick up late-arriving dictionaries.
+   * the typed form: the English dictionary is checked against the namespace's
+   * {@link LocaleNamespaceMap} key union. Extra locale entries are accepted
+   * for source compatibility and for external language packs. Duplicate
+   * (ns, locale) throws (single occupant; a namespace's texts have one owner).
+   * Registration bumps the revision so mounted outlets pick up late-arriving
+   * dictionaries.
    * @param ns - a namespace merged into LocaleNamespaceMap.
    * @param dicts - complete dictionaries keyed by built-in locale id.
    * @returns disposer removing every locale registered by this call (idempotent).
    */
-  register<N extends Extract<keyof LocaleNamespaceMap, string>>(ns: N, dicts: Record<BuiltInLocaleId, LocaleDictOf<N>>): () => void
+  register<N extends Extract<keyof LocaleNamespaceMap, string>>(
+    ns: N,
+    dicts: Record<BuiltInLocaleId, LocaleDictOf<N>> & Record<string, LocaleDict>,
+  ): () => void
   /**
    * Single-locale untyped form for language-pack contributions and namespaces
    * outside the merge table.
@@ -398,10 +408,10 @@ export class LocaleRuntime {
    */
   register(ns: string, locale: string, dict: LocaleDict): () => void
   register(ns: string, localeOrDicts: string | Record<string, LocaleDict>, dict?: LocaleDict): () => void {
-    const pairs: [string, LocaleDict][] = typeof localeOrDicts === 'string'
+    const pairs = (typeof localeOrDicts === 'string'
       // Overload guarantees dict on the single-locale arm.
       ? [[localeOrDicts, dict as LocaleDict]]
-      : Object.entries(localeOrDicts)
+      : Object.entries(localeOrDicts)) as [string, LocaleDict][]
     for (const [locale] of pairs) {
       if (!LOCALE_ID_PATTERN.test(locale)) {
         throw new Error(`locale id "${locale}" is not a BCP 47-style tag`)
@@ -576,8 +586,8 @@ export async function apply(ctx: ClientContext): Promise<void> {
   }
   const host = ctx.configForms.get<LocaleSettings>(LOCALE_SETTINGS_NAMESPACE)
   const locale = new LocaleRuntime(ctx, host, bootstrap)
-  locale.register(COMMON_NS, { zh, en })
-  locale.register(SETTINGS_NS, { zh: settingsZh, en: settingsEn })
+  locale.register(COMMON_NS, { en })
+  locale.register(SETTINGS_NS, { en: settingsEn })
   ctx.provide('locale', locale)
   if (bridge !== undefined) {
     ctx.on('locale/change', (snapshot) => { bridge.onChange(snapshot.active) })

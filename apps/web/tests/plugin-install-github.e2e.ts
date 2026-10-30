@@ -57,20 +57,20 @@ it.each(['network', 'timeout'] as const)('offers a mirror after a GitHub %s, the
   const tripwire = watchConsole(page)
   await page.goto(scaffold.authenticatedUrl)
   await page.waitForSelector('[class*="frame"]')
-  if (await page.getByRole('dialog', { name: '设置' }).count() > 0) await page.keyboard.press('Escape')
-  await page.getByRole('navigation', { name: '全局面板' }).getByRole('button', { name: '插件', exact: true }).click()
-  await page.getByRole('button', { name: '添加插件', exact: true }).click()
+  if (await page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}' }).count() > 0) await page.keyboard.press('Escape')
+  await page.getByRole('navigation', { name: '\u{5168}\u{5C40}\u{9762}\u{677F}' }).getByRole('button', { name: '\u{63D2}\u{4EF6}', exact: true }).click()
+  await page.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{63D2}\u{4EF6}', exact: true }).click()
   const spec = 'https://github.com/example/dsh-plugin.git'
-  const title = failure === 'timeout' ? '连接 GitHub 超时' : '无法访问 GitHub'
-  let dialog = page.getByRole('dialog', { name: '添加插件', exact: true })
-  await dialog.getByRole('button', { name: '安装源 npm 官方源', exact: true }).waitFor()
-  await dialog.getByRole('textbox', { name: '包名或地址' }).fill(spec)
+  const title = failure === 'timeout' ? '\u{8FDE}\u{63A5} GitHub \u{8D85}\u{65F6}' : '\u{65E0}\u{6CD5}\u{8BBF}\u{95EE} GitHub'
+  let dialog = page.getByRole('dialog', { name: '\u{6DFB}\u{52A0}\u{63D2}\u{4EF6}', exact: true })
+  await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}\u{6E90} npm \u{5B98}\u{65B9}\u{6E90}', exact: true }).waitFor()
+  await dialog.getByRole('textbox', { name: '\u{5305}\u{540D}\u{6216}\u{5730}\u{5740}' }).fill(spec)
   expect(await page.getByText(title, { exact: true }).count()).toBe(0)
-  await dialog.getByRole('button', { name: '安装', exact: true }).click()
+  await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}', exact: true }).click()
   dialog = page.getByRole('dialog', { name: title, exact: true })
   await dialog.waitFor()
   expect(await page.getByRole('dialog').count()).toBe(1)
-  expect(await dialog.getByText('请尝试其他安装来源。', { exact: true }).count()).toBe(1)
+  expect(await dialog.getByText('\u{8BF7}\u{5C1D}\u{8BD5}\u{5176}\u{4ED6}\u{5B89}\u{88C5}\u{6765}\u{6E90}。', { exact: true }).count()).toBe(1)
   await compareOrRefreshGolden(
     fileURLToPath(new URL(`./expected/plugin-install-github/${failure === 'timeout' ? 'timeout' : 'failed'}.expected.md`, import.meta.url)),
     await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd), webSnapshotMode(),
@@ -80,14 +80,14 @@ it.each(['network', 'timeout'] as const)('offers a mirror after a GitHub %s, the
   expect(connections).toBeGreaterThan(0)
   await expect.poll(() => sockets.size).toBe(0)
   const checked = connections
-  await dialog.getByRole('button', { name: '改用国内镜像', exact: true }).click()
-  dialog = page.getByRole('dialog', { name: '添加插件', exact: true })
-  const input = dialog.getByRole('textbox', { name: '插件包名', exact: true })
+  await dialog.getByRole('button', { name: '\u{6539}\u{7528}\u{56FD}\u{5185}\u{955C}\u{50CF}', exact: true }).click()
+  dialog = page.getByRole('dialog', { name: '\u{6DFB}\u{52A0}\u{63D2}\u{4EF6}', exact: true })
+  const input = dialog.getByRole('textbox', { name: '\u{63D2}\u{4EF6}\u{5305}\u{540D}', exact: true })
   await input.waitFor()
   expect(await input.inputValue()).toBe('')
   expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
-  expect(await dialog.getByRole('button', { name: '安装', exact: true }).isDisabled()).toBe(true)
-  await dialog.getByRole('button', { name: '安装源 中国大陆镜像源', exact: true }).waitFor()
+  expect(await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}', exact: true }).isDisabled()).toBe(true)
+  await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}\u{6E90} \u{4E2D}\u{56FD}\u{5927}\u{9646}\u{955C}\u{50CF}\u{6E90}', exact: true }).waitFor()
   await compareOrRefreshGolden(
     fileURLToPath(new URL('./expected/plugin-install-github/mirror.expected.md', import.meta.url)),
     await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd), webSnapshotMode(),
@@ -96,16 +96,16 @@ it.each(['network', 'timeout'] as const)('offers a mirror after a GitHub %s, the
   expect(connections).toBe(checked)
   expect(await readFile(manifestPath, 'utf8')).toBe(manifestBefore)
   await input.fill(spec)
-  await dialog.getByRole('button', { name: '安装', exact: true }).click()
+  await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}', exact: true }).click()
   dialog = page.getByRole('dialog', { name: title, exact: true })
   await dialog.waitFor()
   await compareOrRefreshGolden(
     fileURLToPath(new URL(`./expected/plugin-install-github/${failure === 'timeout' ? 'timeout' : 'failed'}-on-mirror.expected.md`, import.meta.url)),
     await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd), webSnapshotMode(),
   )
-  await dialog.getByRole('button', { name: '试试其他方式', exact: true }).click()
-  dialog = page.getByRole('dialog', { name: '添加插件', exact: true })
-  await dialog.getByRole('button', { name: '收起引导', exact: true }).waitFor()
+  await dialog.getByRole('button', { name: '\u{8BD5}\u{8BD5}\u{5176}\u{4ED6}\u{65B9}\u{5F0F}', exact: true }).click()
+  dialog = page.getByRole('dialog', { name: '\u{6DFB}\u{52A0}\u{63D2}\u{4EF6}', exact: true })
+  await dialog.getByRole('button', { name: '\u{6536}\u{8D77}\u{5F15}\u{5BFC}', exact: true }).waitFor()
   expect(await input.inputValue()).toBe('')
   expect(await input.evaluate(element => element === document.activeElement)).toBe(true)
   await compareOrRefreshGolden(
@@ -113,9 +113,9 @@ it.each(['network', 'timeout'] as const)('offers a mirror after a GitHub %s, the
     await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd), webSnapshotMode(),
   )
   await input.fill(spec)
-  await dialog.getByRole('button', { name: '安装', exact: true }).click()
+  await dialog.getByRole('button', { name: '\u{5B89}\u{88C5}', exact: true }).click()
   dialog = page.getByRole('dialog', { name: title, exact: true })
-  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await dialog.getByRole('button', { name: '\u{53D6}\u{6D88}', exact: true }).click()
   await dialog.waitFor({ state: 'detached' })
   expect(await readFile(join(profile, '.attempts'), 'utf8')).toBe('')
   expect(connections).toBeGreaterThan(checked)

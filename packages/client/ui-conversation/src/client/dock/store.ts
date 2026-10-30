@@ -6,10 +6,10 @@
  * rest of the client follows; dropping a Session from the sidebar grows the
  * grid toward the drop side.
  *
- * @module @deepseek-ai/dsh-client-ui-conversation/client/dock/store
+ * @module @yharness/client-ui-conversation/client/dock/store
  */
-import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
 
 /** Widest grid the dock grows to. */
 export const MAX_DOCK_COLUMNS = 3

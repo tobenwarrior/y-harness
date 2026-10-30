@@ -1,18 +1,18 @@
 /** Producer-to-UI regression for shell results bounded by the real spill policy. */
-import { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime'
-import type { PtcRunRequest, PtcRunSpec, PtcRunResult } from '@deepseek-ai/dsh-ptc-runtime'
-import { estimateContent } from '@deepseek-ai/dsh-token-meter/estimate'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { SpillLocator, SpillStore, type SaveTextSpill, type SpillRef } from '@deepseek-ai/dsh-spill'
-import * as SpillPolicy from '@deepseek-ai/dsh-spill-policy'
-import { formatSpillNotice } from '@deepseek-ai/dsh-spill-policy/notice'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type { ToolResultNode } from '@yharness/client-ui-chat/client'
+import { PtcRuntime } from '@yharness/ptc-runtime'
+import type { PtcRunRequest, PtcRunSpec, PtcRunResult } from '@yharness/ptc-runtime'
+import { estimateContent } from '@yharness/token-meter/estimate'
+import { ToolCallId } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
+import { SpillLocator, SpillStore, type SaveTextSpill, type SpillRef } from '@yharness/spill'
+import * as SpillPolicy from '@yharness/spill-policy'
+import { formatSpillNotice } from '@yharness/spill-policy/notice'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime, { defineContentToolFixture } from '@yharness/tools'
+import { PartialArguments } from '@yharness/util-values'
 import { describe, expect, it } from 'vitest'
 import { isSpilledShellCall, terminalCardModel } from '../src/client/tool/models/terminal-card-model.ts'
 
@@ -127,7 +127,7 @@ describe.each([
       { outcome: 'terminating signal', marker: '\n[killed by signal: SIGTERM]' },
       { outcome: 'markerless output', marker: '' },
     ])('keeps a spilled $outcome result generic', async ({ marker }) => {
-      const original = 'HEAD 雪\n'.repeat(200) + marker
+      const original = 'HEAD \u96ea\n'.repeat(200) + marker
       const { block, saves } = await executeShell(original, nested, name)
       expect(saves).toHaveLength(1)
       expect(saves[0]!.input).toMatchObject({
@@ -148,7 +148,7 @@ describe.each([
     })
 
     it('keeps a notice-only result generic when no preview fits', async () => {
-      const original = '雪'.repeat(1_000) + '\n[exit code: 9]'
+      const original = '\u96ea'.repeat(1_000) + '\n[exit code: 9]'
       const notice = formatSpillNotice({ kind: 'exact', count: Buffer.byteLength(original, 'utf8') }, spillReference)
       const { block, saves } = await executeShell(original, nested, name, estimateContent([{ type: 'text', text: notice }]))
       expect(block.content).toEqual([{ type: 'text', text: notice }])

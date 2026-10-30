@@ -1,8 +1,8 @@
 /** One Sidebar Inspector with locally selected Chat and Session-log presentations. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-sidebar-right/client'
 import type { InspectorInjected } from './InspectorTable.tsx'
 import { InspectorTable } from './InspectorTable.tsx'
 import type { InspectorObjects, InspectorChatTarget } from './objects.ts'

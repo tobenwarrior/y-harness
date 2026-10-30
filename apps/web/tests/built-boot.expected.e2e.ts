@@ -91,7 +91,7 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
   // The resident fixture has both a question and an approval; composer routing
   // exposes the question first, and the assembled workspace plugin mirrors that
   // actionable wait instead of the underlying running state.
-  const waitingTitle = await within(tree).findByText('Fixture 历史会话')
+  const waitingTitle = await within(tree).findByText('Fixture \u{5386}\u{53F2}\u{4F1A}\u{8BDD}')
   const waitingRow = waitingTitle.closest<HTMLElement>('[role="treeitem"]')
   if (waitingRow === null) throw new Error('fixture Session title must belong to a tree row')
   expect(waitingRow.querySelector('[data-state="warning"]')).not.toBeNull()
@@ -173,18 +173,18 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
   // Every bundle injected its plugin-owned style tag (the loader's CSS path).
   const styleOwners = [...document.head.querySelectorAll('style[data-plugin]')]
     .map(style => style.getAttribute('data-plugin'))
-  for (const plugin of ['@deepseek-ai/dsh-client-ui-layout', '@deepseek-ai/dsh-client-ui-sidebar', '@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-ui-tool']) {
+  for (const plugin of ['@yharness/client-ui-layout', '@yharness/client-ui-sidebar', '@yharness/client-ui-conversation', '@yharness/client-ui-tool']) {
     expect(styleOwners).toContain(plugin)
   }
 })
 
 it('boots without ui-chat and does not select another conversation view implicitly', async () => {
-  mountAssembledApp({ exclude: ['@deepseek-ai/dsh-client-ui-chat'] })
+  mountAssembledApp({ exclude: ['@yharness/client-ui-chat'] })
 
   const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
   const boot = Reflect.get(window, '__DSH_BOOT__') as { entries: Array<{ id: string }> } | undefined
-  expect(boot?.entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-chat')).toBe(false)
-  const sessionTitle = await within(tree).findByText('Fixture 历史会话')
+  expect(boot?.entries.some(entry => entry.id === '@yharness/client-ui-chat')).toBe(false)
+  const sessionTitle = await within(tree).findByText('Fixture \u{5386}\u{53F2}\u{4F1A}\u{8BDD}')
   fireEvent.click(sessionTitle)
   await waitFor(() => {
     expect(document.querySelector('[data-slot="conversation.session"]')).not.toBeNull()

@@ -9,12 +9,12 @@
  * document language rather than merely looking untidy.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { apply, inject } from '@deepseek-ai/dsh-client-locale/client'
-import type { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { Context } from '@yharness/cordis'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import { TestRemote } from '@yharness/client-test-runtime'
+import { apply, inject } from '@yharness/client-locale/client'
+import type { LocaleRuntime } from '@yharness/client-locale/client'
 import { LOCALE_SETTINGS_NAMESPACE, LocaleSettingsSchema } from '../src/locale-settings.ts'
 
 /** Boot the plugin over a stub Host settings document. */
@@ -67,25 +67,24 @@ describe('document language', () => {
   })
 
   it('states the resolved locale at activation, not the value the markup shipped', async () => {
-    // A Chinese browser resolves zh even though the markup said en.
+    // A retired-locale browser resolves English even though the markup said en.
     const { locale } = await bench()
-    expect(locale.getLocale().active).toBe('zh')
-    expect(langOf()).toBe('zh-CN')
+    expect(locale.getLocale().active).toBe('en')
+    expect(langOf()).toBe('en')
   })
 
   it('follows a locale switch in both directions with BCP 47 tags', async () => {
     const { locale } = await bench()
-    expect(langOf()).toBe('zh-CN')
-    locale.setLocale('en')
-    // `en` needs no region; `zh` names its script variant, which bare `zh`
-    // leaves ambiguous for pronunciation and font selection.
     expect(langOf()).toBe('en')
-    locale.setLocale('zh')
-    expect(langOf()).toBe('zh-CN')
+    locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
+    locale.setLocale('fr')
+    expect(langOf()).toBe('fr')
+    locale.setLocale('en')
+    expect(langOf()).toBe('en')
   })
 
   it('follows an explicit Host preference that overrides browser detection', async () => {
-    // Stored preference wins over the zh browser pinned above.
+    // Stored preference wins over the retired-locale browser pinned above.
     const { locale } = await bench('en')
     await vi.waitFor(() => { expect(locale.getLocale().active).toBe('en') })
     await vi.waitFor(() => { expect(langOf()).toBe('en') })
@@ -103,10 +102,14 @@ describe('document language', () => {
     const observer = new MutationObserver(() => {})
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] })
     try {
-      const remove = locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' })
+      const remove = locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
       expect(observer.takeRecords()).toHaveLength(0)
       remove()
       expect(observer.takeRecords()).toHaveLength(0)
+      locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
+      locale.setLocale('fr')
+      expect(observer.takeRecords()).toHaveLength(1)
+      expect(langOf()).toBe('fr')
       locale.setLocale('en')
       expect(observer.takeRecords()).toHaveLength(1)
       expect(langOf()).toBe('en')

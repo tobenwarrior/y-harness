@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-package-manifest",
+  "name": "@yharness/package-manifest",
   "description": "Shared type declarations for package.json.dsh configuration fields",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/util/package-manifest"
   },
   "type": "module",
@@ -27,9 +27,9 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

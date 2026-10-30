@@ -1,7 +1,7 @@
 /** Connected-native read fixtures preserve original IDs and refuse unstable snapshots. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionNativeId } from '@deepseek-ai/dsh-coding-session/types'
+import { brandString } from '@yharness/brand'
+import type { CodingSessionNativeId } from '@yharness/coding-session/types'
 import { createCodexCodingSessionProvider } from '../src/codex-coding-sessions.ts'
 const nativeId = brandString<CodingSessionNativeId>('native-123')
 const thread = () => ({ historyMode: 'legacy', id: 'native-123', name: 'Fix parser', preview: 'Inspect parser', cwd: '/project', updatedAt: 10, status: { type: 'idle' }, turns: [

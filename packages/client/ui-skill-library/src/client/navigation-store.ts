@@ -1,6 +1,6 @@
 /** Registration-owned library viewing state. */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
-import type { SkillLibraryId, SkillLearningProposalId } from '@deepseek-ai/dsh-skill-library/types'
+import { defineStore, type EngineStoreHandle } from '@yharness/client-store'
+import type { SkillLibraryId, SkillLearningProposalId } from '@yharness/skill-library/types'
 
 /** Complete scope and availability filters. */
 export interface LibraryNavigation {

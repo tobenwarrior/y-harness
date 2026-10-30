@@ -3,7 +3,7 @@ description: "Nine tools that let the model create, message, and coordinate team
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-experimental-tool-agent-team
+# @yharness/experimental-tool-agent-team
 
 ## Summary
 
@@ -23,7 +23,7 @@ This package lets the model create named teammates, send them messages, inspect 
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. `spawn_teammate` prefixes the initial task with the teammate’s role and name.
+Add this package on top of `@yharness/experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. `spawn_teammate` prefixes the initial task with the teammate’s role and name.
 
 ### When to choose it
 
@@ -35,7 +35,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 
 ```yaml
 - id: tool-agent-team
-  name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+  name: '@yharness/experimental-tool-agent-team'
   config:
     freshProvider: spawn
     forkProvider: fork
@@ -46,7 +46,7 @@ The smallest addition to an existing composition is the two-package fragment fro
 | `freshProvider` | `spawn` | Provider that starts fresh teammates |
 | `forkProvider` | `fork` | Provider that starts fork teammates |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessexperimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
 Try it by asking the Lead model: "create a teammate named reviewer to check the diff, then send reviewer the change summary". The model calls the creation tool and then the messaging tool.
 
@@ -110,7 +110,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 - [agent-team package](../agent-team/README.md) — the `ctx.agentTeams` domain service behind these tools.
 - [Agent Teams subsystem](../../../docs/subsystems/agent-team.md) — durable Team types and service API.
-- [Generated tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-experimental-tool-agent-team) — every tool schema the model receives.
+- [Generated tool catalog](../../../docs/tool-catalog.md#yharnessexperimental-tool-agent-team) — every tool schema the model receives.
 - [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) — model-facing, scoping, and isolation decisions.
 
 -----

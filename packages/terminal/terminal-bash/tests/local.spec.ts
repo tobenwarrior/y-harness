@@ -3,20 +3,20 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import TerminalSessionService from '@deepseek-ai/dsh-terminal'
-import type { TerminalSendOperation } from '@deepseek-ai/dsh-terminal'
-import SandboxProvider from '@deepseek-ai/dsh-sandbox'
-import type { ConfinedArgv, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { resolvePwshPath } from '@deepseek-ai/dsh-pwsh-local/src/resolve.ts'
-import * as ptyLocal from '@deepseek-ai/dsh-terminal-bash'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { Context } from '@yharness/cordis'
+import { Session, SessionId } from '@yharness/session'
+import AgentRegistry from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import TerminalSessionService from '@yharness/terminal'
+import type { TerminalSendOperation } from '@yharness/terminal'
+import SandboxProvider from '@yharness/sandbox'
+import type { ConfinedArgv, SandboxPolicy } from '@yharness/sandbox'
+import SandboxPolicyService from '@yharness/sandbox-policy'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import { resolvePwshPath } from '@yharness/pwsh-local/src/resolve.ts'
+import * as ptyLocal from '@yharness/terminal-bash'
+import { unsupportedInbox } from '@yharness/agent-loop-testkit'
 
 const roots: string[] = []
 const contexts: Context[] = []
@@ -142,7 +142,7 @@ describe.skipIf(process.platform === 'win32')('terminal-bash real shell', () => 
     try {
       const { ctx, root, agent } = await harness('danger-full-access')
       const created = await ctx.terminals.spawn(agent, { type: 'shell', name: 'main', cwd: root })
-      expect(created.motd).toContain('dsh> ')
+      expect(created.motd).toContain('yharness> ')
 
       const first = ctx.terminals.startSend(agent, created.sessionId, { text: 'export KEEP=ok; cd /', submit: true })
       expect((await first.done).waitReason).toBe('stdin_read')
@@ -174,7 +174,7 @@ describe.skipIf(process.platform === 'win32')('terminal-bash real shell', () => 
     const after = ctx.terminals.startSend(agent, created.sessionId, { text: 'printf "healed=[%s]\\n" "$PS1"', submit: true })
     const result = await after.done
     expect(result.waitReason).toBe('stdin_read')
-    expect(result.viewport).toContain('healed=[dsh> ]')
+    expect(result.viewport).toContain('healed=[yharness> ]')
     await ctx.terminals.kill(agent, created.sessionId)
   }, 20_000)
 
@@ -333,7 +333,7 @@ describe.skipIf(!hasPwsh)('terminal-bash pwsh real shell', () => {
       const created = await ctx.terminals.spawn(agent, { type: 'shell', name: 'main', cwd: root })
       // stdin_read can precede delivery of the printable prompt to the PTY reader.
       await expect.poll(() => ctx.terminals.read(agent, created.sessionId, { offset: 0, count: 100 }).text,
-        { timeout: 8_000 }).toContain('dsh> ')
+        { timeout: 8_000 }).toContain('yharness> ')
 
       const releaseFile = join(root, 'release-command')
       // Hold the command across the silence settlement without relying on host load.
@@ -393,7 +393,7 @@ describe.skipIf(!hasPwsh)('terminal-bash pwsh real shell', () => {
       submit: true,
     })
     const result = await sent.done
-    expect(result.viewport).toContain('中文 encoding-ok')
+    expect(result.viewport).toContain('\u{4E2D}\u{6587} encoding-ok')
     await ctx.terminals.kill(agent, created.sessionId)
   }, 30_000)
 })

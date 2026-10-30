@@ -1,7 +1,7 @@
 /** Registration of the code-map panel and its sidebar entry. */
-import { Context } from '@deepseek-ai/cordis'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
+import { Context } from '@yharness/cordis'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import { describe, expect, it } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'
 import { en } from '../src/client/locales.ts'

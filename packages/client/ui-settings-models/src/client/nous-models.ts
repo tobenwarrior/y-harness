@@ -5,7 +5,7 @@
  * ranking it discloses, so every rule here preserves it.
  */
 
-import type { NousModelView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { NousModelView } from '@yharness/api-remotes/client'
 
 /** Separator the Portal uses between a vendor name and the model it offers. */
 const VENDOR_SEPARATOR = ': '

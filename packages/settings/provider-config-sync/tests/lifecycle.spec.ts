@@ -1,9 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import type { SettingsDescriptor } from '@deepseek-ai/dsh-settings'
+import type { SettingsDescriptor } from '@yharness/settings'
 import ProviderConfigSync from '../src/index.ts'
 
 const backend = vi.hoisted(() => ({ watchers: [] as { emit(name: string, ...values: unknown[]): boolean }[] }))

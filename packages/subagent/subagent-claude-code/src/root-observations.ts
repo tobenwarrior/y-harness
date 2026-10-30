@@ -1,9 +1,9 @@
 /** Exact direct SDK identities and allowlisted project facts, without native-turn invention. */
 import { isAbsolute, relative, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId, SkillClaudeMessageId, SkillClaudeToolUseId } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId, SkillClaudeMessageId, SkillClaudeToolUseId } from '@yharness/skill-library/types'
 
 /**
  * Validate bounded native metadata before constructing opaque identities.

@@ -1,24 +1,24 @@
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, Inbox, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { AttachmentError, AttachmentId } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createAssistantMessage, createUserMessage, MessageId } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import { RemoteError } from '@yharness/typert-protocol'
+import { Context } from '@yharness/cordis'
+import AgentRegistry from '@yharness/agent'
+import type { Agent, Inbox, ModelSelectionRef } from '@yharness/agent'
+import { AttachmentError, AttachmentId } from '@yharness/attachment'
+import type { ImageAttachmentRef } from '@yharness/attachment'
+import { createAssistantMessage, createUserMessage, MessageId } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import SessionStore, {
   SESSION_FORMAT_VERSION, Session, SessionId, SessionLogOffset, SessionSeq,
-} from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader, UserMessage } from '@deepseek-ai/dsh-session'
-import { snapshotSubagentDescriptor, SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
-import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
+} from '@yharness/session'
+import type { SessionEvent, SessionHeader, UserMessage } from '@yharness/session'
+import { snapshotSubagentDescriptor, SUBAGENT_DESCRIPTOR_VERSION } from '@yharness/subagent'
+import { subagentIdentityProjectionDefinition } from '@yharness/subagent/src/projection.ts'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiSessionAgentController } from '../src/agent.ts'
 import { SessionCommandController } from '../src/commands.ts'
-import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { createInboxStub } from '@yharness/agent-loop-testkit'
 import { installSessionReadTestServices, testSessionPersistence } from './test-remote.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

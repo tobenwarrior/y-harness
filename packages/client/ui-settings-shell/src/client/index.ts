@@ -7,23 +7,23 @@
  */
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: the ctx.configForms Context merge. Cross-plugin collaboration
 // goes through the service, never a value import (client bundle purity gate).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@yharness/client-ui-settings/client'
 // Type-only: the Plugins page's SlotMap merge (the 'plugins.item' entry).
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@yharness/client-ui-plugin-manager/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type { Context as ClientContext } from '@yharness/cordis'
 import { ShellCard } from './ShellCard.tsx'
 import { BASH_NS, PWSH_NS, ShellCardController } from './shell-card-controller.ts'
-import { en, zh, type ShellSettingsLocaleKey } from './locales.ts'
+import { en, type ShellSettingsLocaleKey } from './locales.ts'
 
 export type { ShellCardProps } from './ShellCard.tsx'
 export type { ShellCardFace, ShellCardState, ShellSettings } from './shell-card-controller.ts'
 export type { ShellSettingsLocaleKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Shell settings page copy. */
     'settings.shell': ShellSettingsLocaleKey
@@ -42,7 +42,7 @@ export const inject = ['slots', 'locale', 'configForms']
  */
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-shell: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-settings-shell: dictionaries')
   // The base bundle composes exactly one shell executor per platform; the page binds the served one.
   const bash = new ShellCardController(ctx.configForms.get(BASH_NS))
   const pwsh = new ShellCardController(ctx.configForms.get(PWSH_NS))

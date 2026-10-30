@@ -6,8 +6,8 @@
  * @module
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
 import type { ModDefinition, ModRegister, PluginOptions } from './types.ts'
 
 /** The option values a composition may set for a mod: `userConfig`'s value types. */

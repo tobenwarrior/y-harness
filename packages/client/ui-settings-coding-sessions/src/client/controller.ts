@@ -1,10 +1,10 @@
 /** Remote coding-session queries and user actions with retained state across Settings navigation. */
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { CodingSessionProfile, CodingSessionSource, CodingSessionMirrorId, CodingSessionMirror, CodingSessionPage, CodingSessionSummary, CodingSessionsState, CodingSessionClaimAcknowledgement, CodingSessionRecoveryAcknowledgement } from '@deepseek-ai/dsh-coding-session/types'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { RemoteResult } from '@yharness/typert-protocol'
+import type { CodingSessionProfile, CodingSessionSource, CodingSessionMirrorId, CodingSessionMirror, CodingSessionPage, CodingSessionSummary, CodingSessionsState, CodingSessionClaimAcknowledgement, CodingSessionRecoveryAcknowledgement } from '@yharness/coding-session/types'
 
-import type { CodingSessionLinkId, CodingSessionLinkRecord, CodingSessionDestinationRevision, CodingSessionImportAcknowledgement, CodingSessionRollbackAcknowledgement } from '@deepseek-ai/dsh-coding-session/types'
+import type { CodingSessionLinkId, CodingSessionLinkRecord, CodingSessionDestinationRevision, CodingSessionImportAcknowledgement, CodingSessionRollbackAcknowledgement } from '@yharness/coding-session/types'
 type SessionId = CodingSessionImportAcknowledgement['destinationSessionId']
 
 /** Transport-free method face supplied by the owning generated Remote. */

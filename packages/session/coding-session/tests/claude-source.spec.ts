@@ -6,16 +6,16 @@ import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import { brandString } from '@yharness/brand'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import { SubprocessRuntime } from '@yharness/subprocess'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Typert from '@yharness/typert-registry'
 import * as CodingSessions from '../src/index.ts'
 import * as ClaudeSourcePlugin from '../src/claude-source.ts'
 import { createClaudeSource, Config } from '../src/claude-source.ts'
@@ -139,9 +139,9 @@ describe('explicit original Claude source', () => {
     }
     try {
       const path = join(root, 'cordis.yml')
-      await writeFile(path, JSON.stringify([{ name: '@deepseek-ai/dsh-storage' }, { name: '@deepseek-ai/dsh-storage-json', config: { root: join(root, 'storage') } }, { name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'json' } }, { name: '@deepseek-ai/dsh-typert-registry' }, { name: '@deepseek-ai/dsh-coding-session', config: { enableClaudeDiscovery: false } }, { name: 'fixture-processes' }, { name: '@deepseek-ai/dsh-coding-session/claude-source', config: { sources: [config] } }]))
+      await writeFile(path, JSON.stringify([{ name: '@yharness/storage' }, { name: '@yharness/storage-json', config: { root: join(root, 'storage') } }, { name: '@yharness/storage-domain', config: { backend: 'json' } }, { name: '@yharness/typert-registry' }, { name: '@yharness/coding-session', config: { enableClaudeDiscovery: false } }, { name: 'fixture-processes' }, { name: '@yharness/coding-session/claude-source', config: { sources: [config] } }]))
       context.baseUrl = pathToFileURL(root).href + '/'; await context.plugin(Loader); context.loader.builtins.include = Include
-      const modules = new Map<string, unknown>([['@deepseek-ai/dsh-storage', Storage], ['@deepseek-ai/dsh-storage-json', JsonStorage], ['@deepseek-ai/dsh-storage-domain', Domain], ['@deepseek-ai/dsh-typert-registry', Typert], ['@deepseek-ai/dsh-coding-session', CodingSessions], ['fixture-processes', { default: FixtureProcesses }], ['@deepseek-ai/dsh-coding-session/claude-source', ClaudeSourcePlugin]])
+      const modules = new Map<string, unknown>([['@yharness/storage', Storage], ['@yharness/storage-json', JsonStorage], ['@yharness/storage-domain', Domain], ['@yharness/typert-registry', Typert], ['@yharness/coding-session', CodingSessions], ['fixture-processes', { default: FixtureProcesses }], ['@yharness/coding-session/claude-source', ClaudeSourcePlugin]])
       const internal = context.loader.internal
       if (internal === undefined) throw new Error('Fixture needs Loader module resolution')
       context.loader.internal = new Proxy(internal, { get(target, property, receiver) {
@@ -155,7 +155,7 @@ describe('explicit original Claude source', () => {
       const page = await context.codingSessions.discover({ provider: 'claude', profileId: f.source.provider.profileId })
       const imported = await context.codingSessions.importSession(page.items[0]!.source)
       expect((await context.codingSessions.detail(imported.id)).events[0]?.id).toBe('native-message-uuid')
-      const entry = [...context.loader.entries()].find(entry => entry.options.name === '@deepseek-ai/dsh-coding-session/claude-source')!
+      const entry = [...context.loader.entries()].find(entry => entry.options.name === '@yharness/coding-session/claude-source')!
       await entry.fiber!.dispose(); expect((await context.codingSessions.getState()).sources).toEqual([])
       expect((await context.codingSessions.detail(imported.id)).source.nativeSessionId).toBe(original)
     } finally { await context.fiber.dispose(); await f.source.close(); await rm(root, { recursive: true, force: true }) }

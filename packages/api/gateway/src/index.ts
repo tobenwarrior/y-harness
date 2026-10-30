@@ -2,21 +2,21 @@
  * Live Typert Remote dispatch over Cordis Services and registered providers.
  * Unary transport and response envelopes belong to Connection; live Remote
  * streams use the Gateway-owned WebSocket mux.
- * @module @deepseek-ai/dsh-api-gateway
+ * @module @yharness/api-gateway
  */
 
 import { randomUUID } from 'node:crypto'
-import { Context, Service, symbols } from '@deepseek-ai/cordis'
+import { Context, Service, symbols } from '@yharness/cordis'
 import {
   OperatorPeer,
   type ConnectionRpcAttachment,
   type ConnectionRpcHandler,
-} from '@deepseek-ai/dsh-client-connection'
-import { Deque } from '@deepseek-ai/dsh-deque'
-import type { WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import type {} from '@deepseek-ai/dsh-cmdline'
-import z from '@deepseek-ai/schemastery'
+} from '@yharness/client-connection'
+import { Deque } from '@yharness/deque'
+import type { WebUpgradeRoute } from '@yharness/host-webserver'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import type {} from '@yharness/cmdline'
+import z from '@yharness/schemastery'
 export type { TypertGatewayFaultDetails } from './remote-error-codes.ts'
 import {
   RemoteError,
@@ -29,7 +29,7 @@ import {
   type RemoteInvocation,
   type TypertCodec,
   type TypertGatewayBinding,
-} from '@deepseek-ai/dsh-typert-protocol'
+} from '@yharness/typert-protocol'
 import type {
   InvokeRemoteRequest,
   TypertGateway,

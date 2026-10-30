@@ -1,7 +1,7 @@
 /** Stable-profile guards use fixture config and public projected history only. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionSnapshot } from '@deepseek-ai/dsh-coding-session/types'
+import { brandString } from '@yharness/brand'
+import type { CodingSessionSnapshot } from '@yharness/coding-session/types'
 import { assertSavedPrefix, disabledServerMap, restrictionArguments, restrictedConfig, verifyRestrictedConfig, verifyManagedRequirements } from '../src/codex-sequential-guards.ts'
 
 const config = { features: { apps: true, plugins: true }, notify: ['fixture-hook'], mcp_servers: {

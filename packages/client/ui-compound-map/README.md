@@ -3,11 +3,11 @@ description: "Compound code-map panel and sidebar entry for the Y Harness Web cl
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-compound-map
+# @yharness/client-ui-compound-map
 
 ## Summary
 
-A **Code map** entry sits directly below Skills in the sidebar and opens the Compound code-map viewer: the repository graph with folder clustering, search, import tracing, impact views, and read-only source previews. The viewer is the vendored application itself, framed from this origin and served by `@deepseek-ai/dsh-skill-compound`, which also owns the loopback service behind it. Nothing leaves the machine: the graph, the index cache, and the source previews stay local.
+A **Code map** entry sits directly below Skills in the sidebar and opens the Compound code-map viewer: the repository graph with folder clustering, search, import tracing, impact views, and read-only source previews. The viewer is the vendored application itself, framed from this origin and served by `@yharness/skill-compound`, which also owns the loopback service behind it. Nothing leaves the machine: the graph, the index cache, and the source previews stay local.
 
 ## Table of Contents
 
@@ -22,10 +22,10 @@ A **Code map** entry sits directly below Skills in the sidebar and opens the Com
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount beside `@deepseek-ai/dsh-skill-compound`, which serves the viewer document, its assets, and the proxied service calls the frame uses.
+Mount beside `@yharness/skill-compound`, which serves the viewer document, its assets, and the proxied service calls the frame uses.
 
 ```yaml
-- name: '@deepseek-ai/dsh-client-ui-compound-map'
+- name: '@yharness/client-ui-compound-map'
 ```
 
 | Surface | Registration | Effect |

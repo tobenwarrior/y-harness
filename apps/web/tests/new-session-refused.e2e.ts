@@ -15,7 +15,7 @@ const BROKEN_PRESET = {
   id: PRESET_ID,
   name: 'Renamed plugin',
   description: 'Names a plugin that no longer resolves.',
-  plugins: [{ id: 'ghost', name: '@deepseek-ai/dsh-no-such-plugin' }],
+  plugins: [{ id: 'ghost', name: '@yharness/no-such-plugin' }],
 }
 
 describe.skipIf(MODE === 'record')('web e2e: refused New Session', () => {
@@ -33,13 +33,13 @@ describe.skipIf(MODE === 'record')('web e2e: refused New Session', () => {
         await page.goto(scaffold.authenticatedUrl)
         // Startup prepares the default Workspace, and its own blank-Session
         // attempt is refused without a notice: the hero stays on the picker.
-        await page.getByRole('button', { name: '选择工作区', exact: true }).waitFor()
+        await page.getByRole('button', { name: '\u{9009}\u{62E9}\u{5DE5}\u{4F5C}\u{533A}', exact: true }).waitFor()
         await expect.poll(() => scaffold.ctx.workspaceRegistry.list().length).toBe(1)
         expect(scaffold.ctx.sessions.list()).toEqual([])
         expect(await page.getByRole('alert').count()).toBe(0)
 
-        await page.getByRole('button', { name: '新建会话', exact: true }).first().click()
-        const notice = page.getByRole('alert').filter({ hasText: '新建会话失败' })
+        await page.getByRole('button', { name: '\u{65B0}\u{5EFA}\u{4F1A}\u{8BDD}', exact: true }).first().click()
+        const notice = page.getByRole('alert').filter({ hasText: '\u{65B0}\u{5EFA}\u{4F1A}\u{8BDD}\u{5931}\u{8D25}' })
         await notice.waitFor()
         await compareOrRefreshGolden(NOTICE_EXPECTED, await notice.ariaSnapshot(), MODE)
         expect(scaffold.ctx.sessions.list()).toEqual([])

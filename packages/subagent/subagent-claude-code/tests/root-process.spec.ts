@@ -1,9 +1,9 @@
 /** Real process-owner code with only confinement and managed subprocess boundaries mocked. */
 import { PassThrough } from 'node:stream'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { it, expect, onTestFinished, vi } from 'vitest'
-import { SandboxProvider, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { SandboxProvider, type SandboxPolicy } from '@yharness/sandbox'
+import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@yharness/subprocess'
 import { ClaudeRootProcess } from '../src/root-process.ts'
 
 async function fixture(options: { deferred?: boolean; enforcement?: 'full' | 'partial'; unconfirmed?: boolean; heldRange?: boolean; missingPipe?: boolean; stuckCommand?: boolean } = {}) {
@@ -63,7 +63,7 @@ it('rechecks authority after deferred confinement before spawning', async () => 
 it('refuses partial confinement without starting a child', async () => {
   const f = await fixture({ enforcement: 'partial' }); await expect(f.process.done).rejects.toThrow(/complete/); expect(f.spawned).toEqual([])
 })
-it.each([Buffer.alloc(17, 65), Buffer.from('多'.repeat(6))])('bounds complete wire lines before any JSON parser and drains the managed range', async (bytes) => {
+it.each([Buffer.alloc(17, 65), Buffer.from('\u{591A}'.repeat(6))])('bounds complete wire lines before any JSON parser and drains the managed range', async (bytes) => {
   const f = await fixture({ heldRange: true }); await vi.waitFor(() => { expect(f.spawned).toHaveLength(1) })
   let done = false; void f.process.done.then(() => { done = true }, () => { done = true })
   f.stdout.write(bytes); await vi.waitFor(() => { expect(f.terminate).toHaveBeenCalled() }); expect(done).toBe(false)

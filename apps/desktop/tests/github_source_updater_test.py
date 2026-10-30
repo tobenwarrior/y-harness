@@ -245,7 +245,7 @@ class UpdaterTests(unittest.TestCase):
             self.u.stage(new)
         self.assertEqual(self.u.current(), first)
     def test_default_build_prepares_primary_runtime_before_activation(self):
-        required = ["pnpm", "--filter", "@deepseek-ai/dsh-desktop", "run", "prepare:primary-runtime"]
+        required = ["pnpm", "--filter", "@yharness/desktop", "run", "prepare:primary-runtime"]
         self.assertIn(required, updater.SourceUpdater(self.root).build)
     def test_stage_rejects_a_build_without_runnable_artifacts(self):
         self.incomplete = True

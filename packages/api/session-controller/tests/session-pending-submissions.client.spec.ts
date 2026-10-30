@@ -5,12 +5,12 @@
  */
 
 import { afterEach, describe, expect, vi } from 'vitest'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { createClientTest, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
+import { createUserMessage } from '@yharness/llm'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@yharness/attachment'
+import { SessionSeq, type SessionEvent } from '@yharness/session/types'
+import type { SessionId } from '@yharness/api-remotes/client'
+import { RemoteError } from '@yharness/typert-protocol'
+import { createClientTest, webApp } from '@yharness/client-test-runtime/src/assembly/index.ts'
 import type { PendingSubmissionRetirement } from '../src/client/contract/session.ts'
 import type { SessionRequestId } from '../src/types.ts'
 import { ev, historyValue } from './event-script.client.ts'
@@ -20,7 +20,7 @@ import {
 } from './remote/session.client.ts'
 
 /** A Session talks through the Gateway client; its dependency cone is the Typert registry and the Connection. */
-const API_ROSTER = webApp.closure(['@deepseek-ai/dsh-api-gateway'])
+const API_ROSTER = webApp.closure(['@yharness/api-gateway'])
 const it = createClientTest({ roster: API_ROSTER })
 const SID = 'fk-s1' as SessionId
 /** The first client boot pays the cold module transform of the api cone. */
@@ -48,7 +48,7 @@ function promptEvent(seq: SessionSeq, rpcId: SessionRequestId, refs: readonly At
     data: createUserMessage({
       content: [
         ...refs.map(attachmentBlock),
-        { type: 'text' as const, text: '发送' },
+        { type: 'text' as const, text: '\u{53D1}\u{9001}' },
       ],
       source: { kind: 'user', rpcId },
     }),
@@ -74,7 +74,7 @@ describe('beginSubmission', () => {
     expect(session.getSnapshot()).toMatchObject({ pendingSubmissions: [], promptAttempted: false })
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '你好',
+      text: '\u{4F60}\u{597D}',
       attachments: [{
         type: 'image', value: { previewUrl: 'blob:p1', name: 'a.png', width: 4, height: 3 },
       }],
@@ -83,7 +83,7 @@ describe('beginSubmission', () => {
     expect(session.getSnapshot().pendingSubmissions).toMatchObject([{
       requestId: handle.requestId,
       placement: 'transcript',
-      text: '你好',
+      text: '\u{4F60}\u{597D}',
       attachments: [{
         type: 'image', value: { previewUrl: 'blob:p1', name: 'a.png', width: 4, height: 3 },
       }],
@@ -93,15 +93,15 @@ describe('beginSubmission', () => {
 
   it('derives and captures the echo placement from running state and delivery mode', async ({ mock, start }) => {
     const session = await sessionBench(mock, start, SID)
-    session.beginSubmission({ mode: 'queue', text: '空闲', attachments: [] })
+    session.beginSubmission({ mode: 'queue', text: '\u{7A7A}\u{95F2}', attachments: [] })
     session.handleRunning(true)
-    session.beginSubmission({ mode: 'queue', text: '排队', attachments: [] })
-    session.beginSubmission({ mode: 'steer', text: '纠偏', attachments: [] })
+    session.beginSubmission({ mode: 'queue', text: '\u{6392}\u{961F}', attachments: [] })
+    session.beginSubmission({ mode: 'steer', text: '\u{7EA0}\u{504F}', attachments: [] })
     session.handleRunning(false)
     expect(session.getSnapshot().pendingSubmissions.map(({ text, placement }) => ({ text, placement }))).toEqual([
-      { text: '空闲', placement: 'transcript' },
-      { text: '排队', placement: 'queued' },
-      { text: '纠偏', placement: 'steering' },
+      { text: '\u{7A7A}\u{95F2}', placement: 'transcript' },
+      { text: '\u{6392}\u{961F}', placement: 'queued' },
+      { text: '\u{7EA0}\u{504F}', placement: 'steering' },
     ])
   })
 
@@ -123,7 +123,7 @@ describe('beginSubmission', () => {
     const retirements: PendingSubmissionRetirement[] = []
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '放弃',
+      text: '\u{653E}\u{5F03}',
       attachments: [],
       onRetire: retirement => retirements.push(retirement),
     })
@@ -137,15 +137,15 @@ describe('beginSubmission', () => {
 describe('prompt-coupled retirement', () => {
   it('a rejected identified prompt retires its echo immediately alongside promptError', async ({ mock, start }) => {
     const session = await sessionBench(mock, start, SID)
-    mock.remote.session.prompt.mockResolvedValue(err(new RemoteError('session/agent-busy', '忙', { reason: 'busy' })))
+    mock.remote.session.prompt.mockResolvedValue(err(new RemoteError('session/agent-busy', '\u{5FD9}', { reason: 'busy' })))
     const retirements: PendingSubmissionRetirement[] = []
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '失败的',
+      text: '\u{5931}\u{8D25}\u{7684}',
       attachments: [],
       onRetire: retirement => retirements.push(retirement),
     })
-    const result = await session.prompt([{ type: 'text', text: '失败的' }], 'queue', undefined, handle.requestId)
+    const result = await session.prompt([{ type: 'text', text: '\u{5931}\u{8D25}\u{7684}' }], 'queue', undefined, handle.requestId)
     expect(result.ok).toBe(false)
     expect(session.getSnapshot().pendingSubmissions).toEqual([])
     expect(session.getSnapshot().promptError).toMatchObject({ op: 'send', error: { code: 'session/agent-busy' } })
@@ -154,16 +154,16 @@ describe('prompt-coupled retirement', () => {
 
   it('sends the echo identity as the prompt requestId', async ({ mock, start }) => {
     const session = await sessionBench(mock, start, SID)
-    const handle = session.beginSubmission({ mode: 'queue', text: '带 id', attachments: [] })
-    await session.prompt([{ type: 'text', text: '带 id' }], 'queue', undefined, handle.requestId)
+    const handle = session.beginSubmission({ mode: 'queue', text: '\u{5E26} id', attachments: [] })
+    await session.prompt([{ type: 'text', text: '\u{5E26} id' }], 'queue', undefined, handle.requestId)
     expect(mock.log.requests('session/prompt')).toMatchObject([{ requestId: handle.requestId, sessionId: SID }])
   })
 
   it('an unidentified prompt failure leaves registered echoes alone', async ({ mock, start }) => {
     const session = await sessionBench(mock, start, SID)
-    mock.remote.session.prompt.mockResolvedValue(err(new RemoteError('session/agent-busy', '忙', { reason: 'busy' })))
-    session.beginSubmission({ mode: 'queue', text: '还在', attachments: [] })
-    await session.prompt([{ type: 'text', text: '另一个' }], 'queue')
+    mock.remote.session.prompt.mockResolvedValue(err(new RemoteError('session/agent-busy', '\u{5FD9}', { reason: 'busy' })))
+    session.beginSubmission({ mode: 'queue', text: '\u{8FD8}\u{5728}', attachments: [] })
+    await session.prompt([{ type: 'text', text: '\u{53E6}\u{4E00}\u{4E2A}' }], 'queue')
     expect(session.getSnapshot().pendingSubmissions).toHaveLength(1)
   })
 })
@@ -175,7 +175,7 @@ describe('observed retirement', () => {
     const retirements: PendingSubmissionRetirement[] = []
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '发送',
+      text: '\u{53D1}\u{9001}',
       attachments: [{ type: 'image', value: { previewUrl: 'blob:p1' } }],
       onRetire: retirement => retirements.push(retirement),
     })
@@ -416,7 +416,7 @@ describe('observed retirement', () => {
     session.handleRunning(true)
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '排队',
+      text: '\u{6392}\u{961F}',
       attachments: [{ type: 'image', value: { previewUrl: 'blob:p1' } }],
       onRetire: retirement => retirements.push(retirement),
     })
@@ -454,7 +454,7 @@ describe('observed retirement', () => {
 
   it('a full-window install (reconnect resync) retires echoes observed in the window', async ({ mock, start }) => {
     const session = await sessionBench(mock, start, SID)
-    const handle = session.beginSubmission({ mode: 'queue', text: '重连', attachments: [] })
+    const handle = session.beginSubmission({ mode: 'queue', text: '\u{91CD}\u{8FDE}', attachments: [] })
     mock.stream(FOLLOW, followScript(history([promptEvent(SessionSeq(12), handle.requestId)])))
     await session.open()
     await settleFrames()
@@ -537,7 +537,7 @@ describe('observed retirement', () => {
     const retirements: PendingSubmissionRetirement[] = []
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '先观察',
+      text: '\u{5148}\u{89C2}\u{5BDF}',
       attachments: [],
       onRetire: retirement => retirements.push(retirement),
     })
@@ -553,7 +553,7 @@ describe('observed retirement', () => {
     const retirements: PendingSubmissionRetirement[] = []
     const handle = session.beginSubmission({
       mode: 'queue',
-      text: '同一请求',
+      text: '\u{540C}\u{4E00}\u{8BF7}\u{6C42}',
       attachments: [],
       onRetire: retirement => retirements.push(retirement),
     })
@@ -572,7 +572,7 @@ describe('observed retirement', () => {
       frames.push(fn)
       return frames.length
     })
-    const handle = session.beginSubmission({ mode: 'queue', text: '帧', attachments: [] })
+    const handle = session.beginSubmission({ mode: 'queue', text: '\u{5E27}', attachments: [] })
     await pushEvent(mock, promptEvent(SessionSeq(0), handle.requestId))
     expect(session.getSnapshot().pendingSubmissions).toHaveLength(1)
     expect(frames).toHaveLength(1)
@@ -610,22 +610,22 @@ describe('disposal', () => {
     const retirements: { text: string; retirement: PendingSubmissionRetirement }[] = []
     const observed = session.beginSubmission({
       mode: 'queue',
-      text: '已观察',
+      text: '\u{5DF2}\u{89C2}\u{5BDF}',
       attachments: [],
-      onRetire: retirement => retirements.push({ text: '已观察', retirement }),
+      onRetire: retirement => retirements.push({ text: '\u{5DF2}\u{89C2}\u{5BDF}', retirement }),
     })
     session.beginSubmission({
       mode: 'queue',
-      text: '未settle',
+      text: '\u{672A}settle',
       attachments: [],
-      onRetire: retirement => retirements.push({ text: '未settle', retirement }),
+      onRetire: retirement => retirements.push({ text: '\u{672A}settle', retirement }),
     })
     await pushEvent(mock, promptEvent(SessionSeq(0), observed.requestId))
     await session.dispose()
     await settleFrames()
     expect(retirements).toEqual([
-      { text: '未settle', retirement: { reason: 'failed' } },
-      { text: '已观察', retirement: { reason: 'observed', attachments: [] } },
+      { text: '\u{672A}settle', retirement: { reason: 'failed' } },
+      { text: '\u{5DF2}\u{89C2}\u{5BDF}', retirement: { reason: 'observed', attachments: [] } },
     ])
     expect(session.getSnapshot().pendingSubmissions).toEqual([])
   })

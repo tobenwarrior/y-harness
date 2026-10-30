@@ -1,17 +1,17 @@
 /** Captured release reads survive public source closure; only external native execution and workers are mocked. */
 import { PassThrough } from 'node:stream'
-import { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { Context } from '@yharness/cordis'
+import { brandString } from '@yharness/brand'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { z } from 'zod'
-import type { ClaudeSequentialExecutor } from '@deepseek-ai/dsh-subagent-claude-code'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import type { ClaudeSequentialExecutor } from '@yharness/subagent-claude-code'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
 import { createClaudeSource, type ClaudeSource, type ClaudeSourceConfig } from '../src/claude-source.ts'
 import { claudeSequentialPolicyReceipt } from '../src/claude-source-worker.ts'
 import type { CodingSessionNativeId, CodingSessionOwnerToken } from '../src/types.ts'
 
 const native = vi.hoisted(() => ({ factory: vi.fn() }))
-vi.mock('@deepseek-ai/dsh-subagent-claude-code', () => ({ createClaudeSequentialExecutor: native.factory }))
+vi.mock('@yharness/subagent-claude-code', () => ({ createClaudeSequentialExecutor: native.factory }))
 const original = brandString<CodingSessionNativeId>('11111111-1111-4111-8111-111111111111')
 const request = { signal: new AbortController().signal, limit: 4, maxEvents: 10, maxBytes: 100000 }
 const config: ClaudeSourceConfig = { id: 'original-work', label: 'Original fixture Claude', profileRoot: '/fixture/claude', directory: '/fixture/project',

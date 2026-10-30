@@ -1,6 +1,6 @@
 # Glossary
 
-Domain vocabulary for DeepSeek Harness uses one canonical term per concept. Terms link to their entries with standard Markdown anchors; implementation detail stays in package READMEs and Agent Notes.
+Domain vocabulary for Y Harness uses one canonical term per concept. Terms link to their entries with standard Markdown anchors; implementation detail stays in package READMEs and Agent Notes.
 
 ## capability-seam
 

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-skill-office",
+  "name": "@yharness/skill-office",
   "description": "Bundled Word, PowerPoint, and Excel workflows and structural checks",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/skill/skill-office"
   },
   "type": "module",
@@ -27,18 +27,18 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/skill": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~"
+    "@yharness/skill": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/cordis-plugin-include": "workspace:~"
   },
   "dependencies": {
     "@deepseek-ai/libreoffice-kit": "^0.1.5",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "yaml": "^2.4.2"
   }
 }

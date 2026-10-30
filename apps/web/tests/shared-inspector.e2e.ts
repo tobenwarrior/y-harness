@@ -86,11 +86,11 @@ it('toggles bottom DevTools from the page and iframe without a selected Session'
 
 it.each([
   {
-    locale: 'zh-CN', file: 'zh', plugins: '插件', open: '查看 开发者工具', bundle: '开发者工具',
-    description: '查看调试会话原始数据、聊天消息分组数据，以及调试 NodeJS 后端',
-    inspector: 'NodeJS 诊断', inspectorDescription: '按 Ctrl/Cmd+Shift+. 在底部面板打开 Chrome DevTools 进行开发调试',
-    session: '会话数据诊断', sessionDescription: '在会话侧边栏启用当前会话的原始数据和聊天分组数据分析功能',
-    openSidebar: '打开右侧边栏', sidebarDescription: '在侧边栏分析当前会话原始日志和聊天分组数据',
+    locale: 'zh-CN', file: 'zh', plugins: '\u{63D2}\u{4EF6}', open: '\u{67E5}\u{770B} \u{5F00}\u{53D1}\u{8005}\u{5DE5}\u{5177}', bundle: '\u{5F00}\u{53D1}\u{8005}\u{5DE5}\u{5177}',
+    description: '\u{67E5}\u{770B}\u{8C03}\u{8BD5}\u{4F1A}\u{8BDD}\u{539F}\u{59CB}\u{6570}\u{636E}、\u{804A}\u{5929}\u{6D88}\u{606F}\u{5206}\u{7EC4}\u{6570}\u{636E}，\u{4EE5}\u{53CA}\u{8C03}\u{8BD5} NodeJS \u{540E}\u{7AEF}',
+    inspector: 'NodeJS \u{8BCA}\u{65AD}', inspectorDescription: '\u{6309} Ctrl/Cmd+Shift+. \u{5728}\u{5E95}\u{90E8}\u{9762}\u{677F}\u{6253}\u{5F00} Chrome DevTools \u{8FDB}\u{884C}\u{5F00}\u{53D1}\u{8C03}\u{8BD5}',
+    session: '\u{4F1A}\u{8BDD}\u{6570}\u{636E}\u{8BCA}\u{65AD}', sessionDescription: '\u{5728}\u{4F1A}\u{8BDD}\u{4FA7}\u{8FB9}\u{680F}\u{542F}\u{7528}\u{5F53}\u{524D}\u{4F1A}\u{8BDD}\u{7684}\u{539F}\u{59CB}\u{6570}\u{636E}\u{548C}\u{804A}\u{5929}\u{5206}\u{7EC4}\u{6570}\u{636E}\u{5206}\u{6790}\u{529F}\u{80FD}',
+    openSidebar: '\u{6253}\u{5F00}\u{53F3}\u{4FA7}\u{8FB9}\u{680F}', sidebarDescription: '\u{5728}\u{4FA7}\u{8FB9}\u{680F}\u{5206}\u{6790}\u{5F53}\u{524D}\u{4F1A}\u{8BDD}\u{539F}\u{59CB}\u{65E5}\u{5FD7}\u{548C}\u{804A}\u{5929}\u{5206}\u{7EC4}\u{6570}\u{636E}',
   },
   {
     locale: 'en-US', file: 'en', plugins: 'Plugins', open: 'View Developer Tools', bundle: 'Developer Tools',
@@ -119,7 +119,7 @@ it.each([
   await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
   await page.getByRole('button', { name: copy.plugins, exact: true }).click()
   const panel = page.locator('[data-plugin-panel]')
-  const card = panel.locator('[data-plugin-package="@deepseek-ai/dsh-experimental-inspector-profile"]')
+  const card = panel.locator('[data-plugin-package="@yharness/experimental-inspector-profile"]')
   await card.getByText(copy.description, { exact: true }).waitFor()
   const snapshot = [
     `- bundle: ${await card.getByText(copy.bundle, { exact: true }).innerText()}`,
@@ -150,7 +150,7 @@ it.each([
     `  description: ${await sessionGuide.getByText(copy.sidebarDescription, { exact: true }).innerText()}`,
     `- NodeJS bottom: ${await bottomTitle.innerText()}`)
   await sessionGuide.click()
-  await page.getByRole('table', { name: copy.locale === 'zh-CN' ? '原始数据' : 'Raw Log', exact: true }).waitFor()
+  await page.getByRole('table', { name: copy.locale === 'zh-CN' ? '\u{539F}\u{59CB}\u{6570}\u{636E}' : 'Raw Log', exact: true }).waitFor()
   await compareOrRefreshGolden(fileURLToPath(new URL(`./expected/shared-inspector/metadata-${copy.file}.expected.md`, import.meta.url)),
     snapshot.join('\n'), webSnapshotMode())
 })

@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-http-proxy",
-  "description": "Process-wide outbound HTTP proxy policy for DeepSeek Harness: resolve it from the launch environment and install it as undici's global dispatcher",
+  "name": "@yharness/http-proxy",
+  "description": "Process-wide outbound HTTP proxy policy for Y Harness: resolve it from the launch environment and install it as undici's global dispatcher",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/util/http-proxy"
   },
   "type": "module",
@@ -27,12 +27,12 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
     "undici": "8.11.2"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

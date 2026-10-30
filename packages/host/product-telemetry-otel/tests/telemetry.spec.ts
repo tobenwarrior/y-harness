@@ -1,9 +1,9 @@
-import OTel from '@deepseek-ai/dsh-otel'
+import OTel from '@yharness/otel'
 import { createServer, type IncomingHttpHeaders } from 'node:http'
 import { once } from 'node:events'
 import { gunzipSync } from 'node:zlib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { SeverityNumber } from '@opentelemetry/api-logs'
 import ProductTelemetry, { Config } from '../src/index.ts'
 
@@ -66,6 +66,16 @@ function context() {
 const event = { eventName: 'telemetry.synthetic', body: 'Synthetic test', timestamp: 1_800_000_000_000 }
 
 describe('explicit product telemetry', () => {
+  it('trims explicit endpoint and channel values before creating the reporter', async () => {
+    const target = await collector()
+    const ctx = context()
+    const fiber = await ctx.plugin(ProductTelemetry, config(`  ${target.endpoint}  `, { channel: '  synthetic_channel  ' }))
+    ctx.productTelemetry.emit(event)
+    await fiber.dispose()
+    expect(target.captures).toHaveLength(1)
+    expect(target.captures[0]?.headers['x-channel']).toBe('synthetic_channel')
+  })
+
   it.each(['gzip', 'none', undefined] as const)('drains typed events with %s compression and removes the service', async (compression) => {
     const target = await collector()
     const ctx = context()
@@ -79,7 +89,7 @@ describe('explicit product telemetry', () => {
     service.emit(event)
     expect(target.captures).toHaveLength(1)
     const [capture] = target.captures
-    expect(capture?.headers['x-channel']).toBe('dsh_otel_report')
+    expect(capture?.headers['x-channel']).toBe('yharness_otel_report')
     expect(capture?.headers['content-encoding']).toBe(compression === 'gzip' ? 'gzip' : undefined)
     const logs = capture?.body.resourceLogs.flatMap(r => r.scopeLogs.flatMap(s => s.logRecords))
     expect(logs).toHaveLength(2)
@@ -108,7 +118,7 @@ describe('explicit product telemetry', () => {
     ctx.productTelemetry.emit(event)
     await fiber.dispose()
     expect(target.captures).toHaveLength(1)
-    expect(target.captures[0]?.headers).toMatchObject({ 'x-channel': 'dsh_otel_report' })
+    expect(target.captures[0]?.headers).toMatchObject({ 'x-channel': 'yharness_otel_report' })
     expect(target.captures[0]?.headers).not.toHaveProperty('authorization')
     expect(target.captures[0]?.headers).not.toHaveProperty('x-user-id')
     expect(target.captures[0]?.headers).not.toHaveProperty('x-log-token')
@@ -151,8 +161,8 @@ describe('explicit product telemetry', () => {
   })
 
   it.each([
-    { endpoint: 'broken' }, { endpoint: 'ftp://collector.test/logs' },
-    { channel: '' }, { channel: 'bad\nchannel' }, { channel: '中文' }, { timeoutMillis: 0 },
+    { endpoint: '' }, { endpoint: 'broken' }, { endpoint: 'ftp://collector.test/logs' },
+    { channel: '' }, { channel: '   ' }, { channel: 'bad\nchannel' }, { channel: '\u{4E2D}\u{6587}' }, { timeoutMillis: 0 },
     { maxExportBatchSize: 0 }, { maxExportBatchSize: 2, maxQueueSize: 1 },
     { maxQueueSize: -1 }, { scheduledDelayMillis: 0 }, { exportTimeoutMillis: Infinity },
     { shutdownTimeoutMillis: 2_147_483_648 },
@@ -163,6 +173,7 @@ describe('explicit product telemetry', () => {
   })
 
   it.each([
+    [{ endpoint: '   ' }, 'endpoint must be a non-empty HTTP(S) URL'],
     [{ endpoint: 'broken' }, 'endpoint must be a valid HTTP(S) URL'],
     [{ channel: 'bad\nchannel' }, 'channel must be a valid HTTP header value'],
   ] as const)('names invalid transport fields before registering the service', (invalid, message) => {

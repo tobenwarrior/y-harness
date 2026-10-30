@@ -1,20 +1,20 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
-import type { BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic'
-import { selectCompactableRange } from '@deepseek-ai/dsh-compaction-basic/src/region.ts'
-import { frameSummary } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
-import type { SummarizationInput, SummaryResult } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts'
-import { CompactionId, toolPairingBalancedAfter, toolPairingBalancedBefore } from '@deepseek-ai/dsh-compaction'
+import { Context } from '@yharness/cordis'
+import { AttachmentId } from '@yharness/attachment'
+import BasicCompactionEngine from '@yharness/compaction-basic'
+import type { BasicCompactionConfig } from '@yharness/compaction-basic'
+import { selectCompactableRange } from '@yharness/compaction-basic/src/region.ts'
+import { frameSummary } from '@yharness/compaction-basic/src/summarizer.ts'
+import type { SummarizationInput, SummaryResult } from '@yharness/compaction-basic/src/summarizer.ts'
+import { CompactionId, toolPairingBalancedAfter, toolPairingBalancedBefore } from '@yharness/compaction'
 import {
   resolveCompactSpec,
   resolveConfig,
   resolveTargetPolicy,
-} from '@deepseek-ai/dsh-compaction-basic/src/config.ts'
-import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
-import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+} from '@yharness/compaction-basic/src/config.ts'
+import type { CompactionResult } from '@yharness/compaction'
+import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import type {
   ContentBlock,
   GenerateOptions,
@@ -23,14 +23,14 @@ import type {
   Message,
   StreamChunk,
   TokenUsage,
-} from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import { agentEvents, type Agent, type RequestErrorAction } from '@deepseek-ai/dsh-agent'
-import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
+} from '@yharness/llm'
+import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import TokenMeter from '@yharness/token-meter'
+import { agentEvents, type Agent, type RequestErrorAction } from '@yharness/agent'
+import ToolResultPruner from '@yharness/compaction-tool-result-pruner'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }
@@ -1384,7 +1384,7 @@ async function summarizerHarness(
 }
 
 describe('default one-shot summarizer', () => {
-  it.each([undefined, '', 'SYSTEM HEAD\n精确前缀\n'])('preserves the routed prefix through region summarization with system %j', async (system) => {
+  it.each([undefined, '', 'SYSTEM HEAD\n\u{7CBE}\u{786E}\u{524D}\u{7F00}\n'])('preserves the routed prefix through region summarization with system %j', async (system) => {
     const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
     const session = conversation(3, undefined, system)
     const tools = [{ name: 'do_thing', description: 'd', parameters: { type: 'object' } }]

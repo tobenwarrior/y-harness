@@ -1,9 +1,9 @@
 /** Source-labelled native discovery, readable mirrors, and explicit continuation capability states. */
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Checkbox, IconLoadingOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CodingSessionSequentialToolMode } from '@deepseek-ai/dsh-coding-session/types'
+import { Checkbox, IconLoadingOutlineRegular } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale } from '@yharness/client-ui-slots'
+import type { CodingSessionSequentialToolMode } from '@yharness/coding-session/types'
 import type { CodingSessionsKey } from './locales.ts'
 import type { CodingSessionsFace } from './controller.ts'
 import css from './CodingSessionsSection.module.css'

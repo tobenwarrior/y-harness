@@ -8,11 +8,11 @@
 import { globSync, readFileSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 
-const SCOPE = '@deepseek-ai/dsh-'
+const SCOPE = '@yharness/'
 
 /** One harness package and its in-repo peer-dependency edges. */
 export interface PackageGraphNode {
-  /** Package name with the `@deepseek-ai/dsh-` prefix removed. */
+  /** Package name with the `@yharness/` prefix removed. */
   short: string
   /** Full npm package name. */
   name: string
@@ -33,6 +33,9 @@ export interface PackageGraphNode {
  *   stable back edges inside a dependency cycle.
  */
 export function collectPackageGraph(root: string, groupOrder: readonly string[], gate: string): PackageGraphNode[] {
+  const vendored = new Set(globSync('vendor/*/package.json', { cwd: root })
+    .map(path => JSON.parse(readFileSync(resolve(root, path), 'utf8')) as { name: string })
+    .map(manifest => manifest.name))
   const packages: PackageGraphNode[] = []
   for (const rel of globSync('packages/*/*/package.json', { cwd: root }).map(path => path.split(sep).join('/')).sort()) {
     const json = JSON.parse(readFileSync(resolve(root, rel), 'utf8')) as {
@@ -43,7 +46,7 @@ export function collectPackageGraph(root: string, groupOrder: readonly string[],
     const [, group, leaf] = rel.split('/')
     if (group === undefined || leaf === undefined) throw new Error(`${gate}: unexpected package path ${rel}`)
     const deps = Object.keys(json.peerDependencies ?? {})
-      .filter(dep => dep.startsWith(SCOPE))
+      .filter(dep => dep.startsWith(SCOPE) && !vendored.has(dep))
       .map(dep => dep.slice(SCOPE.length))
       .sort()
     packages.push({

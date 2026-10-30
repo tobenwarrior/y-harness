@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 /** InputHub restores drafts before views and follows Session-owned lexicon subscriptions. */
 import { randomUUID } from 'node:crypto'
-import { Context, Service } from '@deepseek-ai/cordis'
-import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { makeTranslate, TestSessions } from '@deepseek-ai/dsh-client-test-runtime'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { Context, Service } from '@yharness/cordis'
+import type { SessionReference } from '@yharness/api-session-controller/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import { makeTranslate, TestSessions } from '@yharness/client-test-runtime'
+import { SessionId } from '@yharness/session/types'
 import { $nodesOfType } from 'lexical'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type { DraftSnapshot } from '../src/client/contract/draft-editor.ts'
@@ -14,7 +14,7 @@ import { ReferenceChipNode } from '../src/client/input/editor/chip-node.tsx'
 import { TextRefNode } from '../src/client/input/editor/text-ref.ts'
 import { SessionInputShell } from '../src/client/input/facade.ts'
 import { InputHub } from '../src/client/input/hub.ts'
-import { zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 
 const mention = '@src/main.ts'
 const saved: DraftSnapshot = {
@@ -47,7 +47,7 @@ async function storedSession(draft: unknown) {
   onTestFinished(() => { reference.release() })
   await reference.ready
   const binding = reference.binding
-  const hub = new InputHub(ctx, makeTranslate(zh, {}))
+  const hub = new InputHub(ctx, makeTranslate(en, {}))
   return { ctx, sessions, id, key, raw, reference, binding, hub }
 }
 
@@ -190,8 +190,8 @@ it('reuses one shell during synchronous catalog retention and restores its initi
 })
 
 it('restores legacy text before a view and reuses the live draft on later shell lookups', async () => {
-  const b = await fixture('/saved legacy\n🙂 中文')
-  expect(b.shell.draftSnapshot).toEqual({ text: '/saved legacy\n🙂 中文', references: [] })
+  const b = await fixture('/saved legacy\n🙂 \u{4E2D}\u{6587}')
+  expect(b.shell.draftSnapshot).toEqual({ text: '/saved legacy\n🙂 \u{4E2D}\u{6587}', references: [] })
   expect(textReferences(b.shell)).toEqual([])
   expect(localStorage.getItem(b.key)).toBe(b.raw)
   b.shell.setDraft('edited before mounting a view')

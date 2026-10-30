@@ -9,11 +9,11 @@
  * is what makes a reload safe. The seats' components have their own specs.
  */
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { Shortcuts, ShortcutCommand } from '@deepseek-ai/dsh-client-shortcuts/client'
+import { Context } from '@yharness/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import type { SessionId } from '@yharness/session/types'
+import type { Shortcuts, ShortcutCommand } from '@yharness/client-shortcuts/client'
 import { apply, inject } from '../src/client/index.ts'
 import type { GuideInjected, SidebarRightInjected } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
@@ -27,7 +27,7 @@ import { ExpandButton } from '../src/client/shell/ExpandButton.tsx'
 import { GuideBody } from '../src/client/tabs/guide/GuideBody.tsx'
 import { GuideTitle } from '../src/client/tabs/guide/GuideTitle.tsx'
 import { GUIDE_ID } from '../src/client/tabs/guide/definition.ts'
-import { en, zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 
 const SHORTCUT_CATALOG: readonly never[] = []
 
@@ -122,7 +122,7 @@ describe('ui-sidebar-right apply', () => {
     expect(ctx.sidebarRightTabs).toBeInstanceOf(SidebarRightTabRegistry)
     expect(ctx.sidebarRight).toBeInstanceOf(SidebarRightController)
     expect('adopt' in ctx.sidebarRight).toBe(false)
-    expect(dictionaries.get('sidebarRight')).toEqual({ zh, en })
+    expect(dictionaries.get('sidebarRight')).toEqual({ en })
     const guide = ctx.sidebarRightTabs.get('guide')
     expect(guide?.id).toBe(GUIDE_ID)
     expect(guide?.priority).toBe('builtin')

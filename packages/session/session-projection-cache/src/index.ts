@@ -13,25 +13,25 @@
  * next cold read) and a `ver` mismatch discards the row instead of migrating
  * it. Design authority: the session-projection RFC
  * (.agents/notes/proposed/architecture/2026-07-27-session-projection-and-command-log.md).
- * @module @deepseek-ai/dsh-session-projection-cache
+ * @module @yharness/session-projection-cache
  */
 
-import { Context, Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
-import { SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { Context, Service } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { snapshotJsonValue } from '@yharness/util-values'
+import { SessionLogOffset } from '@yharness/session'
 import type {
   Session,
   SessionEvent,
   SessionHeader,
   SessionId,
-} from '@deepseek-ai/dsh-session'
+} from '@yharness/session'
 import type {
   ProjectionCheckpoint,
   ProjectionSnapshot,
   SessionProjectionMap,
-} from '@deepseek-ai/dsh-session-projection'
-import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
+} from '@yharness/session-projection'
+import type { KvTable } from '@yharness/storage-domain'
 import { projectionCacheDomainSpec } from './spec.ts'
 import type { CheckpointIdentity, CheckpointRecord } from './spec.ts'
 
@@ -59,7 +59,7 @@ const PREDECESSOR_TITLE_KEY = 'title' as Extract<keyof SessionProjectionMap, str
 export { checkpointIdentity, checkpointRecord, checkpointRow, projectionCacheDomainSpec } from './spec.ts'
 export type { CheckpointIdentity, CheckpointRecord } from './spec.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     sessionProjectionCache: SessionProjectionCache
   }

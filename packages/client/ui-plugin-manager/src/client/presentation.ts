@@ -1,7 +1,7 @@
 /** Display labels and toast sentences for global plugin management. */
 
-import type { IncompatiblePlugin, ManagementError, Registry } from '@deepseek-ai/dsh-api-remotes/client'
-import { withProductDisplayName, type PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { IncompatiblePlugin, ManagementError, Registry } from '@yharness/api-remotes/client'
+import { withProductDisplayName, type PropsLocale } from '@yharness/client-ui-slots'
 import type { PluginManagerLocaleKey } from './locales.ts'
 import type { FailedAction, ManagerNotice, PackageRow, PackageView, PluginManagerFace } from './manager-store.ts'
 
@@ -104,7 +104,12 @@ export function managementText(error: {
  */
 export function shortName(name: string): string {
   const unscoped = name.startsWith('@') ? name.slice(name.indexOf('/') + 1) : name
-  return unscoped.replace(/^dsh-(?:host-|client-)?/, '')
+  return unscoped.replace(/^(?:dsh-)?(?:host-|client-)?/, '')
+}
+
+/** Whether a package is an experimental first-party bundle in either namespace. */
+function isExperimentalPackage(name: string): boolean {
+  return name.startsWith('@yharness/experimental-') || name.startsWith('@deepseek-ai/dsh-experimental-')
 }
 
 /**
@@ -122,10 +127,10 @@ export function packageText(
     : resolveText(pkg.meta.description) || undefined
   return {
     title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
-    description: pkg.name.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
+    description: pkg.name.startsWith('@yharness/') && description?.includes('DeepSeek Harness')
       ? withProductDisplayName(description)
       : description,
-    beta: pkg.name.startsWith('@deepseek-ai/dsh-experimental-'),
+    beta: isExperimentalPackage(pkg.name),
   }
 }
 
@@ -144,7 +149,7 @@ export function rowText(
     : resolveText(row.meta.description) || undefined
   return {
     title: row.meta?.title === undefined ? row.moduleName : resolveText(row.meta.title),
-    description: row.moduleName.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
+    description: row.moduleName.startsWith('@yharness/') && description?.includes('DeepSeek Harness')
       ? withProductDisplayName(description)
       : description,
   }

@@ -1,11 +1,11 @@
 /** Context and Fiber identities collected from live Cordis plugins. */
 
-import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Service, type Fiber } from '@yharness/cordis'
 import { assert, describe, expect, it, type TestContext } from 'vitest'
 import { CordisTreeCollector } from '../src/shared/cordis/collector.ts'
 import type { CordisTreeNode } from '../src/shared/cordis/snapshot.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     collectorSpawner: CollectorSpawner
   }

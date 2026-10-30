@@ -1,23 +1,24 @@
 /** ui-theme apply wiring: service provision, settings dictionaries riding the
  * locale service, declaration-aware Appearance row registration, snapshot
  * projection into the row store, and HMR collapse recovery. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { apply, inject, SETTINGS_NS } from '@deepseek-ai/dsh-client-ui-theme/client'
-import type { AppearanceRowInjected, FontSizeRowInjected, StyleRowInjected, ThemeRuntime } from '@deepseek-ai/dsh-client-ui-theme/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { TestRemote } from '@yharness/client-test-runtime'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import { apply, inject, SETTINGS_NS } from '@yharness/client-ui-theme/client'
+import type { AppearanceRowInjected, FontSizeRowInjected, StyleRowInjected, ThemeRuntime } from '@yharness/client-ui-theme/client'
 import { THEME_SETTINGS_NAMESPACE, ThemeSettingsSchema } from '../src/theme-settings.ts'
 import { AppearanceRow } from '../src/client/AppearanceRow.tsx'
 import { FontSizeRow } from '../src/client/FontSizeRow.tsx'
 import { StyleRow } from '../src/client/StyleRow.tsx'
 import type { createAppearanceRowStore, createFontSizeRowStore, createStyleRowStore } from '../src/client/settings-store.ts'
 
-// These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
+// These specs assert the shipped English copy. The lane has no jsdom `window`,
 // so browser-language detection never runs and a fresh LocaleRuntime opens on
-// FALLBACK_LOCALE (en); bench stages zh explicitly on the locale instead.
+// FALLBACK_LOCALE (en); bench stages the retired locale name explicitly to
+// verify its compatibility fallback.
 
 const SLOT = 'settings.appearance.item'
 
@@ -107,8 +108,8 @@ describe('ui-theme apply', () => {
     const before = await bench()
     declareItems(before.slots)
     await before.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(before.locale.bind(SETTINGS_NS)('appearance.title')).toBe('颜色模式')
-    expect(before.locale.bind(SETTINGS_NS)('fontSize.title')).toBe('字号大小')
+    expect(before.locale.bind(SETTINGS_NS)('appearance.title')).toBe('Color mode')
+    expect(before.locale.bind(SETTINGS_NS)('fontSize.title')).toBe('Font size')
     before.locale.setLocale('en')
     expect(before.locale.bind(SETTINGS_NS)('appearance.title')).toBe('Color mode')
     const entry = before.slots.entries(SLOT).find(e => e.component === AppearanceRow)!

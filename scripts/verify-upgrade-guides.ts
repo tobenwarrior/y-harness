@@ -16,7 +16,7 @@ const FRONTMATTER_KEYS = ['description', 'kind']
 /** Required `##` sections for each guide language; the word ceiling applies to the English source. */
 const LANGUAGES = {
   'guide.md': { sections: ['Change', 'Migration'], maxWords: 500 },
-  'guide.zh.md': { sections: ['变更', '迁移'], maxWords: undefined },
+  'guide.zh.md': { sections: ['\u53d8\u66f4', '\u8fc1\u79fb'], maxWords: undefined },
 } as const
 const SEMVER = String.raw`(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`
 const GUIDE_PATH = new RegExp(`^v${SEMVER}/[a-z0-9]+(?:-[a-z0-9]+)*/(guide\\.md|guide\\.zh\\.md|guide\\.i18n\\.yaml)$`, 'u')

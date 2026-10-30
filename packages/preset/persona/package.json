@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-persona",
-  "description": "Composition-authored deployment persona section for the DeepSeek Harness",
+  "name": "@yharness/persona",
+  "description": "Composition-authored deployment persona section for Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/preset/persona"
   },
   "type": "module",
@@ -27,15 +27,15 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/scope": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

@@ -1,28 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentStatus, Inbox } from '@deepseek-ai/dsh-agent'
-import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
-import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
-import type { GoalRef } from '@deepseek-ai/dsh-goal'
-import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { MessageSource } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import AgentRegistry, { agentEvents } from '@yharness/agent'
+import type { Agent, AgentStatus, Inbox } from '@yharness/agent'
+import { turnBoundaryProjectionDefinition } from '@yharness/agent-loop'
+import GoalService, { GoalId } from '@yharness/goal'
+import type { GoalRef } from '@yharness/goal'
+import { createUserMessage, ToolCallId } from '@yharness/llm'
+import type { MessageSource } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import SessionStore, {
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
   SessionLogOffset,
-} from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import * as toolGoal from '@deepseek-ai/dsh-tool-goal'
-import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
+} from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import type { ToolExecutionResult } from '@yharness/tools'
+import * as toolGoal from '@yharness/tool-goal'
+import { createInboxStub } from '@yharness/agent-loop-testkit'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }
@@ -229,7 +229,7 @@ describe('goal tool registration and presentation', () => {
 describe('goal tool execution authority', () => {
   it('lets a root model infer create intent from its accepted human turn', async () => {
     const { ctx, root } = await harness()
-    openTurn(root, { kind: 'user' }, '请持续工作直到这个功能完成')
+    openTurn(root, { kind: 'user' }, '\u{8BF7}\u{6301}\u{7EED}\u{5DE5}\u{4F5C}\u{76F4}\u{5230}\u{8FD9}\u{4E2A}\u{529F}\u{80FD}\u{5B8C}\u{6210}')
     const result = await execute(ctx, 'create_goal', {
       objective: 'Finish the feature', max_goal_rounds: 9,
     }, root.agent)
@@ -300,7 +300,7 @@ describe('goal tool execution authority', () => {
     await ctx.agents.register(fork.agent)
     expect(ctx.goals.get(fork.agent)).toMatchObject({ id: created.id, activation: 'disarmed' })
 
-    openTurn(fork, { kind: 'user' }, '继续这个目标')
+    openTurn(fork, { kind: 'user' }, '\u{7EE7}\u{7EED}\u{8FD9}\u{4E2A}\u{76EE}\u{6807}')
     const resumed = await execute(ctx, 'update_goal', {
       goal_id: created.id, revision: created.revision, action: 'resume',
     }, fork.agent)
@@ -455,7 +455,7 @@ describe('goal tool state transitions', () => {
     closeTurn(root, turn)
     await agentEvents(ctx, root.agent).serial('agent/created', { source: 'resume' })
     expect(ctx.goals.get(root.agent)?.activation).toBe('disarmed')
-    turn = openTurn(root, { kind: 'user' }, '继续')
+    turn = openTurn(root, { kind: 'user' }, '\u{7EE7}\u{7EED}')
     const resumed = await execute(ctx, 'update_goal', {
       goal_id: created.id, revision: created.revision, action: 'resume',
     }, root.agent)

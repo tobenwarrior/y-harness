@@ -1,9 +1,9 @@
 /** Private managed Codex process exposes only supported history reads. */
 import { dirname, join, resolve } from 'node:path'
 import { Writable } from 'node:stream'
-import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import type { CodingSessionReadRequest } from '@deepseek-ai/dsh-coding-session/types'
+import { JsonRpcLineTransport } from '@yharness/sdk-protocol'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
+import type { CodingSessionReadRequest } from '@yharness/coding-session/types'
 import type { CodexCodingSessionReader } from './codex-coding-sessions.ts'
 import { boundedCodexInput, codexProcessArguments, codexRequestFailure } from './codex-backend-process.ts'
 import type { CodexSessionSourceConfig } from './coding-session-source.ts'
@@ -41,7 +41,7 @@ export async function openCodexSessionReadPeer(
   spawn: (spec: SubprocessSpawnSpec) => SubprocessHandle,
 ): Promise<CodexSessionReadPeer> {
   request.signal.throwIfAborted()
-  const { scrubbedParentEnv } = await import('@deepseek-ai/dsh-subprocess')
+  const { scrubbedParentEnv } = await import('@yharness/subprocess')
   request.signal.throwIfAborted()
   const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(scrubbedParentEnv()).map(key => [key, undefined]))
   Object.assign(env, {

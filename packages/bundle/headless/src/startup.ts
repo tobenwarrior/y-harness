@@ -3,12 +3,12 @@
  * `--session-id`, `--json`, and `--help`, then publishes
  * {@link HEADLESS_STARTUP_SERVICE}. The runner is an ordinary consumer whose
  * lazy config waits for that service.
- * @module @deepseek-ai/dsh-headless/startup
+ * @module @yharness/headless/startup
  */
 
 import { Command, CommanderError } from 'commander'
-import type { Context } from '@deepseek-ai/cordis'
-import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
+import type { Context } from '@yharness/cordis'
+import { parseCmdline } from '@yharness/cmdline'
 import { boundJsonLine } from './json-stream.ts'
 import { internals } from './startup-internals.ts'
 
@@ -37,7 +37,7 @@ export interface HeadlessStartupValues {
  */
 function headlessCommand(): Command {
   return new Command()
-    .name('dsh --profile headless')
+    .name('yharness --profile headless')
     .description('Answer one task and exit; the answer goes to stdout and diagnostics to stderr.')
     .helpOption('-h, --help', 'show this help')
     .option('--json', 'write newline-delimited run events to stdout instead of the final message')
@@ -45,10 +45,10 @@ function headlessCommand(): Command {
     .argument('[task...]', 'the task text; multiple words are joined by spaces, and `-` reads stdin')
     .addHelpText('after', `
 Examples:
-  dsh --profile headless "run the tests"          answer one task and exit
-  echo "run the tests" | dsh --profile headless   read the task from stdin
-  dsh --profile headless --json "run the tests"   emit machine-readable run events
-  dsh --profile headless --session-id session-… "continue"   resume an existing Session
+  yharness --profile headless "run the tests"          answer one task and exit
+  echo "run the tests" | yharness --profile headless   read the task from stdin
+  yharness --profile headless --json "run the tests"   emit machine-readable run events
+  yharness --profile headless --session-id session-… "continue"   resume an existing Session
 `)
 }
 
@@ -86,7 +86,7 @@ export function apply(ctx: Context): void {
       // commander `error: ` prefix.
       const payload = boundJsonLine({ type: 'error', message: message.replace(/^error: /, '') })
       internals.stdout.write(`${payload}\n`)
-      // The JSON contract keeps stderr to `dsh:` diagnostics, so commander's
+      // The JSON contract keeps stderr to `yharness:` diagnostics, so commander's
       // own print of this message must not run; throwing the same control-flow
       // error still leaves through the launcher's exit path.
       throw new CommanderError(1, errorOptions?.code ?? 'commander.error', message)
@@ -98,11 +98,11 @@ export function apply(ctx: Context): void {
     }
     const joined = program.args.join(' ')
     if (program.args.length > 0 && joined.trim() === '') {
-      program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
+      program.error('error: a task is required, for example: yharness --profile headless "run the tests"')
     }
     const task = program.args.length === 0 ? undefined : joined
     if (task === undefined && internals.stdinIsTty()) {
-      program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
+      program.error('error: a task is required, for example: yharness --profile headless "run the tests"')
     }
     const options = program.opts<{ json?: boolean; sessionId?: string }>()
     // A SessionId is opaque, so whitespace is part of the identity: validate

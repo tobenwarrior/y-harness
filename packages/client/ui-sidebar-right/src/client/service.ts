@@ -34,12 +34,12 @@
  * forwards the seats' reports; callers use the service's navigation methods.
  */
 import { sidebarTargetFromElement, type SidebarRightTarget } from './focus.ts'
-import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
-import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { FloatRect, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
-import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { randomUUID } from '@yharness/util-crypto'
+import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
+import type { FloatRect, PaneId, TabId, TabRecord } from '@yharness/client-ui-dockkit'
+import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@yharness/client-ui-dockkit'
+import type { BoundActions } from '@yharness/client-ui-slots'
+import type { SessionId } from '@yharness/session/types'
 import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
 import { pageAddress } from './contract/seed.ts'
 import type { SidebarRightTabClaim, SidebarRightTabRegistry } from './tab-registry.ts'

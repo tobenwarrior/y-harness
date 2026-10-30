@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-connection",
+  "name": "@yharness/client-connection",
   "description": "Authenticated RPC transport and generation lifecycle",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/connection"
   },
   "type": "module",
@@ -34,8 +34,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "files": [
@@ -44,17 +44,17 @@
     "lib/types/**/*.d.ts"
   ],
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-scope": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/scope": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-attachment": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/attachment": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   }
 }

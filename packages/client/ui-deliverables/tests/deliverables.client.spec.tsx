@@ -7,23 +7,23 @@
  * SlotRegistry.
  */
 import { renderFileActions } from './file-actions.tsx'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { Context } from '@deepseek-ai/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import { Context } from '@yharness/cordis'
 import { cleanup, fireEvent, render, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionLiveEventEntry, SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionLiveEventEntry, SessionListState } from '@yharness/api-session-controller/client'
 import {
   ConversationNodeAssembler, UiConversation,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-ui-conversation/client'
 import type {
   ConversationLocationDataSource, ConversationLocationDataStore, ConversationMatch, ConversationNodeDefinition,
   ConversationStartMatch, ConversationTimelineSnapshot, ConversationTurnDataMap, ConversationViewDefinition,
   ConversationViewNode, TurnLocation,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { apply as applyLocale, inject as localeInject } from '@deepseek-ai/dsh-client-locale/client'
-import type { ChatFileMentions, TurnTailOwnerProps } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { makeTranslate, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
+} from '@yharness/client-ui-conversation/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { apply as applyLocale, inject as localeInject } from '@yharness/client-locale/client'
+import type { ChatFileMentions, TurnTailOwnerProps } from '@yharness/client-ui-chat/client'
+import { makeTranslate, stubConfigForm } from '@yharness/client-test-runtime'
 import { Deliverables, DeliverablesTail, selectDeliverables, type DeliverablesInjected } from '../src/client/Deliverables.tsx'
 import type { ReviewInjected } from '../src/client/ReviewTab.tsx'
 import { ChangesDiffStore } from '../src/client/changes-diff.ts'
@@ -35,9 +35,9 @@ import {
   selectProducedFiles, type DeliverablesTurnData,
 } from '../src/client/turn-deliverables.ts'
 import { apply, inject } from '../src/client/index.ts'
-import { en, zh } from '../src/client/locales.ts'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
+import { en } from '../src/client/locales.ts'
+import { SessionId } from '@yharness/session/types'
+import type { SessionEvent } from '@yharness/session/types'
 
 function openProps(controller = new PresentedOpenController(), summaries = new ChangesSummaryStore()) {
   controller.host.set({ name: 'desktop', available: true, fileManager: 'finder' })
@@ -507,14 +507,14 @@ describe('ChangedFiles card', () => {
     return { props, openFile, view }
   }
 
-  it.each([en, zh])('shows one edited filename without a list and opens its review', (locale) => {
+  it.each([en])('shows one edited filename without a list and opens its review', (locale) => {
     const single = servedStore({ turn: 1, files: [changedFile('src/example.scss', 3, 1)], total: 1, added: 3, deleted: 1 })
     const { props, view } = renderCard(new PresentedOpenController(), locale, { changes, presented: [] }, single)
     const t = makeTranslate(locale)
     const card = view.container.querySelector('[data-changed-files]')!
     expect(within(card as HTMLElement).getByText(t('changes.singleTitle', { name: 'example.scss' }))).toBeTruthy()
     expect(card.querySelector('ul')).toBeNull()
-    expect(view.queryByRole('button', { name: /Show all|Collapse changed|展开全部|收起改动/ })).toBeNull()
+    expect(view.queryByRole('button', { name: /Show all|Collapse changed/ })).toBeNull()
     expect(card.querySelector('svg [data-file-type-mark]')?.children).toHaveLength(3)
     const open = view.getByRole('button', { name: t('changes.viewDiff', { name: 'src/example.scss' }) })
     expect(open.getAttribute('aria-describedby')).toBeTruthy()
@@ -656,20 +656,20 @@ describe('ChangedFiles card', () => {
 
   it('opens the review the same way without a desktop', () => {
     const controller = new PresentedOpenController()
-    const { openFile, props, view } = renderCard(controller, zh)
+    const { openFile, props, view } = renderCard(controller, en)
     controller.host.set('error')
-    view.rerender(<Deliverables {...props} matched={{ changes, presented: [] }} openFile={openFile} sessionId={SessionId('child-session')} t={makeTranslate(zh)} />)
-    expect(view.getByRole('button', { name: '在侧边栏查看本轮改动' })).toBeTruthy()
+    view.rerender(<Deliverables {...props} matched={{ changes, presented: [] }} openFile={openFile} sessionId={SessionId('child-session')} t={makeTranslate(en)} />)
+    expect(view.getByRole('button', { name: 'Review this turn’s changes in the sidebar' })).toBeTruthy()
     controller.host.set({ name: 'server', available: false, fileManager: null })
-    view.rerender(<Deliverables {...props} matched={{ changes, presented: [] }} openFile={openFile} sessionId={SessionId('child-session')} t={makeTranslate(zh)} />)
-    expect(view.getByText('已编辑 11 个文件')).toBeTruthy()
-    fireEvent.click(view.getByRole('button', { name: '在侧边栏查看本轮改动' }))
+    view.rerender(<Deliverables {...props} matched={{ changes, presented: [] }} openFile={openFile} sessionId={SessionId('child-session')} t={makeTranslate(en)} />)
+    expect(view.getByText('Edited 11 files')).toBeTruthy()
+    fireEvent.click(view.getByRole('button', { name: 'Review this turn’s changes in the sidebar' }))
     expect(props.openChangesReview).toHaveBeenLastCalledWith({ sessionId: 'child-session', seq: 5, turn: 1 }, 0)
-    fireEvent.click(view.getByRole('button', { name: '查看 config/design-token 的改动' }))
+    fireEvent.click(view.getByRole('button', { name: 'View changes to config/design-token' }))
     expect(props.openChangesReview).toHaveBeenLastCalledWith({ sessionId: 'child-session', seq: 5, turn: 1 }, 0)
     expect(openFile).not.toHaveBeenCalled()
     expect(props.openChanged).not.toHaveBeenCalled()
-    expect(view.getByRole('button', { name: '展开全部 5 个改动文件' }).textContent).toContain('全部 5 个文件')
+    expect(view.getByRole('button', { name: 'Show all 5 changed files' }).textContent).toContain('All 5 files')
   })
 
   it('preserves expanded rows when the served announcement changes', () => {
@@ -712,7 +712,7 @@ describe('ChangedFiles card', () => {
 })
 
 describe('producedFileMentions resolver', () => {
-  const label = (path: string) => `打开 ${path}`
+  const label = (path: string) => `Open ${path}`
 
   it('resolves exact paths and unique basenames; ambiguity and unknowns stay unresolved', () => {
     const opened: string[] = []
@@ -723,7 +723,7 @@ describe('producedFileMentions resolver', () => {
     )
     // Unique basename resolves to its full path; the full path rides title.
     const byBasename = resolver.resolve('index.html')
-    expect(byBasename?.label).toBe('打开 out/index.html')
+    expect(byBasename?.label).toBe('Open out/index.html')
     expect(byBasename?.title).toBe('out/index.html')
     byBasename?.open()
     expect(opened).toEqual(['out/index.html'])
@@ -779,7 +779,7 @@ describe('plugin registration', () => {
     expect(entry?.inject).toBeDefined()
     expect(registered).toMatchObject({ kind: 'changes-review', patterns: ['dsh-resource://changes-review/**'] })
     const [tabEntry] = ctx.slots.entries('sidebar.right.pane.tab')
-    expect(tabEntry?.options.key).toBe('@deepseek-ai/dsh-client-ui-deliverables')
+    expect(tabEntry?.options.key).toBe('@yharness/client-ui-deliverables')
 
     // The prose face is live while the plugin is: a produced turn yields a
     // resolver whose matches open through the owner-supplied opener.

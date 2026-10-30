@@ -1,10 +1,10 @@
 /** Live plugin Config discovery projected from the running Loader tree. */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
+import type { Context } from '@yharness/cordis'
+import type { Entry } from '@yharness/cordis-plugin-loader'
 // Declares `Context.pluginPackages`, the profile package lookup that resolves an entry's package directory.
-import { createConfigProjector, isNativeConfigSchema, LOADER_EXPRESSION_SCHEMA, type NativeConfigSchema } from '@deepseek-ai/dsh-app-boot'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { createConfigProjector, isNativeConfigSchema, LOADER_EXPRESSION_SCHEMA, type NativeConfigSchema } from '@yharness/app-boot'
+import type { JsonValue } from '@yharness/util-values'
 
 /**
  * `schema`: the running plugin declares a native Schemastery Config. `absent`: it runs without one.

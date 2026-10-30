@@ -1,11 +1,11 @@
 /** Register the HTTP(S) Browser tab type in the right Sidebar. */
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/api-workspace-controller/client'
 import { BrowserBody, type BrowserBodyProps } from './view/BrowserBody.tsx'
 import { BrowserTitle } from './view/BrowserTitle.tsx'
 import { createBrowserControllers } from './browser/BrowserController.ts'
@@ -16,7 +16,7 @@ import type { DesktopBrowserBridge } from '../types.ts'
 import { browserWorkspace } from './electron/workspace.ts'
 import type { BrowserPageFactory } from './browser/BrowserPage.ts'
 import { BROWSER_ID, browserDefinition } from './definition.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 import { createBrowserStore } from './browser/store.ts'
 
 export type { BrowserBodyProps } from './view/BrowserBody.tsx'
@@ -29,7 +29,7 @@ export type { SidebarBrowserKey } from './locales.ts'
 export type { BrowserState } from './browser/store.ts'
 export type { BrowserAddressFailure, BrowserAddressResult, BrowserTarget } from './browser/url.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+declare module '@yharness/client-ui-sidebar-right/client' {
   interface SidebarRightTabParamsMap {
     /** Optional initial Browser URL. */
     browser: { readonly url?: string }
@@ -70,7 +70,7 @@ export function apply(ctx: Context): void {
     dshDesktop?: { readonly protocolVersion: number; readonly browser?: DesktopBrowserBridge }
   }).dshDesktop
   const desktop = carrier?.protocolVersion === 1 ? carrier.browser : undefined
-  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-browser.copy')
+  ctx.effect(() => ctx.locale.register(namespace, { en }), 'ui-sidebar-browser.copy')
   ctx.effect(() => ctx.sidebarRightTabs.register({ ...browserDefinition(t), keepMounted: desktop !== undefined }), 'ui-sidebar-browser.type')
   const installFrames = (scope: Context, factory: (sessionId: BrowserBodyProps['sessionId']) => BrowserPageFactory): void => {
     const controllers = new Map<BrowserBodyProps['sessionId'], BrowserInjected>()

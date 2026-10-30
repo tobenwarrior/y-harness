@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Ajv2020 } from 'ajv/dist/2020.js'
-import Schema from '@deepseek-ai/schemastery'
+import Schema from '@yharness/schemastery'
 import { createConfigProjector, type ConfigProjection } from '../src/config-schema/projector.ts'
 
 const projector = await createConfigProjector()
@@ -317,11 +317,11 @@ describe('Schemastery input projection', () => {
   it('preserves roles, units, presentation metadata, and localized descriptions', () => {
     const schema = Schema.string().role('credential-ref', { source: 'environment' }).hidden().collapse().disabled()
       .link('https://example.com').comment('Credential name').experimental()
-    schema.meta.description = { en: 'Credential reference', zh: '凭据引用' }
+    schema.meta.description = { en: 'Credential reference', zh: '\u{51ED}\u{636E}\u{5F15}\u{7528}' }
     const result = project(schema)
     expect(JSON.stringify(result.schema)).toContain('credential-ref')
     expect(JSON.stringify(result.schema)).toContain('Credential reference')
-    expect(JSON.stringify(result.schema)).toContain('凭据引用')
+    expect(JSON.stringify(result.schema)).toContain('\u{51ED}\u{636E}\u{5F15}\u{7528}')
     expect(JSON.stringify(project(Schema.natural().role('ms').default(100)).schema)).toContain('ms')
     expect(JSON.stringify(project(Schema.string().role('secret')).schema)).toContain('secret')
   })
@@ -420,7 +420,7 @@ describe('Schemastery input projection', () => {
     expect(project(Schema.number().step(0.1)).limitations.length).toBeGreaterThan(0)
   })
 
-  it.each([{ '': 'Default language' }, { zh: '中文' }, {}])('preserves descriptions without an English entry: %j', (description) => {
+  it.each([{ '': 'Default language' }, { zh: '\u{4E2D}\u{6587}' }, {}])('preserves descriptions without an English entry: %j', (description) => {
     const schema = Schema.string()
     schema.meta.description = description
     const result = project(schema)

@@ -1,22 +1,22 @@
 // @vitest-environment jsdom
 import assert from 'node:assert/strict'
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service } from '@yharness/cordis'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { ILayout, PanelInfo } from '@deepseek-ai/dsh-client-ui-layout/client'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { TestRemote, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
-import * as settings from '@deepseek-ai/dsh-client-ui-settings/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { ILayout, PanelInfo } from '@yharness/client-ui-layout/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { TestRemote, usePinnedBrowserLanguages } from '@yharness/client-test-runtime'
+import * as settings from '@yharness/client-ui-settings/client'
 import { apply, inject, NS, PANEL_ID } from '../src/client/index.ts'
 import { PluginManagerPage } from '../src/client/PluginManagerPage.tsx'
 import { PluginRefreshToast, type PluginRefreshToastFace } from '../src/client/PluginRefreshToast.tsx'
 import { PluginsPanelIcon } from '../src/client/PluginsPanelIcon.tsx'
 import type { PluginManagerFace } from '../src/client/manager-store.ts'
 
-usePinnedBrowserLanguages('zh-CN')
+usePinnedBrowserLanguages('en-US')
 afterEach(cleanup)
 
 async function bench() {
@@ -24,6 +24,8 @@ async function bench() {
   onTestFinished(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
+  locale.addLanguage({ id: 'alt', label: 'Alternate', fallback: 'en' })
+  locale.register('pluginManager', 'alt', {})
   ctx.provide('locale', locale)
   class LocaleHolder extends Service {
     constructor(serviceCtx: Context) {
@@ -145,7 +147,7 @@ describe('ui-plugin-manager browser plugin', () => {
     expect(glyph.container.querySelector('svg')?.getAttribute('width')).toBe('18')
     expect(icon.options).toMatchObject({ id: PANEL_ID, order: 0 })
     expect(icon.locale).toBe(NS)
-    expect(resolveSlotLabel(icon.options.label)).toBe('插件')
+    expect(resolveSlotLabel(icon.options.label)).toBe('Plugins')
     // The page declares the slots a plugin's configuration arrives through, and binds their projection beside its state.
     expect(b.slots.spec('plugins.add.actions')).toMatchObject({ kind: 'list', scope: 'root' })
     expect(b.slots.spec('plugins.item')).toMatchObject({ kind: 'list', scope: 'root' })
@@ -166,11 +168,12 @@ describe('ui-plugin-manager browser plugin', () => {
     expect(overlayFace.dismissNotice).toBe(face.dismissNotice)
     expect(Object.keys(overlayFace).sort()).toEqual(['dismissNotice', 'hooks'])
     expect(Object.keys(overlayFace.hooks)).toEqual(['pluginManager'])
-    const text = { en: 'Local tools', zh: '本地工具' }
-    expect(face.resolveText(text)).toBe('本地工具')
+    const text = { en: 'Local tools', alt: 'Local tools (alternate)' }
+    b.locale.setLocale('alt')
+    expect(face.resolveText(text)).toBe('Local tools (alternate)')
     b.locale.setLocale('en')
     expect(face.resolveText(text)).toBe('Local tools')
-    b.locale.setLocale('zh')
+    b.locale.setLocale('alt')
     expect(face.hooks.configLedger.getSnapshot()).toEqual({ items: [], bundles: new Set(), rows: new Set() })
     // A Host change before the first render is not a reason to read.
     b.remote.emit('plugin-manager/changed', [{ reason: 'install' }])

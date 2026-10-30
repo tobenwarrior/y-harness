@@ -1,19 +1,19 @@
 /** Agent activation, composition, and model-selection policy owned by API Session. */
 
 import { mkdir } from 'node:fs/promises'
-import type { Context } from '@deepseek-ai/cordis'
-import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import type { Context } from '@yharness/cordis'
+import { installModelSelection } from '@yharness/agent'
 import type {
   Agent, AgentOptions, AgentSetup, ModelSelection as AgentModelSelection, ModelSelectionRef,
-} from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import { ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
-import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import type {} from '@deepseek-ai/dsh-typert-registry'
+} from '@yharness/agent'
+import type {} from '@yharness/agent-default-model'
+import type {} from '@yharness/agent-preset-registry'
+import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import type { Session, SessionId } from '@yharness/session'
+import type { SessionInspection } from '@yharness/session-persistence'
+import { SessionQueryError, type SessionObservation } from '@yharness/session-query'
+import { RemoteError } from '@yharness/typert-protocol'
+import type {} from '@yharness/typert-registry'
 import type { ModelSelection } from './types.ts'
 
 /** Cold Session identity absent from persistence. */

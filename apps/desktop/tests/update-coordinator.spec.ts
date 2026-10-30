@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppUpdater } from 'electron-updater'
 import { DESKTOP_HOST_PROTOCOL_VERSION } from '../src/host-protocol.ts'
@@ -12,7 +15,34 @@ vi.mock('electron-updater', () => ({
   default: { autoUpdater: { autoDownload: true, autoInstallOnAppQuit: true } },
 }))
 
-const { DesktopUpdateCoordinator } = await import('../src/update-coordinator.ts')
+const { DesktopUpdateCoordinator, resolveDesktopUpdaterMode } = await import('../src/update-coordinator.ts')
+
+describe('desktop updater provider mode', () => {
+  it('leaves the channel unset for GitHub prerelease discovery', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yharness-updater-mode-'))
+    try {
+      const config = join(root, 'app-update.yml')
+      await writeFile(config, 'provider: github\nowner: tobenwarrior\nrepo: y-harness\nchannel: latest\n')
+      expect(resolveDesktopUpdaterMode(config, '1.2.3-rc.1')).toEqual({ channel: null, allowPrerelease: true })
+      expect(resolveDesktopUpdaterMode(config, '1.2.3')).toEqual({ channel: null, allowPrerelease: false })
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('retains the Nightly channel for generic test feeds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yharness-updater-mode-'))
+    try {
+      const config = join(root, 'app-update.yml')
+      await writeFile(config, 'provider: generic\nurl: https://updates.example.test/\nchannel: nightly\n')
+      expect(resolveDesktopUpdaterMode(config)).toEqual({ channel: 'nightly', allowPrerelease: true })
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('desktop release metadata', () => {
   it('accepts one exact release identity for Electron and dsh', () => {
@@ -47,7 +77,7 @@ describe('desktop release metadata', () => {
 const coordinators: InstanceType<typeof DesktopUpdateCoordinator>[] = []
 afterEach(() => { for (const item of coordinators.splice(0)) item.dispose() })
 
-function fixture(enabled = true) {
+function fixture(enabled = true, version = '1.1.0-alpha.1') {
   const events = new EventEmitter()
   const checkForUpdates = vi.fn(async () => ({
     isUpdateAvailable: true,
@@ -66,13 +96,32 @@ function fixture(enabled = true) {
   const updater = Object.assign(events, { checkForUpdates, downloadUpdate, quitAndInstall }) as unknown as AppUpdater
   const coordinator = new DesktopUpdateCoordinator(
     (state) => { states.push(state); return state },
-    beforeRestart, updater, () => enabled, () => '1.1.0-alpha.1', downloadResult,
+    beforeRestart, updater, () => enabled, () => version, downloadResult,
   )
   coordinators.push(coordinator)
   return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
 }
 
 describe('desktop update coordinator', () => {
+  it.each([
+    ['stable', '1.1.0', false],
+    ['prerelease', '1.1.0-rc.2', true],
+  ] as const)('configures GitHub AppUpdater prerelease eligibility from the installed %s version', async (_label, version, allowPrerelease) => {
+    const root = await mkdtemp(join(tmpdir(), 'yharness-updater-runtime-'))
+    const previous = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+    try {
+      await writeFile(join(root, 'app-update.yml'), 'provider: github\nowner: tobenwarrior\nrepo: y-harness\nchannel: latest\n')
+      Object.defineProperty(process, 'resourcesPath', { configurable: true, value: root })
+      const f = fixture(true, version)
+      expect(f.updater).toMatchObject({ channel: null, allowPrerelease })
+    }
+    finally {
+      if (previous === undefined) delete (process as { resourcesPath?: string }).resourcesPath
+      else Object.defineProperty(process, 'resourcesPath', previous)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps safe preparation diagnostics separate and clears them on an explicit retry', async () => {
     const f = fixture()
     await f.coordinator.check()

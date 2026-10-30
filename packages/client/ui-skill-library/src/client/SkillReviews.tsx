@@ -1,8 +1,8 @@
 /** Durable suggestions with explicit evidence and review decisions. */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Button, Checkbox, DiffBlock, IconChevronDownOutlineRegular, IconLoadingOutlineRegular, IconSkillOutlineRegular, Menu, MenuItemButton, Modal, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningProposal, SkillLearningProposalId, SkillLibraryId, SkillLibraryList } from '@deepseek-ai/dsh-skill-library/types'
+import { Button, Checkbox, DiffBlock, IconChevronDownOutlineRegular, IconLoadingOutlineRegular, IconSkillOutlineRegular, Menu, MenuItemButton, Modal, Tag } from '@yharness/client-ui-primitives'
+import type { SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningProposal, SkillLearningProposalId, SkillLibraryId, SkillLibraryList } from '@yharness/skill-library/types'
 import type { SkillLibraryPageProps } from './SkillLibraryPage.tsx'
 import type { SkillLearningUiState } from './controller.ts'
 import css from './SkillLibraryPage.module.css'

@@ -1,8 +1,8 @@
 /** Parser admission keeps original immutable Session envelopes and refuses unsupported wire fields. */
-import { brandNumber, brandString } from '@deepseek-ai/dsh-brand'
-import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionSeq } from '@deepseek-ai/dsh-session'
+import { brandNumber, brandString } from '@yharness/brand'
+import { createSystemMessage, createUserMessage } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
+import type { SessionSeq } from '@yharness/session'
 import { describe, expect, it } from 'vitest'
 import {
   admitCodingSessionImportedUserEvent, admitCodingSessionImportPlannedEvent,

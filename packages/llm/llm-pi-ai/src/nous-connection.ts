@@ -1,7 +1,7 @@
 /** Native Nous device authorization with an explicit public client choice. */
-import { Context } from '@deepseek-ai/cordis'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+import { Context } from '@yharness/cordis'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import type { AuthorizationSession } from '@yharness/authorization'
 import { credentialStoreFrom, authContextFrom, recordKeyFor } from './auth.ts'
 import { createModels } from './models.ts'
 import { nousProvider } from './nous-provider.ts'
@@ -10,7 +10,7 @@ import {
 } from './nous-protocol.ts'
 import type { NousConnectionView, NousDeviceVerification, NousModelView } from './nous-types.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context { nousConnection: NousConnection }
 }
 

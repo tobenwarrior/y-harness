@@ -1,11 +1,11 @@
 /** Live task observations, bounded API suggestions and host-controlled native learning. */
-import type { Context } from '@deepseek-ai/cordis'
-import type { GenerateOptions, LlmCallConfig, StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { } from '@deepseek-ai/dsh-workspace'
-import type { } from '@deepseek-ai/dsh-tools/types'
+import type { Context } from '@yharness/cordis'
+import type { GenerateOptions, LlmCallConfig, StreamChunk } from '@yharness/llm'
+import type { Session, SessionEvent, SessionId } from '@yharness/session'
+import type { } from '@yharness/workspace'
+import type { } from '@yharness/tools/types'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { nativeObservationGenerator, nativeObservationValidator, nativeObservationInstructions } from './native-observation.ts'
 import type { SkillLibraryId } from './types.ts'
 import type {
@@ -21,7 +21,7 @@ import type {
   SkillLearningValidator,
 } from './learning-types.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     /**
      * Bounded auxiliary source frame, logged before API dispatch. The source
@@ -33,7 +33,7 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Log-only exact bounded auxiliary input; never projected into conversation. */
     'skill/learning-request': {
@@ -266,7 +266,7 @@ async function generateDrafts(
     if (prepared.config.reasoningEffort !== route.reasoningEffort || prepared.config.serviceTier !== route.serviceTier) {
       throw new Error('skill-learning: captured effort or processing tier changed during preparation')
     }
-    const { BlockAssembler, createUserMessage } = await import('@deepseek-ai/dsh-llm')
+    const { BlockAssembler, createUserMessage } = await import('@yharness/llm')
     deadline.signal.throwIfAborted()
     const options: GenerateOptions = {
       ...prepared.config,

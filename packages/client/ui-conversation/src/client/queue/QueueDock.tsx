@@ -1,16 +1,16 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { useEffect, useId, useMemo, useState } from 'react'
-import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@yharness/attachment'
+import type { PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type { SessionId } from '@yharness/session/types'
 import {
   IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronUpOutlineRegular, IconCloseOutlineRegular,
   FileTypeIcon, fileSizeText, IconEditOutlineRegular, InlineEditor, IconQueueOutlineRegular, IconSendOutlineRegular,
   IconTrashOutlineRegular, projectUserText, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InboxState } from '@deepseek-ai/dsh-agent/types'
-import type { QueueAction } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
+} from '@yharness/client-ui-primitives'
+import type { InboxState } from '@yharness/agent/types'
+import type { QueueAction } from '@yharness/api-session-controller/types'
+import type { MessageId } from '@yharness/llm/brand'
 import { NS } from '../locales.ts'
 import css from './QueueDock.module.css'
 

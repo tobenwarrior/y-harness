@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SpillLocator } from '@deepseek-ai/dsh-spill'
+import { SpillLocator } from '@yharness/spill'
 import { formatSpillNotice, hasSpillNotice } from '../src/notice.ts'
 
 const ref = { locator: SpillLocator('/spill/output.txt'), retrievalHint: 'Read the file.' }
@@ -30,7 +30,7 @@ describe('persisted spill notice', () => {
 
   it('keeps locator and retrieval text opaque, including parentheses and newlines', () => {
     const notice = formatSpillNotice({ kind: 'exact', count: 42 }, {
-      locator: SpillLocator('/spill/报告 (1).txt'), retrievalHint: 'Read it.\n\n(additional guidance)',
+      locator: SpillLocator('/spill/\u{62A5}\u{544A} (1).txt'), retrievalHint: 'Read it.\n\n(additional guidance)',
     })
     expect(hasSpillNotice(notice)).toBe(true)
     expect(hasSpillNotice(`preview\n\n${notice}`)).toBe(true)

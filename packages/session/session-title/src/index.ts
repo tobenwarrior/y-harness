@@ -1,24 +1,24 @@
 /**
  * Log-backed session title service, deterministic fallback, and provider contract.
- * @module @deepseek-ai/dsh-session-title
+ * @module @yharness/session-title
  */
 
-import { Context, FiberState, Service, type Fiber } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
+import { Context, FiberState, Service, type Fiber } from '@yharness/cordis'
+import z from '@yharness/schemastery'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import type { Branded } from '@deepseek-ai/dsh-brand'
-import { isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { assertNever, deepFreeze } from '@deepseek-ai/dsh-util-values'
+import type { Branded } from '@yharness/brand'
+import { isAgentLoopRequest } from '@yharness/llm'
+import type { GenerateOptions } from '@yharness/llm'
+import { assertNever, deepFreeze } from '@yharness/util-values'
 import type {
   Session,
   SessionEvent,
-} from '@deepseek-ai/dsh-session'
-import { SessionSeq } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-projection'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
-import type {} from '@deepseek-ai/dsh-agent'
+} from '@yharness/session'
+import { SessionSeq } from '@yharness/session'
+import type {} from '@yharness/session-projection'
+import type { ProjectionDefinition } from '@yharness/session-projection'
+import type {} from '@yharness/agent'
 export type {
   SessionTitleEventData,
   SessionTitleModelIdentity,
@@ -62,13 +62,13 @@ export interface Config {
   readonly maxTitleBytes: number
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     sessionTitle: SessionTitleService
   }
 }
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /**
      * Latest-wins session title snapshot. Log-only: it never enters the model

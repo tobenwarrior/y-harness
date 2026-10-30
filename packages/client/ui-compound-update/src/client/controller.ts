@@ -1,6 +1,6 @@
 /** Update status the Host reports for the active Compound skills overlay. */
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { HostObservable } from '@yharness/client-ui-slots'
 
 /** Browser-relative form of the Host route registered by `dsh-skill-compound`. */
 export const UPDATE_ROUTE = 'api/skill-compound.update'

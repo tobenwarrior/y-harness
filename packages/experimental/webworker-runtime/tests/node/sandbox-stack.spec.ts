@@ -1,15 +1,15 @@
 /** The unchanged sandbox-local → bash-sandbox → subprocess stack over the Worker Node layer. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { SandboxBashExecutor } from '@deepseek-ai/dsh-bash-sandbox'
-import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
-import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { Context } from '@yharness/cordis'
+import { SandboxBashExecutor } from '@yharness/bash-sandbox'
+import LocalSandboxProvider from '@yharness/sandbox-local'
+import { SandboxPolicyService } from '@yharness/sandbox-policy'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
 import { MemoryVfs } from '../../src/storage/memory.ts'
 import { setActiveVfs } from '../../src/storage/active.ts'
 import { processAlive, signalProcess } from '../../src/node/process-table.ts'
-import type { ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import type { ShellExecSpec, ShellExecution, ShellRunResult } from '@yharness/shell'
 
 /** Historical foreground shorthand over the unified execute() seam. */
 async function run(x: { execute(spec: ShellExecSpec): Promise<ShellExecution> }, spec: ShellExecSpec): Promise<ShellRunResult> {

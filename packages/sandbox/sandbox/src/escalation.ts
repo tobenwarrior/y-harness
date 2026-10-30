@@ -1,6 +1,6 @@
 /**
  * The escalation vocabulary and choreography shared by every sandbox-enforcing
- * tool family (`@deepseek-ai/dsh-tool-bash`, `@deepseek-ai/dsh-tool-fs`): the
+ * tool family (`@yharness/tool-bash`, `@yharness/tool-fs`): the
  * strictly-wider ladder, the argument-pairing validation, the model-facing
  * denial/hint markers, and {@link approveEscalation} — the ordered fail-closed
  * sequence that resolves a `sandbox_permissions` request through a
@@ -16,7 +16,7 @@
  * @module dsh-sandbox/escalation
  */
 
-import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { assertNever } from '@yharness/util-values'
 import type { SandboxMode } from './index.ts'
 
 /**
@@ -192,7 +192,9 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
     reason: `escalate sandbox to ${mode}: ${justification}`,
     displayReason: {
       en: `Allow this operation with ${mode} permissions: ${justification}`,
-      zh: `允许本次操作使用 ${mode} 权限：${justification}`,
+      // Keep the `zh` locale key for approval-channel compatibility while the
+      // harness presents one English message across supported clients.
+      zh: `Allow this operation with ${mode} permissions: ${justification}`,
     },
     ...approval.signal ? { signal: approval.signal } : {},
   })

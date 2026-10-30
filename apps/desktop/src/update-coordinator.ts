@@ -1,16 +1,47 @@
 /** User-authorized downloads and separate installation of one version-bound Desktop release. */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { CheckoutUpdateState } from './update-checkout.ts'
 import { join } from 'node:path'
 import { app } from 'electron'
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
-import { gt, valid } from 'semver'
+import { gt, prerelease, valid } from 'semver'
 import type { DesktopUpdateState } from './ipc.ts'
 import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
 import { DesktopUpdatePreparationError } from './update-error.ts'
 
 const { autoUpdater } = electronUpdater
+
+/** Updater channel policy derived from the sealed electron-builder config. */
+export interface DesktopUpdaterMode {
+  readonly channel: string | null
+  readonly allowPrerelease: boolean
+}
+
+/**
+ * Resolve the runtime channel without pulling provider-specific configuration
+ * into the update state machine. GitHub releases need no explicit channel:
+ * electron-updater uses the current prerelease identifier to select the next
+ * RC, while a forced `nightly` channel cannot find `v...-rc.*` releases.
+ * @param configPath - Sealed app-update.yml path; absent means the test/default feed.
+ * @param installedVersion - Version of the running application; only prerelease
+ * versions may opt into GitHub prerelease releases.
+ * @returns Channel policy for the updater instance.
+ */
+export function resolveDesktopUpdaterMode(configPath?: string, installedVersion?: string): DesktopUpdaterMode {
+  const path = configPath ?? (typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'app-update.yml') : undefined)
+  if (path === undefined) return { channel: 'nightly', allowPrerelease: true }
+  if (!existsSync(path)) return { channel: 'nightly', allowPrerelease: true }
+  const contents = readFileSync(path, 'utf8')
+  const field = (name: string): string | undefined => {
+    const match = new RegExp(`^${name}:[\\t ]*([^#\\r\\n]+)`, 'mu').exec(contents)?.[1]?.trim()
+    return match?.replace(/^(['"])(.*)\\1$/u, '$2')
+  }
+  if (field('provider') === 'github') {
+    return { channel: null, allowPrerelease: installedVersion !== undefined && valid(installedVersion) !== null && prerelease(installedVersion) !== null }
+  }
+  return { channel: field('channel') ?? 'nightly', allowPrerelease: true }
+}
 
 /** Owns one updater target until its download and installation settle. */
 export class DesktopUpdateCoordinator {
@@ -72,8 +103,9 @@ export class DesktopUpdateCoordinator {
     }
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
-    this.updater.channel = 'nightly'
-    this.updater.allowPrerelease = true
+    const mode = resolveDesktopUpdaterMode(undefined, this.currentVersion())
+    this.updater.channel = mode.channel
+    this.updater.allowPrerelease = mode.allowPrerelease
     // Selecting a channel can enable downgrade in electron-updater.
     this.updater.allowDowngrade = false
     this.updater.on('download-progress', this.onProgress)

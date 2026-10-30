@@ -5,13 +5,13 @@
  * base. `web.searchProvider` and `web.fetchProvider` select them. A Session on the
  * DeepSeek account route authenticates with the account token when the account
  * service allows the endpoint; every other request uses the configured key.
- * @module @deepseek-ai/dsh-web-deepseek-api
+ * @module @yharness/web-deepseek-api
  */
-import type { Context, Volatile } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import type {} from '@deepseek-ai/dsh-agent'
-import type { Session } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-web'
+import type { Context, Volatile } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import type {} from '@yharness/agent'
+import type { Session } from '@yharness/session'
+import type {} from '@yharness/web'
 import { DeepSeekFetchApiProvider } from './fetch.ts'
 import { DEEPSEEK_DEFAULT_COUNT, DEEPSEEK_WEB_API_BASE_URL, DeepSeekSearchApiProvider } from './search.ts'
 import { deepSeekWebAuth } from './transport.ts'

@@ -3,21 +3,21 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
-import Schema from '@deepseek-ai/schemastery'
-import { Context } from '@deepseek-ai/cordis'
-import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
-import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import Schema from '@yharness/schemastery'
+import { Context } from '@yharness/cordis'
+import type { AdapterRegistrationHandle } from '@yharness/llm'
+import { launchEnvironmentOf } from '@yharness/launch-environment'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
 import { CodexBackendAdapter, CodexBackendRuntime } from './codex-backend.ts'
 import type { CodexPreferences } from './codex-backend.ts'
 import { startCodexProcess } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
 import type { CodexBackendModelView, CodexBackendView } from './codex-types.ts'
-import type {} from '@deepseek-ai/dsh-skill-library'
-import type {} from '@deepseek-ai/dsh-workspace'
+import type {} from '@yharness/skill-library'
+import type {} from '@yharness/workspace'
 import { createCodexSkillLibraryProvider } from './codex-skill-library.ts'
 
-import type {} from '@deepseek-ai/dsh-coding-session'
+import type {} from '@yharness/coding-session'
 import { createCodexCodingSessionProvider } from './codex-coding-sessions.ts'
 
 /** Deployment-owned bounds for sanitized native learning observations. */
@@ -27,7 +27,7 @@ export interface CodexBackendConnectionConfig {
 }
 
 
-declare module '@deepseek-ai/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
+declare module '@yharness/cordis' { interface Context { codexBackendConnection: CodexBackendConnection } }
 /** Independent optional model family. */
 export class CodexBackendConnection extends TypertRemoteService {
   static inject = ['llm']

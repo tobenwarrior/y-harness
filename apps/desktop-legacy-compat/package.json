@@ -1,0 +1,13 @@
+{
+  "name": "@deepseek-ai/dsh-desktop",
+  "version": "0.2.1-rc.2",
+  "private": true,
+  "description": "Compatibility workspace for source updater releases before the desktop package rename.",
+  "scripts": {
+    "build": "pnpm --filter @yharness/desktop run build",
+    "prepare:primary-runtime": "pnpm --filter @yharness/desktop run prepare:primary-runtime"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}

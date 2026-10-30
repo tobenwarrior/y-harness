@@ -2,15 +2,15 @@
 import { mkdtemp, rm, readFile, writeFile, mkdir, realpath, symlink, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
-import { WorkspaceFiles } from '@deepseek-ai/dsh-api-workspace-files'
-import { Context } from '@deepseek-ai/cordis'
-import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
-import type { BrowserAuth } from '@deepseek-ai/dsh-client-connection/src/browser-auth.ts'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
-import type { SessionEventReadRequest } from '@deepseek-ai/dsh-session-query'
+import { LocalFileSystem } from '@yharness/fs-local'
+import { WorkspaceFiles } from '@yharness/api-workspace-files'
+import { Context } from '@yharness/cordis'
+import { HostConnectionService } from '@yharness/client-connection'
+import type { BrowserAuth } from '@yharness/client-connection/src/browser-auth.ts'
+import { SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
+import { SessionQueryError } from '@yharness/session-query'
+import type { SessionEventReadRequest } from '@yharness/session-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { registerPresentOpen } from '../src/present-open.ts'
 import { presentedFileUrl, PRESENT_OPEN_PATH } from '../src/presented.ts'
@@ -27,7 +27,7 @@ async function fixture() {
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const cwd = join(root, 'workspace')
   await mkdir(cwd)
-  const file = { path: '日记模板.docx' }
+  const file = { path: 'Årsrapport-template.docx' }
   await writeFile(join(cwd, file.path), Uint8Array.of(80, 75, 0, 255))
   const ctx = new Context()
   cleanups.push(() => ctx.fiber.dispose())
@@ -222,7 +222,7 @@ it('refuses native opening without a matching Host mapping even when a same-name
 
 it('opens a viewed child Session without activating an Agent', async () => {
   const { session, readEvent, open, opener, resolveAgent } = await fixture()
-  readEvent.mockResolvedValueOnce({ session, target: { type: 'deliverables/presented', data: { turn: 1, callId: 'child', files: [{ path: '日记模板.docx' }] } } as SessionEvent })
+  readEvent.mockResolvedValueOnce({ session, target: { type: 'deliverables/presented', data: { turn: 1, callId: 'child', files: [{ path: 'Årsrapport-template.docx' }] } } as SessionEvent })
   expect((await open('?sessionId=child&seq=7&index=0')).status).toBe(204)
   expect(opener).toHaveBeenCalledOnce()
   expect(resolveAgent).not.toHaveBeenCalled()

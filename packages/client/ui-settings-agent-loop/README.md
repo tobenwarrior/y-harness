@@ -3,7 +3,7 @@ description: "The agent loop's settings page on the dsh web client's Plugins pag
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-settings-agent-loop
+# @yharness/client-ui-settings-agent-loop
 
 ## Summary
 

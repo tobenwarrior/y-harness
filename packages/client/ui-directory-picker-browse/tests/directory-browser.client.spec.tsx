@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { DirectoryListing } from '@deepseek-ai/dsh-api-remotes/client'
+import type { DirectoryListing } from '@yharness/api-remotes/client'
 import { DirectoryBrowser } from '../src/client/DirectoryBrowser.tsx'
 
 afterEach(cleanup)
@@ -1340,13 +1340,13 @@ describe('DirectoryBrowser', () => {
     await waitFor(() => { expect(b.listDirectory).toHaveBeenLastCalledWith(DOCS, expect.any(AbortSignal)) })
     fireEvent.click(screen.getByRole('button', { name: 'browser.newFolder' }))
     const nameInput = screen.getByLabelText('browser.folderName')
-    fireEvent.change(nameInput, { target: { value: '新建' } })
+    fireEvent.change(nameInput, { target: { value: '\u65b0\u5efa' } })
     fireEvent.compositionStart(nameInput)
     fireEvent.keyDown(nameInput, { key: 'Enter' })
     expect(b.createDirectory).not.toHaveBeenCalled()
     fireEvent.compositionEnd(nameInput)
     fireEvent.keyDown(nameInput, { key: 'Enter' })
-    await waitFor(() => { expect(b.createDirectory).toHaveBeenCalledWith(DOCS, '新建') })
+    await waitFor(() => { expect(b.createDirectory).toHaveBeenCalledWith(DOCS, '\u65b0\u5efa') })
   })
 
   it('surfaces a two-pane navigation failure as an alert below the columns', async () => {

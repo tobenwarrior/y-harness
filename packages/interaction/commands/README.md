@@ -3,7 +3,7 @@ description: "Human slash-command registry for interactive UIs: plugin-owned com
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-commands
+# @yharness/commands
 
 ## Summary
 

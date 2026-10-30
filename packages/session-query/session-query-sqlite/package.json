@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-session-query-sqlite",
+  "name": "@yharness/session-query-sqlite",
   "description": "Concrete ctx.sessionQuery backend with SQLite FTS5 search",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/session-query/session-query-sqlite"
   },
   "type": "module",
@@ -27,26 +27,26 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence": "workspace:*",
-    "@deepseek-ai/dsh-session-query": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
+    "@yharness/session-query": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-session-persistence": {
+    "@yharness/session-persistence": {
       "optional": true
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*",
-    "@deepseek-ai/dsh-session-query": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*",
+    "@yharness/session-query": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   }
 }

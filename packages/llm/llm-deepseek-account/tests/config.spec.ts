@@ -1,6 +1,6 @@
 /** Account configuration resolves the listing endpoint, cache timing, and model overrides in one step. */
 import { expect, it } from 'vitest'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { Config, plainAccountOptions, resolveAccountOptions } from '../src/config.ts'
 
 it('derives the listing endpoint from the Messages origin and applies the cache defaults', () => {

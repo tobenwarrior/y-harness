@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, open, opendir, realpath } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { learningDraftSchema, learningEvidenceSchema, learningValidationSchema } from './learning-record.ts'
 import { maintenanceGenerator, maintenanceValidator, mechanicalMaintenanceValid,
   reduceInstructionRedundancy } from './semantic-maintenance.ts'

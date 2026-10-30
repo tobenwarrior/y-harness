@@ -3,18 +3,18 @@
  * runtime subprocess across many sessions; `HarnessSession.run` sends a
  * prompt and settles when the whole agent next becomes idle.
  *
- * @module @deepseek-ai/dsh-sdk-client/api
+ * @module @yharness/sdk-client/api
  */
 
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
-import type { SessionEvent, TurnEndReason } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, TurnEndReason } from '@yharness/session'
 import { createProcessHarnessClient, HarnessClient, isRecord, SdkProtocolError } from './client.ts'
 import type { RuntimeProcessOptions } from './launch.ts'
 import type { ContentBlock, DeepSeekHarnessOptions, HarnessNotification, RunResult, SdkPromptContentBlock } from './types.ts'
 
 /**
- * Reusable SDK for running DeepSeek Harness agent turns in a runtime
+ * Reusable SDK for running Y Harness agent turns in a runtime
  * subprocess. The subprocess starts lazily on first use and stays owned by
  * this instance until {@link close}; always close (or `await using`) so the
  * child is reaped.
@@ -84,7 +84,7 @@ export class DeepSeekHarness implements AsyncDisposable {
         } catch (cleanupError: unknown) {
           throw new AggregateError(
             [error, cleanupError],
-            'DeepSeek Harness initialization and cleanup failed',
+            'Y Harness initialization and cleanup failed',
           )
         }
         if (!this.closed) this.clientInstance = this.createClient()

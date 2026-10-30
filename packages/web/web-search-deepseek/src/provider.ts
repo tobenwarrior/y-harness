@@ -3,18 +3,18 @@
  * `web_search_20250305` server tool. Each search costs a model turn, but returns structured
  * result blocks; absence of those blocks is an error rather than a prose-scraping fallback.
  * The wire format and native `fetch` client are provider-private and do not use `ctx.llm`.
- * @module @deepseek-ai/dsh-web-search-deepseek/provider
+ * @module @yharness/web-search-deepseek/provider
  */
 
-import { WebError } from '@deepseek-ai/dsh-web'
+import { WebError } from '@yharness/web'
 import type {
   WebSearchProvider,
   WebSearchRequest,
   WebSearchResult,
   WebSearchSource,
-} from '@deepseek-ai/dsh-web'
-import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
-import type {} from '@deepseek-ai/dsh-session'
+} from '@yharness/web'
+import type { CredentialRef } from '@yharness/credentials'
+import type {} from '@yharness/session'
 import type {
   AnthropicError,
   AnthropicResponse,
@@ -46,7 +46,7 @@ export const DEEPSEEK_DEFAULT_MAX_TOKENS = 4096
 export const DEEPSEEK_DEFAULT_MAX_USES = 5
 
 /** Attribution header sent on every request. Bump with the package version. */
-const USER_AGENT = 'deepseek-harness/0.0.1'
+const USER_AGENT = 'y-harness/0.0.1 (+https://github.com/tobenwarrior/y-harness)'
 
 /**
  * Exact secret-free DeepSeek Messages request recorded immediately before one
@@ -83,7 +83,7 @@ export interface DeepSeekSearchLlmRequest {
   }
 }
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Secret-free auxiliary DeepSeek search request recorded before dispatch. */
     'web/deepseek-search-llm-request': DeepSeekSearchLlmRequest

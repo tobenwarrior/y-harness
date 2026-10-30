@@ -52,13 +52,13 @@ async function fixture(options: {
   await writeFile(join(worker, 'package.json'), '{"type":"module"}\n')
   const state = {
     fingerprint: 'a'.repeat(64), managed: options.managed ?? false, available: true, kind: options.managed ? 'symlink' : 'file',
-    destination: join(root, process.platform === 'win32' ? 'dsh.cmd' : 'dsh'),
-    directory: root, launcher: join(root, 'desktop-dsh'),
-    activeCommand: options.managed && !options.shadowed ? join(root, process.platform === 'win32' ? 'dsh.cmd' : 'dsh') : join(root, 'other-dsh'),
+    destination: join(root, process.platform === 'win32' ? 'yharness.cmd' : 'yharness'),
+    directory: root, launcher: join(root, 'desktop-yharness'),
+    activeCommand: options.managed && !options.shadowed ? join(root, process.platform === 'win32' ? 'yharness.cmd' : 'yharness') : join(root, 'other-yharness'),
   }
   if (process.platform === 'darwin') {
     const shell = join(root, 'lookup-shell')
-    await writeFile(shell, '#!/bin/sh\nprintf "\\0DSH_COMMAND\\0"\ncat "$(dirname "$0")/selected-command"\nprintf "\\0"\n', { mode: 0o755 })
+    await writeFile(shell, '#!/bin/sh\nprintf "\\0YHARNESS_COMMAND\\0"\ncat "$(dirname "$0")/selected-command"\nprintf "\\0"\n', { mode: 0o755 })
     await writeFile(join(root, 'selected-command'), state.activeCommand + '\n')
     external.shell = shell
   }

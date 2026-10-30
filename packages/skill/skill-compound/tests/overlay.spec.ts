@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { activeOverlay, parseGitTree, updateOverlay } from '../src/overlay.ts'
+import { activeOverlay, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -247,4 +247,31 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
     await expect(updateOverlay(root)).rejects.toThrow('unsafe overlay file')
     expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+it('uses the Y Harness data path and keeps a legacy active overlay selected', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'compound-overlay-home-'))
+  try {
+    expect(overlayRoot(home)).toBe(join(home, '.local', 'share', 'y-harness', 'compound-skills'))
+    const legacy = legacyOverlayRoot(home)
+    expect(legacy).toBe(join(home, '.local', 'share', 'deepseek-harness', 'compound-skills'))
+    upstream('a'.repeat(40), '1.0.0')
+    await updateOverlay(legacy)
+    expect(resolveOverlayRoot(home)).toBe(legacy)
+    expect(activeOverlay(legacy)?.commit).toBe('a'.repeat(40))
+    expect(activeOverlay(overlayRoot(home))).toBeUndefined()
+    upstream('b'.repeat(40), '1.1.0')
+    await updateOverlay(overlayRoot(home))
+    expect(resolveOverlayRoot(home)).toBe(overlayRoot(home))
+    expect(activeOverlay(legacy)?.commit).toBe('a'.repeat(40))
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+it('keeps an existing but not-yet-published legacy root as the update target', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'compound-overlay-home-'))
+  try {
+    const legacy = legacyOverlayRoot(home)
+    await mkdir(legacy, { recursive: true, mode: 0o700 })
+    expect(resolveOverlayRoot(home)).toBe(legacy)
+  } finally { await rm(home, { recursive: true, force: true }) }
 })

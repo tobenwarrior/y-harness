@@ -1,9 +1,9 @@
 /** Cold ordinary-Y imports retain quoted native history and exact reversible write receipts. */
 import { isAbsolute } from 'node:path'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm/message'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { brandString } from '@yharness/brand'
+import { createSystemMessage, createUserMessage } from '@yharness/llm'
+import type { UserMessage } from '@yharness/llm/message'
+import type { SessionEvent, SessionId } from '@yharness/session'
 import { codingSessionDigest } from './digest.ts'
 import { codingSessionMirrorSchema } from './record.ts'
 import {

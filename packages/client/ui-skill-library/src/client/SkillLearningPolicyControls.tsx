@@ -1,8 +1,8 @@
 /** Explicit semantic policy approval and per-version consent controls. */
 import { useState, type ReactNode } from 'react'
-import { Button, Checkbox, IconChevronDownOutlineRegular, Menu, MenuItemButton, Modal, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Checkbox, IconChevronDownOutlineRegular, Menu, MenuItemButton, Modal, Switch } from '@yharness/client-ui-primitives'
 import type { SkillLibraryId, SkillLibraryItem, SkillLibraryProject, SkillLearningPolicyId,
-  SkillLearningPolicyRequest } from '@deepseek-ai/dsh-skill-library/types'
+  SkillLearningPolicyRequest } from '@yharness/skill-library/types'
 import type { SkillLearningUiState } from './controller.ts'
 import type { SkillLibraryPageProps } from './SkillLibraryPage.tsx'
 import css from './SkillLibraryPage.module.css'

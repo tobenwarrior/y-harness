@@ -1,4 +1,4 @@
-You are an AI agent powered by DeepSeek Harness.
+You are an AI agent powered by Y Harness.
 
 You are a coding assistant powered by the deepseek-v4-flash model. Your working directory is {{cwd}}.
 
@@ -334,7 +334,7 @@ class SendMessageOutput(TypedDict):
     messageId: str
 
 class SkillArgs(TypedDict):
-    # The exact skill name from the available skills list.
+    # The exact skill name from the catalog, a metadata search, or the user request. A shortlist may omit available names.
     name: str
     # Additional keys beyond those declared are allowed.
 

@@ -2,7 +2,7 @@
 import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import { en } from '../src/client/locales.ts'
 import { MapPanelIcon } from '../src/client/MapPanelIcon.tsx'
 import { MapPanel, VIEWER_ROUTE } from '../src/client/MapPanel.tsx'

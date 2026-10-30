@@ -1,6 +1,6 @@
 /** Deterministic procedural suggestions and separate exact-text validation of live native evidence. */
 import { createHash } from 'node:crypto'
-import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { assertNever } from '@yharness/util-values'
 import type { SkillLearningEvidence, SkillLearningGenerator, SkillLearningNativeProcedure, SkillLearningValidator } from './learning-types.ts'
 
 const permittedChecks = new RegExp(

@@ -2,7 +2,7 @@
 /** Raw-data height follows pointer capture and keyboard resizing without remounting the panel. */
 
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import { afterEach, expect, it, vi } from 'vitest'
 import { InspectorDetails } from '../src/client/views/InspectorDetails.tsx'
 import { en } from '../src/client/locales.ts'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId } from '@yharness/session/types'
 import { SessionDockStore } from '../src/client/dock/store.ts'
 
 const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(id => id as SessionId)

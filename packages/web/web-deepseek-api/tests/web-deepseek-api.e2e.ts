@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DeepSeekFetchApiProvider, DeepSeekSearchApiProvider } from '@deepseek-ai/dsh-web-deepseek-api'
+import { DeepSeekFetchApiProvider, DeepSeekSearchApiProvider } from '@yharness/web-deepseek-api'
 
 /** Real Search and Fetch API probes; the base names the deployment the key authenticates. */
 const apiKey = process.env.DEEPSEEK_API_KEY

@@ -1,10 +1,10 @@
 /** Controlled persistence double checks cancellation admission and uncancellable owner release. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it } from 'vitest'
-import SessionStore, { SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { SessionHeader } from '@deepseek-ai/dsh-session'
-import SessionPersistence from '@deepseek-ai/dsh-session-persistence'
-import type { SessionHandle, SessionHandleFlushOptions, SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
+import SessionStore, { SessionLogOffset } from '@yharness/session'
+import type { SessionHeader } from '@yharness/session'
+import SessionPersistence from '@yharness/session-persistence'
+import type { SessionHandle, SessionHandleFlushOptions, SessionPersistenceSnapshot } from '@yharness/session-persistence'
 import { CodingSessionColdDestinations } from '../src/cold-destinations.ts'
 
 function gate() {

@@ -1,11 +1,11 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@deepseek-ai/dsh-agent-loop-testkit'
-import SandboxPolicy, { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
-import { writableRoots } from '@deepseek-ai/dsh-sandbox'
-import Approval, { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
-import Questions from '@deepseek-ai/dsh-user-questions'
+import { Context } from '@yharness/cordis'
+import { SessionId } from '@yharness/session'
+import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@yharness/agent-loop-testkit'
+import SandboxPolicy, { setSandboxMode } from '@yharness/sandbox-policy'
+import { writableRoots } from '@yharness/sandbox'
+import Approval, { setApprovalPolicy } from '@yharness/user-approval'
+import Questions from '@yharness/user-questions'
 import { resolveCodexAccess } from '../src/codex-backend-access.ts'
 
 async function fixture() {
@@ -52,7 +52,7 @@ describe('native Codex session authority', () => {
     const { ctx, agent, resolve } = await fixture()
     const audit: unknown[] = []
     ctx.on('session/event', (_session, event) => { audit.push(event) })
-    const decide = vi.fn(async (_request: import('@deepseek-ai/dsh-user-approval').ApprovalRequest) => 'allowed-once' as const)
+    const decide = vi.fn(async (_request: import('@yharness/user-approval').ApprovalRequest) => 'allowed-once' as const)
     ctx.on('approval/request', decide)
     const params = { command: 'touch output', cwd: process.cwd(), item: { changes: [{ path: 'output', diff: '+new' }] } }
     expect(await resolve().request(method, params)).toEqual({ decision: 'accept' })
@@ -76,7 +76,7 @@ describe('native Codex session authority', () => {
 
   it('forwards structured native questions and returns selected and custom answers', async () => {
     const { ctx, agent, resolve } = await fixture()
-    const answer = vi.fn(async (_request: import('@deepseek-ai/dsh-user-questions').AskUserQuestionRequest) => ({ answers: [{ id: 'choice', selected: ['first'], custom: 'detail' }] }))
+    const answer = vi.fn(async (_request: import('@yharness/user-questions').AskUserQuestionRequest) => ({ answers: [{ id: 'choice', selected: ['first'], custom: 'detail' }] }))
     ctx.on('user-questions/request', answer)
     expect(await resolve().request('item/tool/requestUserInput', { questions: [{
       id: 'choice', header: 'Choice', question: 'Which?', options: [{ label: 'first', description: 'First option' }],

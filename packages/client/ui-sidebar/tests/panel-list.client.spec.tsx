@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 /** Global panel rows and DOM focus through the production slot renderer. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
-import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import { IconGlobeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ILayout, MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type { PropsRenderSlots, PropsRuntime, SlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
+import { SlotTestRuntime } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
+import { IconGlobeOutlineRegular } from '@yharness/client-ui-primitives'
+import type { ILayout, MainPanelId } from '@yharness/client-ui-layout/client'
+import type { PropsRenderSlots, PropsRuntime, SlotLabel } from '@yharness/client-ui-slots'
 import { apply, inject } from '../src/client/index.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     'sidebar-panel-test': 'alpha'
   }
@@ -52,9 +52,10 @@ async function bench(collapsed = false) {
       ctx.provide('layout', layout)
       ctx.provide('uiWorkspace', { startSession: vi.fn() } as never)
       ctx.provide('locale', locale)
+      ctx.effect(() => locale.addLanguage({ id: 'zh', label: 'External locale', fallback: 'en' }), 'panel test: external locale')
       ctx.effect(() => locale.register('common', { zh: commonZh, en: commonEn }), 'panel test: common locale')
       ctx.effect(() => locale.register('sidebar-panel-test', {
-        zh: { alpha: '甲面板' }, en: { alpha: 'Alpha panel' },
+        zh: { alpha: 'Alpha localized' }, en: { alpha: 'Alpha panel' },
       }), 'panel test: panel locale')
       ctx.slots.installLocale(locale)
       ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'conversation' }, () => (
@@ -221,7 +222,7 @@ describe('sidebar global panels', () => {
     const entries = runtime.slots.entries('sidebar.panellist')
     act(() => { locale.setLocale('zh') })
     await waitFor(() => {
-      expect(within(navigation).getByRole('button', { name: '甲面板' }).textContent).toBe('甲面板')
+      expect(within(navigation).getByRole('button', { name: 'Alpha localized' }).textContent).toBe('Alpha localized')
     })
     expect(within(navigation).getByRole('button', { name: 'Beta panel' }).textContent).toBe('Beta panel')
     expect(runtime.slots.entries('sidebar.panellist')).toBe(entries)

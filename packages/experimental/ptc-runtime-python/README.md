@@ -3,7 +3,7 @@ description: "CPython-subprocess PTC runtime: the dsh-ptc-runtime seam implement
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-experimental-ptc-runtime-python
+# @yharness/experimental-ptc-runtime-python
 
 ## Summary
 

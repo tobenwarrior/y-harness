@@ -2,7 +2,7 @@
 /** User-visible native device connection and explicit account-model persistence. */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { NousConnectionView, NousModelView, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { NousConnectionView, NousModelView, SettingsNamespaceView } from '@yharness/api-remotes/client'
 import { NousCard } from '../src/client/NousCard.tsx'
 import type { ModelsOperations } from '../src/client/operations.ts'
 import { countCopy } from '../src/client/nous-models.ts'

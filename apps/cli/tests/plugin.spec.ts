@@ -3,13 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { getDshRuntimeVersion, initProfile, PROFILE_TEMPLATES, readProfileVersionExemptions } from '@deepseek-ai/dsh-app-boot'
-import { runPluginCommand, runProfilePnpm } from '@deepseek-ai/dsh-plugin-manager/operations'
+import { getDshRuntimeVersion, initProfile, PROFILE_TEMPLATES, readProfileVersionExemptions } from '@yharness/app-boot'
+import { runPluginCommand, runProfilePnpm } from '@yharness/plugin-manager/operations'
 import { runPlugin } from '../src/plugin.ts'
 
 vi.mock('../src/profile-boot.ts', () => ({ INSTALL_ANCHOR: '/installation/package.json' }))
-vi.mock('@deepseek-ai/dsh-plugin-manager/operations', async importOriginal => ({
-  ...await importOriginal<typeof import('@deepseek-ai/dsh-plugin-manager/operations')>(),
+vi.mock('@yharness/plugin-manager/operations', async importOriginal => ({
+  ...await importOriginal<typeof import('@yharness/plugin-manager/operations')>(),
   runPluginCommand: vi.fn(),
   runProfilePnpm: vi.fn(),
 }))
@@ -34,7 +34,7 @@ it('requires explicit acknowledgement, grants only the exact pair, lists and rev
   const runtime = getDshRuntimeVersion()
   expect(await runPlugin('test', ['allow-version', '@example/plugin@1.2.3', '--dsh-version', runtime, '--accept-risk'])).toBe(0)
   expect(stderr.mock.calls.map(call => call[0]).join('')).toMatchInlineSnapshot(`
-    "dsh: warning: allowing incompatible plugin versions can break the application or corrupt data. Approval applies only to the exact package and DSH versions.
+    "yharness: warning: allowing incompatible plugin versions can break the application or corrupt data. Approval applies only to the exact package and Y Harness versions.
     "
   `)
   expect(stderr.mock.invocationCallOrder[0]).toBeLessThan(stdout.mock.invocationCallOrder[0]!)
@@ -80,19 +80,19 @@ it.each([0, 1])('forwards ordinary pnpm output and exit status %s', async (exitC
   expect(await runPlugin('test', ['list'])).toBe(exitCode)
   expect(stdout).toHaveBeenCalledWith('pnpm output')
   if (exitCode === 0) expect(stderr).not.toHaveBeenCalled()
-  else expect(stderr).toHaveBeenCalledWith('dsh: plugin command failed; diagnostics: /profile/log\n')
+  else expect(stderr).toHaveBeenCalledWith('yharness: plugin command failed; diagnostics: /profile/log\n')
 })
 
 it('names the exact grant command for each package a compatibility check refused', async () => {
   const { stderr } = fixture()
   vi.mocked(runPluginCommand).mockResolvedValue({
     exitCode: 1, output: '', truncated: false, logPath: '/profile/log',
-    incompatible: [{ name: '@example/plugin', version: '1.2.3', runtimeVersion: '0.1.0', peers: { '@deepseek-ai/dsh': '^9.0.0' } }],
+    incompatible: [{ name: '@example/plugin', version: '1.2.3', runtimeVersion: '0.1.0', peers: { '@yharness/cli': '^9.0.0' } }],
   })
   expect(await runPlugin('test', ['add', '@example/plugin'])).toBe(1)
   expect(stderr.mock.calls.map(call => call[0])).toEqual([
-    'dsh: to accept the risk, run: dsh plugin --profile test allow-version @example/plugin@1.2.3 --dsh-version 0.1.0 --accept-risk\n',
-    'dsh: plugin command failed; diagnostics: /profile/log\n',
+    'yharness: to accept the risk, run: yharness plugin --profile test allow-version @example/plugin@1.2.3 --dsh-version 0.1.0 --accept-risk\n',
+    'yharness: plugin command failed; diagnostics: /profile/log\n',
   ])
 })
 
@@ -130,7 +130,7 @@ it.each([
   const args = arguments_.map(value => value === 'CURRENT' ? getDshRuntimeVersion() : value)
   expect(await runPlugin('desktop', args)).toBe(1)
   expect(stderr.mock.calls.map(call => call[0]).join('')).toMatchInlineSnapshot(`
-    "dsh: Error: Open Y Harness Desktop once to initialize its profile, then fully quit it before running dsh plugin --profile desktop.
+    "yharness: Error: Open Y Harness Desktop once to initialize its profile, then fully quit it before running yharness plugin --profile desktop.
     "
   `)
   expect(existsSync(join(home, 'profiles', 'desktop'))).toBe(false)

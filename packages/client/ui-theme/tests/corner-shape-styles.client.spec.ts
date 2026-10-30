@@ -84,7 +84,11 @@ describe('full-round radii keep circular corners', () => {
     // The universal superellipse reaches every element, so each circle and
     // pill states its own arc back; a new one without the pairing regresses
     // silently on supporting engines only, which no jsdom test renders.
-    const unpaired = packageStylesheets().flatMap(file =>
+    // Compound's bundled code-map is a standalone demo asset, not a Y Harness
+    // client stylesheet and is intentionally outside this product contract.
+    const unpaired = packageStylesheets()
+      .filter(file => !file.includes('/packages/skill/skill-compound/assets/compound/assets/'))
+      .flatMap(file =>
       unpairedFullRound(readFileSync(file, 'utf8')).map(selectors => `${file} ${selectors}`))
     expect(unpaired).toEqual([])
   })

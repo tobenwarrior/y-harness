@@ -3,7 +3,7 @@ description: "DeepSeek account authentication, model listing, and model gating."
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-llm-deepseek-account
+# @yharness/llm-deepseek-account
 
 ## Summary
 
@@ -29,7 +29,7 @@ The route's catalog comes from the account's `GET /models` listing at the origin
 
 The first access of a credential waits for the listing up to `modelsTimeoutMs`. Later accesses use the loaded listing and refresh it in the background once it is older than `modelsMaxAgeMs`. A failed or empty listing keeps the previous one; before any listing loads, the route serves the built-in catalog of the current version (`deepseek-flash` and `deepseek-v4-pro`). A listing HTTP 401 does not remove the stored login. Each loaded listing, the first failure of a failing streak with the catalog it falls back to, and each hidden listing entry are written to the console with the `[llm-deepseek-account]` tag; secrets are never logged. Each account token has its own listing, so the service can roll a model out to some accounts first.
 
-A listed model is offered only when the current DeepSeek Harness version can serve it. A model that declares `client_requirements["deepseek-harness"].min_version` is offered when the current version is at least that version in semantic-version order, including prerelease tags such as `0.2.0-alpha.1` and `0.2.0-rc.1`. A prerelease orders below its release: `min_version: 0.2.1` refuses `0.2.1-alpha.2`, so a listing that admits prereleases declares the earliest one it admits, such as `0.2.1-alpha.0`. A model without that declaration is offered only when the built-in catalog knows its id; other listed models stay hidden. A request for a listed model the current version cannot serve fails before network I/O with `CLIENT_UPGRADE_REQUIRED`, which names the required and current versions, or with `MODEL_UNSUPPORTED`. Model ids the listing does not name pass through unchanged.
+A listed model is offered only when the current Y Harness version can serve it. A model that declares `client_requirements["deepseek-harness"].min_version` is offered when the current version is at least that version in semantic-version order, including prerelease tags such as `0.2.0-alpha.1` and `0.2.0-rc.1`. A prerelease orders below its release: `min_version: 0.2.1` refuses `0.2.1-alpha.2`, so a listing that admits prereleases declares the earliest one it admits, such as `0.2.1-alpha.0`. A model without that declaration is offered only when the built-in catalog knows its id; other listed models stay hidden. A request for a listed model the current version cannot serve fails before network I/O with `CLIENT_UPGRADE_REQUIRED`, which names the required and current versions, or with `MODEL_UNSUPPORTED`. Model ids the listing does not name pass through unchanged.
 
 Offered models take the listing's name, `context_window`, input modalities, and Messages system prompt mode over the bundled entry for the same id, which keeps its tool-update mode, image budgets, and description. `max_output_tokens` bounds the request default: a request that names no cap sends the smaller of `maxTokens` and that capability. The listing's effort levels are not read; every model offers `off`, `low`, `high`, and `max`.
 
@@ -37,7 +37,7 @@ Offered models take the listing's name, `context_window`, input modalities, and 
 
 ```yaml
 - id: llm-deepseek-account
-  name: '@deepseek-ai/dsh-llm-deepseek-account'
+  name: '@yharness/llm-deepseek-account'
   config:
     reasoningEffort: high
     modelOverrides:

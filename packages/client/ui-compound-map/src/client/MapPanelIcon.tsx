@@ -1,7 +1,7 @@
 /** Code-map glyph; the sidebar owns navigation and selected state. */
 import type { ReactNode } from 'react'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-sidebar/client'
 
 /**
  * Render a dependency-graph mark at the sidebar's requested size.

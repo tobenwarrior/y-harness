@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { inspect } from 'node:util'
-import type { StartupError } from '@deepseek-ai/dsh-app-boot'
+import type { StartupError } from '@yharness/app-boot'
+import { CLI_NAME } from './cli-name.ts'
 
 /** Launcher-owned context; no environment values or plugin configurations are collected. */
 interface StartupDiagnosticContext {
@@ -61,7 +62,7 @@ export async function reportStartupFailure(
     await mkdir(logDir, { recursive: true, mode: 0o700 })
     await writeFile(logPath, report, { flag: 'wx', mode: 0o600 })
   } catch (writeError) {
-    await write(`\ndsh: warning: could not write startup diagnostics: ${String(writeError)}\nFull diagnostics:\n${report}`)
+    await write(`\n${CLI_NAME}: warning: could not write startup diagnostics: ${String(writeError)}\nFull diagnostics:\n${report}`)
     return
   }
   await write(`\nFull diagnostics: ${logPath}\n`)

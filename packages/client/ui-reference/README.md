@@ -3,7 +3,7 @@ description: "Web @file and @session reference source for the composer: candidat
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-reference
+# @yharness/client-ui-reference
 
 ## Summary
 

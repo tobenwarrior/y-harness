@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-file-upload",
+  "name": "@yharness/client-file-upload",
   "description": "Agent-scoped browser file upload, streaming intake, and staged receipt service",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/file-upload"
   },
   "type": "module",
@@ -40,7 +40,7 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-api-remotes"
+        "@yharness/api-remotes"
       ],
       "platform": "web",
       "immediately": true
@@ -63,20 +63,20 @@
   ],
   "dependencies": {
     "zod": "^4.4.3",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*"
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/brand": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-commands": "workspace:*",
-    "@deepseek-ai/dsh-util-crypto": "workspace:*",
-    "@deepseek-ai/dsh-api-remotes": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-attachment": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/commands": "workspace:*",
+    "@yharness/util-crypto": "workspace:*",
+    "@yharness/api-remotes": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/attachment": "workspace:*"
   }
 }

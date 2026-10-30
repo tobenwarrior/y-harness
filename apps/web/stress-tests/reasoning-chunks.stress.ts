@@ -8,8 +8,8 @@
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { expect, it, onTestFailed } from 'vitest'
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-agent-default-model'
+import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@yharness/llm'
+import type {} from '@yharness/agent-default-model'
 import { launchWebScaffold, watchConsole, type WebScaffold } from '../tests/scaffold.ts'
 import {
   connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDraft,
@@ -94,7 +94,7 @@ class ReasoningStressAdapter extends LlmAdapter {
       while (this.emitted < end) {
         const text = this.emitted === CHUNK_COUNT - 1
           ? `\n${MARKER}`
-          : this.emitted % 64 === 63 ? '推理\n' : '推理'
+          : this.emitted % 64 === 63 ? '\u{63A8}\u{7406}\n' : '\u{63A8}\u{7406}'
         parts.push(text)
         yield { type: 'reasoning-delta', index: 0, text }
         this.emitted += 1

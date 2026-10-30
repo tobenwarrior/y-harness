@@ -3,7 +3,7 @@ description: "Web boot kernel for the web GUI: two-stage boot of the client plug
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-client-web
+# @yharness/client-web
 
 ## Summary
 
@@ -80,7 +80,7 @@ The boot kernel delegates manifest entry creation to Client Modules so live grap
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`: Loader mount, one entry per manifest row, activation audit |
 | [`src/mount.ts`](src/mount.ts) | `mountClient`: selective retirement handoff, settled renderer mounting, and replacement recovery |
 | [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: spinner, per-entry status, failure rendering, and page-local retry |
-| [`src/boot-locales.ts`](src/boot-locales.ts) | Kernel-owned English and Chinese boot text, independent of replacing locale services |
+| [`src/boot-locales.ts`](src/boot-locales.ts) | Kernel-owned English boot text, independent of replacing locale services |
 | [`src/platform.ts`](src/platform.ts) | `PLATFORM_MODULES` / `PRELOADED_CLIENT_EXTERNALS`: the implicit external baseline |
 | [`src/seed.ts`](src/seed.ts) | Static module table handed to the loader at boot |
 | [`src/window-drag/regions.ts`](src/window-drag/regions.ts) | The darwin app-region composition model, and the interactive selector `base.css` subtracts |

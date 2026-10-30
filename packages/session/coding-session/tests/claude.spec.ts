@@ -1,6 +1,6 @@
 /** Installed-SDK read fixtures use original UUIDs and complete chronological pages. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type { CodingSessionNativeId } from '../src/types.ts'
 import { createClaudeCodingSessionProvider } from '../src/claude.ts'
 import type { ClaudeSessionSdk } from '../src/claude.ts'

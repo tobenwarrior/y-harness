@@ -1,19 +1,19 @@
 /** Authorized Host PDFs remain binary through Client reuse and disposal. */
-import type { OfficeToPdfGeneration } from '@deepseek-ai/dsh-office-to-pdf/types'
-import { Context } from '@deepseek-ai/cordis'
+import type { OfficeToPdfGeneration } from '@yharness/office-to-pdf/types'
+import { Context } from '@yharness/cordis'
 import { expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { ClientRemote } from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-office-to-pdf/remote'
-import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import type { SessionId } from '@yharness/session/types'
+import type { ClientRemote } from '@yharness/api-remotes/client'
+import type {} from '@yharness/office-to-pdf/remote'
+import { makeTranslate, RemoteError } from '@yharness/client-test-runtime'
 import { DocumentPreviewRegistry } from '../src/client/document/registry.ts'
 import { apply } from '../src/client/office/index.ts'
 import { officeFace } from '../src/client/office/face.ts'
 import { Config } from '../src/config.ts'
 import { OfficeBody, type OfficeBodyInjected } from '../src/client/office/OfficeBody.tsx'
 import type { OfficeStore } from '../src/client/office/store.ts'
-import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { en, zh } from '../src/client/office/locales.ts'
+import type { TabId } from '@yharness/client-ui-dockkit'
+import { en } from '../src/client/office/locales.ts'
 import { en as documentEn } from '../src/client/locales.ts'
 
 vi.mock('../src/client/office/face.ts', async (importOriginal) => {
@@ -91,7 +91,7 @@ async function harness(config: Partial<Config['office']> = {}, missing?: 'remote
 it.each(['remote', 'render', 'files'] as const)('keeps Word and PowerPoint registration and guidance when %s is absent', async (missing) => {
   const h = await harness(undefined, missing)
   try {
-    expect(h.locale.register).toHaveBeenCalledWith('sidebarOffice', { zh, en })
+    expect(h.locale.register).toHaveBeenCalledWith('sidebarOffice', { en })
     for (const path of ['a.DOC', 'b.DOCX', 'c.PPT', 'd.pptx']) {
       expect(h.registry.candidates(path)[0]!.binaryExtensions).toEqual(['doc', 'docx', 'ppt', 'pptx'])
       expect(h.registry.candidates(path)[0]!.title()).toBe(en.title)
@@ -105,7 +105,7 @@ it.each(['remote', 'render', 'files'] as const)('keeps Word and PowerPoint regis
   expect(h.registry.getSnapshot()).toEqual([])
   expect(h.removeLocale).toHaveBeenCalledOnce()
   expect(h.register).toHaveBeenCalledWith(expect.objectContaining({
-    name: 'sidebar.right.tab.document', key: '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office', locale: 'sidebarOffice',
+    name: 'sidebar.right.tab.document', key: '@yharness/client-ui-sidebar-documentpreview/office', locale: 'sidebarOffice',
   }), OfficeBody)
   expect(h.removeNotice).toHaveBeenCalledTimes(3)
 })

@@ -17,18 +17,18 @@
  * reads session state once at each operation boundary; executors and providers
  * remain session-free.
  *
- * @module @deepseek-ai/dsh-sandbox-policy
+ * @module @yharness/sandbox-policy
  */
 
 import { isAbsolute } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service } from '@yharness/cordis'
 import { z as zod } from 'zod'
-import z from '@deepseek-ai/schemastery'
-import type {} from '@deepseek-ai/dsh-agent'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import type { Session } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-projection'
-import type {} from '@deepseek-ai/dsh-system-prompt'
+import z from '@yharness/schemastery'
+import type {} from '@yharness/agent'
+import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
+import type { Session } from '@yharness/session'
+import type {} from '@yharness/session-projection'
+import type {} from '@yharness/system-prompt'
 
 export { SANDBOX_MODES, setSandboxMode } from './session-mode.ts'
 
@@ -55,7 +55,7 @@ function renderPolicyContext(policy: SandboxExecutionPolicy): string {
   }
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     sandboxPolicy: SandboxPolicyService
   }
@@ -94,7 +94,7 @@ const sandboxModeStateSchema = zod.union([
 ]).nullable()
 
 type SandboxModeState = zod.infer<typeof sandboxModeStateSchema>
-declare module '@deepseek-ai/dsh-session-projection/types' {
+declare module '@yharness/session-projection/types' {
   interface SessionProjectionStateMap {
     /** Last logged sandbox-mode override, or null before one (deployment default applies at resolve time). */
     sandboxMode: SandboxModeState

@@ -1,13 +1,13 @@
 ---
-description: "Localization for the web GUI: the zh/en preference, browser-derived fallback, typed namespace dictionaries, and the framework translation seat, for users and plugin authors."
+description: "Localization for the web GUI: the English preference, browser-derived fallback, typed namespace dictionaries, and the framework translation seat, for users and plugin authors."
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-locale
+# @yharness/client-locale
 
 ## Summary
 
-Use `dsh-client-locale` to switch the web GUI between the shipped English and Chinese locales or languages added by client plugins. User selections take effect immediately; loopback pages persist them in `$DSH_HOME/cordis.patch.yml`, while non-loopback pages keep them only for the current process. New browsers use the first supported language requested by the browser until an allowed stored preference arrives. Plugin authors add typed namespace dictionaries and translate through the public locale API; slot-rendered copy updates without a reload.
+Use `dsh-client-locale` to select English or a plugin-provided language in the web GUI. Selections apply immediately; loopback pages persist them in `$DSH_HOME/cordis.patch.yml`, while non-loopback pages keep them for the current process. Browser detection chooses the first supported language until a stored preference is available. Plugin authors register typed dictionaries and translate through the public locale API; slot-rendered copy updates without reload. Retired `zh` settings fall back to English until an external language pack re-registers that id.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Native shells may provide `__DSH_LOCALE__` with an asynchronous `read()` and an 
 
 ### Registering a dictionary
 
-Call `ctx.locale.register(ns, { zh, en })` with a namespace merged into `LocaleNamespaceMap`; the compiler checks every key against the namespace's typed key union and requires both shipped locales. Consumers translate through `ctx.locale.bind(ns)` or the framework-injected `t` seat. A dictionary registered after the UI is already mounted is picked up without a remount.
+Call `ctx.locale.register(ns, { en })` with a namespace merged into `LocaleNamespaceMap`; the compiler checks every key against the namespace's typed key union. Extra locale entries, including `zh`, remain accepted for source compatibility and external language packs. They become selectable only after a matching language definition is registered. Consumers translate through `ctx.locale.bind(ns)` or the framework-injected `t` seat. A dictionary registered after the UI is already mounted is picked up without a remount.
 
 ### Resolving package text
 
@@ -48,13 +48,13 @@ export const inject = ['locale']
 
 export function apply(ctx) {
   ctx.effect(
-    () => ctx.locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' }),
+    () => ctx.locale.addLanguage({ id: 'fr', label: 'Francais', fallback: 'en' }),
     'my-locale: language',
   )
   ctx.effect(
-    () => ctx.locale.register('common', 'ja', {
+    () => ctx.locale.register('common', 'fr', {
       cancel: 'キャンセル',
-      close: '閉じる',
+      close: 'Fermer',
     }),
     'my-locale: common dictionary',
   )
@@ -89,7 +89,7 @@ The provisional locale comes from the browser (`navigator.languages` matched by 
 
 Document language synchronization writes `<html lang>` only when its value changes; dictionary-only revisions leave the attribute untouched.
 
-The typed object form requires complete dictionaries for both built-in locales. The per-locale form lets language packs register each namespace independently. For each key, lookup walks the active language's declared fallback chain in the requested namespace, repeats that chain in `common`, then displays the key itself. Bound translate functions retain stable identity per namespace so they can ride inject surfaces without breaking memoization.
+The typed object form requires an English dictionary. The per-locale form lets language packs register each namespace independently. For each key, lookup walks the active language's declared fallback chain in the requested namespace, repeats that chain in `common`, then displays the key itself. Bound translate functions retain stable identity per namespace so they can ride inject surfaces without breaking memoization.
 
 ### Source map
 
@@ -98,7 +98,7 @@ The typed object form requires complete dictionaries for both built-in locales. 
 | [`src/client/index.ts`](src/client/index.ts) | `LocaleRuntime`, dictionary registry, Language row registration, `locale/change` event |
 | [`src/index.ts`](src/index.ts) | Node half: registers the `locale` settings namespace |
 | [`src/locale-settings.ts`](src/locale-settings.ts) | The durable schema for `locale.preference` |
-| [`src/locales/`](src/locales/) | The shipped `zh`/`en` dictionaries |
+| [`src/locales/`](src/locales/) | The shipped English dictionary and retired-locale compatibility exports |
 
 </details>
 

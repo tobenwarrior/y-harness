@@ -6,9 +6,9 @@
  * so the literal never rides a response.
  */
 
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import { SettingsForm, SettingsSecretField, SettingsValueField, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@yharness/client-ui-plugin-manager/client'
+import { SettingsForm, SettingsSecretField, SettingsValueField, Switch } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import { formLabels } from './locales.ts'
 import styles from './WebSearchCard.module.css'
 import type { WebSearchCardFace } from './web-search-card-controller.ts'

@@ -1,11 +1,11 @@
 /** Account route configuration: Messages settings, the model-listing endpoint, and per-model overrides. */
-import type { Volatile } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { isVolatile } from '@deepseek-ai/cosmokit'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import type { LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-import { catalogModelFields, deepSeekConfigFields, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
-import type { Config as ProtocolConfig, DeepSeekCatalogModel, Options as ProtocolOptions, ResolvedDeepSeekOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import type { Volatile } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { isVolatile } from '@yharness/cosmokit'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import type { LaunchEnvironmentSnapshot } from '@yharness/launch-environment'
+import { catalogModelFields, deepSeekConfigFields, resolveAdapterOptions } from '@yharness/llm-deepseek'
+import type { Config as ProtocolConfig, DeepSeekCatalogModel, Options as ProtocolOptions, ResolvedDeepSeekOptions } from '@yharness/llm-deepseek'
 
 /** Default deadline of one model-listing request and of a first-use wait. */
 export const DEFAULT_MODELS_TIMEOUT_MS = 5_000

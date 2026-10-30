@@ -35,10 +35,10 @@ describe('assembled max-tokens turn-end notice', () => {
     mountAssembledApp()
 
     const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
-    fireEvent.click(await within(tree).findByText('Fixture 历史会话'))
+    fireEvent.click(await within(tree).findByText('Fixture \u{5386}\u{53F2}\u{4F1A}\u{8BDD}'))
     // The truncated answer itself stays in the flow: the notice supplements the
     // partial output, it never replaces it.
-    await screen.findByText(/条目 3：这一条写到一半被/, undefined, { timeout: 10_000 })
+    await screen.findByText(/\u6761\u76EE 3：\u8FD9\u4E00\u6761\u5199\u5230\u4E00\u534A\u88AB/, undefined, { timeout: 10_000 })
     const row = await waitFor(() => {
       const found = [...document.querySelectorAll('[role="status"]')]
         .find(candidate => [...candidate.querySelectorAll('*')].some(el => hasClass(el, 'maxTokensTitle')))

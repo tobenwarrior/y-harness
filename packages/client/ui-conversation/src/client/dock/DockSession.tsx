@@ -1,7 +1,7 @@
 /** One docked pane: retains its Session for display and binds the scope for it. */
 import { useEffect, useMemo, type ReactNode } from 'react'
-import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionReference } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 
 /** Props of one docked Session body. */
 export interface DockSessionProps {

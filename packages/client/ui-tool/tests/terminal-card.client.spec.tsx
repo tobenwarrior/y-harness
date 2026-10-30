@@ -1,23 +1,23 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useDisclosure } from '@deepseek-ai/dsh-client-ui-chat/src/client/chat/use-disclosure.ts'
+import { useDisclosure } from '@yharness/client-ui-chat/src/client/chat/use-disclosure.ts'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { StartedToolCall, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { StartedToolCall, ToolResultNode } from '@yharness/client-ui-chat/client'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import {
   localizeTerminalCardModel, terminalCardModel, terminalFailed,
 } from '../src/client/tool/models/terminal-card-model.ts'
 import { GenericToolCard, type GenericToolCardProps } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { BashRow } from '../src/client/tool/toolviews/bash-sample.tsx'
-import { en, zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { en, zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { PartialArguments } from '@yharness/util-values'
 
 type BashRowProps = Parameters<typeof BashRow>[0]
 
@@ -209,7 +209,7 @@ describe('terminalCardModel', () => {
     }))!
     expect(model.copy).toEqual({ kind: 'terminal-send', text: '', sessionId: 'pty-3' })
     expect(localizeTerminalCardModel(model, t)).toMatchObject({
-      description: '终端 pty-3', card: { command: '（发送输入）' },
+      description: 'Terminal pty-3', card: { command: '(send input)' },
     })
     expect(localizeTerminalCardModel(model, enT)).toMatchObject({
       description: 'Terminal pty-3', card: { command: '(send input)' },
@@ -334,7 +334,7 @@ describe('chat row terminal body', () => {
     toggleRow(view)
     expect(view.getByText('line-5')).toBeTruthy()
     expect(view.getByText('line-19')).toBeTruthy()
-    expect(view.queryByText(/其余/)).toBeNull()
+    expect(view.queryByText(/more lines/)).toBeNull()
   })
 
   it('renders a multi-line command as one prompt row per line', () => {
@@ -370,14 +370,14 @@ describe('chat row terminal body', () => {
     const view = render(<GenericToolCard {...ownerProps(running())} />)
     toggleRow(view)
     expect(view.getByText('ls -la')).toBeTruthy()
-    expect(view.queryByText('复制')).toBeNull()
+    expect(view.queryByText('Copy')).toBeNull()
     // The card states its own run state: a running command reads as running
     // even though it has no output yet to distinguish it from an empty settle.
     expect(runStateOf(view.container)).toBe('ongoing')
   })
 
   it.each([
-    { locale: 'zh', translate: t, description: '终端 pty-3', command: '（发送输入）' },
+    { locale: 'legacy alias', translate: t, description: 'Terminal pty-3', command: '(send input)' },
     { locale: 'en', translate: enT, description: 'Terminal pty-3', command: '(send input)' },
   ])('renders terminal_send copy through the $locale locale', ({ translate, description, command }) => {
     const block = running({
@@ -435,7 +435,7 @@ describe('BashRow terminal card', () => {
     expect(view.queryByText(/a\.ts/)).toBeNull()
     fireEvent.click(view.container.querySelector('[data-expandable]')!)
     expect(view.getByText('a.ts  b.ts', RAW)).toBeTruthy()
-    expect(view.getByText('复制')).toBeTruthy()
+    expect(view.getByText('Copy')).toBeTruthy()
     // Collapse back in place: the summary row returns, the card unmounts.
     fireEvent.click(view.container.querySelector('[data-expandable]')!)
     expect(view.queryByText(/a\.ts/)).toBeNull()
@@ -492,8 +492,8 @@ describe('BashRow terminal card', () => {
     fireEvent.click(row)
 
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(view.getByText('输入')).toBeTruthy()
-    expect(view.getByText('输出')).toBeTruthy()
+    expect(view.getByText('IN')).toBeTruthy()
+    expect(view.getByText('OUT')).toBeTruthy()
     expect(view.getByText(/"command": "ls -la"/)).toBeTruthy()
     expect(view.container.querySelector('[class*="_ioText_"][data-error]')).toBeNull()
     expect(view.container.querySelectorAll('[class*="_ioText_"]')[1]?.textContent)
@@ -535,8 +535,8 @@ describe('BashRow terminal card', () => {
     fireEvent.click(row)
 
     expect(row.getAttribute('aria-expanded')).toBe('true')
-    expect(view.getByText('输入')).toBeTruthy()
-    expect(view.getByText('输出')).toBeTruthy()
+    expect(view.getByText('IN')).toBeTruthy()
+    expect(view.getByText('OUT')).toBeTruthy()
     expect(view.getByText(/"command": "ls -la"/)).toBeTruthy()
     expect(view.container.querySelector('[data-error]')?.textContent).toBe('Error: command aborted')
   })

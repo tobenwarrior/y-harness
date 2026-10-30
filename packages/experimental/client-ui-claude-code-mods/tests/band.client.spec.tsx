@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /** The band draws a serialized mod tree and sends a button press to the Host with the generation it saw. */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SurfaceSnapshot } from '@deepseek-ai/dsh-experimental-claude-code-mods/types'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { SurfaceSnapshot } from '@yharness/experimental-claude-code-mods/types'
 import { afterEach, expect, it, vi } from 'vitest'
 import { Band, type BandProps } from '../src/client/Band.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -95,13 +95,13 @@ it('presses a button with the generation it was drawn in and shows the failure o
   b.press.mockImplementationOnce(() => Promise.reject(new Error('gone')))
   fireEvent.click(screen.getByRole('button', { name: /Cancel/ }))
   await act(async () => { await Promise.resolve() })
-  expect(screen.getByRole('status').textContent).toBe('按钮操作失败：gone')
+  expect(screen.getByRole('status').textContent).toBe('The button failed: gone')
 
   // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- a press rejected with a bare value is the scenario.
   b.press.mockImplementationOnce(() => Promise.reject('text failure'))
   fireEvent.click(screen.getByRole('button', { name: /Cancel/ }))
   await act(async () => { await Promise.resolve() })
-  expect(screen.getByRole('status').textContent).toBe('按钮操作失败：text failure')
+  expect(screen.getByRole('status').textContent).toBe('The button failed: text failure')
 })
 
 it('disables every button while a press is in flight', async () => {

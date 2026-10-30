@@ -3,7 +3,7 @@ description: "The web GUI host's HTTP server: named-route and upgrade registrati
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-host-webserver
+# @yharness/host-webserver
 
 ## Summary
 
@@ -28,7 +28,7 @@ Compose the webserver as the HTTP transport of a browser-facing host, then let t
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-host-webserver'
+- name: '@yharness/host-webserver'
   config:
     host: 127.0.0.1
     port: 3000
@@ -87,7 +87,7 @@ Read these when the server contract is not enough: the subsystem reference, then
 - [HTTP server subsystem](../../../docs/subsystems/web-server.md) — routes, matching order, and the config the server accepts.
 - [SPA dist server](../frontend-static/README.md) — the shipped owner of the fallback seat.
 - [Web config-tree boot and transport layering](../../boot/app-boot/README.md) — why feature plugins own every route.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-host-webserver) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesshost-webserver) — every accepted config field and its source declaration.
 
 -----
 

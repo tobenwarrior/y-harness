@@ -7,13 +7,13 @@
  * ordering. Each provider owns its storage runtime; this suite pins the
  * equivalent observable behavior the seam requires.
  *
- * @module @deepseek-ai/dsh-session-persistence/tests/live-write-contract
+ * @module @yharness/session-persistence/tests/live-write-contract
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { Context } from '@deepseek-ai/cordis'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Context } from '@yharness/cordis'
+import { SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
 import type { SessionPersistence } from '../src/index.ts'
 
 /** One mounted backend under a session store, plus same-storage remount support. */

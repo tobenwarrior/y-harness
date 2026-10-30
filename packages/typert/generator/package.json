@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-typert-generator",
+  "name": "@yharness/typert-generator",
   "description": "TypeScript project analyzer and model-driven Typert artifact generator",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/typert/generator"
   },
   "type": "module",
@@ -36,12 +36,12 @@
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-tool-cordis": "workspace:*",
-    "@deepseek-ai/dsh-typert-registry": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
+    "@yharness/tool-cordis": "workspace:*",
+    "@yharness/typert-registry": "workspace:*",
+    "@yharness/cordis": "workspace:~",
     "zod": "^4.4.3"
   }
 }

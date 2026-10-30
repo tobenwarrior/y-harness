@@ -1,9 +1,9 @@
 /** Synthetic current-generation history and paced reply for browser measurements. */
-import { createAssistantMessage, createSystemMessage, createUserMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import { AssistantStreamAccumulator } from '@deepseek-ai/dsh-llm/assistant-stream'
-import { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-title'
+import { createAssistantMessage, createSystemMessage, createUserMessage, createToolResultMessage, ToolCallId } from '@yharness/llm'
+import type { StreamChunk } from '@yharness/llm'
+import { AssistantStreamAccumulator } from '@yharness/llm/assistant-stream'
+import { Session, SessionId, SESSION_FORMAT_VERSION } from '@yharness/session'
+import type {} from '@yharness/session-title'
 
 /** Closed turns in the browser history workload. */
 export const HISTORY_TURNS = 240
@@ -31,7 +31,7 @@ export function syntheticHistory(): string {
       turn, step: 1, message: createSystemMessage(''),
     }, { surfaceOp: 'append' })
     const user = session.append('user/message', createUserMessage({
-      content: [{ type: 'text', text: 'Review synthetic change ' + String(turn) + ': 检查增量渲染。 '.repeat(30) }],
+      content: [{ type: 'text', text: 'Review synthetic change ' + String(turn) + ': \u{68C0}\u{67E5}\u{589E}\u{91CF}\u{6E32}\u{67D3}。 '.repeat(30) }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     if (turn === 1) session.append('session/title', { title: TITLE, messageSeqs: [user.seq], source: { kind: 'fallback' } })

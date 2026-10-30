@@ -10,9 +10,9 @@
 import { useSyncExternalStore } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import { FEEDBACK_CATEGORIES } from '@deepseek-ai/dsh-command-feedback'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
+import { FEEDBACK_CATEGORIES } from '@yharness/command-feedback'
 import { FeedbackDialog } from '../src/client/FeedbackDialog.tsx'
 import type { FeedbackDialogState } from '../src/client/dialog.ts'
 import { en, zh } from '../src/client/locales.ts'
@@ -41,10 +41,10 @@ function mount(overrides: Partial<FeedbackDialogState> = {}) {
 }
 
 describe('FeedbackDialog', () => {
-  it('owns the conversation-log disclosure and stability category in both supported locales', () => {
-    expect(zh['dialog.hint']).toBe('填写详情以帮助我们改进体验，提交内容会包括当前对话的日志')
+  it('keeps the retired locale alias aligned with the English dictionary', () => {
+    expect(zh['dialog.hint']).toBe(en['dialog.hint'])
     expect(en['dialog.hint']).toBe('Add details to help us improve. Your submission will include the current conversation log.')
-    expect(zh['category.service-stability']).toBe('稳定性和速度')
+    expect(zh['category.service-stability']).toBe(en['category.service-stability'])
     expect(en['category.service-stability']).toBe('Stability and speed')
   })
 

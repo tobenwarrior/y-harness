@@ -3,7 +3,7 @@ description: "Sidebar shell plugin for the dsh web client: brand row, New Sessio
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-sidebar
+# @yharness/client-ui-sidebar
 
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 

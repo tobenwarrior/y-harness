@@ -3,11 +3,11 @@ description: "Preset-scoped reminder management tools (schedule_create, schedule
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-tool-schedule
+# @yharness/tool-schedule
 
 ## Summary
 
-Use `dsh-tool-schedule` to let an agent create, list, edit, and delete durable Host reminders through `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`. The package registers the four tools in the preset or Agent scope that mounts it, so the composition decides which agents receive them; `minimal` keeps none. Each call acts on the calling Agent's Session and only manages stored reminders — the Host `@deepseek-ai/dsh-schedule` service owns storage, scheduling, and delivery. Failures return one structured error code instead of storage details.
+Use `dsh-tool-schedule` to let an agent create, list, edit, and delete durable Host reminders through `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`. The package registers the four tools in the preset or Agent scope that mounts it, so the composition decides which agents receive them; `minimal` keeps none. Each call acts on the calling Agent's Session and only manages stored reminders — the Host `@yharness/schedule` service owns storage, scheduling, and delivery. Failures return one structured error code instead of storage details.
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ Add the row below to a preset's plugin list when that preset's agents should man
 
 ### When to choose it
 
-Choose it for any preset whose agents need to schedule future work in their own Session, and load `@deepseek-ai/dsh-schedule` in the same process: this package is only the model-facing consumer of that service. A preset that should stay capability-poor — `minimal` is the shipped example — omits the row, and its agents see no reminder tool at all.
+Choose it for any preset whose agents need to schedule future work in their own Session, and load `@yharness/schedule` in the same process: this package is only the model-facing consumer of that service. A preset that should stay capability-poor — `minimal` is the shipped example — omits the row, and its agents see no reminder tool at all.
 
 ### The four tools
 
@@ -39,7 +39,7 @@ Choose it for any preset whose agents need to schedule future work in their own 
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-tool-schedule'
+- name: '@yharness/tool-schedule'
 ```
 
 The package declares no `Config` fields. It injects `ctx.tools` and registers the four tools once the scope resolves the Host `ctx.schedule` service, so a composition that keeps that service off mounts no reminder tool. Each call acts on the Session of the Agent that dispatched it.
@@ -69,7 +69,7 @@ The plugin registers four `defineTool` definitions through the context that load
 
 - [Schedule service](../schedule/README.md) — the Host task store, runtime, and delivery behavior these tools manage.
 - [Schedule group map](../README.md) — the sibling packages in this group.
-- [Generated tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tool-schedule) — the exact four schemas the model receives.
+- [Generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-schedule) — the exact four schemas the model receives.
 - [Schedule subsystem](../../../docs/subsystems/schedule.md) — the `ctx.schedule` Cordis surface and stored types.
 - [Schedule user guide](../../../docs/user/guide/schedule.md) — the user-facing reminder workflow.
 
@@ -82,7 +82,7 @@ The plugin registers four `defineTool` definitions through the context that load
 
 #### What the model sees
 
-The generated [`schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-schedule) whenever this package is visible in the calling Agent's scope.
+The generated [`schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` schemas](../../../docs/tool-catalog.md#yharnesstool-schedule) whenever this package is visible in the calling Agent's scope.
 
 #### Token effect
 
@@ -114,7 +114,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 - **Every call needs a calling Agent** — a call dispatched without one returns `internal_error` rather than guessing a Session.
 - **Deletion does not retract a queued message** — a reminder the Host already delivered stays in the Session inbox after `schedule_delete`.
 - **Reminder timing belongs to the Host** — the tools expose no target-time correction, clock source, or delivery retry; those limits are the service's.
-- **Every tool refuses a delegated caller** — each of `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` reads the calling Agent's delegation depth before dispatch and returns `{ code: 'subagent_session', message: 'A delegated subagent cannot use reminders.' }` when that depth is above zero. The guard lives in this package and reads `delegationDepthOf` from `@deepseek-ai/dsh-subagent`, the same accounting the delegation cap enforces, so it holds under any preset that mounts the tools.
+- **Every tool refuses a delegated caller** — each of `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` reads the calling Agent's delegation depth before dispatch and returns `{ code: 'subagent_session', message: 'A delegated subagent cannot use reminders.' }` when that depth is above zero. The guard lives in this package and reads `delegationDepthOf` from `@yharness/subagent`, the same accounting the delegation cap enforces, so it holds under any preset that mounts the tools.
 - **A preset's delegation rows remove the four tools from a child's prompt** — the `standard`, `cordis`, and `ptc` presets declare `toolFilter.deny` for `schedule_create`, `schedule_delete`, `schedule_list`, and `schedule_update` on both the `tool-subagent` and `tool-subagent-fork` rows. The provider applies that filter through `ctx.tools.restrict()` in the child scope, so the four tools leave a delegated child's prompt; delegating further on that chain intersects the same restriction.
 - **A Session a delegated child owns cannot arm a reminder** — `ScheduleService.create` throws `ScheduleInputError` with code `subagent_session`, and `ScheduleService.update` returns the non-mutating `subagent_session` result, when the Session's Agent has a delegation depth above zero. The delegation depth is the accounting the delegation cap itself reads, and the persisted session header carries it across a cold resume. The rule sits in the service, not in these tools, so other in-process consumers reach it too: the Automation surface included. `schedule_list` and `schedule_delete` still serve that Session, so a reminder stored before this rule stays removable.
 

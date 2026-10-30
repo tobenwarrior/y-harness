@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useDisclosure } from '@deepseek-ai/dsh-client-ui-chat/src/client/chat/use-disclosure.ts'
+import { useDisclosure } from '@yharness/client-ui-chat/src/client/chat/use-disclosure.ts'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { StartedToolCall, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { StartedToolCall, ToolResultNode } from '@yharness/client-ui-chat/client'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import { CHAT_DIFF_MAX_LINES, diffCardModel } from '../src/client/tool/models/diff-card-model.ts'
 import { GenericToolCard, type GenericToolCardProps } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { FileMutationRow, fileMutationToolview } from '../src/client/tool/toolviews/file-mutation-row.tsx'
-import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { PartialArguments } from '@yharness/util-values'
 
 afterEach(cleanup)
 
@@ -232,7 +232,7 @@ describe('FileMutationRow diff card', () => {
     toggleRow(view)
     expect(view.container.querySelector('[data-diff]')).not.toBeNull()
     expect(view.getByText('hello fixture')).toBeTruthy()
-    expect(view.getByRole('button', { name: '复制' })).toBeTruthy()
+    expect(view.getByRole('button', { name: 'Copy' })).toBeTruthy()
   })
 
   it('the summary is a path link that opens the tool path through the host', () => {
@@ -310,7 +310,7 @@ describe('FileMutationRow diff card', () => {
     }))} />)
     expect(view.container.querySelector('[data-state="stopped"]')).not.toBeNull()
     expect(view.container.querySelector('[data-state="stopped"] svg')).not.toBeNull()
-    expect(view.getByText('已停止').className).toContain('visuallyHidden')
+    expect(view.getByText('Stopped').className).toContain('visuallyHidden')
     expect(view.container.querySelector('[class*="_stoppedSummary_"]')?.textContent).toBe('notes/demo.txt')
   })
 

@@ -10,6 +10,7 @@
  */
 
 import { basename } from 'node:path'
+import { decodeUnicodeEscapes } from './legacy-unicode.ts'
 
 /** Placeholder names supported by the committed translation prompt. */
 export const TRANSLATION_PROMPT_PLACEHOLDERS = ['source_lang', 'target_lang', 'terminology'] as const
@@ -60,11 +61,11 @@ export interface TranslationResponse {
 }
 
 const PLACEHOLDER = /{{([a-z_]+)}}/g
-const TEMPLATE_OPEN = '## 模板正文\n\n````text\n'
+const TEMPLATE_OPEN = '## \u{6A21}\u{677F}\u{6B63}\u{6587}\n\n````text\n'
 const TEMPLATE_CLOSE = '\n````'
 const RESPONSE_SECTIONS = ['translation', 'review', 'final'] as const
 const RESPONSE_DELIMITERS = new Set(RESPONSE_SECTIONS.flatMap(section => [`<${section}>`, `</${section}>`]))
-const LANGUAGE_SWITCHER = /^(?:English \| \[中文\]\(.+\)|\[English\]\(.+\) \| 中文)$/
+const LANGUAGE_SWITCHER = /^(?:English \| \[\u{4E2D}\u{6587}\]\(.+\)|\[English\]\(.+\) \| \u{4E2D}\u{6587})$/u
 
 interface TranslationFiles {
   targetFilename: string
@@ -83,30 +84,32 @@ function translationFiles(input: Pick<TranslationPromptInput, 'sourceFilename' |
   if (sourceIsChinese) {
     return {
       targetFilename: input.sourceFilename.replace(/\.zh\.md$/, '.md'),
-      targetSwitcher: `English | [中文](${input.sourceFilename})`,
+      targetSwitcher: `English | [\u{4E2D}\u{6587}](${input.sourceFilename})`,
     }
   }
   return {
     targetFilename: input.sourceFilename.replace(/\.md$/, '.zh.md'),
-    targetSwitcher: `[English](${input.sourceFilename}) | 中文`,
+    targetSwitcher: `[English](${input.sourceFilename}) | \u{4E2D}\u{6587}`,
   }
 }
 
 /** Extract the machine-consumed text fence from `translation-prompt.md`. */
 function extractTranslationPrompt(document: string): string {
-  const start = document.indexOf(TEMPLATE_OPEN)
-  if (start === -1) throw new Error('translation prompt: missing `## 模板正文` text fence')
+  const decodedDocument = decodeUnicodeEscapes(document)
+  const start = decodedDocument.indexOf(TEMPLATE_OPEN)
+  if (start === -1) throw new Error('translation prompt: missing template text fence')
   const contentStart = start + TEMPLATE_OPEN.length
-  const end = document.indexOf(TEMPLATE_CLOSE, contentStart)
+  const end = decodedDocument.indexOf(TEMPLATE_CLOSE, contentStart)
   if (end === -1) throw new Error('translation prompt: missing closing four-backtick fence')
-  return document.slice(contentStart, end)
+  return decodedDocument.slice(contentStart, end)
 }
 
 /** Read the placeholder names documented in the prompt's contract table. */
 export function documentedTranslationPromptPlaceholders(document: string): string[] {
-  const preambleEnd = document.indexOf(TEMPLATE_OPEN)
+  const decodedDocument = decodeUnicodeEscapes(document)
+  const preambleEnd = decodedDocument.indexOf(TEMPLATE_OPEN)
   if (preambleEnd === -1) throw new Error('translation prompt: missing template body')
-  return [...document.slice(0, preambleEnd).matchAll(/^\| `{{([a-z_]+)}}` \|/gm)].map(match => match[1] ?? '')
+  return [...decodedDocument.slice(0, preambleEnd).matchAll(/^\| `{{([a-z_]+)}}` \|/gm)].map(match => match[1] ?? '')
 }
 
 /** Render one system prompt from the checked-in template. */
@@ -116,7 +119,7 @@ export function renderTranslationPrompt(document: string, input: TranslationProm
   const values: Record<TranslationPromptPlaceholder, string> = {
     source_lang: input.sourceLanguage,
     target_lang: targetLanguage,
-    terminology: input.terminology,
+    terminology: decodeUnicodeEscapes(input.terminology),
   }
   const template = extractTranslationPrompt(document)
   const placeholderFreeTemplate = template.replace(PLACEHOLDER, '')

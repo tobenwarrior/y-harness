@@ -1,7 +1,7 @@
 /** Desktop-only update row for General Settings: status plus check and update actions. */
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { Button } from '@yharness/client-ui-primitives'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import { BUSY_PHASES, updateCopy } from './DesktopUpdateIndicator.tsx'
 import type { DesktopUpdateView } from '../types.ts'
 import css from './DesktopUpdateRow.module.css'

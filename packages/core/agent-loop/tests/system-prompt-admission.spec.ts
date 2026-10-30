@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { installModelSelection, type Agent, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import LlmRuntime, { createUserMessage, LlmError, type GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { toPiContext } from '@deepseek-ai/dsh-llm-pi-ai/src/context.ts'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import AgentRegistry, { installModelSelection, type Agent, type ModelSelectionRef } from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
+import LlmRuntime, { createUserMessage, LlmError, type GenerateOptions } from '@yharness/llm'
+import { toPiContext } from '@yharness/llm-pi-ai/src/context.ts'
+import SessionStore, { Session, SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime, { defineContentToolFixture } from '@yharness/tools'
 import { MockAdapter, textResponse } from './mock-adapter.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
-    'test-compaction': { kind: 'test-compaction' } & import('@deepseek-ai/dsh-llm').ContextFormed
+    'test-compaction': { kind: 'test-compaction' } & import('@yharness/llm').ContextFormed
   }
 }
 

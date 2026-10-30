@@ -1,19 +1,19 @@
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { Context, Service } from '@deepseek-ai/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import { Context, Service } from '@yharness/cordis'
 import { describe, expect, it, vi, type Mock } from 'vitest'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { UiConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { resolveSlotLabel, type HostObservable, type StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
-import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
-import { apply as applyLocale, inject as localeInject } from '@deepseek-ai/dsh-client-locale/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { UiConversation } from '@yharness/client-ui-conversation/client'
+import { resolveSlotLabel, type HostObservable, type StoredEntry } from '@yharness/client-ui-slots'
+import { stubConfigForm } from '@yharness/client-test-runtime'
+import { apply as applyLocale, inject as localeInject } from '@yharness/client-locale/client'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as applyNode } from '../src/index.ts'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { ScheduleId, ScheduleCatalogEntry, ScheduleUpdateRequest, ScheduleUpdateResult } from '@deepseek-ai/dsh-schedule/client'
-import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import type { SessionId } from '@yharness/session/types'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
+import type { ScheduleId, ScheduleCatalogEntry, ScheduleUpdateRequest, ScheduleUpdateResult } from '@yharness/schedule/client'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import { RemoteError } from '@yharness/client-test-runtime'
 import type { CatalogInjected } from '../src/client/catalog-source.ts'
 import { ScheduleDeleteToast, type DeleteToastSource } from '../src/client/DeleteToast.tsx'
 import { SCHEDULE_TASK_ID, SCHEDULE_TASK_KIND } from '../src/client/definition.ts'
@@ -425,7 +425,7 @@ describe('ui-schedule browser half', () => {
     ctx.locale.setLocale('en')
     expect(resolveSlotLabel(panel.options.label)).toBe('Automation tasks')
     ctx.locale.setLocale('zh')
-    expect(resolveSlotLabel(panel.options.label)).toBe('自动化任务')
+    expect(resolveSlotLabel(panel.options.label)).toBe('Automation tasks')
     const face = injectedFace(entry, undefined as never) as TaskManagerInjected
     const dispose = face.hooks.catalog.subscribe(vi.fn())
     try {

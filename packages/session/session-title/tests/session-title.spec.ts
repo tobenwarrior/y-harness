@@ -1,18 +1,18 @@
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import { Context } from '@deepseek-ai/cordis'
+import { createUserMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it } from 'vitest'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
 import SessionTitleService, {
   SessionTitleProviderId,
   fallbackSessionTitle,
   foldSessionTitle,
   normalizeSessionTitle,
   truncateTitleUtf8,
-} from '@deepseek-ai/dsh-session-title'
+} from '@yharness/session-title'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'seed': { kind: 'seed' } & ContextFormed
   }
@@ -33,7 +33,7 @@ describe('session title normalization', () => {
     expect(normalizeSessionTitle('\u001B]0;stolen\u0007  Hello\t brave\nnew world  ', 80))
       .toBe('Hello brave new world')
     expect(fallbackSessionTitle('one two three four', 3, 80)).toBe('one two three')
-    expect(fallbackSessionTitle('你好世界', 5, 7)).toBe('你好')
+    expect(fallbackSessionTitle('\u{4F60}\u{597D}\u{4E16}\u{754C}', 5, 7)).toBe('\u{4F60}\u{597D}')
     expect(Buffer.byteLength(fallbackSessionTitle('😀😀', 5, 5), 'utf8')).toBe(4)
   })
 

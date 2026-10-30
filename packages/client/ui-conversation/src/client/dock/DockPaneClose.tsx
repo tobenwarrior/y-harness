@@ -1,8 +1,8 @@
 /** Per-pane close control for the Session header utilities. */
 import type { ReactNode } from 'react'
-import { IconCloseOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconCloseOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import type { SessionDockState } from './store.ts'
 import css from './DockPaneClose.module.css'
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Inspector iframe keyboard listeners follow document loads and the effective command binding. */
 import { afterEach, expect, it, vi } from 'vitest'
-import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
+import type { ShortcutCatalogEntry } from '@yharness/client-shortcuts/client'
 import { bindInspectorKeyboard } from '../src/client/bottom/keyboard.ts'
 
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks() })

@@ -1,15 +1,15 @@
 /** Platform PKCE account provider; browser approval never bypasses local cancellation. */
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
-import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@yharness/host-webserver'
 import { arch, platform, release } from 'node:os'
 import { promises as streamPromises } from 'node:stream'
-import { Context, Service } from '@deepseek-ai/cordis'
-import Schema from '@deepseek-ai/schemastery'
+import { Context, Service } from '@yharness/cordis'
+import Schema from '@yharness/schemastery'
 import { z } from 'zod'
-import { DeepSeekAccount, installAccountTaskCancellation, mergePlatformCookies, platformClientHeaders, platformWireLocale, type AccountBonusBatch, type AccountBonusOrderId, type AccountClientMetadata, type AccountDetails, type AccountUserId, type AccountView, type PlatformSession, type SignInAttemptId, type SignInAttemptView } from '@deepseek-ai/dsh-deepseek-account'
-import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import type { AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+import { DeepSeekAccount, installAccountTaskCancellation, mergePlatformCookies, platformClientHeaders, platformWireLocale, type AccountBonusBatch, type AccountBonusOrderId, type AccountClientMetadata, type AccountDetails, type AccountUserId, type AccountView, type PlatformSession, type SignInAttemptId, type SignInAttemptView } from '@yharness/deepseek-account'
+import { credentialKey } from '@yharness/credentials'
+import type { AuthorizationSession } from '@yharness/authorization'
 import { profile, readAccountDetail, readUnnotifiedBonuses, sendBonusNotified } from './details.ts'
 import { revokeAccount, type LogoutRetryPolicy } from './logout.ts'
 import { AccountUnauthorizedError, PlatformAuthError, platformHeaders, platformOrigin, browserUrl, requestPlatform, initialization, exchange, loginOrigin } from './protocol.ts'
@@ -638,8 +638,7 @@ export class PlatformAccount extends DeepSeekAccount {
   private finishFailedCallback(attempt: Attempt): void {
     if (attempt.loginSource === 'web') {
       const nonce = randomBytes(16).toString('base64url')
-      const message = attempt.locale === 'zh_CN' ? '登录失败，请关闭此标签页并在原页面重试。'
-        : 'Sign-in failed. Close this tab and try again in the original tab.'
+      const message = 'Sign-in failed. Close this tab and try again in the original tab.'
       attempt.callback?.writeHead(200, {
         'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
         'content-security-policy': `default-src 'none'; script-src 'nonce-${nonce}'; frame-ancestors 'none'`,

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import type { SkillLibraryId } from '@deepseek-ai/dsh-skill-library/types'
+import type {} from '@yharness/client-locale/client'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import type { SkillLibraryId } from '@yharness/skill-library/types'
 import { SkillReviews, type SkillReviewsProps } from '../src/client/SkillReviews.tsx'
 import { en } from '../src/client/locales.ts'
 import { evidence, learningProposal, learningStatus } from './learning-fixtures.ts'

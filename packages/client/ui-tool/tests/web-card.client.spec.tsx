@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useDisclosure } from '@deepseek-ai/dsh-client-ui-chat/src/client/chat/use-disclosure.ts'
+import { useDisclosure } from '@yharness/client-ui-chat/src/client/chat/use-disclosure.ts'
 import { cleanup, fireEvent, render } from '@testing-library/react'
-import type { StartedToolCall, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { ToolCallOwnerProps } from '@deepseek-ai/dsh-client-ui-tool/client'
-import { IconGlobeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { StartedToolCall, ToolResultNode } from '@yharness/client-ui-chat/client'
+import type { ToolCallOwnerProps } from '@yharness/client-ui-tool/client'
+import { IconGlobeOutlineRegular } from '@yharness/client-ui-primitives'
 import { webCardModel, webFetchHref } from '../src/client/tool/models/web-card-model.ts'
 import { GenericToolCard } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { WebRow, webToolview } from '../src/client/tool/toolviews/web-row.tsx'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
+import { zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { PartialArguments } from '@yharness/util-values'
 
 afterEach(cleanup)
 
@@ -168,7 +168,7 @@ describe('chat row web body', () => {
     const globe = render(<IconGlobeOutlineRegular />).container.querySelector('svg')!.outerHTML
     const view = render(<WebRow {...rowProps(settledSearch(), 'web_search')} />)
     // Collapsed: the summary row alone, no card in the DOM.
-    expect(view.getByText('网页搜索')).toBeTruthy()
+    expect(view.getByText('Search')).toBeTruthy()
     expect(view.container.querySelector('svg')?.outerHTML).toBe(globe)
     expect(view.queryByText('Titled')).toBeNull()
     expect(view.container.querySelector('[data-web]')).toBeNull()
@@ -182,7 +182,7 @@ describe('chat row web body', () => {
 
   it('the WebRow expands to the fetch card, titled Fetch', () => {
     const view = render(<WebRow {...rowProps(settledFetch(), 'web_fetch')} />)
-    expect(view.getByText('网页获取')).toBeTruthy()
+    expect(view.getByText('Fetch')).toBeTruthy()
     expect(view.container.querySelector('[data-web]')).toBeNull()
     toggleRow(view)
     // The url shows as the card's link; scope to the card.
@@ -211,7 +211,7 @@ describe('chat row web body', () => {
 
   it('a running web call is the summary row alone, with nothing to expand', () => {
     const view = render(<WebRow {...rowProps(runningSearch(), 'web_search')} />)
-    expect(view.getByText('网页搜索')).toBeTruthy()
+    expect(view.getByText('Search')).toBeTruthy()
     expect(view.queryByText('Titled')).toBeNull()
     // No card material and no expandable body: clicking the row reveals nothing.
     expect(view.container.querySelector('[data-expandable]')).toBeNull()
@@ -222,7 +222,7 @@ describe('chat row web body', () => {
     const view = render(<WebRow {...rowProps(settledSearch({
       isError: true,
     }), 'web_search')} />)
-    expect(view.getByText('网页搜索')).toBeTruthy()
+    expect(view.getByText('Search')).toBeTruthy()
     expect(view.container.querySelector('[data-web]')).toBeNull()
     // The row reflects the error state so the summary line still reads as failed.
     expect(view.container.querySelector('[data-state="error"]')).not.toBeNull()
@@ -261,7 +261,7 @@ describe('web toolview registration', () => {
           return () => {}
         },
       },
-    } as unknown as import('@deepseek-ai/cordis').Context
+    } as unknown as import('@yharness/cordis').Context
     webToolview.apply(ctx)
     expect(registered.map(r => r.key)).toEqual(['web_search', 'web_fetch'])
     // Both keys claim the conversation locale seat ToolRow's body copy needs.

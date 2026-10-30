@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-user-approval",
-  "description": "User-approval seam (ctx.approval) for the DeepSeek Harness: one-shot permission decisions dispatched to composed answerers over the approval/request waterfall, fail-closed by default",
+  "name": "@yharness/user-approval",
+  "description": "User-approval seam (ctx.approval) for the Y Harness: one-shot permission decisions dispatched to composed answerers over the approval/request waterfall, fail-closed by default",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/interaction/user-approval"
   },
   "type": "module",
@@ -32,24 +32,24 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

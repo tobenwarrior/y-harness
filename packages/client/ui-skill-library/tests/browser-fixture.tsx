@@ -1,9 +1,9 @@
 /** Synthetic, in-memory browser fixture. It never contacts the Host or a native runtime. */
 import { useState, useSyncExternalStore, type ReactNode } from 'react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList } from '@deepseek-ai/dsh-skill-library/types'
+import { createSnapshotStore } from '@yharness/client-store'
+import type {} from '@yharness/client-locale/client'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList } from '@yharness/skill-library/types'
 import { SkillLibraryPage, type SkillLibraryPageProps } from '../src/client/SkillLibraryPage.tsx'
 import { createNavigationStore } from '../src/client/navigation-store.ts'
 import { createLearningState, type SkillLibraryState } from '../src/client/controller.ts'

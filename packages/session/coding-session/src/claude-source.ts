@@ -1,10 +1,10 @@
 /** Explicit original Claude read sources with a separate default-off conversation handoff. */
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
-import schema from '@deepseek-ai/schemastery'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import type { Context } from '@yharness/cordis'
+import schema from '@yharness/schemastery'
+import { scrubbedParentEnv } from '@yharness/subprocess'
+import type { SubprocessRuntime } from '@yharness/subprocess'
 import type {} from './index.ts'
 import { createClaudeSequentialWriter } from './claude-sequential.ts'
 import { z } from 'zod'
@@ -211,7 +211,7 @@ export function createClaudeSource(input: ClaudeSourceConfig, runtime: Pick<Subp
     releaseSnapshot: (selection, request) => releaseProvider.read(selection.nativeSessionId, request),
     releaseMessages: (selection, request) => messagesFor(selection.nativeSessionId, request, true),
   }, async (selection) => {
-    const { createClaudeSequentialExecutor } = await import('@deepseek-ai/dsh-subagent-claude-code')
+    const { createClaudeSequentialExecutor } = await import('@yharness/subagent-claude-code')
     return createClaudeSequentialExecutor(authority, {
       connectionId: source.id, profileRoot: source.profileRoot, directory: source.directory, shellHome: source.shellHome,
       nodePath: source.nodePath, processGraceMs: source.processGraceMs, ...sequentialOptions,

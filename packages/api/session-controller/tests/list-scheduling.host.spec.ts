@@ -1,10 +1,10 @@
 /** Event-loop fairness and cancellation of synchronous Session-list summaries. */
 
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
+import { Context } from '@yharness/cordis'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import SessionStore, { SessionId, type Session } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import type { SessionRecord } from '@yharness/session-query'
 import { resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'

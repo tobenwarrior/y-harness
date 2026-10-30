@@ -3,7 +3,7 @@ description: "Permission preset surfaces for the Web GUI: the General settings d
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-permission-presets
+# @yharness/client-ui-permission-presets
 
 ## Summary
 
@@ -27,7 +27,7 @@ Mount this plugin alongside the settings, commands, and conversation packages. G
 
 ### The picker
 
-A pick submits the `/permission <preset>` command line. The argument-bearing form (`/permission <preset>` typed directly) still switches directly; the decoration replaces only the bare invocation. The built-in labels are `Read Only`, `Ask for approval`, `Approve for me`, `Full access`, and `Auto review` in English and `仅可查看`, `请求批准`, `替我批准`, `完全权限`, and `Auto review` in Chinese. Explicit host labels remain unchanged, unknown kebab-case names render in title case, and `auto` carries an `EXP` badge plus an experimental-risk confirmation. `custom` is display state, never a target.
+A pick submits the `/permission <preset>` command line. The argument-bearing form (`/permission <preset>` typed directly) still switches directly; the decoration replaces only the bare invocation. The built-in English labels are `Read Only`, `Ask for approval`, `Approve for me`, `Full access`, and `Auto review`; localized deployments may provide equivalent labels. Explicit host labels remain unchanged, unknown kebab-case names render in title case, and `auto` carries an `EXP` badge plus an experimental-risk confirmation. `custom` is display state, never a target.
 
 When the live catalog withdraws a preset, the composer closes its pending confirmation and shows the Session's current value instead of an unavailable optimistic pick. Every catalog invalidation — the payload-free notification or a connection-generation change — closes an open slash picker or its confirmation without consuming the draft, while publishing the result of a read the picker waits for leaves it open with its failure and retry state; reopening reads the current catalog. A submitted command remains busy until its response settles.
 

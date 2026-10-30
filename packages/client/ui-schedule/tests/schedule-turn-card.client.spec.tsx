@@ -6,18 +6,18 @@
  */
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import {
   ConversationNodeAssembler, type ConversationLocationDataSource, type ConversationLocationDataStore,
   type ConversationMatch, type ConversationNodeDefinition, type ConversationStartMatch,
   type ConversationTimelineSnapshot, type ConversationTurnDataMap,
   type ConversationViewDefinition, type ConversationViewNode, type ToolResultNode, type TurnLocation,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionLiveEventEntry } from '@deepseek-ai/dsh-api-session-controller/client'
-import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { ScheduleCatalogEntry, ScheduleId } from '@deepseek-ai/dsh-schedule/client'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+} from '@yharness/client-ui-conversation/client'
+import type { SessionLiveEventEntry } from '@yharness/api-session-controller/client'
+import { createToolResultMessage, ToolCallId } from '@yharness/llm'
+import type { SessionEvent } from '@yharness/session/types'
+import type { ScheduleCatalogEntry, ScheduleId } from '@yharness/schedule/client'
+import { PartialArguments } from '@yharness/util-values'
 import { ScheduleTurnCard, type ScheduleTurnCardProps } from '../src/client/ScheduleTurnCard.tsx'
 import { zoneLabel } from '../src/client/schedule-format.ts'
 import {
@@ -553,8 +553,8 @@ describe('ScheduleTurnCard', () => {
     render(<ScheduleTurnCard {...cardProps(
       [settledBlock(weeklyTask)], openTaskDetail, makeTranslate(zh),
     )} />)
-    expect(screen.getByText(`每周一、三 09:00（${zoneLabel('Asia/Shanghai', makeTranslate(zh))}）`)).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: '打开任务详情：Check the deployment' }))
+    expect(screen.getByText(`Weekly on Mon, Wed at 09:00 (${zoneLabel('Asia/Shanghai', makeTranslate(zh))})`)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Open task details: Check the deployment' }))
     expect(openTaskDetail).toHaveBeenCalledExactlyOnceWith('task-weekly' as ScheduleId)
   })
 

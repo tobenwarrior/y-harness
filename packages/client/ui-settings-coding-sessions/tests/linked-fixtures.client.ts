@@ -1,7 +1,7 @@
 /** Synthetic cold destinations and lost-owner records; no real native/session work. */
-import { brandNumber, brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionLinkRecord, CodingSessionLinkSummary, CodingSessionDestinationRevision } from '@deepseek-ai/dsh-coding-session/types'
-import type { CodingSessionMirror } from '@deepseek-ai/dsh-coding-session/types'
+import { brandNumber, brandString } from '@yharness/brand'
+import type { CodingSessionLinkRecord, CodingSessionLinkSummary, CodingSessionDestinationRevision } from '@yharness/coding-session/types'
+import type { CodingSessionMirror } from '@yharness/coding-session/types'
 type SessionId = CodingSessionLinkRecord['destinationSessionId']
 import { fixtureApi, mirror, ok } from './fixtures.client.ts'
 export const coldId = brandString<SessionId>('cold-y')

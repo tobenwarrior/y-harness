@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { fireEvent } from '@testing-library/dom'
-import { Context } from '@deepseek-ai/cordis'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { Context } from '@yharness/cordis'
+import { LocaleRuntime } from '@yharness/client-locale/client'
 import { installKeyboard } from '../src/client/dom.ts'
 import ShortcutsService from '../src/client/index.ts'
 import { ShortcutRegistry } from '../src/client/registry.ts'
@@ -102,7 +102,7 @@ it('publishes fixed reservations and removes them with their owning registration
   expect(registry.definitions()).toEqual([{ id: 'response.stop', defaults: {}, fixed: [{ code: 'Escape', modifiers: [] }] }])
   expect(() => registry.registerFixed(command)).toThrow('Duplicate')
   expect(() => registry.register({ ...command, aliases: [], defaults: {}, regions: [], modals: [], resolve: () => ({ status: 'pass' }) })).toThrow('Duplicate')
-  label = '停止回复'; registry.refreshLabels()
+  label = '\u{505C}\u{6B62}\u{56DE}\u{590D}'; registry.refreshLabels()
   expect(registry.fixedCatalog.getSnapshot()[0]?.label).toBe(label)
   off(); off()
   expect(registry.fixedCatalog.getSnapshot()).toEqual([])

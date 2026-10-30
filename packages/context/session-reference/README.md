@@ -3,7 +3,7 @@ description: "Cross-session snapshot references and durable untrusted model cont
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-session-reference
+# @yharness/session-reference
 
 ## Summary
 
@@ -50,7 +50,7 @@ For a truncated reference, an optional spill backend saves the full captured tex
 
 The automatic budget is `max(65536, floor(contextWindow × 4 × referenceContextFraction))` bytes per source. Model context capacity is measured in tokens; four bytes per token is a sizing heuristic, not an exact token conversion. A missing route, LLM service, adapter, or capacity uses 64 KiB; other model metadata lookup errors and cancellation fail preparation.
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-session-reference) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesssession-reference) is the exhaustive source for every accepted field and its JSDoc.
 
 -----
 
@@ -99,7 +99,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [historical Session-reference spill reuse](../../../.agents/notes/archived/bug-fix/2026-09-05-session-reference-spill-reuse.md) — snapshot identity, omission notices, storage ownership, and alternatives.
 - [Session-query subsystem](../../../docs/subsystems/session-query.md) — the read service that supplies session surfaces.
 - [Context group map](../README.md) — sibling request-context packages.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-session-reference) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesssession-reference) — every accepted config field and its source declaration.
 
 -----
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ToolCallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { ToolCallId, type ContentBlock } from '@yharness/llm'
+import { SessionId } from '@yharness/session'
 import { createSettlementMessage } from '../src/continuation-messages.ts'
 
 const childId = SessionId('settled-child')
@@ -41,7 +41,7 @@ describe('continuable settlement content', () => {
 
   it('preserves text block order and bytes around omitted reasoning and tool calls', () => {
     const first: ContentBlock = { type: 'text', text: '  first\n' }
-    const second: ContentBlock = { type: 'text', text: '\n第二段  ' }
+    const second: ContentBlock = { type: 'text', text: '\n\u{7B2C}\u{4E8C}\u{6BB5}  ' }
     const message = createSettlementMessage(childId, {
       stopReason: 'completed',
       output: [reasoning, first, toolCall, second],

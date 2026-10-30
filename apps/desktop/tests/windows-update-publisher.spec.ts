@@ -58,7 +58,7 @@ describe('Windows update publisher', () => {
   afterAll(() => vi.unstubAllEnvs())
 
   it('preserves organization identity and escapes DN delimiters using the updater parser', async () => {
-    const subject = { CN: '测试 "Publisher", Inc;+\\', O: ' Leading=org ', C: 'CN', ST: 'State' }
+    const subject = { CN: 'Test "Publisher", Inc;+\\', O: ' Leading=org ', C: 'CN', ST: 'State' }
     await withCertificate(subject, async (file) => {
       expect(Object.fromEntries(parseDn(resolveWindowsUpdatePublisher(file))))
         .toEqual({ CN: subject.CN, O: subject.O, C: subject.C })
@@ -90,7 +90,7 @@ describe('Windows update publisher', () => {
         DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
       }, 'win32', 'x64')
       expect(config.win.forceCodeSigning).toBe(true)
-      expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}.${ext}')
+      expect(config.artifactName).toBe('y-harness-${version}-${os}-${arch}.${ext}')
       expect(typeof config.win.signtoolOptions.sign).toBe('function')
       const manager = new WindowsSignToolManager({ platformSpecificBuildOptions: config.win, getCscLink: () => undefined })
       expect(await manager.computedPublisherName.value).toEqual(['CN=Publisher,O=Company,C=CN'])

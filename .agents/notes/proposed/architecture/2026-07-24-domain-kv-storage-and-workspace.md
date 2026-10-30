@@ -19,11 +19,11 @@ Create the `packages/storage/` group — the `ctx.storage` hub (backend registry
 
 | Package | Path | ctx surface | This phase |
 | --- | --- | --- | --- |
-| `@deepseek-ai/dsh-storage` | `packages/storage/storage/` | `ctx.storage` (the hub) | ✓ |
-| `@deepseek-ai/dsh-storage-json` | `packages/storage/storage-json/` | registers backend `json` | ✓ |
-| `@deepseek-ai/dsh-storage-sqlite` | `packages/storage/storage-sqlite/` | registers backend `sqlite` | ✓ |
-| `@deepseek-ai/dsh-storage-domain` | `packages/storage/storage-domain/` | mounts `ctx.storage.domain` | ✓ |
-| `@deepseek-ai/dsh-workspace` | `packages/workspace/workspace/` | `ctx.workspaceRegistry` | ✓ |
+| `@yharness/storage` | `packages/storage/storage/` | `ctx.storage` (the hub) | ✓ |
+| `@yharness/storage-json` | `packages/storage/storage-json/` | registers backend `json` | ✓ |
+| `@yharness/storage-sqlite` | `packages/storage/storage-sqlite/` | registers backend `sqlite` | ✓ |
+| `@yharness/storage-domain` | `packages/storage/storage-domain/` | mounts `ctx.storage.domain` | ✓ |
+| `@yharness/workspace` | `packages/workspace/workspace/` | `ctx.workspaceRegistry` | ✓ |
 | `SessionPersistence.delete` extension + cascade orchestration | `packages/session/session-persistence*` | new method on the existing seam | ✗ future work (session side untouched this phase) |
 | `workspace.*` / `session.delete` RPC, GUI wiring, boot assembly | — | — | ✗ next phase |
 
@@ -197,7 +197,7 @@ export type WorkspaceId = Branded<'WorkspaceId'>
 export function WorkspaceId(id: string): WorkspaceId
 
 const workspaceRecord = z.object({
-  path: z.string(),                              // realpath，见下
+  path: z.string(),                              // realpath, see below
   title: z.string(),
   sessionIds: z.array(z.string().transform(SessionId)),
   createdAt: z.string(),                         // ISO
@@ -216,7 +216,7 @@ export interface Workspace {
   readonly id: WorkspaceId
   readonly path: string
   readonly title: string
-  readonly sessionIds: readonly SessionId[]      // 唯一真相且有序：数组序即展示序
+  readonly sessionIds: readonly SessionId[]      // sole source of truth and ordered: array order is display order
   setTitle(title: string): Promise<void>
   /** Record a session under this workspace (idempotent). Rejects when the session
    *  header's cwd (realpath) differs from this workspace's path. */
@@ -229,12 +229,12 @@ export interface Workspace {
 export class WorkspaceRegistry extends Service {
   constructor(ctx: Context)                      // super(ctx, 'workspaceRegistry')
   // start(): this.domain = await ctx.storage.domain.open(workspaceDomainSpec)
-  //          实体缓存 Map<WorkspaceId, WorkspaceEntity> 重建
-  create(path: string, title?: string): Promise<Workspace>   // realpath 后撞已有 → reject
+  //          rebuild entity cache Map<WorkspaceId, WorkspaceEntity>
+  create(path: string, title?: string): Promise<Workspace>   // reject after realpath collides with an existing entry
   get(id: WorkspaceId): Workspace | undefined
   list(): Workspace[]
-  resolveByPath(path: string): Promise<Workspace | undefined> // 同 realpath 口径，故 async
-  delete(id: WorkspaceId): Promise<boolean>      // 只删注册记录；目录与 session 日志保留
+  resolveByPath(path: string): Promise<Workspace | undefined> // same realpath semantics, therefore async
+  delete(id: WorkspaceId): Promise<boolean>      // delete only the registry record; retain the directory and session logs
 }
 ```
 

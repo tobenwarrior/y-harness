@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SubprocessOutcome, SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
-import type { TerminalReadRequest } from '@deepseek-ai/dsh-terminal'
+import type { SubprocessOutcome, SubprocessTerminalHandle } from '@yharness/subprocess'
+import type { TerminalReadRequest } from '@yharness/terminal'
 import type { ResolvedConfig } from '../src/config.ts'
 import { LocalPtySession } from '../src/session.ts'
 
@@ -135,8 +135,8 @@ describe('LocalPtySession incremental output compatibility', () => {
       text: 'a'.repeat(limit), totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: false,
     })
 
-    producer.emit('界😀TAIL')
-    const retained = `${'a'.repeat(limit - 11)}界😀TAIL`
+    producer.emit('\u{754C}😀TAIL')
+    const retained = `${'a'.repeat(limit - 11)}\u{754C}😀TAIL`
     expect(session.read({})).toEqual({
       text: retained, totalLines: 1, lineBegin: 0, lineEnd: 1, truncated: true,
     })
@@ -173,13 +173,13 @@ describe('LocalPtySession incremental output compatibility', () => {
     const { producer, session } = fixture({ scrollbackMaxBytes: 11, maxReadBytes: 11 })
     const operation = session.startSend({ text: '', submit: false })
     producer.emit('abc')
-    const encoded = Buffer.from('界😀éz')
+    const encoded = Buffer.from('\u{754C}😀éz')
     producer.emit(encoded.subarray(0, 5))
     producer.emit(encoded.subarray(5, 7))
     producer.emit(encoded.subarray(7))
-    expect(session.read({}).text).toBe('c界😀éz')
-    expect(operation.readOutput()).toEqual({ delta: 'c界😀éz', truncated: true })
-    producer.emit('界😀'.repeat(1000) + 'éEND')
+    expect(session.read({}).text).toBe('c\u{754C}😀éz')
+    expect(operation.readOutput()).toEqual({ delta: 'c\u{754C}😀éz', truncated: true })
+    producer.emit('\u{754C}😀'.repeat(1000) + 'éEND')
     expect(session.read({}).text).toBe('😀éEND')
     expect(operation.readOutput()).toEqual({ delta: '😀éEND', truncated: true })
     expect(operation.readOutput()).toEqual({ delta: '', truncated: false })
@@ -210,7 +210,7 @@ describe('LocalPtySession incremental output compatibility', () => {
       const scrollback = new ReferenceBuffer(scrollbackMaxBytes, scrollbackLines)
       const output = new ReferenceBuffer(maxReadBytes)
       const operation = session.startSend({ text: '', submit: false })
-      const chunks = deterministicChunks(['a', 'bc', '\n', '\n\n', '界', '😀', 'éz', '', 'long line\nend\n'], 120)
+      const chunks = deterministicChunks(['a', 'bc', '\n', '\n\n', '\u{754C}', '😀', 'éz', '', 'long line\nend\n'], 120)
       for (const [index, chunk] of chunks.entries()) {
         producer.emit(chunk)
         scrollback.append(chunk)
@@ -278,7 +278,7 @@ describe('LocalPtySession incremental output compatibility', () => {
     const chunks = [
       '\ud83d', '\ude00', 'x', '\ud83d', '', '\ude00', '\n', '\ud800', 'abc', '\udfff',
       'prefix'.repeat(20) + '\ud800', '\udfff', '\n\n\n',
-      ...deterministicChunks(['a', '\ud800', '\udfff', '\ud83d\ude00', '\n', 'é', '界', '', '\n\n'], 150),
+      ...deterministicChunks(['a', '\ud800', '\udfff', '\ud83d\ude00', '\n', 'é', '\u{754C}', '', '\n\n'], 150),
     ]
     for (const [index, chunk] of chunks.entries()) {
       buffer.append(chunk)

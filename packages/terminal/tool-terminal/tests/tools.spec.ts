@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { renderToolsSdk } from '@deepseek-ai/dsh-tools'
-import type { ToolSdkSchema } from '@deepseek-ai/dsh-tools/src/ts-types.ts'
-import TerminalSessionService, { TerminalSessionId } from '@deepseek-ai/dsh-terminal'
-import type { TerminalBackend, TerminalBackendSession, TerminalSendOperation, TerminalSendRead, TerminalSendRequest, TerminalSessionStatus, TerminalSignal } from '@deepseek-ai/dsh-terminal'
-import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
-import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
-import * as ToolPty from '@deepseek-ai/dsh-tool-terminal'
+import { Context } from '@yharness/cordis'
+import { ToolCallId } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
+import AgentRegistry from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime, { renderToolsSdk } from '@yharness/tools'
+import type { ToolSdkSchema } from '@yharness/tools/src/ts-types.ts'
+import TerminalSessionService, { TerminalSessionId } from '@yharness/terminal'
+import type { TerminalBackend, TerminalBackendSession, TerminalSendOperation, TerminalSendRead, TerminalSendRequest, TerminalSessionStatus, TerminalSignal } from '@yharness/terminal'
+import LocalJobRegistry from '@yharness/jobs-local'
+import * as ToolJobs from '@yharness/tool-jobs'
+import * as ToolPty from '@yharness/tool-terminal'
 import { sendSource } from '../src/background.ts'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { unsupportedInbox } from '@yharness/agent-loop-testkit'
 
 async function fakeAgent(ctx: Context, rawId: string): Promise<Agent> {
   const scope = ctx.plugin(() => {})
@@ -410,12 +410,12 @@ describe('tool-terminal foreground API', () => {
 
 describe('sendSource', () => {
   it('reads nothing before the send starts and counts delivered bytes afterwards', () => {
-    const reads: TerminalSendRead[] = [{ delta: '界', truncated: false }, { delta: '', truncated: true }]
+    const reads: TerminalSendRead[] = [{ delta: '\u{754C}', truncated: false }, { delta: '', truncated: true }]
     const send: { operation?: TerminalSendOperation } = {}
     const source = sendSource(() => send.operation)
     expect(source.read(0)).toEqual({ text: '', nextOffset: 0, lossy: false })
     send.operation = { readOutput: () => reads.shift()!, cancel: () => false, done: new Promise(() => {}) }
-    expect(source.read(0)).toEqual({ text: '界', nextOffset: 3, lossy: false })
+    expect(source.read(0)).toEqual({ text: '\u{754C}', nextOffset: 3, lossy: false })
     // A truncated delta carries the same marker the foreground read shows.
     expect(source.read(3)).toEqual({ text: '[output truncated]', nextOffset: 21, lossy: false })
   })
@@ -436,11 +436,11 @@ describe('tool-terminal task integration', () => {
   it('bounds foreground and background results after terminal and task metadata', async () => {
     const { ctx, agent, stub } = await setup(true, { maxResultBytes: 64 })
     await call(ctx, 'terminal_open', { type: 'stub' }, agent)
-    stub.sessions[0]!.viewport = '界'.repeat(100)
+    stub.sessions[0]!.viewport = '\u{754C}'.repeat(100)
     const foreground = await call(ctx, 'terminal_send', { sessionId: 'pty-1', text: 'foreground' }, agent)
     expect(Buffer.byteLength(text(foreground))).toBeLessThanOrEqual(64)
 
-    stub.sessions[0]!.delta = '界'.repeat(100)
+    stub.sessions[0]!.delta = '\u{754C}'.repeat(100)
     stub.sessions[0]!.deltaTruncated = true
     await call(ctx, 'terminal_send', { sessionId: 'pty-1', text: 'background', run_in_background: true }, agent)
     const background = await call(ctx, 'job_output', { job_id: 'pty-send-1', wait: true }, agent)

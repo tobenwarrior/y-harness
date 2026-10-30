@@ -8,15 +8,15 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { runInNewContext } from 'node:vm'
-import { Context, FiberState, type Fiber } from '@deepseek-ai/cordis'
+import { Context, FiberState, type Fiber } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderIndexInjections, type WebServer, type WebRoute } from '@deepseek-ai/dsh-host-webserver'
+import { renderIndexInjections, type WebServer, type WebRoute } from '@yharness/host-webserver'
 import * as modulesClient from '../src/client/index.ts'
 import { ClientModuleRegistry, bootInjections, orderByModuleGraph } from '../src/index.ts'
 import type { ClientModuleLoaderTarget, WebBootEntry, WebBootGraph } from '../src/client/index.ts'
 
-const MODULES_ID = '@deepseek-ai/dsh-client-modules'
-const UI_RENDERER_ID = '@deepseek-ai/dsh-client-ui-renderer'
+const MODULES_ID = '@yharness/client-modules'
+const UI_RENDERER_ID = '@yharness/client-ui-renderer'
 
 // Graph rows and batch descriptors carry app-directory-relative references;
 // a host request reaches the backend route once the document's directory
@@ -1093,7 +1093,7 @@ describe('module graph order', () => {
 
   it('leaves a request no row answers to the static assembly channel', () => {
     expect(ids(orderByModuleGraph([
-      entry('consumer', { external: ['@deepseek-ai/cordis'] }),
+      entry('consumer', { external: ['@yharness/cordis'] }),
       entry('other'),
     ]))).toEqual(['consumer', 'other'])
   })

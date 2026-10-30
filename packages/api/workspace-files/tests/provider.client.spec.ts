@@ -1,8 +1,8 @@
 /** File-provider metadata reads, target subscriptions, failures, and cancellation. */
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import { absoluteFileAddress, sessionFileAddress } from '@deepseek-ai/dsh-util-workspace-path'
+import { RemoteError } from '@yharness/client-test-runtime'
+import type { SessionId } from '@yharness/session/types'
+import type { RemoteFailure, RemoteResult } from '@yharness/typert-protocol'
+import { absoluteFileAddress, sessionFileAddress } from '@yharness/util-workspace-path'
 import type { WorkspaceFileStat } from '../src/types.ts'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { ChangeFeed } from '../src/client/change-feed.ts'

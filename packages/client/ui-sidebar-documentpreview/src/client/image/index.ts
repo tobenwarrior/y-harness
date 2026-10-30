@@ -1,16 +1,16 @@
 /** Builtin image metadata and keyed document-body registration. */
-import type { Context } from '@deepseek-ai/cordis'
-import type { BoundActions } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Context } from '@yharness/cordis'
+import type { BoundActions } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
 import type {} from '../index.ts'
 import type { DocumentPreviewDefinition } from '../document/registry.ts'
 import { retainDocumentTabs } from '../document/tab-lifetime.ts'
 import { createZoomStore, type ZoomInjected, type ZoomStore } from '../zoom/store.ts'
 import { ImageBody } from './ImageBody.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 /** Image implementation identity, shared by metadata and the keyed slot. */
-export const IMAGE_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/image'
+export const IMAGE_BODY_ID = '@yharness/client-ui-sidebar-documentpreview/image'
 
 /** File suffixes rendered by the builtin image body. */
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'] as const
@@ -41,7 +41,7 @@ export function imageBodyDefinition(title: () => string): DocumentPreviewDefinit
  */
 export function apply(ctx: Context): void {
   const t = ctx.locale.bind('sidebarImage')
-  ctx.effect(() => ctx.locale.register('sidebarImage', { zh, en }), 'document-image: dictionaries')
+  ctx.effect(() => ctx.locale.register('sidebarImage', { en }), 'document-image: dictionaries')
   ctx.effect(() => ctx.documentPreviews.register(imageBodyDefinition(() => t('title'))), 'document-image: metadata')
   const store = createZoomStore()
   const retainTab = retainDocumentTabs(ctx)

@@ -1,6 +1,6 @@
 /** Turn and Step start/end ranges add ancestry without inventing or reordering log records. */
 
-import type { SessionEventLike } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionEventLike } from '@yharness/api-session-controller/client'
 import type { InspectorRow } from '../table-model.ts'
 
 /** One ordered pass over the loaded log; missing starts do not create synthetic headers. */

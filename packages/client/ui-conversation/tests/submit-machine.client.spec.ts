@@ -203,12 +203,12 @@ describe('submit-machine: claimed lifecycle', () => {
   })
 
   it.each([
-    ['goal', '/goal '], ['goal', '/目标 '], ['plan', '/plan '], ['plan', '/计划 '],
-    ['feedback', '/feedback '], ['feedback', '/反馈 '],
+    ['goal', '/goal '], ['goal', '/\u{76EE}\u{6807} '], ['plan', '/plan '], ['plan', '/\u{8BA1}\u{5212} '],
+    ['feedback', '/feedback '], ['feedback', '/\u{53CD}\u{9988} '],
   ])('retains %s as %s without its separator and submits an empty argument', (name, token) => {
     const m = new SubmitMachine()
     m.dispatch({ type: 'claim', claim: { ...claimOf(name), token } })
-    for (const draft of [token + '这是目标', token, token.trimEnd(), token, token.trimEnd()]) {
+    for (const draft of [token + '\u{8FD9}\u{662F}\u{76EE}\u{6807}', token, token.trimEnd(), token, token.trimEnd()]) {
       m.dispatch({ type: 'draft-changed', draft })
       expect(m.state.phase).toBe('claimed')
       expect(m.state.claim?.name).toBe(name)
@@ -221,9 +221,9 @@ describe('submit-machine: claimed lifecycle', () => {
     expect(m.state.claim?.name).toBe(name)
   })
 
-  it.each(['/目', '/目标x', '/目标/文件', '', '看看 /目标'])('releases a goal claim for %j', (draft) => {
+  it.each(['/\u{76EE}', '/\u{76EE}\u{6807}x', '/\u{76EE}\u{6807}/\u{6587}\u{4EF6}', '', '\u{770B}\u{770B} /\u{76EE}\u{6807}'])('releases a goal claim for %j', (draft) => {
     const m = new SubmitMachine()
-    m.dispatch({ type: 'claim', claim: { ...claimOf('goal'), token: '/目标 ' } })
+    m.dispatch({ type: 'claim', claim: { ...claimOf('goal'), token: '/\u{76EE}\u{6807} ' } })
     m.dispatch({ type: 'draft-changed', draft })
     expect(m.state.phase).toBe('plain')
     expect(m.state.claim).toBeUndefined()

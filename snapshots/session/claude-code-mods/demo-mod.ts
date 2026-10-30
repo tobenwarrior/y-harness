@@ -1,4 +1,4 @@
-import { defineMod } from '@deepseek-ai/dsh-experimental-claude-code-mods'
+import { defineMod } from '@yharness/experimental-claude-code-mods'
 
 /**
  * A mod whose effects reach the Session log: it adds a context line after

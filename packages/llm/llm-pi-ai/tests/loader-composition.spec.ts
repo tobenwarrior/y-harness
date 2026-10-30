@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@deepseek-ai/dsh-llm'
-import AuthorizationService from '@deepseek-ai/dsh-authorization'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@yharness/llm'
+import AuthorizationService from '@yharness/authorization'
+import LocalCredentialProvider from '@yharness/credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
-import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
+import * as LlmPiAi from '@yharness/llm-pi-ai'
 import { assemble } from './assemble.ts'
 import { clearCodexLaunchEnvironment } from './codex-launch-environment.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
@@ -50,14 +50,14 @@ async function loadComposition(): Promise<{ ctx: Context; settingsPath: string }
     '- id: llm',
     "  name: 'test-llm-service'",
     '- id: credentials',
-    "  name: '@deepseek-ai/dsh-credentials-local'",
+    "  name: '@yharness/credentials-local'",
     '  config:',
     `    path: ${JSON.stringify(join(root, '.credentials.yaml'))}`,
     '    debounceMs: 10',
     '- id: authorization',
     "  name: 'test-authorization'",
     '- id: llm-pi-ai',
-    "  name: '@deepseek-ai/dsh-llm-pi-ai'",
+    "  name: '@yharness/llm-pi-ai'",
     '',
   ].join('\n'))
 
@@ -69,8 +69,8 @@ async function loadComposition(): Promise<{ ctx: Context; settingsPath: string }
   const modules = new Map<string, unknown>([
     ['test-llm-service', LlmRuntime],
     ['test-authorization', AuthorizationService],
-    ['@deepseek-ai/dsh-credentials-local', LocalCredentialProvider],
-    ['@deepseek-ai/dsh-llm-pi-ai', LlmPiAi],
+    ['@yharness/credentials-local', LocalCredentialProvider],
+    ['@yharness/llm-pi-ai', LlmPiAi],
   ])
   const internal: ModuleLoaderV2 = {
     version: 'v2',

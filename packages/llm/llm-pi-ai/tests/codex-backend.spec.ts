@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import type { AttachmentStore } from '@yharness/attachment'
 import { parseCodexModels, declineCodexRequest, projectCodexHistory, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
-import { ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
-import type { SkillLearningNativeItem } from '@deepseek-ai/dsh-skill-library/types'
+import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 import { codexNativeItem } from '../src/codex-native-evidence.ts'
 
 const catalog = { data: [{ id: 'sol-id', model: 'gpt-6.1-sol', displayName: 'Sol', description: 'Native', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'max', description: 'Max' }, { reasoningEffort: 'ultra', description: 'Delegation' }], defaultReasoningEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }] }, { id: 'hidden', model: 'hidden', hidden: true }] }
-function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined, observeNativeItem?: (options: import('@deepseek-ai/dsh-llm').GenerateOptions, item: SkillLearningNativeItem) => void, nativeEvidenceMaxItems?: number, observationScope: { cwd?: string; projectRoot?: string | null } = {}) {
+function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined, observeNativeItem?: (options: import('@yharness/llm').GenerateOptions, item: SkillLearningNativeItem) => void, nativeEvidenceMaxItems?: number, observationScope: { cwd?: string; projectRoot?: string | null } = {}) {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
   const request = vi.fn(async (method: string, _params: object): Promise<unknown> => {
     if (method === 'initialize') return { userAgent: 'codex' }

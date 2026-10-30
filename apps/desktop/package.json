@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-desktop",
+  "name": "@yharness/desktop",
   "description": "Electron desktop shell for a bundled dsh runtime and external plugins",
   "version": "0.2.1-rc.2",
   "private": true,
@@ -33,6 +33,7 @@
     "package:win:x64": "tsx scripts/package-target.ts win-x64",
     "package:win:x64:unsigned": "tsx scripts/package-target.ts win-x64 --unsigned",
     "package:win:x64:dir": "tsx scripts/package-target.ts win-x64 --dir",
+    "publish:github-release": "tsx scripts/publish-github-release.ts",
     "upload:mac:arm64": "tsx scripts/upload-target.ts mac-arm64",
     "upload:mac:x64": "tsx scripts/upload-target.ts mac-x64",
     "upload:win:x64": "tsx scripts/upload-target.ts win-x64",
@@ -44,15 +45,15 @@
     "electron-updater": "^6.8.9",
     "semver": "^7.8.5",
     "ws": "^8.21.0",
-    "@deepseek-ai/dsh-api-gateway": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/api-gateway": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-app-boot": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-settings-general": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-sidebar-browser": "workspace:*",
-    "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/node-addon-system": "workspace:~",
+    "@yharness/app-boot": "workspace:*",
+    "@yharness/client-ui-settings-general": "workspace:*",
+    "@yharness/client-ui-sidebar-browser": "workspace:*",
+    "@yharness/home-paths": "workspace:*",
+    "@yharness/node-addon-system": "workspace:~",
     "@electron/get": "^5.1.0",
     "@electron/notarize": "2.5.0",
     "@types/js-yaml": "^4.0.9",
@@ -68,17 +69,17 @@
     "pnpm": "11.25.0",
     "sharp": "^0.35.3",
     "typescript": "^6.0.3",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
+    "@yharness/deepseek-account": "workspace:*",
     "@types/ws": "^8.18.1",
-    "@deepseek-ai/dsh-client-ui-primitives": "workspace:*",
+    "@yharness/client-ui-primitives": "workspace:*",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
     "vite": "^6.0.0",
-    "@deepseek-ai/dsh-client-ui-theme": "workspace:*",
-    "@deepseek-ai/dsh-client-shortcuts": "workspace:*",
-    "@deepseek-ai/dsh-atomic-write": "workspace:*",
-    "@deepseek-ai/dsh-client-product-analytics": "workspace:*"
+    "@yharness/client-ui-theme": "workspace:*",
+    "@yharness/client-shortcuts": "workspace:*",
+    "@yharness/atomic-write": "workspace:*",
+    "@yharness/client-product-analytics": "workspace:*"
   }
 }

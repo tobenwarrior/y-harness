@@ -1,5 +1,5 @@
-Y harness
-Y harness
+Y Harness
+Y Harness
 Add an API key to get started
 Configure official DeepSeek models to start using Y Harness
 Enter API key [password]

@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import OTel from '../src/index.ts'
 import { Agent, createServer, type IncomingHttpHeaders } from 'node:http'
 import { once } from 'node:events'
@@ -7,7 +7,7 @@ import { gunzipSync } from 'node:zlib'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base'
 import { JsonLogsSerializer } from '@opentelemetry/otlp-transformer'
-import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq } from '@yharness/session'
 import { SESSION_LOG_MAX_REQUEST_BYTES, type SessionLogRecord, type SessionLogOptions } from '../src/session-log.ts'
 
 interface Capture {
@@ -86,7 +86,7 @@ function parseContent(content: string): unknown {
 function reporter(endpoint: string, overrides: Partial<SessionLogOptions> = {}) {
   const onFailure = vi.fn()
   const sender = ctx.otel.createSessionLogReporter({
-    scope: { name: '@deepseek-ai/dsh-session-telemetry-otel', version: (createRequire(import.meta.url)('../package.json') as { version: string }).version },
+    scope: { name: '@yharness/session-telemetry-otel', version: (createRequire(import.meta.url)('../package.json') as { version: string }).version },
     exporter: { url: endpoint, timeoutMillis: 1000 }, resourceAttributes: { 'service.name': 'session-test' },
     processor: { scheduledDelayMillis: 60000 }, onFailure, ...overrides,
   })
@@ -99,7 +99,7 @@ it('preserves full nested events without truncation or ambient headers and retai
   vi.stubEnv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=Bearer%20unrelated')
   const target = await collector()
   const { sender } = reporter(target.endpoint)
-  const record = sessionRecord('中文\n"quote"\\path 😀')
+  const record = sessionRecord('\u{4E2D}\u{6587}\n"quote"\\path 😀')
   sender.reportSessionLog(record)
   await sender.shutdown()
   expect(contents(target.captures).map(parseContent)).toEqual([record.event])
@@ -107,14 +107,14 @@ it('preserves full nested events without truncation or ambient headers and retai
   expect(target.captures[0]!.headers).not.toHaveProperty('authorization')
   expect(target.captures[0]!.headers).not.toHaveProperty('x-channel')
   expect(target.captures[0]!.body.resourceLogs[0]!.scopeLogs[0]).toMatchObject({
-    scope: { name: '@deepseek-ai/dsh-session-telemetry-otel', version: (createRequire(import.meta.url)('../package.json') as { version: string }).version },
+    scope: { name: '@yharness/session-telemetry-otel', version: (createRequire(import.meta.url)('../package.json') as { version: string }).version },
   })
 })
 
 it.each([CompressionAlgorithm.GZIP, CompressionAlgorithm.NONE])('bounds %s requests and preserves nested content', async (compression) => {
   const target = await collector()
   const { sender, onFailure } = reporter(target.endpoint, { exporter: { url: target.endpoint, compression, concurrencyLimit: 1 } })
-  const records = [0,1,2].map(seq => sessionRecord('中"\\'.repeat(100000), seq))
+  const records = [0,1,2].map(seq => sessionRecord('\u{4E2D}"\\'.repeat(100000), seq))
   for (const record of records) sender.reportSessionLog(record)
   await sender.shutdown()
   expect(target.captures.length).toBeGreaterThan(1)
@@ -125,7 +125,7 @@ it.each([CompressionAlgorithm.GZIP, CompressionAlgorithm.NONE])('bounds %s reque
 
 it('admits an exact request and diagnoses an oversized record only once', async () => {
   const target = await collector()
-  const record = sessionRecord('边界"\\')
+  const record = sessionRecord('\u{8FB9}\u{754C}"\\')
   const baseline = reporter(target.endpoint).sender
   baseline.reportSessionLog(record)
   await baseline.shutdown()

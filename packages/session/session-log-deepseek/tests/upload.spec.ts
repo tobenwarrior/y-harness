@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
-import { Context, LoggerLevel } from '@deepseek-ai/cordis'
+import { Context, LoggerLevel } from '@yharness/cordis'
 import SessionStore, {
   SESSION_FORMAT_VERSION,
   Session,
@@ -9,11 +9,11 @@ import SessionStore, {
   type CreateSessionOptions,
   type SessionEvent,
   type SessionHeader,
-} from '@deepseek-ai/dsh-session'
-import { createSessionFormatCatalogWithChildren } from '@deepseek-ai/dsh-session-format-catalog'
-import DeepSeekLlmApiExtensionRegistry from '@deepseek-ai/dsh-deepseek-llm-api-extensions'
-import { createDeveloperMessage, createAssistantMessage, createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+} from '@yharness/session'
+import { createSessionFormatCatalogWithChildren } from '@yharness/session-format-catalog'
+import DeepSeekLlmApiExtensionRegistry from '@yharness/deepseek-llm-api-extensions'
+import { createDeveloperMessage, createAssistantMessage, createSystemMessage, createUserMessage } from '@yharness/llm'
+import type { JsonValue } from '@yharness/util-values'
 import * as SessionLogDeepSeek from '../src/index.ts'
 import type { DeepSeekSessionLogExtension, DeepSeekSessionLogWireEvent, DeepSeekSessionLogWireSurfaceOp } from '../src/types.ts'
 
@@ -644,7 +644,7 @@ describe('byte-bounded DeepSeek session-log upload', () => {
   })
 
   it('measures maxBytes in UTF-8 bytes', async () => {
-    const { ctx, session, full } = await unbounded('bounded-utf8', ['界'.repeat(100), '界'.repeat(100)])
+    const { ctx, session, full } = await unbounded('bounded-utf8', ['\u{754C}'.repeat(100), '\u{754C}'.repeat(100)])
     const limit = bytes(prefix(full, 2)) - 1
     // UTF-16 code units undercount this field, so a code-unit budget would still admit both messages.
     expect(JSON.stringify(prefix(full, 2)).length).toBeLessThan(limit)

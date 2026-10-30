@@ -1,10 +1,10 @@
 /** Incremental raw Session rows with lossless Assistant stream children. */
 
-import type { SessionEventSource, SessionEventWindow, SessionEventLikeEntry } from '@deepseek-ai/dsh-api-session-controller/client'
-import { createSnapshotStore, type ObservableSnapshot, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { expandAssistantStream, type AssistantStreamRecord, type TimedStreamChunk } from '@deepseek-ai/dsh-llm/assistant-stream'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { SessionEventSource, SessionEventWindow, SessionEventLikeEntry } from '@yharness/api-session-controller/client'
+import { createSnapshotStore, type ObservableSnapshot, type SnapshotStore } from '@yharness/client-store'
+import { expandAssistantStream, type AssistantStreamRecord, type TimedStreamChunk } from '@yharness/llm/assistant-stream'
+import type { StreamChunk } from '@yharness/llm'
+import type { SessionSeq } from '@yharness/session/types'
 import type { InspectorRecord, InspectorRow } from '../table-model.ts'
 import { AssistantLogStream } from './stream.ts'
 import { SessionLogGroups } from './groups.ts'

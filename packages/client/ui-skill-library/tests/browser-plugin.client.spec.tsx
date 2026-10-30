@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { TestRemote, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ILayout, PanelInfo } from '@deepseek-ai/dsh-client-ui-layout/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { TestRemote, usePinnedBrowserLanguages } from '@yharness/client-test-runtime'
+import type { ILayout, PanelInfo } from '@yharness/client-ui-layout/client'
 import { apply, inject } from '../src/client/index.ts'
 import { SkillLibraryPage } from '../src/client/SkillLibraryPage.tsx'
 import { SkillLibraryToast } from '../src/client/SkillLibraryToast.tsx'
@@ -49,7 +49,7 @@ describe('skill library Loader composition', () => {
     const sidebar = slots.entries('sidebar.panellist')[0]!
     expect(resolveSlotLabel(sidebar.options.label)).toBe('Skills')
     locale.setLocale('zh')
-    expect(resolveSlotLabel(sidebar.options.label)).toBe('技能')
+    expect(resolveSlotLabel(sidebar.options.label)).toBe('Skills')
     const injected: object = entry.inject!()
     const face = injected as SkillLibraryFace
     face.ensure()

@@ -1,7 +1,7 @@
 /** Operation feedback hosted outside the Skills panel lifetime. */
 import type { ReactNode } from 'react'
-import { IconWarningOutlineRegular, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconWarningOutlineRegular, Toast } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale } from '@yharness/client-ui-slots'
 import type { SkillLibraryFace } from './controller.ts'
 
 /** Only notices and their dismissal are exposed to the shell overlay. */

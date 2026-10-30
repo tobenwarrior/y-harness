@@ -3,7 +3,7 @@
  * prefix hits first, alignment score next, source order for ties.
  */
 import { describe, expect, it } from 'vitest'
-import { rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
+import { rankByName } from '@yharness/client-ui-primitives'
 
 const named = (...names: string[]) => names.map(name => ({ name }))
 const names = (items: readonly { name: string }[]) => items.map(item => item.name)
@@ -36,14 +36,14 @@ describe('rankByName', () => {
 
   it('matches the display label as a second key and keeps the stronger alignment', () => {
     const items = [
-      { name: 'goal', label: '目标' },
-      { name: 'plan', label: '计划' },
-      { name: 'permission', label: '权限' },
+      { name: 'goal', label: 'Objective' },
+      { name: 'plan', label: 'Plan' },
+      { name: 'permission', label: 'Access' },
     ]
-    expect(names(rankByName(items, '目标'))).toEqual(['goal'])
+    expect(names(rankByName(items, 'Objective'))).toEqual(['goal'])
     expect(names(rankByName(items, 'goal'))).toEqual(['goal'])
     expect(names(rankByName(items, 'p'))).toEqual(['plan', 'permission'])
-    expect(names(rankByName(items, '划'))).toEqual(['plan'])
+    expect(names(rankByName(items, 'Plan'))).toEqual(['plan'])
     // A label prefix hit ranks like a name prefix hit.
     expect(names(rankByName([{ name: 'xplan', label: 'plan' }, { name: 'plant' }], 'pla'))).toEqual(['xplan', 'plant'])
   })

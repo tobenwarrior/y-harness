@@ -9,7 +9,7 @@
  * the same AST walk as docs/cordis-catalog, so this data and the rendered
  * docs cannot diverge.
  *
- * @module @deepseek-ai/dsh-cordis-client-runner/client/api-catalog
+ * @module @yharness/cordis-client-runner/client/api-catalog
  */
 
 /* jscpd:ignore-start */
@@ -141,7 +141,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'setLocale(id: string): void',
         description: 'Switch the active locale — the only user preference write entry.\n\nThe durable write happens even when the id already matches the active locale, because the active value may be a provisional browser-derived or fallback resolution that nothing has stored yet. Picking the language already on screen is still an explicit choice, and it must survive a different browser sharing the same DSH home. Only the render notification is conditional: republishing an unchanged locale would churn every subscriber for nothing.',
-        parameters: [{ name: 'id', description: 'a registered locale id; unknown ids throw.' }],
+        parameters: [{ name: 'id', description: 'a registered locale id; unknown ids throw. Retired locale ids resolve to English and persist that replacement when no external language pack has registered the id.' }],
       },
       {
         signature: 'addLanguage(input: LanguageRegistration): () => void',
@@ -151,8 +151,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when fields are malformed, the id is occupied, or the fallback target is unknown or creates a cycle.'],
       },
       {
-        signature: 'register<N extends Extract<keyof LocaleNamespaceMap, string>>(ns: N, dicts: Record<BuiltInLocaleId, LocaleDictOf<N>>): () => void',
-        description: 'Register a declared namespace\'s dictionaries, all locales in one call — the typed form: each dictionary is checked against the namespace\'s LocaleNamespaceMap key union (a missing or extra key is a compile error), and every shipped locale is required (bilingual balance enforced at registration). Duplicate (ns, locale) throws (single occupant; a namespace\'s texts have one owner). Registration bumps the revision so mounted outlets pick up late-arriving dictionaries.',
+        signature: 'register<N extends Extract<keyof LocaleNamespaceMap, string>>( ns: N, dicts: Record<BuiltInLocaleId, LocaleDictOf<N>> & Record<string, LocaleDict>, ): () => void',
+        description: 'Register a declared namespace\'s dictionaries, all locales in one call — the typed form: the English dictionary is checked against the namespace\'s LocaleNamespaceMap key union. Extra locale entries are accepted for source compatibility and for external language packs. Duplicate (ns, locale) throws (single occupant; a namespace\'s texts have one owner). Registration bumps the revision so mounted outlets pick up late-arriving dictionaries.',
         parameters: [{ name: 'ns', description: 'a namespace merged into LocaleNamespaceMap.' }, { name: 'dicts', description: 'complete dictionaries keyed by built-in locale id.' }],
         returns: 'disposer removing every locale registered by this call (idempotent).',
       },

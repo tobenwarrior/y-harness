@@ -4,19 +4,19 @@
  * Escape and Shift+Tab leave a pane before closing; reopening discards provider drafts.
  * A selection completion belongs only to the menu opening that submitted it.
  */
-import { MenuSurface } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MenuSurface } from '@yharness/client-ui-primitives'
 import {
   useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type KeyboardEvent, type FocusEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ModelReasoningEffort, ModelSelection } from '@yharness/api-remotes/client'
 import {
   IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconCloseFillRegular,
   IconDataOutlineRegular, IconWarningOutlineRegular, Input, rankByName, StateDot, Toast,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-primitives'
+import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@yharness/client-ui-slots'
 import type { ModelLabelOwner, ModelSelectInjected } from './slots.ts'
 import css from './ModelSelect.module.css'
 import { orderModelProviders } from './provider-order.ts'

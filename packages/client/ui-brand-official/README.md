@@ -3,7 +3,7 @@ description: "Y Harness brand occupants for the sidebar, active only in official
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-brand-official
+# @yharness/client-ui-brand-official
 
 ## Summary
 

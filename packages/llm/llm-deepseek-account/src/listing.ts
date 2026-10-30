@@ -1,7 +1,7 @@
 /** DeepSeek `GET /models` listing: one authenticated request and per-entry decoding. */
-import { APP_IDENTITY, attributionHeaders, LlmError } from '@deepseek-ai/dsh-llm'
-import type { ModelModality } from '@deepseek-ai/dsh-llm'
-import { timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { APP_IDENTITY, attributionHeaders, LlmError } from '@yharness/llm'
+import type { ModelModality } from '@yharness/llm'
+import { timeoutOf } from '@yharness/timeout'
 
 const LISTED_MODALITIES = ['text', 'image'] as const satisfies readonly ModelModality[]
 
@@ -91,7 +91,7 @@ function capabilitiesOf(entry: Fields): ListedCapabilities {
   const outputs = entry.output_modalities === undefined ? ['text'] : knownModalities(entry.output_modalities)
   if (outputs?.includes('text') !== true) return { usable: false, reason: 'declares no text output' }
   const inputs = entry.input_modalities === undefined ? ['text' as const] : knownModalities(entry.input_modalities)
-  if (inputs === undefined || inputs.length === 0) return { usable: false, reason: 'declares no input modality DeepSeek Harness supports' }
+  if (inputs === undefined || inputs.length === 0) return { usable: false, reason: 'declares no input modality Y Harness supports' }
   const contextWindow = capacity(entry.context_window)
   const maxOutputTokens = capacity(entry.max_output_tokens)
   if (contextWindow === false || maxOutputTokens === false) {

@@ -5,26 +5,26 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it, onTestFinished } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { createUserMessage, createSystemMessage, createAssistantMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import { brandString } from '@yharness/brand'
+import { createUserMessage, createSystemMessage, createAssistantMessage, ToolCallId } from '@yharness/llm'
+import * as Llm from '@yharness/llm'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as Sessions from '@yharness/session'
+import type { SessionEvent, SessionId } from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
 import { sessionDir, logPath } from '../../session-persistence-jsonl/src/format.ts'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import * as Typert from '@yharness/typert-registry'
 import * as CodingSessions from '../src/index.ts'
 import { CodingSessionColdDestinations } from '../src/cold-destinations.ts'
 import { codingSessionDigest } from '../src/digest.ts'
@@ -73,11 +73,11 @@ async function fixture() {
     const entries: [string, unknown][] = [['session', Sessions], ['session-projection', Projection], ['session-persistence-jsonl', Jsonl], ['typert-registry', Typert]]
     if (withCodingSessions) entries.push(['storage', Storage], ['storage-json', JsonStorage], ['storage-domain', Domain], ['coding-session', CodingSessions], ['fixture-native-history', sourcePlugin])
     if (withAgentLoop) entries.push(['llm', Llm], ['system-prompt', Prompt], ['tools', Tools], ['agent', Agents], ['agent-loop', Loop], ['fixture-import-model', modelPlugin])
-    const modules = new Map(entries.map(([name, value]): [string, unknown] => [`@deepseek-ai/dsh-${name}`, value]))
+    const modules = new Map(entries.map(([name, value]): [string, unknown] => [`@yharness/${name}`, value]))
     const configs: Record<string, object> = { 'storage-json': { root: join(root, 'storage') }, 'storage-domain': { backend: 'json' },
       'session-persistence-jsonl': { root: join(root, 'sessions'), compression: 'none' }, 'coding-session': { enableClaudeDiscovery: false }, 'agent-loop': { agents: [] } }
     const configPath = join(root, withCodingSessions ? 'cordis.yml' : 'persistence-only.yml')
-    await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@deepseek-ai/dsh-', '')] }))))
+    await writeFile(configPath, JSON.stringify([...modules.keys()].map(name => ({ name, config: configs[name.replace('@yharness/', '')] }))))
     ctx.baseUrl = pathToFileURL(root).href + '/'; await ctx.plugin(Loader); ctx.loader.builtins.include = Include
     const internal = ctx.loader.internal
     if (internal === undefined) throw new Error('Fixture Loader resolver absent')

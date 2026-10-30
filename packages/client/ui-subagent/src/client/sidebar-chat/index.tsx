@@ -1,21 +1,21 @@
 /** Right-Sidebar presentation of an existing subagent Conversation. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import type {
   ISessions, SessionReference,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ResourceProvider } from '@deepseek-ai/dsh-client-resources/client'
-import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+} from '@yharness/api-session-controller/client'
+import type { ResourceProvider } from '@yharness/client-resources/client'
+import type { ConversationViewsProps } from '@yharness/client-ui-conversation/client'
+import type { SidebarRightTabDefinition } from '@yharness/client-ui-sidebar-right/client'
 import type {
   PropsRenderFactories, PropsRenderSlots, PropsRuntime, TranslateNS,
-} from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
+} from '@yharness/client-ui-slots'
+import type { SessionId } from '@yharness/session/types'
+import type { SubagentAddress } from '@yharness/subagent/client'
 import type { NS } from '../locales.ts'
 import css from './SidebarChat.module.css'
 
 /** Stable implementation identity for the Sidebar tab body. */
-export const SUBAGENT_CHAT_ID = '@deepseek-ai/dsh-client-ui-subagent'
+export const SUBAGENT_CHAT_ID = '@yharness/client-ui-subagent'
 
 /** Resource-address prefix for an embedded Session chat. */
 export const SUBAGENT_CHAT_ADDRESS = 'dsh-resource://subagentchat/session/'
@@ -26,13 +26,13 @@ export interface SubagentChatResource {
   readonly reference: SessionReference
 }
 
-declare module '@deepseek-ai/dsh-api-session-controller/client' {
+declare module '@yharness/api-session-controller/client' {
   interface SessionReferenceSourceMap {
     sidebarChat: unknown
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface ResourceProtocolMap {
     subagentchat: SubagentChatResource
   }

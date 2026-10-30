@@ -1,8 +1,8 @@
 /** Log inspection submits original coordinates without reading Chat nodes. */
 
 import { expect, it } from 'vitest'
-import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { MessageId, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { SessionSeq, type SessionEvent } from '@yharness/session/types'
+import type { MessageId, ToolCallId } from '@yharness/llm'
 import { sessionLogChatTarget } from '../src/client/views/session-log/chat-target.ts'
 
 it('keeps a user message’s original sequence without inventing Turn or Step coordinates', () => {

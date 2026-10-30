@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import subprocess
 import sys
 import threading
 import time
@@ -9,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from deepseek_harness import DeepSeekHarness, HarnessClient, HarnessConfig, Notification, RunResult, SdkProtocolError
-from deepseek_harness.errors import JsonRpcError
+from yharness import DeepSeekHarness, HarnessClient, HarnessConfig, Notification, RunResult, SdkProtocolError
+from yharness.errors import JsonRpcError
 
 
 def test_high_level_sdk_runs_turn_and_preserves_auto_review_errors(tmp_path: Path) -> None:
@@ -950,7 +951,7 @@ for line in sys.stdin:
 
 
 def test_public_signatures_omit_unsupported_wire_parameters() -> None:
-    from deepseek_harness import DeepSeekHarnessConfig, Session
+    from yharness import DeepSeekHarnessConfig, Session
 
     assert "session_root" not in inspect.signature(HarnessClient.initialize).parameters
     assert "system_prompt" not in inspect.signature(HarnessClient.initialize).parameters
@@ -1083,6 +1084,7 @@ import sys
 
 json.dump({
     "argv": sys.argv[1:],
+    "YH_HOME": os.environ.get("YH_HOME"),
     "DSH_HOME": os.environ.get("DSH_HOME"),
     "DSH_CORDIS_CONFIG": os.environ.get("DSH_CORDIS_CONFIG"),
 }, open(os.environ["ENV_DUMP"], "w"))
@@ -1096,7 +1098,7 @@ for line in sys.stdin:
 """.strip()
     )
 
-    module_dir = tmp_path / "deepseek_harness_runtime"
+    module_dir = tmp_path / "yharness_runtime"
     module_dir.mkdir()
     (module_dir / "__init__.py").write_text(
         f"""
@@ -1106,7 +1108,7 @@ def resolve_bundled_launch_args(mode=None):
     )
 
     monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.delitem(sys.modules, "deepseek_harness_runtime", raising=False)
+    monkeypatch.delitem(sys.modules, "yharness_runtime", raising=False)
 
 
 def test_client_default_launch_uses_bundled_dsh_sdk_profile_and_explicit_home(
@@ -1132,6 +1134,7 @@ def test_client_default_launch_uses_bundled_dsh_sdk_profile_and_explicit_home(
     assert init.serverInfo.name == "bundled-runtime"
     assert json.loads(env_dump.read_text()) == {
         "argv": ["--profile", "sdk", "--patch", str(patch)],
+        "YH_HOME": None,
         "DSH_HOME": str(home),
         "DSH_CORDIS_CONFIG": None,
     }
@@ -1151,8 +1154,56 @@ def test_client_accepts_explicit_environment_dsh_home(
 
     assert json.loads(env_dump.read_text()) == {
         "argv": ["--profile", "custom"],
+        "YH_HOME": None,
         "DSH_HOME": str(home),
         "DSH_CORDIS_CONFIG": None,
+    }
+
+
+def test_client_accepts_canonical_bin_and_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_dump = tmp_path / "env.json"
+    home = tmp_path / "canonical-home"
+    runtime = tmp_path / "runtime.py"
+    runtime.write_text(
+        "import json, os, sys\n"
+        "json.dump({'argv': sys.argv[1:], 'YH_HOME': os.environ.get('YH_HOME'), "
+        "'DSH_HOME': os.environ.get('DSH_HOME')}, open(os.environ['ENV_DUMP'], 'w'))\n"
+        "for line in sys.stdin:\n"
+        "    message = json.loads(line)\n"
+        "    if message.get('method') == 'initialize':\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': message['id'], 'result': "
+        "{'serverInfo': {'name': 'canonical-runtime'}}}), flush=True)\n"
+        "    elif message.get('method') == 'shutdown':\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': message['id'], 'result': {}}), flush=True)\n"
+        "        break\n",
+        encoding="utf-8",
+    )
+
+    popen = subprocess.Popen
+
+    def launch_runtime(args, **kwargs):
+        assert args[0] == str(runtime)
+        return popen([sys.executable, str(runtime), *args[1:]], **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch_runtime)
+
+    with HarnessClient(
+        HarnessConfig(
+            profile="canonical",
+            yh_bin=str(runtime),
+            yh_home=str(home),
+            env={"ENV_DUMP": str(env_dump)},
+        )
+    ) as client:
+        init = client.initialize(provider="deepseek-official", cwd="/workspace", model="deepseek-v4-pro")
+
+    assert init.serverInfo.name == "canonical-runtime"
+    assert json.loads(env_dump.read_text()) == {
+        "argv": ["--profile", "canonical"],
+        "YH_HOME": str(home),
+        "DSH_HOME": None,
     }
 
 
@@ -1162,13 +1213,13 @@ def test_client_rejects_an_implicit_default_dsh_home(
     _install_fake_bundled_dsh(tmp_path, monkeypatch)
     monkeypatch.delenv("DSH_HOME", raising=False)
 
-    with pytest.raises(ValueError, match="explicit dsh_home or non-empty DSH_HOME"):
+    with pytest.raises(ValueError, match="explicit yh_home/dsh_home or non-empty YH_HOME/DSH_HOME"):
         HarnessClient(HarnessConfig(env={})).start()
 
 
 def test_client_reports_missing_bundled_runtime_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "deepseek_harness_runtime", raising=False)
+    monkeypatch.delitem(sys.modules, "yharness_runtime", raising=False)
     monkeypatch.setattr(sys, "path", [])
 
-    with pytest.raises(FileNotFoundError, match="Install deepseek-harness-runtime-bin"):
+    with pytest.raises(FileNotFoundError, match="Install yharness-runtime-bin"):
         HarnessClient(HarnessConfig(dsh_home="/explicit/home")).start()

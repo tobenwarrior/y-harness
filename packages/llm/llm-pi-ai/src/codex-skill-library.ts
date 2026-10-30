@@ -1,7 +1,7 @@
 /** Metadata-only observations of the pinned native Codex skill catalog. */
 import { isAbsolute, normalize } from 'node:path'
 import { z } from 'zod'
-import type { NativeSkillLibraryEntry, NativeSkillLibraryObservation, NativeSkillLibraryProvider, SkillLibraryProject } from '@deepseek-ai/dsh-skill-library/types'
+import type { NativeSkillLibraryEntry, NativeSkillLibraryObservation, NativeSkillLibraryProvider, SkillLibraryProject } from '@yharness/skill-library/types'
 import type { CodexBackendRuntime } from './codex-backend.ts'
 
 /**

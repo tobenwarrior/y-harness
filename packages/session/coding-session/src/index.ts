@@ -1,14 +1,14 @@
 /** Host coding-session discovery, durable mirrors, and source-owned capability gates. */
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import type {} from '@deepseek-ai/dsh-workspace'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-skill-library'
+import { Context, Service } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
+import type { Domain } from '@yharness/storage-domain'
+import type {} from '@yharness/workspace'
+import type { Agent } from '@yharness/agent'
+import type { SessionId } from '@yharness/session/types'
+import type {} from '@yharness/skill-library'
 import { CodingSessionColdDestinations } from './cold-destinations.ts'
 import { CodingSessionLinkedImports } from './linked-import.ts'
 import { codingSessionLinkDomain } from './linked-import-record.ts'
@@ -22,7 +22,7 @@ import type { CodingSessionProvider, CodingSessionProfile, CodingSessionSource, 
 
 export type * from './types.ts'
 export type * from './linked-import-options.ts'
-declare module '@deepseek-ai/cordis' { interface Context { codingSessions: CodingSessions } }
+declare module '@yharness/cordis' { interface Context { codingSessions: CodingSessions } }
 /** Complete native page, retained history, and operation deadline budgets. */
 export interface Config {
   /** Maximum native metadata items per page. */

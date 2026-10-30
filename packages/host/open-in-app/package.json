@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-host-open-in-app",
+  "name": "@yharness/host-open-in-app",
   "description": "Host half of open-in-app: resolved application catalog, icons, and the launch endpoint as three webServer routes",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/host/open-in-app"
   },
   "type": "module",
@@ -36,17 +36,17 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-launch-environment": "workspace:*",
-    "@deepseek-ai/dsh-native-command": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/launch-environment": "workspace:*",
+    "@yharness/native-command": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/schemastery": "workspace:~"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/host-webserver": "workspace:*"
   }
 }

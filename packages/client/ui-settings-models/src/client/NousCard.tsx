@@ -1,9 +1,9 @@
 /** Native Nous device sign-in and selection of account-visible models. */
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Button, DisclosureRow, IconInfoOutlineRegular, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { NousConnectionView, NousDeviceVerification, NousModelView, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import { Button, DisclosureRow, IconInfoOutlineRegular, Tag } from '@yharness/client-ui-primitives'
+import type { NousConnectionView, NousDeviceVerification, NousModelView, SettingsNamespaceView } from '@yharness/api-remotes/client'
+import type { JsonValue } from '@yharness/util-values'
 import { NousModelPicker } from './NousModelPicker.tsx'
 import { countCopy, starterModels } from './nous-models.ts'
 import type { ModelsOperations } from './operations.ts'

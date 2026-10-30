@@ -3,7 +3,7 @@ description: "Per-step clock context with the current time, browser zone, and el
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-time-context
+# @yharness/time-context
 
 ## Summary
 
@@ -34,7 +34,7 @@ Each injected reading has three lines: an ISO-shaped timestamp with numeric offs
 The minimal mount needs no configuration. A positive `refreshIntervalMs` suppresses injections that fall within that many milliseconds of the latest one; omission uses 600000 ms (10 minutes), while `0` injects at every eligible entering pre-step whose signal is not already aborted.
 
 ```yaml
-- name: '@deepseek-ai/dsh-time-context'
+- name: '@yharness/time-context'
   config:
     timeZone: Asia/Shanghai
 ```
@@ -44,7 +44,7 @@ The minimal mount needs no configuration. A positive `refreshIntervalMs` suppres
 | `timeZone` | process zone | Fallback display zone when the open turn has no unique browser zone |
 | `refreshIntervalMs` | `600000` (10 minutes) | Minimum milliseconds between durable injections in one session |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-time-context) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesstime-context) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Choosing the zone
 
@@ -87,7 +87,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 - [Schedule user guide](../../../docs/user/guide/schedule.md) — the official configuration path for mounting this plugin.
 - [Context group map](../README.md) — sibling request-context packages.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-time-context) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesstime-context) — every accepted config field and its source declaration.
 
 -----
 

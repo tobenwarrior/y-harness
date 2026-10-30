@@ -1,23 +1,23 @@
 /** Register interactive terminal tabs and explicit process cleanup with the sidebar. */
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { Context } from '@deepseek-ai/cordis'
-import type { WebTerminalId } from '@deepseek-ai/dsh-api-terminal-controller/types'
-import type { SidebarRightTabParamsMap, TabId } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-api-terminal-controller/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
-import { PluginArtworkTerminal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import type { Context } from '@yharness/cordis'
+import type { WebTerminalId } from '@yharness/api-terminal-controller/types'
+import type { SidebarRightTabParamsMap, TabId } from '@yharness/client-ui-sidebar-right/client'
+import type { SessionId } from '@yharness/session/types'
+import type {} from '@yharness/api-terminal-controller/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-theme/client'
+import { PluginArtworkTerminal } from '@yharness/client-ui-primitives'
 import { TerminalGuide, type TerminalGuideInjected } from './TerminalGuide.tsx'
 import { LazyTerminalBody } from './LazyTerminalBody.tsx'
 import { TerminalTitle } from './TerminalTitle.tsx'
 // import { TerminalRecovery, type TerminalRecoveryInjected } from './TerminalRecovery.tsx'
 // import { TerminalCleanup, type TerminalCleanupInjected } from './TerminalCleanup.tsx'
 import type { TerminalBodyInjected, TerminalInjected } from './face.ts'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 /** Services needed by the terminal's two sidebar seats. */
 export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'webTerminals', 'theme', 'shortcuts']
@@ -49,7 +49,7 @@ export function apply(ctx: Context): void {
       params !== undefined && 'shellPath' in params ? params.shellPath : undefined)
   }
   const namespace = 'sidebarTerminal'
-  const id = '@deepseek-ai/dsh-client-ui-sidebar-terminal'
+  const id = '@yharness/client-ui-sidebar-terminal'
   const t = ctx.locale.bind(namespace)
   ctx.effect(() => ctx.shortcuts.register({
     id: 'terminal.new' as ShortcutCommandId, label: () => t('new'), aliases: ['new terminal', 'shell'],
@@ -67,7 +67,7 @@ export function apply(ctx: Context): void {
       return { status: 'handled', run: () => { ctx.sidebarRight.openTabFromTarget('terminal', target) } }
     },
   }), 'ui-sidebar-terminal: shortcut')
-  ctx.effect(() => ctx.locale.register(namespace, { zh, en }), 'ui-sidebar-terminal.copy')
+  ctx.effect(() => ctx.locale.register(namespace, { en }), 'ui-sidebar-terminal.copy')
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id, kind: 'terminal', multiple: true, priority: 'builtin', title: () => t('title'),
     guide: [{ id: 'new', order: 20, title: () => t('new'), description: () => t('description'), icon: PluginArtworkTerminal }],

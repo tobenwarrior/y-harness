@@ -1,6 +1,6 @@
 /** Public-config exclusions and saved-history checks for an acknowledged stable native profile. */
 import { createHash } from 'node:crypto'
-import type { CodingSessionSnapshot } from '@deepseek-ai/dsh-coding-session/types'
+import type { CodingSessionSnapshot } from '@yharness/coding-session/types'
 import { z } from 'zod'
 
 type Obj = Record<string, unknown>

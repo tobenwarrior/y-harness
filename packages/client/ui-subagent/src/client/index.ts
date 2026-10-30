@@ -1,22 +1,22 @@
 /** Web subagent catalog, navigation, and addressed-session composer owner. */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { SubagentAddress } from '@yharness/subagent/client'
+import type { SessionId } from '@yharness/session/types'
+import type { ComposerChainProps } from '@yharness/client-ui-conversation/client'
 import { SubagentCatalogAction, SubagentHeaderLineage, type SubagentCatalogInjected } from './SubagentHeaderLineage.tsx'
 import {
   SubagentReadOnlyComposer, type SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
 import { registerSidebarChat, subagentChatAddress } from './sidebar-chat/index.tsx'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { en, NS, zh, type SubagentKey } from './locales.ts'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-chat/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/client-ui-workspace/client'
+import { en, NS, type SubagentKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Subagent catalog and read-only composer copy. */
     'subagent': SubagentKey
@@ -53,7 +53,7 @@ function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatc
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-subagent: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-subagent: dictionaries')
   ctx.inject(['resources', 'sidebarRightTabs'], (scope) => {
     registerSidebarChat(scope, ctx.locale.bind(NS))
   })

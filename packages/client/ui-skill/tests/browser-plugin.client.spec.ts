@@ -13,15 +13,15 @@
  * projections. Direct driving is deliberate: this spec owns only the
  * source's own contract.
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
-import { RemoteError, TestRemote, TestSessions } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionFixture } from '@deepseek-ai/dsh-client-test-runtime'
-import type { RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import type { ClientSessionContext, InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import type { SessionId } from '@yharness/session/types'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { InputTriggerService } from '@yharness/client-ui-input-trigger/client'
+import { RemoteError, TestRemote, TestSessions } from '@yharness/client-test-runtime'
+import type { SessionFixture } from '@yharness/client-test-runtime'
+import type { RemoteFailure } from '@yharness/api-remotes/client'
+import type { ClientSessionContext, InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
 import { apply, inject } from '../src/client/index.ts'
 import { SkillRow as SkillToolRow } from '../src/client/SkillRow.tsx'
 
@@ -54,8 +54,9 @@ function providePresentation(ctx: Context): PresentationCapture {
       capture.dictionaries.push({ namespace, dictionaries })
       return () => { capture.localeDisposed = true }
     },
-    // Minimal bound-translate fake: zh dictionary lookup, key passthrough on miss.
-    bind: () => (key: string) => key === 'menu.userOnly' ? '仅用户' : key,
+    // Minimal bound-translate fake: a custom language-pack value, with key
+    // passthrough on miss.
+    bind: () => (key: string) => key === 'menu.userOnly' ? 'custom-user-only' : key,
   })
   return capture
 }
@@ -131,16 +132,6 @@ describe('apply', () => {
     expect(entry?.component).toBe(SkillToolRow)
     expect(presentation.dictionaries).toEqual([{
       namespace: 'skill', dictionaries: {
-        zh: {
-          'row.title': '加载技能',
-          'row.running': '正在加载 skill',
-          'row.preparing': '准备加载技能',
-          'row.failed': 'skill 加载失败',
-          'row.stopped': 'skill 加载已中止',
-          'row.instructions': '说明',
-          'row.inspect': '查看',
-          'menu.userOnly': '仅用户',
-        },
         en: {
           'row.title': 'Skill',
           'row.running': 'Loading skill',
@@ -449,7 +440,7 @@ describe('user-only marking', () => {
     const candidates = await source.candidates(proj('s1'), req(''))
     expect(candidates).toEqual([
       { name: 'shared-skill', description: 'both surfaces' },
-      { name: 'user-only-skill', description: '仅用户 · user surface only' },
+      { name: 'user-only-skill', description: 'custom-user-only · user surface only' },
     ])
   })
 })

@@ -3,8 +3,8 @@ import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
 import { fixture } from './loader-fixture.ts'
 
 const hooks = vi.hoisted(() => ({ afterWrite: undefined as ((path: string) => Promise<void>) | undefined }))
-vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@deepseek-ai/dsh-atomic-write')>()
+vi.mock('@yharness/atomic-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@yharness/atomic-write')>()
   return { ...actual, writeFileAtomic: async (...args: Parameters<typeof actual.writeFileAtomic>) => {
     await actual.writeFileAtomic(...args)
     await hooks.afterWrite?.(args[0])

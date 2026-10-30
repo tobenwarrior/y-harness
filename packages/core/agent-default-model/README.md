@@ -3,7 +3,7 @@ description: "The deployment default model selection for users and maintainers c
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-agent-default-model
+# @yharness/agent-default-model
 
 ## Summary
 
@@ -30,7 +30,7 @@ Mount this package wherever agents are created without an explicit model route. 
 The composition requires a provider and model. Consumers read the live references even when no configuration editor is mounted.
 
 ```yaml
-- name: '@deepseek-ai/dsh-agent-default-model'
+- name: '@yharness/agent-default-model'
   config:
     provider: deepseek
     model: deepseek-chat
@@ -41,7 +41,7 @@ The composition requires a provider and model. Consumers read the live reference
 | `provider` | required | Registered provider route for fresh agents |
 | `model` | required | Provider-owned model id for fresh agents |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-agent-default-model) lists every accepted field. `reasoningEffort` is optional; saving a selection without it removes that field from the profile’s complete config override.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessagent-default-model) lists every accepted field. `reasoningEffort` is optional; saving a selection without it removes that field from the profile’s complete config override.
 
 ### Read and change the default
 
@@ -89,7 +89,7 @@ The package-level contract is enough for most consumers; read these when you nee
 
 - [Core subsystem](../../../docs/subsystems/core.md) — the `Agent` handle and `AgentOptions` route selection.
 - [agent-loop package](../agent-loop/README.md) — how agents resolve provider and model at request time.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-agent-default-model) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnessagent-default-model) — every accepted config field and its source declaration.
 - [Core group map](../README.md) — how the core packages compose.
 
 -----

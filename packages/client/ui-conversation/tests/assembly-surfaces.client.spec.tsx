@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
 /** Conversation assembly acceptance independent of Tool presentation. */
 import './control-row-dom.ts'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import type { ISession } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import type { ISession } from '@yharness/api-session-controller/client'
+import type { PropsRenderSlots } from '@yharness/client-ui-slots'
 import {
   RemoteError, SlotTestRuntime, usePinnedBrowserLanguages, stubConfigForm,
-} from '@deepseek-ai/dsh-client-test-runtime'
+} from '@yharness/client-test-runtime'
 import { InputHub } from '../src/client/input/hub.ts'
-import { apply, inject, type EmptyWorkspaceOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import { apply, inject, type EmptyWorkspaceOwnerProps } from '@yharness/client-ui-conversation/client'
+import type { SessionId } from '@yharness/session/types'
+import type { WorkspaceId } from '@yharness/workspace/types'
 
 // jsdom implements no Range geometry (Lexical's scroll-into-view measures the
 // caret with one once the surface is genuinely contenteditable).
@@ -23,7 +23,7 @@ Range.prototype.getBoundingClientRect = () => ({
 })
 
 
-usePinnedBrowserLanguages('zh-CN')
+usePinnedBrowserLanguages('en-US')
 
 
 const SID = 's1' as SessionId
@@ -122,10 +122,10 @@ describe('resident composer', () => {
     fireEvent.click(textarea!)
     expect(view.getByTestId('workspace-probe').textContent).toBe('true:0')
     expect(textarea!.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(view.getByRole('button', { name: '选择工作区' }))
+    fireEvent.click(view.getByRole('button', { name: 'Choose workspace' }))
     fireEvent.keyDown(textarea!, { key: 'Enter' })
     expect(view.getByTestId('workspace-probe').textContent).toBe('true:0')
-    expect(view.getByRole('button', { name: '选择工作区' })).toBeTruthy()
+    expect(view.getByRole('button', { name: 'Choose workspace' })).toBeTruthy()
     await runtime.dispose()
   })
 
@@ -148,7 +148,7 @@ describe('resident composer', () => {
     const scrollBody = view.container.querySelector('[data-conversation-scroll]')!
     const composerSeat = view.container.querySelector('[data-composer-seat]')!
     const textarea = view.container.querySelector<HTMLDivElement>('[data-composer-input]')!
-    const workspaceChip = view.getByRole('button', { name: '选择工作区' })
+    const workspaceChip = view.getByRole('button', { name: 'Choose workspace' })
     const workspaceProbe = view.getByTestId('workspace-probe')
     expect(textarea.getAttribute('aria-disabled')).not.toBe('true')
     expect(textarea.getAttribute('contenteditable')).not.toBe('true')
@@ -169,7 +169,7 @@ describe('resident composer', () => {
     expect(view.container.querySelector('[data-conversation-scroll]')).toBe(scrollBody)
     expect(view.container.querySelector('[data-composer-seat]')).toBe(composerSeat)
     expect(view.container.querySelector<HTMLDivElement>('[data-composer-input]')).toBe(textarea)
-    expect(view.getByRole('button', { name: '选择工作区' })).toBe(workspaceChip)
+    expect(view.getByRole('button', { name: 'Choose workspace' })).toBe(workspaceChip)
     expect(view.getByTestId('workspace-probe')).toBe(workspaceProbe)
     expect(workspaceProbe.textContent).toBe('true:1')
     expect(textarea.getAttribute('aria-disabled')).not.toBe('true')
@@ -245,12 +245,12 @@ describe('title projection across assembled surfaces', () => {
   it('one summary update re-labels the current-session crumb', async () => {
     const runtime = await bench()
     const view = runtime.renderRoot()
-    const hierarchy = view.getByRole('navigation', { name: '会话层级' })
+    const hierarchy = view.getByRole('navigation', { name: 'Session hierarchy' })
     expect(within(hierarchy).getByText('S').tagName).toBe('SPAN')
 
-    await runtime.sessions.updateSummary(SID, { displayTitle: '修订标题', title: '修订标题' })
+    await runtime.sessions.updateSummary(SID, { displayTitle: 'Revised title', title: 'Revised title' })
     await waitFor(() => {
-      expect(within(hierarchy).getByText('修订标题').tagName).toBe('SPAN')
+      expect(within(hierarchy).getByText('Revised title').tagName).toBe('SPAN')
     })
     expect(within(hierarchy).queryByText('S')).toBeNull()
     await runtime.dispose()

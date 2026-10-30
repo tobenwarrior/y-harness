@@ -8,10 +8,10 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SessionRetainInfo } from '@deepseek-ai/dsh-api-session-controller/client'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { SessionRetainInfo } from '@yharness/api-session-controller/client'
+import { SessionId } from '@yharness/session/types'
 import { AgentPresetLabel } from '../src/client/AgentPresetLabel.tsx'
 import type { AgentPresetLabelProps } from '../src/client/AgentPresetLabel.tsx'
 import { AgentPresetSeat } from '../src/client/AgentPresetSeat.tsx'
@@ -254,7 +254,7 @@ describe('a refused switch', () => {
     // lifetime assertion below would wait out its real nine seconds.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      const reason = 'failed to import loader entry live-on-mac (@deepseek-ai/dsh-also-gone)'
+      const reason = 'failed to import loader entry live-on-mac (@yharness/also-gone)'
       const actions = renderSeat({ current: '' }, undefined, undefined, false)
       const refusal = { preset: { id: 'cordis' }, reason }
       act(() => { actions.store.set({ ...actions.store.getSnapshot(), error: refusal }) })
@@ -335,7 +335,7 @@ describe('the chip introduce cue', () => {
     vi.useFakeTimers()
     renderSeat({
       current: 'creator',
-      options: [{ id: 'creator', name: '创造模式' }],
+      options: [{ id: 'creator', name: '\u521b\u9020\u6a21\u5f0f' }],
       introduce: true,
     })
 

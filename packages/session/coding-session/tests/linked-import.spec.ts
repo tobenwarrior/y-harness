@@ -1,9 +1,9 @@
 /** Real Session history with test-owned canonical persistence; no native runtime or model. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { createSystemMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { brandString } from '@yharness/brand'
+import { createSystemMessage, createUserMessage } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
 import { codingSessionDigest } from '../src/digest.ts'
 import { CodingSessionLinkedImports } from '../src/linked-import.ts'
 import type { CodingSessionEvent, CodingSessionMirror, CodingSessionSource } from '../src/types.ts'
@@ -336,7 +336,7 @@ describe('ordinary-Y linked public native history', () => {
   })
   it('enforces complete framed retained UTF-8 limits before any append', async () => {
     const f = fixture({ maxBytes: 800 }); const before = f.stored()
-    await expect(f.imports.importMirror(mirror([nativeEvent('unicode', 'user', '中文'.repeat(200))]), await f.acknowledgement())).rejects.toThrow(/byte|limit/i)
+    await expect(f.imports.importMirror(mirror([nativeEvent('unicode', 'user', '\u{4E2D}\u{6587}'.repeat(200))]), await f.acknowledgement())).rejects.toThrow(/byte|limit/i)
     expect(f.stored()).toEqual(before); expect(f.records.size).toBe(0)
   })
   it('returns detached journal records and bounds generations without discarding rollback data', async () => {

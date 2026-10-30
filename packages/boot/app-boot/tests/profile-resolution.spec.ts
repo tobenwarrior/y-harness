@@ -75,6 +75,35 @@ function conditionalPkg(dir: string, name: string, importMarker: number, require
   return join(dir, 'package.json')
 }
 
+const CORDIS_PACKAGE_ALIASES = [
+  ['@deepseek-ai/cordis', '@yharness/cordis'],
+  ['@deepseek-ai/cosmokit', '@yharness/cosmokit'],
+  ['@deepseek-ai/schemastery', '@yharness/schemastery'],
+  ['@deepseek-ai/cordis-plugin-loader', '@yharness/cordis-plugin-loader'],
+  ['@deepseek-ai/cordis-plugin-include', '@yharness/cordis-plugin-include'],
+  ['@deepseek-ai/cordis-plugin-group', '@yharness/cordis-plugin-group'],
+  ['@deepseek-ai/cordis-plugin-timer', '@yharness/cordis-plugin-timer'],
+  ['@deepseek-ai/cordis-plugin-hmr', '@yharness/cordis-plugin-hmr'],
+  ['@deepseek-ai/cordis-plugin-logger-console', '@yharness/cordis-plugin-logger-console'],
+] as const
+
+function cordisAliasPkg(dir: string, name: string, marker: number): string {
+  file(join(dir, 'package.json'), JSON.stringify({
+    name,
+    version: `${String(marker)}.0.0`,
+    type: 'module',
+    exports: {
+      '.': { import: './index.js', require: './index.cjs' },
+      './subpath': { import: './subpath.js', require: './subpath.cjs' },
+    },
+  }))
+  file(join(dir, 'index.js'), `export const marker = ${String(marker)}\n`)
+  file(join(dir, 'index.cjs'), `module.exports = { marker: ${String(marker)} }\n`)
+  file(join(dir, 'subpath.js'), `export const marker = ${String(marker + 10)}\n`)
+  file(join(dir, 'subpath.cjs'), `module.exports = { marker: ${String(marker + 10)} }\n`)
+  return join(dir, 'package.json')
+}
+
 async function importFrom(specifier: string, parent: string): Promise<Record<string, unknown>> {
   const addon = createRequire(import.meta.url)('node-addon-require-builtin') as {
     requireBuiltin(id: string): unknown
@@ -366,6 +395,162 @@ describe('runtime resolution', { concurrent: false }, () => {
     expect(await importFrom('@deepseek-ai/dsh-core', parent)).toMatchObject({ marker: 1 })
   })
 
+  it('routes legacy and canonical Harness package names to one installation entry', async () => {
+    const f = fixture('@yharness/core')
+    const registration = installRuntimeInterception(await resolutionOf(f))
+    registrations.push(registration)
+    const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+    const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+    const expectedCjs = join(f.installed, 'index.cjs')
+    const expectedEsm = pathToFileURL(join(f.installed, 'index.js')).href
+
+    expect(require('@deepseek-ai/dsh-core')).toEqual({ marker: 1 })
+    expect(require('@yharness/core')).toEqual({ marker: 1 })
+    expect(require.resolve('@deepseek-ai/dsh-core')).toBe(expectedCjs)
+    expect(require.resolve('@yharness/core')).toBe(expectedCjs)
+    expect(resolveFrom('@deepseek-ai/dsh-core', parent)).toBe(expectedEsm)
+    expect(resolveFrom('@yharness/core', parent)).toBe(expectedEsm)
+    expect(await importFrom('@deepseek-ai/dsh-core', parent)).toMatchObject({ marker: 1 })
+    expect(await importFrom('@yharness/core', parent)).toMatchObject({ marker: 1 })
+  })
+
+  it('routes both names when the manifest key is legacy but the installed directory is canonical', async () => {
+    const f = fixture()
+    const canonical = join(dirname(f.installAnchor), 'node_modules', '@yharness', 'core')
+    rmSync(f.installed, { recursive: true })
+    pkg(canonical, '@yharness/core', 1)
+
+    const resolution = await resolutionOf(f)
+    expect(resolution.entries.find(entry => entry.name === '@deepseek-ai/dsh-core')).toMatchObject({
+      packageDir: canonical,
+      scope: 'installation',
+    })
+    const registration = installRuntimeInterception(resolution)
+    registrations.push(registration)
+    const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+    const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+    const expectedCjs = join(canonical, 'index.cjs')
+    const expectedEsm = pathToFileURL(join(canonical, 'index.js')).href
+
+    expect(require('@deepseek-ai/dsh-core')).toEqual({ marker: 1 })
+    expect(require('@yharness/core')).toEqual({ marker: 1 })
+    expect(require.resolve('@deepseek-ai/dsh-core')).toBe(expectedCjs)
+    expect(require.resolve('@yharness/core')).toBe(expectedCjs)
+    expect(resolveFrom('@deepseek-ai/dsh-core', parent)).toBe(expectedEsm)
+    expect(resolveFrom('@yharness/core', parent)).toBe(expectedEsm)
+    expect(await importFrom('@deepseek-ai/dsh-core', parent)).toMatchObject({ marker: 1 })
+    expect(await importFrom('@yharness/core', parent)).toMatchObject({ marker: 1 })
+  })
+
+  it('routes a CommonJS package-import target through a canonical physical alias', async () => {
+    const f = fixture()
+    const canonical = join(dirname(f.installAnchor), 'node_modules', '@yharness', 'core')
+    rmSync(f.installed, { recursive: true })
+    pkg(canonical, '@yharness/core', 1)
+    file(join(f.profile.dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true,
+      imports: { '#core': '@deepseek-ai/dsh-core' },
+      dependencies: { '@deepseek-ai/dsh-core': '*' },
+    }))
+
+    const registration = installRuntimeInterception(await resolutionOf(f))
+    registrations.push(registration)
+    const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+
+    expect(require('#core')).toEqual({ marker: 1 })
+    expect(require.resolve('#core')).toBe(join(canonical, 'index.cjs'))
+  })
+
+  it.each([
+    ['legacy manifest key with canonical directory', 0, 1],
+    ['canonical manifest key with legacy directory', 1, 0],
+  ] as const)('routes every Cordis package alias through CJS and ESM (%s)', async (_label, manifestIndex, physicalIndex) => {
+    for (const [legacy, canonical] of CORDIS_PACKAGE_ALIASES) {
+      const names = [legacy, canonical] as const
+      const f = fixture(names[manifestIndex])
+      rmSync(f.installed, { recursive: true })
+      const physical = join(dirname(f.installAnchor), 'node_modules', names[physicalIndex])
+      cordisAliasPkg(physical, names[physicalIndex], 1)
+      const installedAlias = join(dirname(f.installAnchor), 'node_modules', physicalIndex === 0 ? names[1] : names[0])
+      symlinkSync(physical, installedAlias, process.platform === 'win32' ? 'junction' : 'dir')
+
+      const resolution = await resolutionOf(f)
+      const entry = resolution.entries.find(entry => entry.name === names[manifestIndex])
+      expect(entry?.scope).toBe('installation')
+      expect(entry === undefined ? undefined : realpathSync.native(entry.packageDir)).toBe(realpathSync.native(physical))
+      const registration = installRuntimeInterception(resolution)
+      registrations.push(registration)
+      const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+      const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+      const expectedCjs = join(physical, 'index.cjs')
+      const expectedEsm = pathToFileURL(join(physical, 'index.js')).href
+      const expectedSubpathCjs = join(physical, 'subpath.cjs')
+      const expectedSubpathEsm = pathToFileURL(join(physical, 'subpath.js')).href
+
+      expect(require(legacy)).toEqual({ marker: 1 })
+      expect(require(canonical)).toEqual({ marker: 1 })
+      expect(require(legacy)).toBe(require(canonical))
+      expect(require.resolve(legacy)).toBe(expectedCjs)
+      expect(require.resolve(canonical)).toBe(expectedCjs)
+      expect(require(`${legacy}/subpath`)).toEqual({ marker: 11 })
+      expect(require(`${canonical}/subpath`)).toEqual({ marker: 11 })
+      expect(require(`${legacy}/subpath`)).toBe(require(`${canonical}/subpath`))
+      expect(require.resolve(`${legacy}/subpath`)).toBe(expectedSubpathCjs)
+      expect(require.resolve(`${canonical}/subpath`)).toBe(expectedSubpathCjs)
+      expect(resolveFrom(legacy, parent)).toBe(expectedEsm)
+      expect(resolveFrom(canonical, parent)).toBe(expectedEsm)
+      expect(resolveFrom(`${legacy}/subpath`, parent)).toBe(expectedSubpathEsm)
+      expect(resolveFrom(`${canonical}/subpath`, parent)).toBe(expectedSubpathEsm)
+      const legacyModule = await importFrom(legacy, parent)
+      const canonicalModule = await importFrom(canonical, parent)
+      expect(legacyModule).toMatchObject({ marker: 1 })
+      expect(canonicalModule).toBe(legacyModule)
+      const legacySubpath = await importFrom(`${legacy}/subpath`, parent)
+      const canonicalSubpath = await importFrom(`${canonical}/subpath`, parent)
+      expect(legacySubpath).toMatchObject({ marker: 11 })
+      expect(canonicalSubpath).toBe(legacySubpath)
+    }
+  })
+
+  it.each([
+    ['legacy manifest key with canonical directory', 0, 1],
+    ['canonical manifest key with legacy directory', 1, 0],
+  ] as const)('routes Cordis aliases when only one physical package path exists (%s)', async (_label, manifestIndex, physicalIndex) => {
+    for (const [legacy, canonical] of CORDIS_PACKAGE_ALIASES) {
+      const names = [legacy, canonical] as const
+      const f = fixture(names[manifestIndex])
+      rmSync(f.installed, { recursive: true })
+      const physical = join(dirname(f.installAnchor), 'node_modules', names[physicalIndex])
+      cordisAliasPkg(physical, names[physicalIndex], 1)
+
+      const resolution = await resolutionOf(f)
+      const entry = resolution.entries.find(entry => entry.name === names[manifestIndex])
+      expect(entry?.scope).toBe('installation')
+      expect(entry === undefined ? undefined : realpathSync.native(entry.packageDir)).toBe(realpathSync.native(physical))
+      const registration = installRuntimeInterception(resolution)
+      registrations.push(registration)
+      const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+      const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+      const expectedCjs = join(physical, 'index.cjs')
+      const expectedEsm = pathToFileURL(join(physical, 'index.js')).href
+      const expectedSubpathCjs = join(physical, 'subpath.cjs')
+      const expectedSubpathEsm = pathToFileURL(join(physical, 'subpath.js')).href
+
+      expect(require(legacy)).toEqual({ marker: 1 })
+      expect(require(canonical)).toEqual({ marker: 1 })
+      expect(require.resolve(legacy)).toBe(expectedCjs)
+      expect(require.resolve(canonical)).toBe(expectedCjs)
+      expect(require(`${legacy}/subpath`)).toEqual({ marker: 11 })
+      expect(require(`${canonical}/subpath`)).toEqual({ marker: 11 })
+      expect(require.resolve(`${legacy}/subpath`)).toBe(expectedSubpathCjs)
+      expect(require.resolve(`${canonical}/subpath`)).toBe(expectedSubpathCjs)
+      expect(resolveFrom(legacy, parent)).toBe(expectedEsm)
+      expect(resolveFrom(canonical, parent)).toBe(expectedEsm)
+      expect(resolveFrom(`${legacy}/subpath`, parent)).toBe(expectedSubpathEsm)
+      expect(resolveFrom(`${canonical}/subpath`, parent)).toBe(expectedSubpathEsm)
+    }
+  })
+
   it('routes a scoped CommonJS package through its containing node_modules directory', async () => {
     const f = fixture('@scope/tools')
     const registration = installRuntimeInterception(await resolutionOf(f))
@@ -558,6 +743,31 @@ describe('runtime resolution', { concurrent: false }, () => {
     expect(resolveFrom('@deepseek-ai/dsh-core', parent)).toBe(
       pathToFileURL(join(f.profile.dir, 'node_modules', '@deepseek-ai/dsh-core', 'index.js')).href,
     )
+  })
+
+  it('recognizes a canonical profile package for a legacy dependency key', async () => {
+    const f = fixture()
+    const local = join(f.profile.dir, 'node_modules', '@yharness', 'core')
+    file(join(f.profile.dir, 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web', private: true, dependencies: { '@deepseek-ai/dsh-core': '*' },
+    }))
+    pkg(local, '@yharness/core', 2)
+
+    const resolution = await resolutionOf(f)
+    expect(resolution.localPackageNames).toEqual(['@deepseek-ai/dsh-core'])
+    const registration = installRuntimeInterception(resolution)
+    registrations.push(registration)
+    const require = createRequire(join(f.profile.dir, 'entry.cjs'))
+    const parent = pathToFileURL(join(f.profile.dir, 'entry.mjs')).href
+    const expectedCjs = join(local, 'index.cjs')
+    const expectedEsm = pathToFileURL(join(local, 'index.js')).href
+
+    expect(require('@deepseek-ai/dsh-core')).toEqual({ marker: 2 })
+    expect(require('@yharness/core')).toEqual({ marker: 2 })
+    expect(require.resolve('@deepseek-ai/dsh-core')).toBe(expectedCjs)
+    expect(require.resolve('@yharness/core')).toBe(expectedCjs)
+    expect(resolveFrom('@deepseek-ai/dsh-core', parent)).toBe(expectedEsm)
+    expect(resolveFrom('@yharness/core', parent)).toBe(expectedEsm)
   })
 
   it('preserves an npm alias package self-reference', async () => {

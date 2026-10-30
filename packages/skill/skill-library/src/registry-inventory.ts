@@ -1,7 +1,7 @@
 /** Read-only metadata observations from already registered skill views. */
 import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
-import type { SkillRegistry, SkillSummary, SkillViewOptions } from '@deepseek-ai/dsh-skill'
+import type { SkillRegistry, SkillSummary, SkillViewOptions } from '@yharness/skill'
 import type { SkillLibraryProject, SkillLibraryProviderStatus } from './types.ts'
 
 /** Registry reads admitted by the existing composition. */

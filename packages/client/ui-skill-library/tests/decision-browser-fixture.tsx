@@ -1,9 +1,9 @@
 /** Browser-only synthetic Decision footer for root-owned visual verification. */
 import { useState, type ReactNode } from 'react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
 import { DecisionSettings, type DecisionSettingsProps } from '../src/client/DecisionSettings.tsx'
 import type { DecisionState } from '../src/client/decision-controller.ts'
 import { en } from '../src/client/locales.ts'

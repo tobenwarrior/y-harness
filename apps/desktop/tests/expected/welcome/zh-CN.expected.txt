@@ -1,6 +1,6 @@
-Y harness
-Y harness
-欢迎使用 Y harness
-组装无限可能，共探智能上限
-登录
-添加 API Key
+Y Harness
+Y Harness
+Welcome to Y Harness
+Build potential. Explore intelligence.
+Sign in
+Add API Key

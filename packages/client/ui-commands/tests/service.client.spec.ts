@@ -7,20 +7,20 @@
  * payload, the scoped consume-token dispatch, per-session popupFor
  * lifecycle, and the directory invalidation event subscriptions.
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import type { CommandResult } from '@deepseek-ai/dsh-commands/types'
-import { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
-import { scopeOf } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { RemoteError, TestRemote, TestSessions } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionFixture } from '@deepseek-ai/dsh-client-test-runtime'
-import { IconGoalOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ClientSessionContext, ConsumeTokenRequest, InputTriggerPick, InputTriggerSource, SubmitAttachment } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import type { CommandResult } from '@yharness/commands/types'
+import { CommandDefinitionId } from '@yharness/commands/brand'
+import { scopeOf } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { RemoteError, TestRemote, TestSessions } from '@yharness/client-test-runtime'
+import type { SessionFixture } from '@yharness/client-test-runtime'
+import { IconGoalOutlineRegular } from '@yharness/client-ui-primitives'
+import type { ClientSessionContext, ConsumeTokenRequest, InputTriggerPick, InputTriggerSource, SubmitAttachment } from '@yharness/client-ui-input-trigger/client'
 import type { CommandContribution, CommandDecoration, PopupSelectSpec, SelectOption } from '../src/client/contract.ts'
 import type { CommandDescriptor } from '../src/client/directory.ts'
 import { CommandUiRuntime } from '../src/client/service.ts'
-import { en, zh, type CommandKey } from '../src/client/locales.ts'
+import { en, type CommandKey } from '../src/client/locales.ts'
 
 const sid = (k: string): SessionId => k as SessionId
 
@@ -322,7 +322,7 @@ describe('candidates', () => {
   it('localizes canonical built-in and contribution descriptions on every candidate request', async () => {
     let locale = 'zh'
     const commands: CommandDescriptor[] = [
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-command-compact'), name: 'compact', description: 'Compact older conversation history' },
+      { definitionId: CommandDefinitionId('@yharness/command-compact'), name: 'compact', description: 'Compact older conversation history' },
       { name: 'goal', description: 'scoped goal override' },
       { name: 'custom', description: 'plugin-authored copy' },
     ]
@@ -359,12 +359,12 @@ describe('candidates', () => {
   describe('menu presentation (design doc for #3567)', () => {
     /** First-party definitions plus an unrelated command, in Host registration order. */
     const SHIPPED: CommandDescriptor[] = [
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-command-compact'), name: 'compact', description: 'Compact older conversation history' },
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-session-log-export'), name: 'export', description: 'Download this Session log as a ZIP archive' },
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-command-feedback'), name: 'feedback', description: 'Record feedback about this session', input: { hint: '<text>' } },
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-command-goal'), name: 'goal', description: 'Set or view the goal for a long-running task', input: { hint: '<objective>', attachments: true } },
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-permission-presets'), name: 'permission', description: 'Switch the permission preset (sandbox mode + approval policy)', input: { hint: '<preset>' } },
-      { definitionId: CommandDefinitionId('@deepseek-ai/dsh-plan-mode'), name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]', attachments: true } },
+      { definitionId: CommandDefinitionId('@yharness/command-compact'), name: 'compact', description: 'Compact older conversation history' },
+      { definitionId: CommandDefinitionId('@yharness/session-log-export'), name: 'export', description: 'Download this Session log as a ZIP archive' },
+      { definitionId: CommandDefinitionId('@yharness/command-feedback'), name: 'feedback', description: 'Record feedback about this session', input: { hint: '<text>' } },
+      { definitionId: CommandDefinitionId('@yharness/command-goal'), name: 'goal', description: 'Set or view the goal for a long-running task', input: { hint: '<objective>', attachments: true } },
+      { definitionId: CommandDefinitionId('@yharness/permission-presets'), name: 'permission', description: 'Switch the permission preset (sandbox mode + approval policy)', input: { hint: '<preset>' } },
+      { definitionId: CommandDefinitionId('@yharness/plan-mode'), name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]', attachments: true } },
       { name: 'deploy', description: 'third-party command' },
     ]
     const Glyph = () => null
@@ -377,8 +377,8 @@ describe('candidates', () => {
     })
     const modelContribution = (): CommandContribution => ({
       name: 'model',
-      label: () => '模型',
-      description: () => '选择本会话使用的模型',
+      label: () => '\u{6A21}\u{578B}',
+      description: () => '\u{9009}\u{62E9}\u{672C}\u{4F1A}\u{8BDD}\u{4F7F}\u{7528}\u{7684}\u{6A21}\u{578B}',
       icon: Glyph,
       available: () => true,
       ui: themeUi(),
@@ -405,7 +405,7 @@ describe('candidates', () => {
         section: 'command:section.add',
       })
       expect(rows[0]).toEqual({ name: 'file', label: 'command:label.file', icon: Glyph, section: 'command:section.add' })
-      expect(rows[6]).toMatchObject({ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: Glyph })
+      expect(rows[6]).toMatchObject({ name: 'model', label: '\u{6A21}\u{578B}', description: '\u{9009}\u{62E9}\u{672C}\u{4F1A}\u{8BDD}\u{4F7F}\u{7528}\u{7684}\u{6A21}\u{578B}', icon: Glyph })
       // A third-party command keeps its catalog text and gets no glyph.
       expect(rows[8]).toEqual({ name: 'deploy', description: 'third-party command', section: 'command:section.commands' })
     })
@@ -415,12 +415,13 @@ describe('candidates', () => {
       const { source } = await bench({ commands: () => Promise.resolve({ commands }) })
       const [row] = await source.candidates(proj('s1'), req(''))
       expect(row).toEqual({ name: 'goal', description: en['description.goal'], hint: 'x', section: 'command:section.add' })
-      expect(source.matchSpace!(proj('s1'), '/目标')).toBeUndefined()
-      expect(await source.matchEnter!(proj('s1'), '/目标 x', new AbortController().signal, { attachments: 0 })).toBeUndefined()
+      expect(source.matchSpace!(proj('s1'), '/objective')).toBeUndefined()
+      expect(await source.matchEnter!(proj('s1'), '/objective x', new AbortController().signal, { attachments: 0 })).toBeUndefined()
       expect(source.matchSpace!(proj('s1'), '/goal')).toHaveProperty('claim.name', 'goal')
     })
 
-    it.each([['en', en], ['zh', zh]] as const)('description edits preserve menu claims and bilingual parsing under %s', async (_locale, dictionary) => {
+    it('description edits preserve menu claims and canonical token parsing', async () => {
+      const dictionary = en
       const commands = SHIPPED.map(command => ({ ...command, description: command.description + '.' }))
       const { fiber, source, warm } = await bench({
         commands: () => Promise.resolve({ commands }),
@@ -433,7 +434,7 @@ describe('candidates', () => {
         expect(rows.find(row => row.name === name)?.label).toBe(dictionary[`label.${name}`])
         const picked = menuPick(source, name, proj('s1'))
         expect(picked).toHaveProperty('claim.token', `/${dictionary[`token.${name}`]} `)
-        for (const spelling of [en[`token.${name}`], zh[`token.${name}`]]) {
+        for (const spelling of [en[`token.${name}`]]) {
           expect(source.matchSpace!(proj('s1'), `/${spelling}`)).toHaveProperty('claim.name', name)
           expect(await source.matchEnter!(proj('s1'), `/${spelling} text`, new AbortController().signal, { attachments: 0 }))
             .toHaveProperty('claim.token', `/${spelling} `)
@@ -445,7 +446,7 @@ describe('candidates', () => {
       const { command, source } = await bench({ commands: () => Promise.resolve({ commands: SHIPPED }) })
       command.register(modelContribution())
       const names = async (query: string) => (await source.candidates(proj('s1'), req(query))).map(c => c.name)
-      await expect(names('模型')).resolves.toEqual(['model'])
+      await expect(names('\u{6A21}\u{578B}')).resolves.toEqual(['model'])
       await expect(names('label.goal')).resolves.toEqual(['goal'])
       await expect(names('ex')).resolves.toEqual(['export'])
       // Prefix hits lead; the empty-query section order no longer applies.
@@ -482,28 +483,28 @@ describe('candidates', () => {
       expect(executeCalls).toEqual([{ sessionId: sid('s1'), line: '/plan do x', images: [] }])
     })
 
-    it('a typed localized token resolves to the built-in command on space and enter; the Host line carries the catalog name', async () => {
+    it('a typed canonical token resolves to the built-in command on space and enter; the Host line carries the catalog name', async () => {
       const { source, mint, warm, executeCalls } = await bench({ commands: () => Promise.resolve({ commands: SHIPPED }) })
       mint('s1')
       await warm(proj('s1'))
-      const space = source.matchSpace!(proj('s1'), '/计划')
+      const space = source.matchSpace!(proj('s1'), '/plan')
       if (space === undefined || space === 'handled' || !('claim' in space)) throw new Error('expected the plan claim')
       expect(space.claim.hint).toBe('[off|message]')
       // The claim keeps the typed spelling (the draft carries it and the
       // arguments are read after it); the submission sends the catalog name.
-      expect(space.claim.token).toBe('/计划 ')
+      expect(space.claim.token).toBe('/plan ')
       expect(space.claim.name).toBe('plan')
-      const enter = await source.matchEnter!(proj('s1'), '/目标 ship it', new AbortController().signal, { attachments: 0 })
+      const enter = await source.matchEnter!(proj('s1'), '/goal ship it', new AbortController().signal, { attachments: 0 })
       if (enter === undefined || enter === 'handled' || !('claim' in enter)) throw new Error('expected the goal claim')
       expect(enter.claim.attachments).toBe(true)
-      expect(enter.claim.token).toBe('/目标 ')
+      expect(enter.claim.token).toBe('/goal ')
       await enter.claim.submit('ship it', new Context(), [])
       expect(executeCalls).toEqual([{ sessionId: sid('s1'), line: '/goal ship it', images: [] }])
       const typed = await source.matchEnter!(proj('s1'), '/plan now', new AbortController().signal, { attachments: 0 })
       if (typed === undefined || typed === 'handled' || !('claim' in typed)) throw new Error('expected the plan claim')
       expect(typed.claim.token).toBe('/plan ')
       executeCalls.length = 0
-      expect(await source.matchEnter!(proj('s1'), '/压缩', new AbortController().signal, { attachments: 0 })).toBe('handled')
+      expect(await source.matchEnter!(proj('s1'), '/compact', new AbortController().signal, { attachments: 0 })).toBe('handled')
       await vi.waitFor(() => { expect(executeCalls).toEqual([{ sessionId: sid('s1'), line: '/compact', images: [] }]) })
     })
   })

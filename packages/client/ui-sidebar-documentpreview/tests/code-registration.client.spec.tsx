@@ -2,15 +2,15 @@
 /** Code renderer registration lifetimes through the production document and Slot registries. */
 import { afterEach, describe, expect, it } from 'vitest'
 import { act } from '@testing-library/react'
-import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { CODE_HIGHLIGHT_EXTENSIONS } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SlotTestRuntime } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { CODE_HIGHLIGHT_EXTENSIONS } from '@yharness/client-ui-primitives'
 import { apply } from '../src/client/code/index.ts'
 import { CodeBody } from '../src/client/code/CodeBody.tsx'
 import { DocumentPreviewRegistry } from '../src/client/document/registry.ts'
 import { documentTabInfoFactory } from '../src/client/document/contract.ts'
 
-const ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code'
+const ID = '@yharness/client-ui-sidebar-documentpreview/code'
 const SLOT = 'sidebar.right.tab.document'
 const plugin = { inject: ['slots', 'locale', 'documentPreviews'], apply }
 let runtime: SlotTestRuntime | undefined
@@ -65,7 +65,7 @@ describe('code renderer registration', () => {
     await act(async () => { h.locale.setLocale('en') })
     expect(definition?.title()).toBe('Code')
     await act(async () => { h.locale.setLocale('zh') })
-    expect(definition?.title()).toBe('代码')
+    expect(definition?.title()).toBe('Code')
     await feature.dispose()
     expect(h.previews.getSnapshot()).toEqual([])
     expect(h.rt.slots.entries(SLOT)).toEqual([])

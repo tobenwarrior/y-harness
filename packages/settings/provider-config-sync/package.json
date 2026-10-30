@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-provider-config-sync",
+  "name": "@yharness/provider-config-sync",
   "description": "Opt-in ordinary provider catalog configuration synchronization",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/settings/provider-config-sync"
   },
   "type": "module",
@@ -27,21 +27,21 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-settings": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/settings": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-settings": "workspace:*",
-    "@deepseek-ai/dsh-app-boot": "workspace:*",
-    "@deepseek-ai/dsh-config-editor": "workspace:*",
-    "@deepseek-ai/cordis-plugin-timer": "workspace:~",
-    "@deepseek-ai/dsh-hmr": "workspace:*",
-    "@deepseek-ai/dsh-llm-pi-ai": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/settings": "workspace:*",
+    "@yharness/app-boot": "workspace:*",
+    "@yharness/config-editor": "workspace:*",
+    "@yharness/cordis-plugin-timer": "workspace:~",
+    "@yharness/hmr": "workspace:*",
+    "@yharness/llm-pi-ai": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
-    "@deepseek-ai/dsh-atomic-write": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
+    "@yharness/atomic-write": "workspace:*",
     "chokidar": "^4.0.3",
     "zod": "^4.4.3"
   }

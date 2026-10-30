@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId, ImageVariantId } from '@yharness/attachment'
 import type {
   AttachmentStore,
   ImageAttachmentRef,
   ImageRequestTarget,
   RequestImageAttachment,
-} from '@deepseek-ai/dsh-attachment'
-import { createDeveloperMessage, ToolCallId, createAssistantMessage, createMessage, createToolResultMessage, createUserMessage, offloadedImageText } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, GenerateOptions, Message, RequestUserInput } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+} from '@yharness/attachment'
+import { createDeveloperMessage, ToolCallId, createAssistantMessage, createMessage, createToolResultMessage, createUserMessage, offloadedImageText } from '@yharness/llm'
+import type { ContentBlock, GenerateOptions, Message, RequestUserInput } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import { toPiContext } from '../src/context.ts'
 import type { PiImageRequestContext } from '../src/context.ts'
 import { toPiAssistant } from '../src/replay.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

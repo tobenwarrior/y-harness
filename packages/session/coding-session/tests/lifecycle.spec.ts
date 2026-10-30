@@ -4,13 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import { brandString } from '@yharness/brand'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Typert from '@yharness/typert-registry'
 import * as CodingSessions from '../src/index.ts'
 import { CodingSessionLibrary } from '../src/library.ts'
 import { codingSessionDomain } from '../src/record.ts'
@@ -37,9 +37,9 @@ async function bootStorage(extraModules: readonly [string, unknown][] = []): Pro
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-storage', Storage], ['@deepseek-ai/dsh-storage-json', JsonStorage],
-    ['@deepseek-ai/dsh-storage-domain', Domain], ['@deepseek-ai/dsh-typert-registry', Typert],
-    ['@deepseek-ai/dsh-coding-session', CodingSessions],
+    ['@yharness/storage', Storage], ['@yharness/storage-json', JsonStorage],
+    ['@yharness/storage-domain', Domain], ['@yharness/typert-registry', Typert],
+    ['@yharness/coding-session', CodingSessions],
     ...extraModules,
   ])
   const internal = ctx.loader.internal
@@ -51,15 +51,15 @@ async function bootStorage(extraModules: readonly [string, unknown][] = []): Pro
     }
     return Reflect.get(target, property, receiver)
   } })
-  await ctx.loader.create({ name: '@deepseek-ai/dsh-storage' })
-  await ctx.loader.create({ name: '@deepseek-ai/dsh-storage-json', config: { root: join(root, 'storage') } })
-  await ctx.loader.create({ name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'json' } })
-  await ctx.loader.create({ name: '@deepseek-ai/dsh-typert-registry' })
+  await ctx.loader.create({ name: '@yharness/storage' })
+  await ctx.loader.create({ name: '@yharness/storage-json', config: { root: join(root, 'storage') } })
+  await ctx.loader.create({ name: '@yharness/storage-domain', config: { backend: 'json' } })
+  await ctx.loader.create({ name: '@yharness/typert-registry' })
   await ctx.loader.await()
   return ctx
 }
 async function startCodingSessions(ctx: Context) {
-  const id = await ctx.loader.create({ name: '@deepseek-ai/dsh-coding-session', config: { enableClaudeDiscovery: false, enableSequentialHandoff: true } })
+  const id = await ctx.loader.create({ name: '@yharness/coding-session', config: { enableClaudeDiscovery: false, enableSequentialHandoff: true } })
   const fiber = ctx.loader.resolve(id).fiber
   if (fiber === undefined) throw new Error('Coding session fixture did not create a Loader fiber')
   return fiber

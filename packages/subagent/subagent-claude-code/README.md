@@ -3,7 +3,7 @@ description: "Claude Code delegations and optional normal root turns for users a
 kind: "package-bundle"
 ---
 
-# @deepseek-ai/dsh-subagent-claude-code
+# @yharness/subagent-claude-code
 
 ## Summary
 
@@ -30,8 +30,8 @@ Mount this provider when a delegation should run as a real Claude Code session i
 Install the package into the target Profile, then restart that Profile. The installation brings the pinned Agent SDK and one compatible platform CLI payload into the Profile; the declared patch layer registers only the dormant provider and starts no Claude process.
 
 ```sh
-dsh plugin --profile <name> add @deepseek-ai/dsh-subagent-claude-code
-dsh plugin --profile <name> remove @deepseek-ai/dsh-subagent-claude-code
+dsh plugin --profile <name> add @yharness/subagent-claude-code
+dsh plugin --profile <name> remove @yharness/subagent-claude-code
 dsh --profile <name>
 ```
 
@@ -57,7 +57,7 @@ Removing the package withdraws the provider and its private runtime closure on t
 | `plan` | Run in native planning mode, deny execution approval, and return the completed plan as the final answer |
 | `bypassPermissions` | Explicitly set the SDK's dangerous confirmation and bypass permission checks |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-claude-code) is the exhaustive source for every accepted field and its JSDoc. A configured `model` passes unchanged to every query from that provider instance; omission leaves native model selection in force. Credential-shaped ambient variables are removed before the explicit `env` overlay, so an API key intended for the child must be supplied there. The provider omits the SDK `settingSources` option, so Claude Code reads the host's normal user, project, and local settings relative to the parent Session cwd. It does not copy or filter those files, create or modify login state, inspect `PATH`, or fall back to a host `claude` executable.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesssubagent-claude-code) is the exhaustive source for every accepted field and its JSDoc. A configured `model` passes unchanged to every query from that provider instance; omission leaves native model selection in force. Credential-shaped ambient variables are removed before the explicit `env` overlay, so an API key intended for the child must be supplied there. The provider omits the SDK `settingSources` option, so Claude Code reads the host's normal user, project, and local settings relative to the parent Session cwd. It does not copy or filter those files, create or modify login state, inspect `PATH`, or fall back to a host `claude` executable.
 
 ### Normal root turns
 
@@ -85,11 +85,11 @@ Each delegation tool row names one provider and needs its own `toolName`, so the
 
 ```yaml
 - id: jobs
-  name: '@deepseek-ai/dsh-jobs-local'
+  name: '@yharness/jobs-local'
 - id: tool-jobs
-  name: '@deepseek-ai/dsh-tool-jobs'
+  name: '@yharness/tool-jobs'
 - id: tool-subagent-claude
-  name: '@deepseek-ai/dsh-tool-subagent'
+  name: '@yharness/tool-subagent'
   config:
     provider: claude-code
     toolName: subagent_claude_code
@@ -155,7 +155,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [dsh-subagent seam](../subagent/README.md) — the registry and start API this provider registers on.
 - [Codex subagent provider](../subagent-codex/README.md) — the sibling product backend over the official app-server protocol.
 - [historical Claude Code and Codex backends](../../../.agents/notes/archived/feature/2026-08-04-claude-code-and-codex-subagent-backends.md) — the design record for the product providers.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-claude-code) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesssubagent-claude-code) — every accepted config field and its source declaration.
 
 -----
 

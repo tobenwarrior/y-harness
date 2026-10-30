@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList, SkillCleanupProposalId, SkillRevisionId } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList, SkillCleanupProposalId, SkillRevisionId } from '@yharness/skill-library/types'
 import { SkillLibraryController, type SkillLibraryApi } from '../src/client/controller.ts'
 import { learningProposal, learningStatus, evidence } from './learning-fixtures.ts'
 
@@ -28,7 +28,7 @@ const api = (overrides: Partial<SkillLibraryApi> = {}): SkillLibraryApi => ({
   listLearningEvidence: async () => ({ ok: true, value: [evidence] }),
   learningStatus: async () => ({ ok: true, value: learningStatus }),
   approveLearningPolicy: async () => ({ ok: true, value: {
-    id: 'policy' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningPolicyId,
+    id: 'policy' as import('@yharness/skill-library/types').SkillLearningPolicyId,
     approvedAt: '2026-10-09T00:00:00Z', validatorId: 'validator', operations: ['compress'],
   } }),
   setAutomaticLearning: async request => ({ ok: true, value: {
@@ -43,7 +43,7 @@ describe('skill library controller', () => {
       id: request.policyId, approvedAt: '2026-10-09T00:00:00Z', validatorId: 'validator', operations: ['compress'], enabled: false,
     } }))
     const controller = new SkillLibraryController(api({ revokeLearningPolicy }))
-    const policyId = 'policy' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningPolicyId
+    const policyId = 'policy' as import('@yharness/skill-library/types').SkillLearningPolicyId
     await controller.revokePolicy(policyId)
     expect(revokeLearningPolicy).toHaveBeenCalledWith({ policyId })
     expect(controller.source.getSnapshot().learning.providers).toEqual(learningStatus)
@@ -109,7 +109,7 @@ describe('skill library controller', () => {
     const controller = new SkillLibraryController(api({ setAutomaticLearning }))
     await controller.approvePolicy({ validatorId: 'validator', operations: ['compress'] })
     expect(setAutomaticLearning).not.toHaveBeenCalled()
-    const policyId = 'policy' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningPolicyId
+    const policyId = 'policy' as import('@yharness/skill-library/types').SkillLearningPolicyId
     await controller.setLearningAutomatic(item, policyId, true)
     expect(setAutomaticLearning).toHaveBeenCalledWith({ id, expectedHash: 'hash', policyId, enabled: true })
     controller.dispose()
@@ -125,7 +125,7 @@ describe('skill library controller', () => {
   it('ignores a late proposal body when a newer suggestion was selected', async () => {
     let resolveFirst!: (value: Awaited<ReturnType<SkillLibraryApi['detailProposal']>>) => void
     const first = new Promise<Awaited<ReturnType<SkillLibraryApi['detailProposal']>>>((resolve) => { resolveFirst = resolve })
-    const newer = { ...learningProposal, id: 'proposal:newer' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningProposalId, generator: 'newer-generator' }
+    const newer = { ...learningProposal, id: 'proposal:newer' as import('@yharness/skill-library/types').SkillLearningProposalId, generator: 'newer-generator' }
     const controller = new SkillLibraryController(api({
       detailProposal: async request => request.proposalId === learningProposal.id ? first : { ok: true, value: newer },
     }))
@@ -139,7 +139,7 @@ describe('skill library controller', () => {
   it('does not switch selection back when an earlier review action finishes', async () => {
     let resolveApply!: (value: Awaited<ReturnType<SkillLibraryApi['applyProposal']>>) => void
     const applying = new Promise<Awaited<ReturnType<SkillLibraryApi['applyProposal']>>>((resolve) => { resolveApply = resolve })
-    const newer = { ...learningProposal, id: 'proposal:newer' as import('@deepseek-ai/dsh-skill-library/types').SkillLearningProposalId }
+    const newer = { ...learningProposal, id: 'proposal:newer' as import('@yharness/skill-library/types').SkillLearningProposalId }
     const controller = new SkillLibraryController(api({
       applyProposal: async () => applying, detailProposal: async () => ({ ok: true, value: newer }),
     }))

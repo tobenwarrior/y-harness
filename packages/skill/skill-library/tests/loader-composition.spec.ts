@@ -4,16 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Session from '@deepseek-ai/dsh-session'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Session from '@yharness/session'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
 import * as Library from '../src/index.ts'
 import { SkillLibrary } from '../src/library.ts'
 
@@ -35,23 +35,23 @@ describe('skill library real Loader composition', () => {
       '---\nname: deploy\ndescription: Release workflow\n---\n\nRun the documented release checks.\n')
     const configPath = join(root, 'cordis.yml')
     await writeFile(configPath, JSON.stringify([
-      { name: '@deepseek-ai/dsh-storage' },
-      { name: '@deepseek-ai/dsh-storage-json', config: { root: join(root, 'storage') } },
-      { name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'json' } },
-      { name: '@deepseek-ai/dsh-session' },
-      { name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: join(root, 'sessions'), compression: 'none' } },
-      { name: '@deepseek-ai/dsh-workspace' },
-      { name: '@deepseek-ai/dsh-typert-registry' },
-      { name: '@deepseek-ai/dsh-skill-library', config: { dshHome: home, agentsHome: join(root,
+      { name: '@yharness/storage' },
+      { name: '@yharness/storage-json', config: { root: join(root, 'storage') } },
+      { name: '@yharness/storage-domain', config: { backend: 'json' } },
+      { name: '@yharness/session' },
+      { name: '@yharness/session-persistence-jsonl', config: { root: join(root, 'sessions'), compression: 'none' } },
+      { name: '@yharness/workspace' },
+      { name: '@yharness/typert-registry' },
+      { name: '@yharness/skill-library', config: { dshHome: home, agentsHome: join(root,
         'agents'), automaticMaintenanceIntervalMs: 10 } },
     ]))
     context = new Context(); context.baseUrl = pathToFileURL(root).href + '/'
     await context.plugin(Loader); context.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
-      ['@deepseek-ai/dsh-storage', Storage], ['@deepseek-ai/dsh-storage-json', JsonStorage], ['@deepseek-ai/dsh-storage-domain', Domain],
-      ['@deepseek-ai/dsh-session', Session], ['@deepseek-ai/dsh-session-persistence-jsonl', Jsonl],
-      ['@deepseek-ai/dsh-workspace', Workspace],
-      ['@deepseek-ai/dsh-typert-registry', Typert], ['@deepseek-ai/dsh-skill-library', Library],
+      ['@yharness/storage', Storage], ['@yharness/storage-json', JsonStorage], ['@yharness/storage-domain', Domain],
+      ['@yharness/session', Session], ['@yharness/session-persistence-jsonl', Jsonl],
+      ['@yharness/workspace', Workspace],
+      ['@yharness/typert-registry', Typert], ['@yharness/skill-library', Library],
     ])
     const internal = context.loader.internal
     if (internal === undefined) throw new Error('fixture requires an internal module loader')
@@ -121,7 +121,7 @@ describe('skill library real Loader composition', () => {
     expect(context.skillLibrary.learningStatus({}).optIns.find(consent => consent.id === changed.id)?.enabled).toBe(false)
     await context.skillLibrary.restore({ id: changed.id })
     expect(context.skillLibrary.learningStatus({}).optIns.find(consent => consent.id === changed.id)?.enabled).toBe(false)
-    const entry = [...context.loader.entries()].find(entry => entry.options.name === '@deepseek-ai/dsh-skill-library')!
+    const entry = [...context.loader.entries()].find(entry => entry.options.name === '@yharness/skill-library')!
     const warnings = vi.spyOn(entry.fiber!.ctx.logger, 'warn').mockImplementation(() => undefined)
     const failingConsumer = vi.spyOn(SkillLibrary.prototype,
       'cleanupOptedIn').mockRejectedValueOnce(new Error('fixture whitespace consumer failure'))

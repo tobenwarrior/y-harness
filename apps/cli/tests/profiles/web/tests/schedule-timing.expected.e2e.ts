@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { DailyScheduleRecord, ScheduleCatalogEntry } from '@deepseek-ai/dsh-schedule'
+import type { DailyScheduleRecord, ScheduleCatalogEntry } from '@yharness/schedule'
 import { expect, it } from 'vitest'
 import { withDefaultWeb, webGet, webRequest } from './default-web-process.ts'
 

@@ -4,8 +4,8 @@
 import type { ReactNode, RefObject } from 'react'
 import {
   IconChevronDownOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, YHarnessLogo,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
+} from '@yharness/client-ui-primitives'
+import { workspaceTitleOf } from '@yharness/util-workspace-path'
 import type { ConversationContentProps } from '../contract/slots.ts'
 import css from './HeroShell.module.css'
 

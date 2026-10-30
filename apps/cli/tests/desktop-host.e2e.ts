@@ -13,7 +13,7 @@ it.each([false, true])('settles startup after parent IPC disconnect (boot failur
   const modules = join(root, 'node_modules', '@deepseek-ai')
   const hostDirectory = fileURLToPath(new URL('../../desktop-host/', import.meta.url))
   const manifest = JSON.parse(readFileSync(join(hostDirectory, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
-  const stubbed = new Set(['@deepseek-ai/dsh-app-boot', '@deepseek-ai/dsh', '@deepseek-ai/dsh-home-paths'])
+  const stubbed = new Set(['@yharness/app-boot', '@yharness/cli', '@yharness/home-paths'])
   for (const name of Object.keys(manifest.dependencies)) {
     const destination = join(root, 'node_modules', name)
     mkdirSync(dirname(destination), { recursive: true })

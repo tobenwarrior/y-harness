@@ -26,15 +26,17 @@ rg -n --hidden '§\d' ...
 ## Chinese batteries
 
 ```sh
-# Change or review narration in Chinese counterparts.
-rg -n --hidden '评审|上一?轮|旧版|老的|不再|以前|本版|遗留' --glob '*.zh.md' ...
+# Change or review narration in translated counterparts. The PCRE escapes keep
+# the historical Han probes exact while keeping this source file ASCII-only.
+rg -n --pcre2 --hidden '\x{8BC4}\x{5BA1}|\x{4E0A}\x{4E00}?\x{8F6E}|\x{65E7}\x{7248}|\x{8001}\x{7684}|\x{4E0D}\x{518D}|\x{4EE5}\x{524D}|\x{672C}\x{7248}|\x{9057}\x{7559}' --glob '*.zh.md' ...
 
-# Chinese authoring-language slips in English Markdown.
-rg -n --hidden '设计稿|评审|上一?轮|旧版|老的|不再|以前|本版|遗留|私有|(^|[^a-zA-Z])端([^a-zA-Z]|$)' --glob '*.md' --glob '!*.zh.md' ...
+# Authoring-language slips in English Markdown. The same escaped literals
+# preserve the legacy detector without embedding Han characters in this skill.
+rg -n --pcre2 --hidden '\x{8BBE}\x{8BA1}\x{7A3F}|\x{8BC4}\x{5BA1}|\x{4E0A}\x{4E00}?\x{8F6E}|\x{65E7}\x{7248}|\x{8001}\x{7684}|\x{4E0D}\x{518D}|\x{4EE5}\x{524D}|\x{672C}\x{7248}|\x{9057}\x{7559}|\x{79C1}\x{6709}|(^|[^a-zA-Z])\x{7AEF}([^a-zA-Z]|$)' --glob '*.md' --glob '!*.zh.md' ...
 
 # Chinese authoring-language slips in English code comments and JSDoc.
-rg -n --hidden '(^[[:space:]]*(//|/\*|\*)|//|/\*)[^\r\n]*(设计稿|评审|上一?轮|旧版|老的|不再|以前|本版|遗留|私有|端)' --glob '*.{ts,tsx,js,jsx,mjs,cjs,css}' ...
-rg -n --hidden '#[^\r\n]*(设计稿|评审|上一?轮|旧版|老的|不再|以前|本版|遗留|私有|端)' --glob '*.py' ...
+rg -n --pcre2 --hidden '(^[[:space:]]*(//|/\*|\*)|//|/\*)[^\r\n]*(\x{8BBE}\x{8BA1}\x{7A3F}|\x{8BC4}\x{5BA1}|\x{4E0A}\x{4E00}?\x{8F6E}|\x{65E7}\x{7248}|\x{8001}\x{7684}|\x{4E0D}\x{518D}|\x{4EE5}\x{524D}|\x{672C}\x{7248}|\x{9057}\x{7559}|\x{79C1}\x{6709}|\x{7AEF})' --glob '*.{ts,tsx,js,jsx,mjs,cjs,css}' ...
+rg -n --pcre2 --hidden '#[^\r\n]*(\x{8BBE}\x{8BA1}\x{7A3F}|\x{8BC4}\x{5BA1}|\x{4E0A}\x{4E00}?\x{8F6E}|\x{65E7}\x{7248}|\x{8001}\x{7684}|\x{4E0D}\x{518D}|\x{4EE5}\x{524D}|\x{672C}\x{7248}|\x{9057}\x{7559}|\x{79C1}\x{6709}|\x{7AEF})' --glob '*.py' ...
 ```
 
 ## Known false-positive families
@@ -48,5 +50,5 @@ Judged and kept during the purge; expect them again:
 - **`§N` with a committed owner** — external standards (RFC 9110 §10.1.5) and committed docs that own their §-numbering stay citable by section.
 - **Contrastive "actually" and noun "wait"** — ordinary English, not hedging; no committed line probes them, so they surface only when you extend the battery with broader hedging patterns.
 - **Runtime "today" and recorded timestamps** — prompts or tests that ask for the current date use natural time, not a repository version stamp; recorded CLI output keeps its voice. Wording that reaches a model or user still follows the behavior-evidence rule before any edit.
-- **本版本 in zh prose** — a legitimate rendering of "this release" in versioned-artifact contexts; the banned indexical is 本版 as a bare stamp mirroring "this cut".
+- **A translated rendering of "this release"** — legitimate in versioned-artifact contexts; the banned indexical is the bare stamp that mirrors "this cut".
 - **Alternatives-considered sections** — "rejected" inside an Agent Note's genre slot is the sanctioned home, not review choreography.

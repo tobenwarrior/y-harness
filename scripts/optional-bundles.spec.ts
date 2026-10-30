@@ -28,14 +28,14 @@ function bundle(name: string): { dir: string; patches: ReturnType<typeof loadOve
 }
 
 describe('optional bundles', () => {
-  const shipped = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'].map(name => bundle(name).patches)
+  const shipped = ['@yharness/base', '@yharness/web-app'].map(name => bundle(name).patches)
 
   it('ships at least one bundle switched off', () => {
     expect(OPTIONAL_BUNDLES.length).toBeGreaterThan(0)
   })
 
   it('keeps the Inspector out of the default plugin list', () => {
-    expect(OPTIONAL_BUNDLES).not.toContain('@deepseek-ai/dsh-experimental-inspector')
+    expect(OPTIONAL_BUNDLES).not.toContain('@yharness/experimental-inspector')
   })
 
   it.each(OPTIONAL_BUNDLES)('%s composes over the Web profile without a skipped patch', (name) => {
@@ -69,8 +69,8 @@ describe('optional bundles', () => {
     // The delivered composition carries the Host Schedule service and its task
     // page enabled; the clock stays preset-level, so no Host row declares it.
     for (const row of [
-      { id: 'schedule', name: '@deepseek-ai/dsh-schedule' },
-      { id: 'ui-schedule', name: '@deepseek-ai/dsh-client-ui-schedule' },
+      { id: 'schedule', name: '@yharness/schedule' },
+      { id: 'ui-schedule', name: '@yharness/client-ui-schedule' },
     ]) {
       expect(composed.filter(entry => entry.id === row.id && entry.name === row.name && entry.disabled !== true))
         .toHaveLength(1)
@@ -98,8 +98,8 @@ describe('optional bundles', () => {
     for (const id of ['preset-standard', 'preset-cordis', 'preset-ptc']) {
       const plugins = presetPlugins(id)
       for (const plugin of [
-        { id: 'time-context', name: '@deepseek-ai/dsh-time-context' },
-        { id: 'tool-schedule', name: '@deepseek-ai/dsh-tool-schedule' },
+        { id: 'time-context', name: '@yharness/time-context' },
+        { id: 'tool-schedule', name: '@yharness/tool-schedule' },
       ]) {
         const matches = plugins.filter(row => row.id === plugin.id && row.name === plugin.name)
         expect(matches).toHaveLength(1)
@@ -116,8 +116,8 @@ describe('optional bundles', () => {
       }
     }
     // `minimal` declares neither, so it composes no clock reading and no reminder tool.
-    expect(presetPlugins('preset-minimal').some(row => row.name === '@deepseek-ai/dsh-time-context'
-      || row.name === '@deepseek-ai/dsh-tool-schedule')).toBe(false)
+    expect(presetPlugins('preset-minimal').some(row => row.name === '@yharness/time-context'
+      || row.name === '@yharness/tool-schedule')).toBe(false)
   })
 
   it.each(OPTIONAL_BUNDLES)('%s resolves a title, description, and icon in both shipped languages', (name) => {

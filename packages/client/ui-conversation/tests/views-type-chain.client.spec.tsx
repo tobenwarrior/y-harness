@@ -1,8 +1,8 @@
 // Target-neutral View-ring type chain and runtime ledger projection.
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it } from 'vitest'
 import type { ReactNode } from 'react'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import type { ConvViewProps } from '../src/client/contract/slots.ts'
 
 describe('view-ring type negatives (compile-time; body never runs)', () => {
@@ -50,18 +50,18 @@ describe('view-ring runtime dual (real ledger)', () => {
   it('registers, orders, projects tabs, and disposes through the slot ledger', () => {
     const { slots } = bench()
     const offLate = slots.register(
-      { name: 'conversation.view', id: 'z-late', order: 20, label: '晚' }, () => null)
+      { name: 'conversation.view', id: 'z-late', order: 20, label: '\u{665A}' }, () => null)
     const offEarly = slots.register(
-      { name: 'conversation.view', id: 'early', order: 0, label: '早' }, () => null)
+      { name: 'conversation.view', id: 'early', order: 0, label: '\u{65E9}' }, () => null)
     // Order-sorted ledger, label fallback for a labelless rider.
     const offBare = slots.register(
       { name: 'conversation.view', id: 'bare', order: 10 }, () => null)
     const tabs = slots.entries('conversation.view')
       .map(e => ({ id: e.options.id, label: e.options.label ?? e.options.id }))
     expect(tabs).toEqual([
-      { id: 'early', label: '早' },
+      { id: 'early', label: '\u{65E9}' },
       { id: 'bare', label: 'bare' },
-      { id: 'z-late', label: '晚' },
+      { id: 'z-late', label: '\u{665A}' },
     ])
     // Duplicate ids fail loud at load (the ring's uniqueness contract).
     expect(() => slots.register({ name: 'conversation.view', id: 'early' }, () => null))

@@ -2,25 +2,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
-import type { DeepSeekAccount } from '@deepseek-ai/dsh-deepseek-account'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import WebRuntime, { WebError } from '@deepseek-ai/dsh-web'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import AgentRegistry from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import { credentialRef } from '@yharness/credentials'
+import LocalCredentialProvider from '@yharness/credentials-local'
+import type { DeepSeekAccount } from '@yharness/deepseek-account'
+import SessionStore, { SessionId } from '@yharness/session'
+import WebRuntime, { WebError } from '@yharness/web'
 import {
   DeepSeekSearchProvider,
   DEEPSEEK_PROVIDER_ID,
-} from '@deepseek-ai/dsh-web-search-deepseek'
-import * as deepseekPlugin from '@deepseek-ai/dsh-web-search-deepseek'
+} from '@yharness/web-search-deepseek'
+import * as deepseekPlugin from '@yharness/web-search-deepseek'
 import { citationSnippets, mapAnthropicResponse } from '../src/provider.ts'
-import type { AnthropicResponse } from '@deepseek-ai/dsh-web-search-deepseek/src/types.ts'
+import type { AnthropicResponse } from '@yharness/web-search-deepseek/src/types.ts'
 
 /** Construct the provider over a fixed options value; production passes a live thunk. */
-import type { DeepSeekSearchProviderOptions } from '@deepseek-ai/dsh-web-search-deepseek'
+import type { DeepSeekSearchProviderOptions } from '@yharness/web-search-deepseek'
 
 const searchProvider = (options: DeepSeekSearchProviderOptions): DeepSeekSearchProvider =>
   new DeepSeekSearchProvider(() => options)
@@ -198,6 +198,7 @@ describe('DeepSeekSearchProvider request mapping', () => {
     expect(headers['x-api-key']).toBe('ds-key')
     expect(headers['authorization']).toBe('Bearer ds-key')
     expect(headers['anthropic-version']).toBe('2023-06-01')
+    expect(headers['user-agent']).toBe('y-harness/0.0.1 (+https://github.com/tobenwarrior/y-harness)')
     const body = {
       model: 'deepseek-chat',
       max_tokens: 4096,

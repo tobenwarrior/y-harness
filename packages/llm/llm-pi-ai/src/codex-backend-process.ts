@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 import { dirname, isAbsolute, join } from 'node:path'
 import { Transform } from 'node:stream'
-import { JsonRpcLineTransport, JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
+import { JsonRpcLineTransport, JsonRpcResponseError } from '@yharness/sdk-protocol'
 import type { CodexPeer } from './codex-backend.ts'
 /** Absolute deployment-owned paths one Codex child is launched with. */
 export interface CodexProcessOptions { binary: string; home: string; shellHome: string; cwd: string; nodePath: string }

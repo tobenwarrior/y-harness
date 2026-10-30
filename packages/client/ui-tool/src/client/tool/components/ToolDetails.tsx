@@ -1,9 +1,9 @@
 /** Compact, read-only fields and lists for recorded Tool results. */
 import {
   CodeBlock, MarkdownText, IconCheckOutlineRegular, IconChevronRightOutlineRegular, IconPlayOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { OpenFileOptions } from '@deepseek-ai/dsh-client-ui-chat/client'
+} from '@yharness/client-ui-primitives'
+import type { TranslateNS } from '@yharness/client-ui-slots'
+import type { OpenFileOptions } from '@yharness/client-ui-chat/client'
 import { codeToolbarLabels, markdownLabels } from '../models/primitive-labels.ts'
 import css from './ToolDetails.module.css'
 

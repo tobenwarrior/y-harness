@@ -2,11 +2,11 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises
 import { homedir } from 'node:os'
 import { createServer, type Socket } from 'node:net'
 import { delimiter, join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import Sandbox from '@deepseek-ai/dsh-sandbox-local'
-import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
+import { Context } from '@yharness/cordis'
+import Sandbox from '@yharness/sandbox-local'
+import { SandboxUnavailableError } from '@yharness/sandbox'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import type { PtcBindingFunction, PtcBindingNamespace, PtcRunRequest } from '@deepseek-ai/dsh-ptc-runtime'
+import type { PtcBindingFunction, PtcBindingNamespace, PtcRunRequest } from '@yharness/ptc-runtime'
 import type { Config } from '../src/index.ts'
 import { mountRuntime } from './setup.ts'
 
@@ -105,10 +105,10 @@ describe('Node program process', () => {
 
   it('retains raw native stdout and stderr separately from control frames', async () => {
     const { run } = await setup()
-    const result = await run({ program: 'const fs = await import("node:fs"); fs.writeSync(1,"native-out你好"); fs.writeSync(2,"native-err🙂"); return 42;', bindings: [] })
+    const result = await run({ program: 'const fs = await import("node:fs"); fs.writeSync(1,"native-out\u{4F60}\u{597D}"); fs.writeSync(2,"native-err🙂"); return 42;', bindings: [] })
     expect(result.error).toBeUndefined()
     expect(result.value).toBe(42)
-    expect(result.logs.join('')).toContain('native-out你好')
+    expect(result.logs.join('')).toContain('native-out\u{4F60}\u{597D}')
     expect(result.logs.join('')).toContain('native-err🙂')
   })
 

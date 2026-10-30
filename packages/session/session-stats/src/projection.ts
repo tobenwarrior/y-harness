@@ -20,12 +20,12 @@
  * time stays uncounted in every time figure — matching the window, which
  * renders it as an untimed interrupted node.
  *
- * @module @deepseek-ai/dsh-session-stats/projection
+ * @module @yharness/session-stats/projection
  */
 
 import { z } from 'zod'
-import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import { assistantStreamFirstTokenTime } from '@yharness/llm'
+import type { ProjectionDefinition } from '@yharness/session-projection'
 
 
 /** Accumulated whole-log figures (the view is exactly these totals). */
@@ -63,7 +63,7 @@ interface SessionStatsState extends SessionStatsTotals {
   pendingCalls: Record<string, number>
 }
 
-declare module '@deepseek-ai/dsh-session-projection/types' {
+declare module '@yharness/session-projection/types' {
   interface SessionProjectionStateMap {
     sessionStats: SessionStatsState
   }

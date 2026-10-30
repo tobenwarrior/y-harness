@@ -1,7 +1,7 @@
 /** Production Settings component with synthetic native source history for root's built browser evidence. */
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
 import { CodingSessionsController } from '../src/client/controller.ts'
 import { CodingSessionsSection } from '../src/client/CodingSessionsSection.tsx'
 import type { CodingSessionsSectionProps } from '../src/client/CodingSessionsSection.tsx'

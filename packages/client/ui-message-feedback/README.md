@@ -3,7 +3,7 @@ description: "The Web feedback surface: the Like/Dislike pair in the finalized a
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-message-feedback
+# @yharness/client-ui-message-feedback
 
 ## Summary
 

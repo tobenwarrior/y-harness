@@ -32,29 +32,29 @@
  * accent row derived only from each logged call/result slice.
  */
 // Type-only: the carrier types, the forwarded Host-event face and the ctx.remote merge.
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SkillEntry } from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { InputTriggerServiceContract, InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
-import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'
-import { rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { SkillEntry } from '@yharness/api-remotes/client'
+import type {} from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import type { InputTriggerServiceContract, InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
+import { fileAddressFor } from '@yharness/util-workspace-path'
+import { rankByName } from '@yharness/client-ui-primitives'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-renderer/client'
 import { SkillRow } from './SkillRow.tsx'
-import { en, NS, zh, type SkillKey } from './locales.ts'
+import { en, NS, type SkillKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-api-session-controller/client' {
+declare module '@yharness/api-session-controller/client' {
   interface SessionReferenceSourceMap {
     /** A skill-catalog fetch waiting for initial history and its RPC result. */
     skillCatalog: unknown
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** The dedicated skill tool row's copy. */
     skill: SkillKey
@@ -77,7 +77,7 @@ export const inject = ['inputTriggers', 'sessions', 'slots', 'locale', 'remote',
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-skill: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-skill: dictionaries')
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register(
     { name: 'tool.call.toolview', key: 'skill', locale: NS },
     SkillRow,

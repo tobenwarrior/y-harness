@@ -3,9 +3,9 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SettingsFieldState, SettingsFormShell } from '@deepseek-ai/dsh-client-ui-primitives'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { SettingsFieldState, SettingsFormShell } from '@yharness/client-ui-primitives'
 import { WebSearchCard, type WebSearchCardProps } from '../src/client/WebSearchCard.tsx'
 import type { WebSearchCardState } from '../src/client/web-search-card-controller.ts'
 import { en, zh } from '../src/client/locales.ts'
@@ -127,7 +127,7 @@ describe('WebSearchCard', () => {
     expect(screen.getByLabelText(en.maxUses)).toBeTruthy()
     expect(screen.getByText(en.baseUrlHint)).toBeTruthy()
     expect(screen.queryByText(en.searchApiBaseUrlHint)).toBeNull()
-    expect(zh.useSearchApi).toBe('启用新版 Web 搜索 API')
+    expect(zh.useSearchApi).toBe(en.useSearchApi)
     fireEvent.click(toggle)
     expect(actions.setSearchApi).toHaveBeenCalledWith(true)
     expect(actions.save).not.toHaveBeenCalled()
@@ -140,8 +140,8 @@ describe('WebSearchCard', () => {
     expect(guide.getAttribute('target')).toBe('_blank')
     expect(guide.getAttribute('rel')).toBe('noopener noreferrer')
     expect(guide.parentElement?.textContent).toBe(`${en.useSearchApiHint}${en.searchGuide}`)
-    expect(`${zh.useSearchApiHint}${zh.searchGuide}`).toBe('默认关闭，搜索通过 DeepSeek Messages 完成。新版 Web 搜索 API 功能与计费详见网页搜索与抓取指南')
-    expect(zh.searchGuideUrl).toBe('https://api-docs.deepseek.com/zh-cn/guides/search')
+    expect(`${zh.useSearchApiHint}${zh.searchGuide}`).toBe(`${en.useSearchApiHint}${en.searchGuide}`)
+    expect(zh.searchGuideUrl).toBe(en.searchGuideUrl)
   })
 
   it('omits the switch while the Host serves no Search and Fetch API section', () => {

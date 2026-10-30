@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { getEnvironmentData } from 'node:worker_threads'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PluginPackages } from '../src/profile-resolution/service.ts'
 import { createRuntimeResolution, initProfile, loadProfileDirectory, type RuntimeResolution } from '../src/profile.ts'
@@ -127,12 +127,12 @@ describe('profile package metadata service', () => {
     }))
     file(join(packageDir, 'index.js'), 'throw new Error("must not execute")\n')
     file(join(packageDir, 'locale', 'en.json'), '{"meta":{"title":"Local plugin"}}')
-    file(join(packageDir, 'locale', 'zh.json'), '{"meta":{"title":"本地插件"}}')
+    file(join(packageDir, 'locale', 'zh.json'), '{"meta":{"title":"\u{672C}\u{5730}\u{63D2}\u{4EF6}"}}')
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(PluginPackages)
     const parent = pathToFileURL(join(root, 'entry.mjs')).href
-    expect(ctx.pluginPackages.metaOf('localized/private', parent)).toEqual({ title: { en: 'Local plugin', zh: '本地插件' } })
+    expect(ctx.pluginPackages.metaOf('localized/private', parent)).toEqual({ title: { en: 'Local plugin', zh: '\u{672C}\u{5730}\u{63D2}\u{4EF6}' } })
     expect(ctx.pluginPackages.metaOf('localized', parent)).toBeUndefined()
     expect(ctx.pluginPackages.metaOf('node:fs', parent)).toBeUndefined()
     file(join(root, 'node_modules', 'invalid', 'package.json'), '{')

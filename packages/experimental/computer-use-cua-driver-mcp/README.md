@@ -3,7 +3,7 @@ description: "Configure experimental local computer use with an installed Cua Dr
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp
+# @yharness/experimental-computer-use-cua-driver-mcp
 
 ## Summary
 
@@ -30,8 +30,8 @@ Choose this provider when Cua Driver is already installed and configured on the 
 Add these rows to a composition that already provides tools and system-prompt services. Screenshots also require an attachment store and a model route declaring image input.
 
 ```yaml
-- name: '@deepseek-ai/dsh-computer-use'
-- name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp'
+- name: '@yharness/computer-use'
+- name: '@yharness/experimental-computer-use-cua-driver-mcp'
   config:
     command: cua-driver
     args: [mcp]
@@ -44,7 +44,7 @@ Add these rows to a composition that already provides tools and system-prompt se
 | `toolCallTimeoutMs` | MCP client default | Per-call timeout override in milliseconds |
 | `reconnect` | MCP client policy | Optional reconnection overrides |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-computer-use-cua-driver-mcp) lists accepted fields. The [MCP client](../../mcp/mcp-client/README.md) owns timeout and reconnection defaults.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessexperimental-computer-use-cua-driver-mcp) lists accepted fields. The [MCP client](../../mcp/mcp-client/README.md) owns timeout and reconnection defaults.
 
 ### Activation and ownership
 

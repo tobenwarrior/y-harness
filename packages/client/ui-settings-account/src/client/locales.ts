@@ -1,6 +1,6 @@
 /** Account settings copy, owned by the account feature. */
-import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
-import { onboardingCopy, onboardingEnglishCopy } from './locales/onboarding.ts'
+import { withProductDisplayName } from '@yharness/client-ui-slots'
+import { onboardingEnglishCopy } from './locales/onboarding.ts'
 
 /** English account dictionary. */
 export const en = {
@@ -37,40 +37,8 @@ export const en = {
   quotaTopUp: 'Top up',
   bonusNoticeTitle: 'Bonus credited',
 } as const
+
+/** Compatibility export for the retired locale name. */
+export const zh = en
 /** Account locale keys. */
 export type AccountKey = keyof typeof en
-/** Chinese account settings copy. */
-export const zh: Record<AccountKey, string> = {
-  modelSignInRequired: 'DeepSeek 账号模型暂不可用，请登录或选择其他模型',
-  sessionExpired: 'DeepSeek 登录信息已失效，请重新登录以使用账号模型',
-  ...onboardingCopy,
-  close: '关闭', addApiKey: '添加 API Key', retry: '重新登录',
-  loginTitle: '登录 DeepSeek', loginDescription: '登录以使用 DeepSeek 账号模型，或在模型设置中添加 API Key。你的项目和文件保存在本地。',
-  browserTitle: '等待登录', browserPrompt: '没有自动打开新页面？', copyLink: '复制登录链接', copiedLink: '链接已复制', copyFailed: '复制失败',
-  browserDescription: '，手动打开登录页完成登录。',
-  timeoutTitle: '登录已超时', timeoutDescription: '请重新登录后继续操作。',
-  failureTitle: '登录失败',
-  platformFailed: '操作未完成，请重试', platformRetry: '重试',
-  loading: '加载中…', backToHarness: withProductDisplayName('返回 Y Harness'),
-  settings: '设置', contactUs: '意见反馈', menu: '账号菜单',
-  nav: '账号与余额', signedIn: '已登录 DeepSeek', signedOut: '尚未登录',
-  modelsAccountTitle: 'DeepSeek 账号', modelsAccountDescription: '可选择登录以使用 DeepSeek 账号模型',
-  signIn: '登录', signOut: '退出登录',
-  signOutUnknownDescription: '暂时无法确认任务状态。退出登录可能会中断使用此账号的任务，是否继续？',
-  signOutDescription: '退出登录不会丢失任何数据，你仍可以登录此账号。',
-  signOutRunningDescription: '当前有进程正在执行中，点击“退出登录”，将会打断进程，是否即刻退出登录？', cancel: '取消', open: '打开浏览器',
-  initializing: '正在发起登录…', waiting: '请在浏览器中继续',
-  completing: '正在完成登录…', expired: '登录已过期，请重试。',
-  failed: '操作未完成，请重试。',
-  noResponse: '操作未完成，可能是网络异常，请检查你的网络状况后重试',
-  settingsSignedOutTitle: '尚未登录 DeepSeek',
-  settingsSignedOutDescription: '登录以使用 DeepSeek 账号模型',
-  signInDescription: '登录以使用 DeepSeek 账号模型',
-  profileUnavailable: '账号资料暂不可用',
-  balance: '充值余额', bonusBalance: '赠金余额', balanceUnavailable: '前往开放平台查看', balanceSignedOut: '登录后查看',
-  accountInfo: '更多账号信息', more: '更多', usage: '查询用量', topUp: '充值',
-  quotaTitle: '当前无可用余额',
-  quotaDescription: withProductDisplayName('没有可用额度时，Y Harness 无法开始新的任务，是否前往充值？或者可以稍后前往 设置 → 账号与余额 进行充值。'),
-  quotaTopUp: '去充值',
-  bonusNoticeTitle: '赠金已到账',
-}

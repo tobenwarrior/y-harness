@@ -1,17 +1,18 @@
 /** What the browser half registers, and that it all leaves with the fiber. */
 
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { apply, inject } from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import type { PluginsSettingsSectionInjected } from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { apply, inject } from '@yharness/client-ui-settings-plugins/client'
+import type { PluginsSettingsSectionInjected } from '@yharness/client-ui-settings-plugins/client'
 import { apply as hostApply } from '../src/index.ts'
 
-// These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
-// so browser-language detection never runs and a fresh LocaleRuntime opens on
-// FALLBACK_LOCALE (en); bench stages zh explicitly on the locale instead.
+// The lane has no jsdom `window`, so browser-language detection never runs and
+// a fresh LocaleRuntime opens on FALLBACK_LOCALE (en). The bench still stages
+// the retired locale setting to verify that the section resolves through the
+// English fallback.
 
 async function bench() {
   const ctx = new Context()
@@ -48,7 +49,7 @@ describe('ui-settings-plugins apply', () => {
     const section = slots.entries('settings.section')[0]!
     expect(section.options).toMatchObject({ id: 'plugins', order: 15 })
     // The nav label is a locale-following thunk; owners resolve it at read time.
-    expect(resolveSlotLabel(section.options.label)).toBe('内置插件')
+    expect(resolveSlotLabel(section.options.label)).toBe('Built-in plugins')
     expect(slots.spec('settings.plugins.tab')).toMatchObject({ kind: 'list', scope: 'root' })
     expect(slots.entries('settings.plugins.tab')).toHaveLength(0)
   })

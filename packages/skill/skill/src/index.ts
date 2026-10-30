@@ -3,20 +3,20 @@
  *
  * This package owns the Service Definition role of the skill capability seam.
  * Concrete
- * providers such as `@deepseek-ai/dsh-skill-filesystem` decide where skills come
+ * providers such as `@yharness/skill-filesystem` decide where skills come
  * from; this service only merges provider catalogs, resolves the winning skill
  * for a name, and exposes the winning summaries and definitions to consumers.
  *
- * @module @deepseek-ai/dsh-skill
+ * @module @yharness/skill
  */
 
-import { Context, Service } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-llm'
-import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
-import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
-import z from '@deepseek-ai/schemastery'
-import type Schema from '@deepseek-ai/schemastery'
+import { Context, Service } from '@yharness/cordis'
+import type {} from '@yharness/llm'
+import { assertNever } from '@yharness/util-values'
+import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from '@yharness/scope'
+import type { ScopeKey, ScopeLayer } from '@yharness/scope'
+import z from '@yharness/schemastery'
+import type Schema from '@yharness/schemastery'
 import { selectSkillCatalog, type SkillCatalogSelection, type SkillCatalogSelectionOptions } from './catalog-selection.ts'
 
 export { selectSkillCatalog } from './catalog-selection.ts'
@@ -155,7 +155,7 @@ export interface SkillInvocationSource {
   readonly form: 'instructions'
 }
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     /** A user-explicit skill invocation injected by the host. */
     'skill-invocation': SkillInvocationSource
@@ -284,7 +284,7 @@ export interface Config {
   readonly collectCacheMaxEntries?: number
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     skills: SkillRegistry
   }

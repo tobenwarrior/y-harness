@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-api-account-controller",
+  "name": "@yharness/api-account-controller",
   "description": "Expose safe account operations over authenticated Remote",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/api/account-controller"
   },
   "type": "module",
@@ -47,15 +47,15 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/deepseek-account": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/agent": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/deepseek-account": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/agent": "workspace:*"
   }
 }

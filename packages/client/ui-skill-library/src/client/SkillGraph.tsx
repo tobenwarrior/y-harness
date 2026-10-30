@@ -1,9 +1,9 @@
 /** Interactive metadata graph; instruction bodies never enter the drawing data. */
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { Button, IconFullscreenOutlineRegular, IconPlusOutlineRegular, IconSlidersTwoOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SkillLibraryId, SkillLibraryItem, SkillLibraryProject } from '@deepseek-ai/dsh-skill-library/types'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { Button, IconFullscreenOutlineRegular, IconPlusOutlineRegular, IconSlidersTwoOutlineRegular } from '@yharness/client-ui-primitives'
+import type { SkillLibraryId, SkillLibraryItem, SkillLibraryProject } from '@yharness/skill-library/types'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import { layoutGraph, zoomGraph, type GraphInput, type GraphTransform } from './graph.ts'
 import css from './SkillGraph.module.css'
 

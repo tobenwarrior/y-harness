@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -252,12 +254,91 @@ class Tests(unittest.TestCase):
             runner = stack.enter_context(mock.patch.object(supervisor, 'Supervisor'))
             runner.return_value.serve.return_value = 0
             self.assertEqual(supervisor.main(['--serve']), 0)
-        self.assertIn(['/pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime'],
+        self.assertIn(['/pnpm', '--filter', '@yharness/desktop', 'run', 'prepare:primary-runtime'],
                       source.call_args.kwargs['build'])
         cancel = runner.call_args.kwargs['cancel']
         with mock.patch.object(supervisor._engine, '_run', return_value='') as run:
             source.call_args.kwargs['runner'](['/pnpm', 'install'], None, 5)
         self.assertIs(run.call_args.kwargs['cancel_event'], cancel)
+
+    def test_shipped_legacy_filter_commands_have_a_workspace_target(self):
+        repo = Path(__file__).resolve().parents[3]
+        canonical = json.loads((repo / 'apps/desktop/package.json').read_text())
+        legacy = json.loads((repo / 'apps/desktop-legacy-compat/package.json').read_text())
+        self.assertEqual(canonical['name'], '@yharness/desktop')
+        self.assertEqual(legacy['name'], '@deepseek-ai/dsh-desktop')
+        self.assertTrue(legacy['private'])
+        self.assertIn('  - apps/*', (repo / 'pnpm-workspace.yaml').read_text())
+        self.assertIn(
+            '  apps/desktop-legacy-compat:\n'
+            '    devDependencies:\n'
+            '      electron:\n'
+            '        specifier: ^44.0.0\n'
+            '        version: 44.0.0(supports-color@9.4.0)',
+            (repo / 'pnpm-lock.yaml').read_text(),
+        )
+
+        legacy_filter = ['pnpm', '--filter', legacy['name']]
+        shipped_commands = [
+            legacy_filter + ['exec', 'install-electron'],
+            legacy_filter + ['run', 'build'],
+            legacy_filter + ['run', 'prepare:primary-runtime'],
+        ]
+        self.assertEqual([command[2] for command in shipped_commands], [legacy['name']] * 3)
+        self.assertEqual([command[3:] for command in shipped_commands], [
+            ['exec', 'install-electron'],
+            ['run', 'build'],
+            ['run', 'prepare:primary-runtime'],
+        ])
+        self.assertEqual(legacy['devDependencies'], {'electron': canonical['devDependencies']['electron']})
+        self.assertEqual(legacy['scripts'], {
+            'build': 'pnpm --filter @yharness/desktop run build',
+            'prepare:primary-runtime': 'pnpm --filter @yharness/desktop run prepare:primary-runtime',
+        })
+
+    def test_shipped_legacy_commands_execute_against_canonical_workspace(self):
+        pnpm = shutil.which('pnpm')
+        if pnpm is None:
+            self.skipTest('pnpm is required for the isolated workspace compatibility check')
+        with tempfile.TemporaryDirectory(dir=self.support) as temporary:
+            root = Path(temporary)
+            canonical = root / 'apps/desktop'
+            legacy = root / 'apps/desktop-legacy-compat'
+            canonical.mkdir(parents=True)
+            legacy.mkdir(parents=True)
+            (root / 'pnpm-workspace.yaml').write_text('packages:\n  - apps/*\n')
+            marker = root / 'commands.log'
+            source_alias = Path(__file__).resolve().parents[3] / 'apps/desktop-legacy-compat/package.json'
+            alias_name = json.loads(source_alias.read_text())['name']
+            (canonical / 'package.json').write_text(json.dumps({
+                'name': '@yharness/desktop',
+                'version': '0.0.0',
+                'private': True,
+                'scripts': {
+                    'build': "node -e \"require('node:fs').appendFileSync(process.env.TEST_MARKER, 'build\\n')\"",
+                    'prepare:primary-runtime': "node -e \"require('node:fs').appendFileSync(process.env.TEST_MARKER, 'prepare\\n')\"",
+                },
+            }))
+            (legacy / 'package.json').write_text(source_alias.read_text())
+            install_bin = legacy / 'node_modules/.bin/install-electron'
+            install_bin.parent.mkdir(parents=True)
+            install_bin.write_text(
+                '#!/usr/bin/env node\n'
+                "require('node:fs').appendFileSync(process.env.TEST_MARKER, 'install-electron\\n')\n",
+            )
+            install_bin.chmod(0o755)
+            environment = {**os.environ, 'TEST_MARKER': str(marker)}
+            for command in (
+                ['exec', 'install-electron'],
+                ['run', 'build'],
+                ['run', 'prepare:primary-runtime'],
+            ):
+                result = subprocess.run(
+                    [pnpm, '--dir', str(root), '--filter', alias_name, *command],
+                    cwd=root, env=environment, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(marker.read_text().splitlines(), ['install-electron', 'build', 'prepare'])
 
     def test_quit_cancels_an_in_flight_background_build(self):
         cancel = threading.Event()

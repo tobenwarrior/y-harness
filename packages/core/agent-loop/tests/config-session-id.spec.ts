@@ -1,24 +1,24 @@
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@yharness/llm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import LlmRuntime from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
+import LlmRuntime from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import SessionStore, { SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import type { SessionHandle } from '@yharness/session-persistence'
 
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import AgentLoop, { CONFIGURED_AGENT_IDENTITIES_KEY } from '@deepseek-ai/dsh-agent-loop'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
+import AgentLoop, { CONFIGURED_AGENT_IDENTITIES_KEY } from '@yharness/agent-loop'
+import SessionProjectionRegistry from '@yharness/session-projection'
 import { MockAdapter, textResponse } from './mock-adapter.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

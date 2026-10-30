@@ -3,7 +3,7 @@ description: "Native directory-picker surface: the browser half that drives the 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-directory-picker-native
+# @yharness/client-ui-directory-picker-native
 
 ## Summary
 

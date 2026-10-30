@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { Config } from '../src/config.ts'
 import { createTranscriber } from '../src/inference.ts'
 
-const native = vi.hoisted(() => ({ speech: true, texts: ['第一句。', '第二句。'], configs: [] as object[],
+const native = vi.hoisted(() => ({ speech: true, texts: ['\u{7B2C}\u{4E00}\u{53E5}。', '\u{7B2C}\u{4E8C}\u{53E5}。'], configs: [] as object[],
   front: vi.fn(), resets: vi.fn(), accepted: [] as number[], windows: [] as number[] }))
 vi.mock('node:module', () => {
   return { createRequire: () => () => ({
@@ -36,7 +36,7 @@ function wave(samples = 1024): Uint8Array {
 it('loads one model pair, carries language changes, and copies VAD buffers for Electron', () => {
   const transcribe = createTranscriber(Object.assign(Config({ dataRoot: '/cache' }), { model: '/model', tokens: '/tokens', vad: '/vad' }))
   const result = transcribe(wave(), 'zh')
-  expect(result).toMatchObject({ text: '第一句。 第二句。', audioSeconds: 1024 / 16000 })
+  expect(result).toMatchObject({ text: '\u{7B2C}\u{4E00}\u{53E5}。 \u{7B2C}\u{4E8C}\u{53E5}。', audioSeconds: 1024 / 16000 })
   expect(result.inferenceSeconds).toBeGreaterThanOrEqual(0)
   expect(native.accepted).toEqual([512, 512])
   expect(native.front).toHaveBeenCalledWith(false)

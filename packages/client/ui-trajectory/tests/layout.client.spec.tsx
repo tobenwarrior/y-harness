@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import type {
   ConversationLocation, ConversationNode, RequestView,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+} from '@yharness/client-ui-conversation/client'
+import { PartialArguments } from '@yharness/util-values'
 import { TrajectoryGroupHeader } from '../src/client/TrajectoryGroupHeader.tsx'
 import { TrajectoryTurn } from '../src/client/TrajectoryTurn.tsx'
 import { TrajectoryTurnHeader } from '../src/client/TrajectoryTurnHeader.tsx'
@@ -90,7 +90,7 @@ describe('deriveTrajectoryLayout', () => {
 
   it.each([
     [t, 'Tools updated · 2 added, 1 removed', 'Added: search, read_file\nRemoved: old_search'],
-    [tZh, '工具已更新 · 新增 2 个，移除 1 个', '新增：search, read_file\n移除：old_search'],
+    [tZh, 'Tools updated · 2 added, 1 removed', 'Added: search, read_file\nRemoved: old_search'],
   ] as const)('keeps tool update details on two literal lines', (translate, text, inputDetail) => {
     const nodes: ConversationNode[] = [{
       kind: 'context', seq: 1, time: 1_000, content: [{ type: 'tool-addition', toolName: 'search' }, { type: 'tool-addition', toolName: 'read_file' }, { type: 'tool-removal', toolName: 'old_search' }],
@@ -530,13 +530,13 @@ describe('run_code sub-dispatch cells', () => {
     {
       kind: 'assistant', seq: 2, time: 6_000, turn: 1, step: 1,
       blocks: [
-        { kind: 'tool-call', callId: 'p1', name: 'run_code', argsRaw: '{"code":"…","description":"批量读取"}' },
+        { kind: 'tool-call', callId: 'p1', name: 'run_code', argsRaw: '{"code":"…","description":"bulk read"}' },
       ],
     },
     {
       kind: 'tool-result', seq: 3, time: 9_000, callId: 'p1',
-      name: 'run_code', args: PartialArguments.fromText('{"code":"…","description":"批量读取"}'),
-      call: { name: 'run_code', argsRaw: '{"code":"…","description":"批量读取"}' }, callTime: 6_200,
+      name: 'run_code', args: PartialArguments.fromText('{"code":"…","description":"bulk read"}'),
+      call: { name: 'run_code', argsRaw: '{"code":"…","description":"bulk read"}' }, callTime: 6_200,
       content: [{ type: 'text', text: 'done' }], isError: false,
       subCalls: [],
     },

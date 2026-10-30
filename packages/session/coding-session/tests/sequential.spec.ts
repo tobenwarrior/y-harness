@@ -1,6 +1,6 @@
 /** Explicit sequential ownership fixtures never launch native processes or model requests. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { CodingSessionLibrary } from '../src/library.ts'
 import type { CodingSessionClaimAcknowledgement, CodingSessionNativeTurnId, CodingSessionHandoff, CodingSessionMirror, CodingSessionProvider, CodingSessionSnapshot } from '../src/types.ts'
 

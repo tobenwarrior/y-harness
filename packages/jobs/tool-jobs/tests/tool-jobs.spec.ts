@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import AgentRegistry, { emitAgentEvent } from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
-import { JobId } from '@deepseek-ai/dsh-jobs'
-import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
-import type { JobAppendOptions, JobHandle, JobHooks, JobOutcome, JobOutputSource, JobSpec, JobView } from '@deepseek-ai/dsh-jobs'
-import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import { Context } from '@yharness/cordis'
+import { ToolCallId } from '@yharness/llm'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import AgentRegistry, { emitAgentEvent } from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import { createUserMessage } from '@yharness/llm'
+import { SessionId } from '@yharness/session'
+import { bindScopeParent, createScope, scopeOf } from '@yharness/scope'
+import { JobId } from '@yharness/jobs'
+import LocalJobRegistry from '@yharness/jobs-local'
+import type { JobAppendOptions, JobHandle, JobHooks, JobOutcome, JobOutputSource, JobSpec, JobView } from '@yharness/jobs'
+import * as ToolJobs from '@yharness/tool-jobs'
 import { publicJob, renderModelDelta, statusLine } from '../src/render.ts'
 
 const testToolSignal = new AbortController().signal
@@ -365,7 +365,7 @@ describe('job_output', () => {
     const { ctx } = await setup()
     const p = producer({ outputLimitBytes: 48 })
     ctx.jobs.start(p.spec)
-    p.append('界'.repeat(100))
+    p.append('\u{754C}'.repeat(100))
 
     const output = text(await call(ctx, 'job_output', { job_id: 'bash-1' }))
     expect(Buffer.byteLength(output)).toBeLessThanOrEqual(48)

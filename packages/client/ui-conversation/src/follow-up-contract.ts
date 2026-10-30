@@ -4,7 +4,7 @@
  *
  * This module lives at the package root on purpose. The client half is gated by
  * client-bundle purity (no cross-plugin VALUE imports), while the host half is
- * free to call `@deepseek-ai/dsh-llm`. Both halves import THIS file, so it must
+ * free to call `@yharness/llm`. Both halves import THIS file, so it must
  * stay pure — no imports of any kind beyond types it declares itself.
  */
 

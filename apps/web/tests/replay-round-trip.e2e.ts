@@ -18,10 +18,10 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page, Route, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { ToolCallId, expandAssistantStream } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionListValue } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { ToolCallId, expandAssistantStream } from '@yharness/llm'
+import type { Session, SessionEvent, SessionId } from '@yharness/session'
+import type { SessionListValue } from '@yharness/api-session-controller/types'
+import type { RemoteResult } from '@yharness/typert-protocol'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts,

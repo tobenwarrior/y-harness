@@ -4,18 +4,18 @@
  * authenticates with the account token when the account service allows the search endpoint;
  * every other search reuses `DEEPSEEK_API_KEY`. The provider does not reuse `DEEPSEEK_BASE_URL`;
  * auxiliary search has its own endpoint configuration.
- * @module @deepseek-ai/dsh-web-search-deepseek
+ * @module @yharness/web-search-deepseek
  */
-import type { Volatile } from '@deepseek-ai/cordis'
+import type { Volatile } from '@yharness/cordis'
 
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import type {} from '@deepseek-ai/dsh-agent'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import type {} from '@deepseek-ai/dsh-deepseek-account'
-import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import type {} from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-web'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import type {} from '@yharness/agent'
+import { credentialRef } from '@yharness/credentials'
+import type {} from '@yharness/deepseek-account'
+import { launchEnvironmentOf } from '@yharness/launch-environment'
+import type {} from '@yharness/session'
+import type {} from '@yharness/web'
 import {
   DeepSeekSearchProvider,
   DEEPSEEK_DEFAULT_API_VERSION,

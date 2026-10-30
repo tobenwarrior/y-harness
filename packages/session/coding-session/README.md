@@ -3,7 +3,7 @@ description: "Native Codex and Claude coding-session discovery, durable mirrors,
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-coding-session
+# @yharness/coding-session
 
 ## Summary
 
@@ -31,7 +31,7 @@ Codex source identity follows the backend's `DSH_CODEX_HOME`, which is passed as
 
 `pageSize` bounds native pages; `maxEvents` and `maxBytes` bound complete histories and responses, including record wrappers. `maxMirrors` caps retained records and defaults to 500. `maxImportGenerations` defaults to 64 and preserves complete rollback generations; `maxEvents` and `maxBytes` also bound complete canonical Y destination logs and linked journals. `timeoutMs` bounds admission lifetime; cancellation drains underlying work. `enableClaudeDiscovery` defaults to true and can disable local Claude source registration. `enableSequentialHandoff` defaults to false. `sequentialTurnTimeoutMs` bounds sequential turns separately and defaults to 600000. A sequential source adapter and a selected live idle same-project Y root Session are also required; mounting a reader alone grants no model authority.
 
-Mount `@deepseek-ai/dsh-coding-session/claude-source` beside this service and a managed subprocess provider to select an original external Claude profile without enabling a model. Its `sources` defaults to an empty array. Each source requires a stable `id`, visible `label`, absolute `profileRoot`, project `directory`, `shellHome`, `nodePath`, canonical `sdkModulePath` and `sdkManifestPath`, trusted `sdkModuleSha256`, `sdkVersion: '0.3.263'`, and positive `processGraceMs`. Source identity hashes the selected profile root, project and id. The plugin neither guesses personal roots nor copies authentication or history.
+Mount `@yharness/coding-session/claude-source` beside this service and a managed subprocess provider to select an original external Claude profile without enabling a model. Its `sources` defaults to an empty array. Each source requires a stable `id`, visible `label`, absolute `profileRoot`, project `directory`, `shellHome`, `nodePath`, canonical `sdkModulePath` and `sdkManifestPath`, trusted `sdkModuleSha256`, `sdkVersion: '0.3.263'`, and positive `processGraceMs`. Source identity hashes the selected profile root, project and id. The plugin neither guesses personal roots nor copies authentication or history.
 
 Claude sequential writer registration requires `sequentialHandoff.knownUnmanagedStartup: true`; omission or false keeps the source reader-only. It defaults to false and declares, through trusted deployment configuration, that the selected account, profile and machine have no managed, remote, helper or parent startup policy. Codex registration likewise requires both default-false source fields `enableSequentialProjectFiles` and `knownNoManagedFeatureOverrides` to be true; the latter declares that native feature requirements are absent or all false and remain unchanged. These declarations are separate from the user's closed-writer/unchanged-profile acknowledgement.
 

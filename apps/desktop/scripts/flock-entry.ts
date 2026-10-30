@@ -6,9 +6,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
-type FlockEntry = typeof import('@deepseek-ai/node-addon-system/flock')
+type FlockEntry = typeof import('@yharness/node-addon-system/flock')
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, '..', '..', '..')
+const ENTRY_PACKAGE_NAMES = [
+  '@yharness/node-addon-system',
+  '@deepseek-ai/node-addon-system',
+] as const
 /** Root package script that compiles the host addon, then the `native/system` script that emits the entry's JavaScript. */
 const BUILD_COMMANDS: readonly (readonly string[])[] = [
   ['run', 'build:native-system'],
@@ -18,7 +22,7 @@ const BUILD_COMMAND_TEXT = BUILD_COMMANDS.map(args => `pnpm ${args.join(' ')}`).
 
 /** Loader steps; tests replace the module import, the addon probe, and the build. */
 export interface FlockEntryLoaderSteps {
-  /** Import `@deepseek-ai/node-addon-system/flock`; rejects with `ERR_MODULE_NOT_FOUND` while its `lib/` is unbuilt. */
+  /** Import the canonical flock entry, with a legacy-package fallback; rejects with `ERR_MODULE_NOT_FOUND` while its `lib/` is unbuilt. */
   readonly importEntry: () => Promise<FlockEntry>
   /** Whether every binary the host platform package declares in `prebuilds.json` exists. */
   readonly hostAddonBuilt: () => boolean
@@ -27,7 +31,29 @@ export interface FlockEntryLoaderSteps {
 }
 
 function isModuleNotFound(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | undefined)?.code === 'ERR_MODULE_NOT_FOUND'
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND'
+}
+
+function platformPackageNames(platform: NodeJS.Platform, arch: string): readonly [string, string] {
+  return [
+    `@yharness/node-addon-system-${platform}-${arch}`,
+    `@deepseek-ai/node-addon-system-${platform}-${arch}`,
+  ]
+}
+
+function resolvePackageManifest(packageNames: readonly string[]): { packageName: string; manifest: string } {
+  const resolvePackage = createRequire(import.meta.url).resolve
+  let lastError: unknown
+  for (const packageName of packageNames) {
+    try {
+      return { packageName, manifest: resolvePackage(`${packageName}/package.json`) }
+    } catch (error) {
+      if (!isModuleNotFound(error)) throw error
+      lastError = error
+    }
+  }
+  throw lastError ?? new Error('native system package is not installed')
 }
 
 /**
@@ -59,14 +85,33 @@ function hostAddonBuilt(): boolean {
   const { platform, arch } = process
   // flock itself rejects other platforms; the probe only reports missing builds for supported ones.
   if (platform !== 'darwin' && platform !== 'linux') return true
-  const entryManifest = createRequire(import.meta.url).resolve('@deepseek-ai/node-addon-system/package.json')
-  let prebuilds: string
+  let entryManifest: string
   try {
-    prebuilds = createRequire(entryManifest).resolve(`@deepseek-ai/node-addon-system-${platform}-${arch}/prebuilds.json`)
+    entryManifest = resolvePackageManifest(ENTRY_PACKAGE_NAMES).manifest
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error
+    if (!isModuleNotFound(error)) throw error
     return false
   }
+  let prebuilds: string | undefined
+  try {
+    const packageRequire = createRequire(entryManifest)
+    const platformPackages = platformPackageNames(platform, arch)
+    let lastError: unknown
+    for (const packageName of platformPackages) {
+      try {
+        prebuilds = packageRequire.resolve(`${packageName}/prebuilds.json`)
+        break
+      } catch (error) {
+        if (!isModuleNotFound(error)) throw error
+        lastError = error
+      }
+    }
+    if (prebuilds === undefined) throw lastError ?? new Error('native system platform package is not installed')
+  } catch (error) {
+    if (!isModuleNotFound(error)) throw error
+    return false
+  }
+  if (prebuilds === undefined) return false
   const manifest = JSON.parse(readFileSync(prebuilds, 'utf8')) as { readonly binaries: readonly { readonly path: string }[] }
   return manifest.binaries.every(binary => existsSync(join(dirname(prebuilds), binary.path)))
 }
@@ -84,11 +129,19 @@ async function buildNativeSystem(): Promise<void> {
 }
 
 /**
- * Load `@deepseek-ai/node-addon-system/flock`, building the host addon and the entry's JavaScript through pnpm when either is missing.
+ * Load `@yharness/node-addon-system/flock`, falling back to the legacy package
+ * family, and build the host addon and entry JavaScript when either is missing.
  * @returns The flock entry; rejects when a build fails or the script did not run under pnpm.
  */
 export const loadFlockEntry = createFlockEntryLoader({
-  importEntry: () => import('@deepseek-ai/node-addon-system/flock'),
+  importEntry: async () => {
+    try {
+      return await import('@yharness/node-addon-system/flock')
+    } catch (error) {
+      if (!isModuleNotFound(error)) throw error
+      return import('@deepseek-ai/node-addon-system/flock')
+    }
+  },
   hostAddonBuilt,
   build: buildNativeSystem,
 })

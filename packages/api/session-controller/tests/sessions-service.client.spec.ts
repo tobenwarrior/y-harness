@@ -1,14 +1,14 @@
 /** Client catalog projection, explicitly retained scopes, streams, and Host operations. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SessionId } from '@yharness/api-remotes/client'
 import type { SessionReference } from '../src/client/contract/sessions.ts'
-import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
-import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
-import { SESSION_FORMAT_VERSION, SessionSeq } from '@deepseek-ai/dsh-session/types'
-import { ok, streamHandle, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
-import { createClientTest, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
+import { RemoteError } from '@yharness/typert-protocol'
+import { LlmAttemptId } from '@yharness/llm'
+import { RemoteStreamCarrierError } from '@yharness/api-gateway/client'
+import { SESSION_FORMAT_VERSION, SessionSeq } from '@yharness/session/types'
+import { ok, streamHandle, type RemoteMock } from '@yharness/remote-mock'
+import { createClientTest, webApp } from '@yharness/client-test-runtime/src/assembly/index.ts'
 import { ClientSessions, SessionCreateError, SessionForkError } from '../src/client/sessions/service.ts'
 import { scopeOf } from '../src/client/scope.ts'
 import type {
@@ -18,7 +18,7 @@ import { FOLLOW, err, followScript, sessionWorld } from './remote/session.client
 
 const sid = (s: string): SessionId => s as SessionId
 /** ClientSessions uses the Gateway client for stream supervision and the native Remote mocks for responses. */
-const API_ROSTER = webApp.closure(['@deepseek-ai/dsh-api-gateway'])
+const API_ROSTER = webApp.closure(['@yharness/api-gateway'])
 /** The first client boot pays the cold module transform of the api cone. */
 const COLD_BOOT_TIMEOUT_MS = 60_000
 
@@ -861,12 +861,12 @@ describe('create', () => {
     b.mock.remote.session.create.mockResolvedValue(ok({ sessionId: sid('fresh') }))
     await expect(b.svc.create({ cwd: '/w', sessionId: sid('fresh') })).resolves.toBe('fresh')
     expect(b.mock.remote.session.create).toHaveBeenCalledExactlyOnceWith({ cwd: '/w', sessionId: 'fresh' })
-    b.mock.remote.session.create.mockResolvedValue(err(new RemoteError('gateway/internal', '爆了', {})))
+    b.mock.remote.session.create.mockResolvedValue(err(new RemoteError('gateway/internal', '\u{7206}\u{4E86}', {})))
     const failure = await b.svc.create({ sessionId: sid('candidate') }).catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(SessionCreateError)
     expect(failure).toMatchObject({
       requestedSessionId: 'candidate',
-      rpcError: { code: 'gateway/internal', message: '爆了' },
+      rpcError: { code: 'gateway/internal', message: '\u{7206}\u{4E86}' },
     })
   })
 
@@ -921,8 +921,8 @@ describe('fork', () => {
   it.for([
     ['Roadmap', 'Roadmap (1)'],
     ['Roadmap (1)', 'Roadmap (2)'],
-    ['计划（1）', '计划（2）'],
-    ['计划 （9）', '计划 （10）'],
+    ['\u{8BA1}\u{5212}（1）', '\u{8BA1}\u{5212}（2）'],
+    ['\u{8BA1}\u{5212} （9）', '\u{8BA1}\u{5212} （10）'],
   ] as const)('increments the durable title %j after the child is published', async ([sourceTitle, childTitle], { bench }) => {
     const b = bench()
     b.svc.handleControlFrame({

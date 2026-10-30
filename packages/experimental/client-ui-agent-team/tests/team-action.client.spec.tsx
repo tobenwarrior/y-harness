@@ -3,15 +3,15 @@
 import { Profiler } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId } from '@yharness/session/types'
 import type {
   TeamMemberProjection, TeamProjection, TeamTaskId, TeamTaskView as TeamTask,
-} from '@deepseek-ai/dsh-experimental-agent-team/client'
-import type { SessionListState, SessionSnapshot, SessionSummary, UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+} from '@yharness/experimental-agent-team/client'
+import type { SessionListState, SessionSnapshot, SessionSummary, UseProjection } from '@yharness/api-session-controller/client'
+import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import { TeamAction, type TeamActionInjected, type TeamActionProps } from '../src/client/TeamAction.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -104,7 +104,7 @@ function bench(options: {
 }
 
 function openPanel(): void {
-  fireEvent.click(screen.getByRole('button', { name: /智能体团队/u }))
+  fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
 }
 
 function setProjectionSnapshot(
@@ -126,11 +126,11 @@ describe('TeamAction', () => {
   it('renders the Lead projection and applies later projection frames without any user action', async () => {
     const b = bench()
     render(<TeamAction {...b.props} />)
-    expect(screen.getByRole('button', { name: /智能体团队/u }).textContent).toBe(zh.trigger)
+    expect(screen.getByRole('button', { name: /Agent Team/u }).textContent).toBe(zh.trigger)
     openPanel()
     expect(await screen.findByText('Implement runtime')).toBeTruthy()
     expect(screen.getByText('write scopes overlap with task-2')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /刷新|Refresh/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /\u5237\u65B0|Refresh/u })).toBeNull()
 
     setProjection(b.sessions, SESSION, {
       members: [lead, worker, { id: 'worker-b' as SessionId, name: 'worker-b', role: 'teammate', phase: 'provisioning' }],
@@ -138,7 +138,7 @@ describe('TeamAction', () => {
     })
     expect(screen.getByText('Pushed task')).toBeTruthy()
     expect(screen.getByRole('button', { name: /worker-b/u })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('heading', { name: '成员3' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Members3' })).toBeTruthy()
   })
 
   it('overlays live Session status and the durable model selection on roster rows', () => {
@@ -164,13 +164,13 @@ describe('TeamAction', () => {
     expect(row.querySelector('[data-state="ongoing"]')).not.toBeNull()
 
     act(() => { b.statuses.set(new Map([[WORKER, { running: false, pendingInteraction: undefined, completionUnread: false }]])) })
-    expect(screen.getByRole('button', { name: /^worker.*未运行/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^worker.*Inactive/u })).toBeTruthy()
 
     act(() => {
       b.statuses.set(new Map())
       b.sessions.update((draft) => { draft.byId[WORKER] = summary(WORKER, true) })
     })
-    expect(screen.getByRole('button', { name: /^worker.*运行中/u })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^worker.*Running/u })).toBeTruthy()
   })
 
   it('reads the Lead projection from an addressed teammate conversation', () => {
@@ -253,7 +253,7 @@ describe('TeamAction', () => {
     render(<TeamAction {...b.props} />)
     openPanel()
     expect(screen.queryByText(zh.loading)).toBeNull()
-    expect(screen.getByRole('status').textContent).toBe('Team 暂不可用')
+    expect(screen.getByRole('status').textContent).toBe('Team is unavailable')
   })
 
   it('surfaces a Team projection failure beside the last valid state', () => {
@@ -262,7 +262,7 @@ describe('TeamAction', () => {
     })
     render(<TeamAction {...b.props} />)
     openPanel()
-    expect(screen.getByRole('alert').textContent).toBe('团队持久记录无效：revision is not contiguous')
+    expect(screen.getByRole('alert').textContent).toBe('Invalid persisted Team record: revision is not contiguous')
     expect(screen.getByText('Implement runtime')).toBeTruthy()
   })
 
@@ -296,7 +296,7 @@ describe('TeamAction', () => {
     expect(screen.getByText('provider failed')).toBeTruthy()
     expect(screen.getByText(zh.ready)).toBeTruthy()
     expect(screen.getByText(zh.blocked)).toBeTruthy()
-    expect(screen.getAllByText('Owner: 未分配')).toHaveLength(2)
+    expect(screen.getAllByText('Owner: Unowned')).toHaveLength(2)
     expect(screen.getByText('Owner: worker')).toBeTruthy()
     const failedMember = screen.getByRole<HTMLButtonElement>('button', { name: /failed-worker/u })
     const provisioningMember = screen.getByRole<HTMLButtonElement>('button', { name: /provisioning-worker/u })
@@ -314,7 +314,7 @@ describe('TeamAction', () => {
     expect(screen.getByRole('alert').textContent).toBe('Error: navigation failed')
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: /智能体团队/u }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Agent Team/u }))
   })
 
   it('closes the panel and clears a navigation failure when the conversation switches sessions', () => {
@@ -336,7 +336,7 @@ describe('TeamAction', () => {
   it('keeps panel interactions open and dismisses on outside pointer or Escape', () => {
     const b = bench()
     const rendered = render(<TeamAction {...b.props} />)
-    const trigger = screen.getByRole('button', { name: /智能体团队/u })
+    const trigger = screen.getByRole('button', { name: /Agent Team/u })
     fireEvent.click(trigger)
     const panel = screen.getByRole('dialog')
     expect(rendered.container.contains(panel)).toBe(false)
@@ -363,7 +363,7 @@ describe('TeamAction', () => {
     const clientHeight = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(60)
     try {
       render(<TeamAction {...bench().props} />)
-      fireEvent.click(screen.getByRole('button', { name: /智能体团队/u }))
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
       const expand = await screen.findByRole('button', { name: zh['task.expand'] })
       const description = screen.getByText('Build the Team runtime')
       expect(expand.getAttribute('aria-expanded')).toBe('false')
@@ -389,7 +389,7 @@ describe('TeamAction', () => {
     }
     const b = bench()
     const rendered = render(<TeamAction {...b.props} />)
-    const trigger = screen.getByRole('button', { name: /智能体团队/u })
+    const trigger = screen.getByRole('button', { name: /Agent Team/u })
     const root = trigger.parentElement!
 
     fireEvent.mouseEnter(trigger)
@@ -424,7 +424,7 @@ describe('TeamAction', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(duration) })
     }
     render(<TeamAction {...bench().props} />)
-    const trigger = screen.getByRole('button', { name: /智能体团队/u })
+    const trigger = screen.getByRole('button', { name: /Agent Team/u })
     const root = trigger.parentElement!
 
     fireEvent.click(trigger)
@@ -461,7 +461,7 @@ describe('TeamAction', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(duration) })
     }
     render(<TeamAction {...bench().props} />)
-    const trigger = screen.getByRole('button', { name: /智能体团队/u })
+    const trigger = screen.getByRole('button', { name: /Agent Team/u })
     const label = screen.getByText(zh.trigger)
     const computedStyle = window.getComputedStyle.bind(window)
     vi.spyOn(window, 'getComputedStyle').mockImplementation(element =>

@@ -3,7 +3,7 @@ description: "The same-session continuation driver for users and maintainers cho
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-goal-round-driver
+# @yharness/goal-round-driver
 
 ## Summary
 
@@ -31,13 +31,13 @@ Mount the driver beside the goal service and the goal tools; the driver itself t
 
 ```yaml
 - id: goal
-  name: '@deepseek-ai/dsh-goal'
+  name: '@yharness/goal'
 
 - id: tool-goal
-  name: '@deepseek-ai/dsh-tool-goal'
+  name: '@yharness/tool-goal'
 
 - id: goal-round-driver
-  name: '@deepseek-ai/dsh-goal-round-driver'
+  name: '@yharness/goal-round-driver'
 ```
 
 `maxGoalRounds` belongs to the goal definition, while the model-facing blocked threshold belongs to `dsh-tool-goal`; duplicating either value in the driver could produce divergent policy.

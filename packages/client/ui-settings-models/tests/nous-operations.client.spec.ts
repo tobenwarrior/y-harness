@@ -1,5 +1,5 @@
 /** Optional Nous namespace resolution and cancellation of device-status polling. */
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Context, Service } from '@yharness/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createModelsOperations } from '../src/client/operations.ts'
 import type { ModelsOperations } from '../src/client/operations.ts'

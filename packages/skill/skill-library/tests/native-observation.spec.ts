@@ -1,6 +1,6 @@
 /** Exact procedural facts and independent full-change recomputation, without model calls. */
 import { expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { nativeObservationGenerator, nativeObservationInstructions, nativeObservationValidator } from '../src/native-observation.ts'
 import type { SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId, SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningGenerateInput, SkillLearningProposal, SkillLearningProposalId } from '../src/learning-types.ts'
 import type { SkillLibraryId } from '../src/types.ts'

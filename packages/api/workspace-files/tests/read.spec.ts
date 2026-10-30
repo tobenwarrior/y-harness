@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { FsError } from '@deepseek-ai/dsh-fs'
+import { FsError } from '@yharness/fs'
 import { failureOf, openWorkspace, signal, type Harness } from './harness.ts'
 
 let harness: Harness
@@ -63,9 +63,9 @@ describe('workspaceFiles.read — the happy path', () => {
   })
 
   it('accepts multi-byte UTF-8 and counts the file bytes, not its characters', async () => {
-    await writeFile(join(workspace, 'zh.txt'), '侧栏', 'utf8')
+    await writeFile(join(workspace, 'zh.txt'), '\u{4FA7}\u{680F}', 'utf8')
     const result = await endpoint().read(harness.scope, 'zh.txt', {}, signal())
-    expect(result.text).toBe('侧栏')
+    expect(result.text).toBe('\u{4FA7}\u{680F}')
     expect(result.bytes).toBe(6)
   })
 })

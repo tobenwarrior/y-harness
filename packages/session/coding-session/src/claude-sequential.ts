@@ -1,6 +1,6 @@
 /** Separate original-ID Claude conversation handoff, with isolated native-history readback. */
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { ClaudeSequentialExecutor, ClaudeSequentialTurnReceipt } from '@deepseek-ai/dsh-subagent-claude-code'
+import { brandString } from '@yharness/brand'
+import type { ClaudeSequentialExecutor, ClaudeSequentialTurnReceipt } from '@yharness/subagent-claude-code'
 import { codingSessionDigest } from './digest.ts'
 import type { CodingSessionProvider, CodingSessionReadRequest, CodingSessionSnapshot, CodingSessionSource,
   CodingSessionNativeTurnId, CodingSessionSequentialWriterProvider, CodingSessionSequentialWriterLease, CodingSessionSequentialReleaseReceipt } from './types.ts'

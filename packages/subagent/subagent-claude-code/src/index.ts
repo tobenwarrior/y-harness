@@ -3,13 +3,13 @@
  * invokes the official Agent SDK in the delegating Session's workspace and
  * places the SDK-spawned real CLI under the shared subprocess owner.
  *
- * @module @deepseek-ai/dsh-subagent-claude-code
+ * @module @yharness/subagent-claude-code
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import type { Session } from '@deepseek-ai/dsh-session'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import type { Session } from '@yharness/session'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import {
   assertPositiveFinite,
   NO_START_CAPABILITIES,
@@ -17,7 +17,7 @@ import {
   type ResolvedSubagentStartRequest,
   type SubagentCapabilities,
   type SubagentProvider,
-} from '@deepseek-ai/dsh-subagent'
+} from '@yharness/subagent'
 import {
   CLAUDE_CODE_PERMISSION_MODES,
   DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
@@ -37,7 +37,7 @@ export type { ClaudeRootProtocolRecord } from './root-types.ts'
 export { createClaudeSequentialExecutor, claudeSequentialProjectDirectory } from './sequential.ts'
 export type { ClaudeSequentialSelection, ClaudeSequentialSdk, ClaudeSequentialStartupPolicyReceipt, ClaudeSequentialTurnReceipt, ClaudeSequentialExecutor } from './sequential.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Events {
     /**
      * Observe-only direct native child receipts, separate from parent task evidence.

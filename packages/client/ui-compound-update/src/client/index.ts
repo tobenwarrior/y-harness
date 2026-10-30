@@ -1,15 +1,15 @@
 /** Compound skills update indicator: sidebar badge and update steps panel. */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-sidebar/client'
 import { CompoundUpdateController } from './controller.ts'
-import { en, zh, type CompoundUpdateKey } from './locales.ts'
+import { en, type CompoundUpdateKey } from './locales.ts'
 import { UpdateBadge } from './UpdateBadge.tsx'
 import { UpdatePanel } from './UpdatePanel.tsx'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Compound skills update indicator copy. */
     compoundUpdate: CompoundUpdateKey
@@ -27,7 +27,7 @@ const STATUS_REFRESH_INTERVAL_MS = 60 * 1000
  * @param ctx - browser plugin context supplied by Cordis.
  */
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register('compoundUpdate', { en, zh }), 'ui-compound-update: dictionaries')
+  ctx.effect(() => ctx.locale.register('compoundUpdate', { en }), 'ui-compound-update: dictionaries')
   const controller = new CompoundUpdateController()
   // Read immediately and periodically while this plugin is active.
   ctx.effect(() => {

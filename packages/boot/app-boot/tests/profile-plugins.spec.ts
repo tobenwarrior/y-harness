@@ -69,6 +69,21 @@ describe('profile plugin inventory', () => {
       { name: 'invalid', version: '^2', bundle: false, enabled: false },
     ])
   })
+
+  it('matches a legacy dependency key to a canonical installed package without rewriting the manifest', () => {
+    const location = fixture()
+    const legacy = '@deepseek-ai/dsh-addon'
+    const canonical = '@yharness/addon'
+    writeManifest(location.profileDir, {
+      dependencies: { [legacy]: '^1' },
+      dsh: { profile: { bundles: [legacy] } },
+    })
+    installed(location, canonical)
+
+    const inventory = readProfilePlugins(location)
+    expect(inventory.dependencies).toEqual([{ name: legacy, version: '1.0.0', bundle: true, enabled: true }])
+    expect(inventory.manifest.dsh?.profile?.bundles).toEqual([legacy])
+  })
 })
 
 describe('profile plugin reconciliation', () => {
@@ -111,6 +126,45 @@ describe('profile plugin reconciliation', () => {
     installed(location, 'added')
     expect(reconcileProfilePlugins({ ...location, before, preserveDisabled: false }).plugins.manifest.dsh?.profile?.bundles)
       .toEqual(['added'])
+  })
+
+  it('preserves activation across a legacy-to-canonical dependency-key rewrite', () => {
+    const location = fixture()
+    const legacy = '@deepseek-ai/dsh-addon'
+    const canonical = '@yharness/addon'
+    const beforeManifest = {
+      dependencies: { [legacy]: '^1' },
+      dsh: { profile: { bundles: [legacy] } },
+    }
+    writeManifest(location.profileDir, beforeManifest)
+    installed(location, legacy)
+    const before = readProfilePlugins(location)
+
+    writeManifest(location.profileDir, {
+      dependencies: { [canonical]: '^1' },
+      dsh: { profile: { bundles: [legacy] } },
+    })
+    installed(location, canonical)
+    const result = reconcileProfilePlugins({ ...location, before, preserveDisabled: true })
+
+    expect(result.plugins.manifest.dsh?.profile?.bundles).toEqual([legacy])
+    expect(result.plugins.dependencies.map(dependency => ({ name: dependency.name, enabled: dependency.enabled })))
+      .toEqual([{ name: canonical, enabled: true }])
+  })
+
+  it('does not report a canonical plain dependency as newly added after a legacy-key rewrite', () => {
+    const location = fixture()
+    const legacy = '@deepseek-ai/dsh-library'
+    const canonical = '@yharness/library'
+    writeManifest(location.profileDir, { dependencies: { [legacy]: '^1' } })
+    installed(location, legacy, false)
+    const before = readProfilePlugins(location)
+
+    writeManifest(location.profileDir, { dependencies: { [canonical]: '^1' } })
+    installed(location, canonical, false)
+    const result = reconcileProfilePlugins({ ...location, before, preserveDisabled: true })
+
+    expect(result.addedPlainDependencies).toEqual([])
   })
 
   it('removes an unresolved dependency layer while preserving custom profile metadata', () => {

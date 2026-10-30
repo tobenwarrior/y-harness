@@ -1,11 +1,11 @@
 /** Native source discovery remains loadable when ordinary-Y Session capabilities are absent. */
-import { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import { Context } from '@yharness/cordis'
+import { brandString } from '@yharness/brand'
+import type { SessionId } from '@yharness/session'
 import { describe, expect, it, vi } from 'vitest'
 
 const attempts = vi.hoisted(() => ({ sessionLoads: 0 }))
-vi.mock('@deepseek-ai/dsh-session', () => {
+vi.mock('@yharness/session', () => {
   attempts.sessionLoads += 1
   throw new Error('Optional Session package is absent in this fixture')
 })

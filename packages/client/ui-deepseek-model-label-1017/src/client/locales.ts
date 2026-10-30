@@ -1,10 +1,10 @@
 /** Localized label of the fixed release marker. */
 
-/** Simplified Chinese badge copy. */
-export const zh = { 'badge.label': '1017' }
-
 /** Keys owned by the release-label namespace. */
-export type LabelKey = keyof typeof zh
+export type LabelKey = keyof typeof en
 
 /** English badge copy. */
-export const en: Record<LabelKey, string> = { 'badge.label': '1017' }
+export const en= { 'badge.label': '1017' }
+
+/** Compatibility export for the retired locale name. */
+export const zh = en

@@ -68,7 +68,7 @@ interface Paste {
 
 /** One package's catalog entry. */
 export interface CatalogEntry {
-  /** npm package name, e.g. `@deepseek-ai/dsh-agent-loop`. */
+  /** npm package name, e.g. `@yharness/agent-loop`. */
   pkg: string
   /** Repo-relative package dir, e.g. `packages/core/agent-loop`. */
   dir: string
@@ -930,27 +930,27 @@ const TEXT: Record<Locale, {
   },
   zh: {
     header: [
-      '<!-- 由 scripts/gen-config-catalog.ts 生成——请勿手工编辑。',
-      '     运行 `pnpm run gen-config-catalog` 重新生成。 -->',
+      '<!-- \u7531 scripts/gen-config-catalog.ts \u751f\u6210——\u8bf7\u52ff\u624b\u5de5\u7f16\u8f91。',
+      '     \u8fd0\u884c `pnpm run gen-config-catalog` \u91cd\u65b0\u751f\u6210。 -->',
     ],
-    title: '# 插件配置目录',
-    switcher: ['[English](config-catalog.md) | 中文', ''],
+    title: '# \u63d2\u4ef6\u914d\u7f6e\u76ee\u5f55',
+    switcher: ['[English](config-catalog.md) | \u4e2d\u6587', ''],
     intro: [
-      '每个 `config:` 块均可由 `cordis.yml` 条目设置：针对每个可加载的 harness 包，原样列出其 `apply` 函数或服务构造函数接收的配置声明（包括 JSDoc），并附上所有引用类型——包内类型直接粘贴，其他类型则提供链接。粘贴的内容是插件声明的完整配置类型——运行时 schema 有意排除的字段是仅供运行时使用的 seam（其自身的 JSDoc 会如此说明），不能通过 `cordis.yml` 设置。这是以**部署**为轴的参考文档——插件作者所依据的连接方式请参阅各[子系统页面](subsystems/core.md)中的生成 `cordis-surface` 区域，面向模型的工具 schema 请参阅[工具目录](tool-catalog.md)，而 [subsystems/](subsystems/core.md) 则记录了这些声明所引用的类型。',
-      '本文件的两种语言版本都由源代码（`scripts/gen-config-catalog.ts`）生成，并通过 `pnpm run verify-config-catalog`（`doc-sync` 的一部分）验证新鲜度——请勿手工编辑。声明块使用 `ts config-catalog` 围栏（doc-typecheck 会跳过它，因为单独引用导入项的声明无法独立编译）。生成器还会将运行时 schemastery schema 与粘贴的声明进行交叉核对——每个经 schema 验证的键（包括嵌套键）都必须能在声明的配置类型中找到——因此，粘贴内容无法隐藏加载器接受的字段。',
-      '每个包的条目用三个标识符标注：`inject` 列出插件注入的服务键，其 `cordis.yml` 树还必须加载这些服务的提供者；`refs` 列出声明引用、但未粘贴在此处的类型；`source` 链接到声明配置的源文件。范围限定为 harness 层级（`packages/`）；配置树还可能加载的 vendored cordis 插件（控制台日志记录器等）固定为上游源代码（参见 [vendoring policy](../vendor/README.md)），未收录于此目录。',
+      '\u6bcf\u4e2a `config:` \u5757\u5747\u53ef\u7531 `cordis.yml` \u6761\u76ee\u8bbe\u7f6e：\u9488\u5bf9\u6bcf\u4e2a\u53ef\u52a0\u8f7d\u7684 harness \u5305，\u539f\u6837\u5217\u51fa\u5176 `apply` \u51fd\u6570\u6216\u670d\u52a1\u6784\u9020\u51fd\u6570\u63a5\u6536\u7684\u914d\u7f6e\u58f0\u660e（\u5305\u62ec JSDoc），\u5e76\u9644\u4e0a\u6240\u6709\u5f15\u7528\u7c7b\u578b——\u5305\u5185\u7c7b\u578b\u76f4\u63a5\u7c98\u8d34，\u5176\u4ed6\u7c7b\u578b\u5219\u63d0\u4f9b\u94fe\u63a5。\u7c98\u8d34\u7684\u5185\u5bb9\u662f\u63d2\u4ef6\u58f0\u660e\u7684\u5b8c\u6574\u914d\u7f6e\u7c7b\u578b——\u8fd0\u884c\u65f6 schema \u6709\u610f\u6392\u9664\u7684\u5b57\u6bb5\u662f\u4ec5\u4f9b\u8fd0\u884c\u65f6\u4f7f\u7528\u7684 seam（\u5176\u81ea\u8eab\u7684 JSDoc \u4f1a\u5982\u6b64\u8bf4\u660e），\u4e0d\u80fd\u901a\u8fc7 `cordis.yml` \u8bbe\u7f6e。\u8fd9\u662f\u4ee5**\u90e8\u7f72**\u4e3a\u8f74\u7684\u53c2\u8003\u6587\u6863——\u63d2\u4ef6\u4f5c\u8005\u6240\u4f9d\u636e\u7684\u8fde\u63a5\u65b9\u5f0f\u8bf7\u53c2\u9605\u5404[\u5b50\u7cfb\u7edf\u9875\u9762](subsystems/core.md)\u4e2d\u7684\u751f\u6210 `cordis-surface` \u533a\u57df，\u9762\u5411\u6a21\u578b\u7684\u5de5\u5177 schema \u8bf7\u53c2\u9605[\u5de5\u5177\u76ee\u5f55](tool-catalog.md)，\u800c [subsystems/](subsystems/core.md) \u5219\u8bb0\u5f55\u4e86\u8fd9\u4e9b\u58f0\u660e\u6240\u5f15\u7528\u7684\u7c7b\u578b。',
+      '\u672c\u6587\u4ef6\u7684\u4e24\u79cd\u8bed\u8a00\u7248\u672c\u90fd\u7531\u6e90\u4ee3\u7801（`scripts/gen-config-catalog.ts`）\u751f\u6210，\u5e76\u901a\u8fc7 `pnpm run verify-config-catalog`（`doc-sync` \u7684\u4e00\u90e8\u5206）\u9a8c\u8bc1\u65b0\u9c9c\u5ea6——\u8bf7\u52ff\u624b\u5de5\u7f16\u8f91。\u58f0\u660e\u5757\u4f7f\u7528 `ts config-catalog` \u56f4\u680f（doc-typecheck \u4f1a\u8df3\u8fc7\u5b83，\u56e0\u4e3a\u5355\u72ec\u5f15\u7528\u5bfc\u5165\u9879\u7684\u58f0\u660e\u65e0\u6cd5\u72ec\u7acb\u7f16\u8bd1）。\u751f\u6210\u5668\u8fd8\u4f1a\u5c06\u8fd0\u884c\u65f6 schemastery schema \u4e0e\u7c98\u8d34\u7684\u58f0\u660e\u8fdb\u884c\u4ea4\u53c9\u6838\u5bf9——\u6bcf\u4e2a\u7ecf schema \u9a8c\u8bc1\u7684\u952e（\u5305\u62ec\u5d4c\u5957\u952e）\u90fd\u5fc5\u987b\u80fd\u5728\u58f0\u660e\u7684\u914d\u7f6e\u7c7b\u578b\u4e2d\u627e\u5230——\u56e0\u6b64，\u7c98\u8d34\u5185\u5bb9\u65e0\u6cd5\u9690\u85cf\u52a0\u8f7d\u5668\u63a5\u53d7\u7684\u5b57\u6bb5。',
+      '\u6bcf\u4e2a\u5305\u7684\u6761\u76ee\u7528\u4e09\u4e2a\u6807\u8bc6\u7b26\u6807\u6ce8：`inject` \u5217\u51fa\u63d2\u4ef6\u6ce8\u5165\u7684\u670d\u52a1\u952e，\u5176 `cordis.yml` \u6811\u8fd8\u5fc5\u987b\u52a0\u8f7d\u8fd9\u4e9b\u670d\u52a1\u7684\u63d0\u4f9b\u8005；`refs` \u5217\u51fa\u58f0\u660e\u5f15\u7528、\u4f46\u672a\u7c98\u8d34\u5728\u6b64\u5904\u7684\u7c7b\u578b；`source` \u94fe\u63a5\u5230\u58f0\u660e\u914d\u7f6e\u7684\u6e90\u6587\u4ef6。\u8303\u56f4\u9650\u5b9a\u4e3a harness \u5c42\u7ea7（`packages/`）；\u914d\u7f6e\u6811\u8fd8\u53ef\u80fd\u52a0\u8f7d\u7684 vendored cordis \u63d2\u4ef6（\u63a7\u5236\u53f0\u65e5\u5fd7\u8bb0\u5f55\u5668\u7b49）\u56fa\u5b9a\u4e3a\u4e0a\u6e38\u6e90\u4ee3\u7801（\u53c2\u89c1 [vendoring policy](../vendor/README.md)），\u672a\u6536\u5f55\u4e8e\u6b64\u76ee\u5f55。',
     ],
     noConfig: [
-      '## 无配置的可加载插件',
-      '这些插件通过 `cordis.yml` 中不含 `config:` 块的条目加载；它们未声明任何配置接口。',
+      '## \u65e0\u914d\u7f6e\u7684\u53ef\u52a0\u8f7d\u63d2\u4ef6',
+      '\u8fd9\u4e9b\u63d2\u4ef6\u901a\u8fc7 `cordis.yml` \u4e2d\u4e0d\u542b `config:` \u5757\u7684\u6761\u76ee\u52a0\u8f7d；\u5b83\u4eec\u672a\u58f0\u660e\u4efb\u4f55\u914d\u7f6e\u63a5\u53e3。',
     ],
     seam: [
-      '## Seam 包（不可直接加载）',
-      '抽象服务类——部署时应改为加载具体的实现包（参见[能力 seam](../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md)）。',
+      '## Seam \u5305（\u4e0d\u53ef\u76f4\u63a5\u52a0\u8f7d）',
+      '\u62bd\u8c61\u670d\u52a1\u7c7b——\u90e8\u7f72\u65f6\u5e94\u6539\u4e3a\u52a0\u8f7d\u5177\u4f53\u7684\u5b9e\u73b0\u5305（\u53c2\u89c1[\u80fd\u529b seam](../.agents/notes/implemented/architecture/2026-06-13-capability-seams.md)）。',
     ],
     library: [
-      '## 库包（无插件入口）',
-      '由其他包作为库导入；`cordis.yml` 无法加载它们。',
+      '## \u5e93\u5305（\u65e0\u63d2\u4ef6\u5165\u53e3）',
+      '\u7531\u5176\u4ed6\u5305\u4f5c\u4e3a\u5e93\u5bfc\u5165；`cordis.yml` \u65e0\u6cd5\u52a0\u8f7d\u5b83\u4eec。',
     ],
   },
 }

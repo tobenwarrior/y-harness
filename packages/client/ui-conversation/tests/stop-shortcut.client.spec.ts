@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
-import type { Shortcuts, ShortcutContext, ShortcutGesture } from '@deepseek-ai/dsh-client-shortcuts/client'
-import { makeTranslate, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
-import { MutableSessionEventSource } from '@deepseek-ai/dsh-api-session-controller/client'
-import { SessionSeq, type SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionPendingInteractionBase } from '@yharness/client-ui-session/client'
+import type { Shortcuts, ShortcutContext, ShortcutGesture } from '@yharness/client-shortcuts/client'
+import { makeTranslate, SlotTestRuntime } from '@yharness/client-test-runtime'
+import { MutableSessionEventSource } from '@yharness/api-session-controller/client'
+import { SessionSeq, type SessionId } from '@yharness/session/types'
 import { UiConversation } from '../src/client/conversation/assembly.ts'
 import { ComposerBlockRegistry } from '../src/client/input/blocks.ts'
 import { InputHub } from '../src/client/input/hub.ts'
 import { ConversationController } from '../src/client/service.ts'
 import { installStopShortcut } from '../src/client/stop-shortcut.ts'
-import { zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 
 const disposers: (() => void | Promise<void>)[] = []
 afterEach(async () => {
@@ -28,7 +28,7 @@ async function bench() {
   ] })
   const reference = runtime.sessions.retain('s1' as SessionId)
   await reference.ready
-  const hub = new InputHub(runtime.ctx, makeTranslate(zh, {}))
+  const hub = new InputHub(runtime.ctx, makeTranslate(en, {}))
   const fiber = runtime.ctx.plugin(ConversationController, {
     input: hub, blocks: new ComposerBlockRegistry(), maxConcurrentFileUploads: 2,
   })

@@ -2,16 +2,16 @@
 /** Model-list editing, endpoint interrogation, and hand-declared provider creation. */
 import { within, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import Schema from '@deepseek-ai/schemastery'
-import { Context } from '@deepseek-ai/cordis'
-import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+import Schema from '@yharness/schemastery'
+import { Context } from '@yharness/cordis'
+import { bindSnapshotSelector, RemoteError } from '@yharness/client-test-runtime'
+import type { SettingsNamespaceView } from '@yharness/api-remotes/client'
+import type { JsonValue } from '@yharness/util-values'
 import { ModelsSection, providerCopy } from '../src/client/ModelsSection.tsx'
 import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/ModelsSection.tsx'
 import { CustomProviderCard } from '../src/client/CustomProviderCard.tsx'
 import { formatCapacity, parseCapacity } from '../src/client/DeepSeekModelsEditor.tsx'
-import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
+import { SettingsDescribeMirror } from '@yharness/client-ui-settings/src/client/settings-mirror.ts'
 import { ModelsSettingsStore, deriveKeyRef, protocolChoices } from '../src/client/store.ts'
 import { createModelsOperations } from '../src/client/operations.ts'
 import type { ModelsOperations } from '../src/client/operations.ts'
@@ -956,12 +956,12 @@ describe('hand-declared providers', () => {
     // The route id, not the stored name: it is what the route will be called
     // the moment the field is cleared.
     expect(name.placeholder).toBe('acme-gateway')
-    fireEvent.change(name, { target: { value: 'Acme 网关' } })
+    fireEvent.change(name, { target: { value: 'Acme \u7f51\u5173' } })
     fireEvent.click(screen.getByText(en.apply))
 
     await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
     expect(firstMutate(mutate).ops)
-      .toEqual([{ op: 'set', path: ['providers', 'acme-gateway', 'displayName'], value: 'Acme 网关' }])
+      .toEqual([{ op: 'set', path: ['providers', 'acme-gateway', 'displayName'], value: 'Acme \u7f51\u5173' }])
   })
 
   it('offers the composition name as what a cleared field falls back to', async () => {
@@ -993,20 +993,20 @@ describe('hand-declared providers', () => {
     // the adapter re-registers it.
     face.llm.listConfigurableProviders = vi.fn(() => Promise.resolve(ok([{
       provider: 'acme-gateway',
-      displayName: 'Acme 网关',
+      displayName: 'Acme \u7f51\u5173',
       settingsNs: 'llm-pi-ai',
       settingsPath: ['providers', 'acme-gateway'],
       declared: true,
     }])))
     openEditor('acme-gateway')
 
-    fireEvent.change(screen.getByLabelText(en.customDisplayName), { target: { value: 'Acme 网关' } })
+    fireEvent.change(screen.getByLabelText(en.customDisplayName), { target: { value: 'Acme \u7f51\u5173' } })
     fireEvent.click(screen.getByText(en.apply))
 
     const notice = await screen.findByRole('status')
     expect(notice.textContent).toBe(providerCopy(en.savedProvider, {
       provider: 'acme-gateway',
-      displayName: 'Acme 网关',
+      displayName: 'Acme \u7f51\u5173',
     }))
   })
 

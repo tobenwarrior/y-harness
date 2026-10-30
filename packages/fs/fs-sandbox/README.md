@@ -3,7 +3,7 @@ description: "The sandbox-enforcing ctx.fs backend for deployments and maintaine
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-fs-sandbox
+# @yharness/fs-sandbox
 
 ## Summary
 
@@ -30,14 +30,14 @@ Mount this backend instead of `fs-local` when the model's file writes and edits 
 Load the shared policy service, then this backend, then the tools; the read-before-edit policy plugin stays optional.
 
 ```yaml
-- name: '@deepseek-ai/dsh-sandbox-policy'
-- name: '@deepseek-ai/dsh-fs-sandbox'
+- name: '@yharness/sandbox-policy'
+- name: '@yharness/fs-sandbox'
   config:
     cwd: /absolute/path/to/workspace
-- name: '@deepseek-ai/dsh-tool-fs'
+- name: '@yharness/tool-fs'
 ```
 
-The backend's config is unchanged from the local backend's (`cwd` resolution default and `diffBasisMaxBytes` overwrite bound); the [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-fs-sandbox) is the exhaustive source.
+The backend's config is unchanged from the local backend's (`cwd` resolution default and `diffBasisMaxBytes` overwrite bound); the [configuration catalog](../../../docs/config-catalog.md#yharnessfs-sandbox) is the exhaustive source.
 
 ### How the fence behaves
 

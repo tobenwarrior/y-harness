@@ -1,13 +1,13 @@
 ---
-description: "The bundled 'powered by dsh' badge skill for users and maintainers enabling, using, or debugging the optional badge provider."
+description: "The bundled Y Harness badge skill for users and maintainers enabling, using, or debugging the optional badge provider."
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-skill-badge
+# @yharness/skill-badge
 
 ## Summary
 
-Agents can load the official "powered by dsh" badge skill from this bundled provider and follow its instructions for adding attribution badges to documents, PRs, and other content produced with DeepSeek Harness. The provider has no configuration, and the shipped CLI composition includes the plugin disabled, so deployments enable it explicitly. The skill ships both Markdown snippets and a packaged PNG for systems that cannot reliably import remote images.
+Agents can load the official Y Harness badge skill from this bundled provider and follow its instructions for adding attribution badges to documents, PRs, and other content produced with Y Harness. The provider has no configuration, and the shipped CLI composition includes the plugin disabled, so deployments enable it explicitly. The skill ships both Markdown snippets and a packaged SVG for systems that cannot reliably import remote images.
 
 ## Table of Contents
 
@@ -23,30 +23,30 @@ Agents can load the official "powered by dsh" badge skill from this bundled prov
 <a id="use-this-package"></a>
 ## Use this package
 
-Enable the plugin to make the `dsh-badge` skill available in the session skill catalog; the model can then load it like any other skill and follow its instructions for adding a "powered by dsh" badge.
+Enable the plugin to make the `y-harness-badge` skill available in the session skill catalog; the model can then load it like any other skill and follow its instructions for adding a Y Harness badge. The legacy `dsh-badge` name remains available for user-invoked compositions during migration.
 
 ### When to choose it
 
-Choose this provider when content produced with DeepSeek Harness should carry official attribution badges, and the deployment wants the badge skill available to agents without storing it in a local skill directory. Skip it when the badge is irrelevant to the deployment — the plugin is disabled by default and adds nothing until enabled.
+Choose this provider when content produced with Y Harness should carry an official attribution badge, and the deployment wants the badge skill available to agents without storing it in a local skill directory. Skip it when the badge is irrelevant to the deployment — the plugin is disabled by default and adds nothing until enabled.
 
 ### Enable the plugin
 
 The plugin has no configuration. Add its composition row to a composition; the shipped CLI composition carries the row as `disabled: true`, so enable it explicitly there.
 
 ```yaml
-- name: '@deepseek-ai/dsh-skill-badge'
+- name: '@yharness/skill-badge'
 ```
 
-After enabling, `dsh-badge` appears in the available skills of the session catalog. The skill covers remote Markdown badges (Shields.io-based) and a packaged PNG badge asset for targets that cannot fetch remote images reliably.
+After enabling, `y-harness-badge` appears in the available skills of the session catalog. The legacy `dsh-badge` alias is user-invocable but hidden from model-facing skill suggestions. The skill covers remote Markdown badges (Shields.io-based) and a packaged SVG badge asset for targets that cannot fetch remote images reliably.
 
 ### What the badge skill provides
 
 - **Markdown snippets.** Instructions for embedding the official badge markup in documents, PRs, and merge requests.
-- **Packaged PNG asset.** A `dsh-badge.png` resource (726×120 source, rendered at 121×20) that works where remote images cannot be imported.
+- **Packaged SVG asset.** A `y-harness-badge.svg` resource (726×120 source, rendered at 121×20) that works where remote images cannot be imported.
 
 ### Observable success and failures
 
-Enabling the plugin makes `dsh-badge` appear in the catalog and loadable by name; disabling or omitting the row keeps it out of every catalog. Because the provider is immutable, discovery always succeeds with exactly one skill and never reports partial results.
+Enabling the plugin makes `y-harness-badge` and its migration alias loadable by name; disabling or omitting the row keeps them out of every catalog. Because the provider is immutable, discovery always succeeds with exactly two skills and never reports partial results.
 
 -----
 
@@ -60,14 +60,14 @@ This section explains how the bundled provider is wired; the observable behavior
 
 ### Design concept
 
-The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `dsh-badge`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/dsh-badge.md` file on every load.
+The provider is an immutable, synchronously registered skill source: it registers the canonical `y-harness-badge` candidate and the user-invocable legacy `dsh-badge` alias at the bundled skill rank (600) under the provider name `y-harness-badge`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/y-harness-badge.md` file on every load.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry and the immutable provider: one candidate, resource base, body load |
-| [`assets/`](assets/) | Packaged skill body (`dsh-badge.md`) and PNG asset (`dsh-badge.png`) |
+| [`src/index.ts`](src/index.ts) | Plugin entry and the immutable provider: canonical candidate, legacy alias, resource base, and body load |
+| [`assets/`](assets/) | Packaged skill body (`y-harness-badge.md`) and SVG asset (`y-harness-badge.svg`) |
 
 </details>
 
@@ -87,7 +87,7 @@ Read these pages when the package-level contract is not enough. They move from t
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through `dsh-tool-skill`, which renders the provider's catalog entry and the selected skill body to the model.
+Indirectly, through `tool-skill`, which renders the provider's catalog entry and the selected skill body to the model.
 
 #### KV Cache effect
 
@@ -99,8 +99,8 @@ Disabled by default, the plugin changes no request. When enabled, its catalog en
 
 These limits define what the bundled provider does not do. They are current package constraints, not a task backlog.
 
-- **One fixed skill, no runtime customization** — the provider contributes exactly the `dsh-badge` skill; deployments that need another badge variant author their own skill instead.
-- **Remote Markdown relies on Shields.io** — the remote badge markup embeds a Shields.io image; use the packaged PNG when the target cannot fetch remote images reliably.
+- **One fixed skill, no runtime customization** — the provider contributes the canonical `y-harness-badge` skill plus its migration-only `dsh-badge` alias; deployments that need another badge variant author their own skill instead.
+- **Remote Markdown relies on Shields.io** — the remote badge markup embeds a Shields.io image; use the packaged SVG when the target cannot fetch remote images reliably.
 
 <a id="dev-note"></a>
 ### Dev Note

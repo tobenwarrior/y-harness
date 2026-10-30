@@ -1,7 +1,10 @@
 /** Installed profile dependencies and their bundle activation after package-manager operations. */
 
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { readProfileManifest, resolveBundleDir, writeProfileManifest, type ProfileManifest } from './profile.ts'
+import {
+  bundlePackageNameCandidates, readProfileManifest, resolveBundleDir, writeProfileManifest, type ProfileManifest,
+} from './profile.ts'
 
 /** Profile directory and installation used by the shared bundle resolver. */
 export interface ProfilePluginLocation {
@@ -43,6 +46,28 @@ function optionalManifest(binName: string, packageDir: string): ProfileManifest 
   try { return readProfileManifest(binName, packageDir) } catch { return undefined }
 }
 
+/**
+ * Find a profile-local package under either namespace without changing package.json or pnpm-lock.yaml.
+ * @param profileDir - profile directory containing the managed node_modules tree.
+ * @param name - package name as written in the profile manifest.
+ * @returns the installed package directory, or undefined when no candidate is installed.
+ */
+export function installedProfilePackageDir(profileDir: string, name: string): string | undefined {
+  for (const candidate of bundlePackageNameCandidates(name)) {
+    const packageDir = join(profileDir, 'node_modules', candidate)
+    if (existsSync(join(packageDir, 'package.json'))) return packageDir
+  }
+  return undefined
+}
+
+function samePackageName(left: string, right: string): boolean {
+  return bundlePackageNameCandidates(left).includes(right)
+}
+
+function hasPackageName(names: ReadonlySet<string>, name: string): boolean {
+  return [...names].some(candidate => samePackageName(candidate, name))
+}
+
 /** Resolve activation metadata with the same installation precedence as profile loading. */
 function bundleManifest(location: ProfilePluginLocation, name: string): ProfileManifest | undefined {
   let packageDir: string
@@ -65,12 +90,13 @@ export function readProfilePlugins(location: ProfilePluginLocation): ProfilePlug
   const manifest = readProfileManifest(location.binName, location.profileDir)
   const bundles = manifest.dsh?.profile?.bundles ?? []
   const dependencies = Object.entries(manifest.dependencies ?? {}).map(([name, spec]) => {
-    const installed = optionalManifest(location.binName, join(location.profileDir, 'node_modules', name))
+    const installedDir = installedProfilePackageDir(location.profileDir, name)
+    const installed = installedDir === undefined ? undefined : optionalManifest(location.binName, installedDir)
     return {
       name,
       version: typeof installed?.version === 'string' ? installed.version : spec,
       bundle: bundleManifest(location, name)?.dsh?.bundle?.patch !== undefined,
-      enabled: bundles.includes(name),
+      enabled: bundles.some(bundle => samePackageName(bundle, name)),
     }
   })
   return { manifest, dependencies }
@@ -110,18 +136,22 @@ export function reconcileProfilePlugins(options: ProfilePluginLocation & {
     ? options.before.dependencies.filter(dependency => dependency.bundle && !dependency.enabled).map(dependency => dependency.name)
     : [])
   const previous = after.manifest.dsh?.profile?.bundles ?? []
-  const bundles = previous.filter(name => !(beforeNames.has(name) || afterNames.has(name)) || bundleNames.has(name))
+  const bundles = previous.filter(name => (!hasPackageName(beforeNames, name) && !hasPackageName(afterNames, name)) || hasPackageName(bundleNames, name))
   for (const dependency of after.dependencies) {
-    if (dependency.bundle && !disabled.has(dependency.name) && !bundles.includes(dependency.name)) bundles.push(dependency.name)
+    if (dependency.bundle && !hasPackageName(disabled, dependency.name) && !bundles.some(name => samePackageName(name, dependency.name))) {
+      bundles.push(dependency.name)
+    }
   }
   const changed = bundles.length !== previous.length || bundles.some((name, index) => name !== previous[index])
   const manifest = changed ? writeProfileBundles(options.profileDir, after.manifest, bundles) : after.manifest
   return {
     plugins: {
       manifest,
-      dependencies: after.dependencies.map(dependency => ({ ...dependency, enabled: bundles.includes(dependency.name) })),
+      dependencies: after.dependencies.map(dependency => ({
+        ...dependency, enabled: bundles.some(name => samePackageName(name, dependency.name)),
+      })),
     },
-    addedPlainDependencies: after.dependencies.filter(dependency => !dependency.bundle && !beforeNames.has(dependency.name))
+    addedPlainDependencies: after.dependencies.filter(dependency => !dependency.bundle && !hasPackageName(beforeNames, dependency.name))
       .map(dependency => dependency.name),
   }
 }

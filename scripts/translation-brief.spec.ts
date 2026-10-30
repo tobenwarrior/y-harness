@@ -77,12 +77,12 @@ describe('markdown spans', () => {
   })
 
   it('aligns sections by depth only, so translated heading text still maps', () => {
-    const zh = DOC.replace('## First', '## 第一节').replace('## Second', '## 第二节').replace('# Title', '# 标题')
+    const zh = DOC.replace('## First', '## \u{7B2C}\u{4E00}\u{8282}').replace('## Second', '## \u{7B2C}\u{4E8C}\u{8282}').replace('# Title', '# \u{6807}\u{9898}')
     expect(spansAligned(sectionSpans(DOC), sectionSpans(zh))).toBe(true)
   })
 
   it('aligns span lists only on equal non-empty kind sequences', () => {
-    const zh = DOC.replace('First body.', '第一段。').replace('item one', '第一项').replace('Intro paragraph.', '导语。')
+    const zh = DOC.replace('First body.', '\u{7B2C}\u{4E00}\u{6BB5}。').replace('item one', '\u{7B2C}\u{4E00}\u{9879}').replace('Intro paragraph.', '\u{5BFC}\u{8BED}。')
     expect(spansAligned(markdownUnits(DOC), markdownUnits(zh))).toBe(true)
     const reshaped = DOC.replace('- item one\n- item two', 'merged paragraph')
     expect(spansAligned(markdownUnits(DOC), markdownUnits(reshaped))).toBe(false)
@@ -97,7 +97,7 @@ describe('markdown spans', () => {
 
 describe('mechanical code updates', () => {
   const en = '# T\n\nProse.\n\n```sh\nrun one\n```\n'
-  const zh = '# T\n\n中文。\n\n```sh\nrun one\n```\n'
+  const zh = '# T\n\n\u{4E2D}\u{6587}。\n\n```sh\nrun one\n```\n'
 
   it('splices a fence-only edit into the counterpart', () => {
     const edited = en.replace('run one', 'run two')
@@ -121,19 +121,19 @@ describe('mechanical code updates', () => {
 })
 
 const TERMINOLOGY = [
-  '| English | 中文 | 首次出现 | 不要译作 | 备注 |',
+  '| English | \u{4E2D}\u{6587} | \u{9996}\u{6B21}\u{51FA}\u{73B0} | \u{4E0D}\u{8981}\u{8BD1}\u{4F5C} | \u{5907}\u{6CE8} |',
   '|---|---|---|---|---|',
-  '| agent | agent | agent（智能体） | 智能体 | |',
-  '| session log | 会话日志 | | 会话记录 | |',
-  '| gate | 门禁 | | | |',
-  '| registry | 注册表 | | | |',
+  '| agent | agent | agent（\u{667A}\u{80FD}\u{4F53}） | \u{667A}\u{80FD}\u{4F53} | |',
+  '| session log | \u{4F1A}\u{8BDD}\u{65E5}\u{5FD7} | | \u{4F1A}\u{8BDD}\u{8BB0}\u{5F55} | |',
+  '| gate | \u{95E8}\u{7981} | | | |',
+  '| registry | \u{6CE8}\u{518C}\u{8868} | | | |',
 ].join('\n')
 
 describe('terminology', () => {
   it('parses data rows and skips the header and separator', () => {
     const rows = parseTerminologyRows(TERMINOLOGY)
     expect(rows.map(row => row.english)).toEqual(['agent', 'session log', 'gate', 'registry'])
-    expect(rows[0]).toMatchObject({ chinese: 'agent', first: 'agent（智能体）' })
+    expect(rows[0]).toMatchObject({ chinese: 'agent', first: 'agent（\u{667A}\u{80FD}\u{4F53}）' })
   })
 
   it('matches English terms on word boundaries with plural inflections', () => {
@@ -146,9 +146,18 @@ describe('terminology', () => {
   it('selects rows for the changed text per direction', () => {
     expect(relevantTerminologyRows(TERMINOLOGY, 'en-to-zh', 'All agents write a session log.').map(row => row.english))
       .toEqual(['agent', 'session log'])
-    expect(relevantTerminologyRows(TERMINOLOGY, 'zh-to-en', '门禁在提交时运行。').map(row => row.english))
+    expect(relevantTerminologyRows(TERMINOLOGY, 'zh-to-en', '\u{95E8}\u{7981}\u{5728}\u{63D0}\u{4EA4}\u{65F6}\u{8FD0}\u{884C}。').map(row => row.english))
       .toEqual(['gate'])
     expect(relevantTerminologyRows(TERMINOLOGY, 'en-to-zh', 'delegate the work')).toEqual([])
+  })
+
+  it('decodes escaped legacy rows before matching translated text', () => {
+    const encoded = String.raw`| English | \u{4E2D}\u{6587} | \u{9996}\u{6B21}\u{51FA}\u{73B0} | \u{4E0D}\u{8981}\u{8BD1}\u{4F5C} | \u{5907}\u{6CE8} |
+|---|---|---|---|---|
+| gate | \u{95E8}\u{7981} | | | |`
+    const chinese = String.fromCodePoint(0x95e8, 0x7981)
+    expect(parseTerminologyRows(encoded)[0]).toMatchObject({ chinese, line: `| gate | ${chinese} | | | |` })
+    expect(relevantTerminologyRows(encoded, 'zh-to-en', `${chinese} runs here`)).toHaveLength(1)
   })
 })
 
@@ -198,14 +207,14 @@ describe('brief rendering', () => {
     label: 'paragraph',
     confirmedSourceText: 'old text about the agent\n',
     currentSourceText: 'new text about the agent\n',
-    counterpartText: '关于 agent 的旧文本\n',
+    counterpartText: '\u{5173}\u{4E8E} agent \u{7684}\u{65E7}\u{6587}\u{672C}\n',
     counterpartStartLine: 9,
   }
 
   it('renders unit bundles with three-way context and line anchors', () => {
     const brief = renderTranslationBrief({
       ...base,
-      scope: { kind: 'units', bundles: [bundle], firstOccurrenceNotes: ['agent: the document-wide first occurrence moved from #2 to #1; the agent（智能体） form moves with it (later occurrences drop the annotation).'] },
+      scope: { kind: 'units', bundles: [bundle], firstOccurrenceNotes: ['agent: the document-wide first occurrence moved from #2 to #1; the agent（\u{667A}\u{80FD}\u{4F53}） form moves with it (later occurrences drop the annotation).'] },
     })
     expect(brief).toContain('# Translation update briefing: docs/foo.md')
     expect(brief).toContain('## Changed units')
@@ -213,8 +222,8 @@ describe('brief rendering', () => {
     expect(brief).toContain('Last-confirmed English:')
     expect(brief).toContain('Current Chinese (bring this along):')
     expect(brief).toContain('## First-occurrence notes')
-    expect(brief).toContain('agent（智能体）')
-    expect(brief).toContain('首次出现 annotations attach to the document-wide first occurrence only')
+    expect(brief).toContain('agent（\u{667A}\u{80FD}\u{4F53}）')
+    expect(brief).toContain('\u{9996}\u{6B21}\u{51FA}\u{73B0} annotations attach to the document-wide first occurrence only')
     expect(brief).toContain('targets in the active bilingual corpus use `.zh.md` for Chinese')
     expect(brief).toContain('a missing in-scope counterpart is an error')
     expect(brief).toContain('verify-translation-pairing --write docs/foo.md')

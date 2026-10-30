@@ -5,9 +5,10 @@ import { createRequire, isBuiltin } from 'node:module'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { getEnvironmentData, setEnvironmentData } from 'node:worker_threads'
-import type { ModuleLoaderV1, ModuleLoaderV2, ResolveResult } from '@deepseek-ai/cordis-plugin-loader'
+import type { ModuleLoaderV1, ModuleLoaderV2, ResolveResult } from '@yharness/cordis-plugin-loader'
 import { imports as resolvePackageImports, type Package as ResolvePackageManifest } from 'resolve.exports'
 import type { RuntimeResolutionEntry, RuntimeResolution } from '../profile.ts'
+import { bundlePackageNameCandidates } from './package-aliases.ts'
 
 const WORKER_RESOLUTION_KEY = '@deepseek-ai/dsh-app-boot/profile-resolution'
 const EMPTY_ATTRIBUTES: ImportAttributes = Object.freeze({})
@@ -70,6 +71,11 @@ interface CommonJsLookup {
   readonly cacheable: boolean
   resolveNative(searchPaths: readonly string[]): string
   resolveEntry(entry: RuntimeResolutionEntry, after: string): string
+}
+
+interface LocalPackageCandidate {
+  readonly name: string
+  readonly packageDir: string
 }
 
 /** The lookup positions that one interception layer fixes on an importer's ancestor chain. */
@@ -151,6 +157,30 @@ export function barePackageName(request: string): string | undefined {
   if (first < 0) return
   const second = request.indexOf('/', first + 1)
   return second < 0 ? request : request.slice(0, second)
+}
+
+function rewritePackageSpecifier(request: string, targetName: string): string {
+  const requestedName = barePackageName(request)
+  if (requestedName === undefined || requestedName === targetName) return request
+  return `${targetName}${request.slice(requestedName.length)}`
+}
+
+/**
+ * Return the package key Node can resolve from an entry's physical directory.
+ * A package manager may retain a legacy dependency key while its installed
+ * directory has already moved to the canonical namespace; routing through the
+ * retained key would ask Node for a directory that does not exist. Npm aliases
+ * keep their requested directory name, so the path is preferred over the
+ * manifest's package name when it lies below `node_modules`.
+ * @param entry - runtime entry selected for a package request.
+ * @returns the physical package key, or the entry key for non-node_modules roots.
+ */
+function packageRequestName(entry: RuntimeResolutionEntry): string {
+  const marker = `${sep}node_modules${sep}`
+  const index = entry.packageDir.lastIndexOf(marker)
+  if (index < 0) return entry.name
+  const candidate = entry.packageDir.slice(index + marker.length).split(sep).join('/')
+  return barePackageName(candidate) === candidate ? candidate : entry.name
 }
 
 function canonicalPath(path: string): string {
@@ -244,11 +274,27 @@ function profileChild(path: string, treePrefix: string): string {
 }
 
 function nativePackageDir(parent: string, name: string): string | undefined {
-  for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
-    const candidate = join(searchPath, name)
-    if (existsSync(join(candidate, 'package.json'))) return candidate
+  for (const candidateName of bundlePackageNameCandidates(name)) {
+    for (const searchPath of createRequire(parent).resolve.paths(candidateName) as string[]) {
+      const candidate = join(searchPath, candidateName)
+      if (existsSync(join(candidate, 'package.json'))) return candidate
+    }
   }
   return undefined
+}
+
+function resolutionEntry(
+  entries: ReadonlyMap<string, RuntimeResolutionEntry>, name: string,
+): RuntimeResolutionEntry | undefined {
+  for (const candidate of bundlePackageNameCandidates(name)) {
+    const entry = entries.get(candidate)
+    if (entry !== undefined) return entry
+  }
+  return undefined
+}
+
+function hasPackageName(names: ReadonlySet<string>, name: string): boolean {
+  return bundlePackageNameCandidates(name).some(candidate => names.has(candidate))
 }
 
 function localPackageCandidate(searchPath: string, name: string, flavor: 'esm' | 'cjs'): string | undefined {
@@ -464,39 +510,78 @@ class ResolutionRouter {
 
     if (layer.kind === 'linked') return this.routeLinked(request, name, parent, resolution, flavor, cjs)
 
-    const target = resolution.entries.get(name)
-    const candidates: string[] = []
+    const target = resolutionEntry(resolution.entries, name)
+    const candidates: LocalPackageCandidate[] = []
     const localSearchPaths: string[] = []
-    for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
+    const candidateNames = bundlePackageNameCandidates(name)
+    const searchPaths = createRequire(parent).resolve.paths(candidateNames[0] as string) as string[]
+    for (const searchPath of searchPaths) {
       if (!searchPath.startsWith(layer.localPrefix)) break
       localSearchPaths.push(searchPath)
-      const candidate = localPackageCandidate(searchPath, name, flavor)
-      if (candidate !== undefined) candidates.push(candidate)
+      for (const candidateName of candidateNames) {
+        const candidate = localPackageCandidate(searchPath, candidateName, flavor)
+        if (candidate !== undefined) candidates.push({ name: candidateName, packageDir: candidate })
+      }
     }
     if (candidates.length > 0) {
       if (cjs !== undefined) {
-        try {
-          const resolved = cjs.resolveNative(localSearchPaths)
-          const selected = candidates.find(candidate => (
-            localCandidateOwnsResolution(candidate, resolved, request, name)
-          ))
-          if (selected !== undefined) {
+        const selected = candidates[0] as LocalPackageCandidate
+        if (selected.name === name) {
+          try {
+            const resolved = cjs.resolveNative(localSearchPaths)
+            if (localCandidateOwnsResolution(selected.packageDir, resolved, request, name)) {
+              const state = {
+                route: { kind: 'native' as const, packageDir: selected.packageDir },
+                packageDir: selected.packageDir,
+                cjs: resolved,
+              }
+              if (memo) requests.set(request, state)
+              return state
+            }
+          } catch (error) {
+            if (!isUnselectedPackageMiss(error)) throw error
+          }
+        } else {
+          const localEntry: RuntimeResolutionEntry = {
+            name: selected.name,
+            packageDir: selected.packageDir,
+            version: undefined,
+            declarer: join(layer.localPrefix.slice(0, -sep.length), 'package.json'),
+            scope: 'profile',
+          }
+          try {
+            const resolved = cjs.resolveEntry(localEntry, layer.after)
             const state = {
-              route: { kind: 'native' as const, packageDir: selected },
-              packageDir: selected,
+              route: { kind: 'interception' as const, entry: localEntry, after: layer.after },
+              packageDir: selected.packageDir,
               cjs: resolved,
             }
             if (memo) requests.set(request, state)
             return state
+          } catch (error) {
+            if (!isUnselectedPackageMiss(error)) throw error
           }
-        } catch (error) {
-          if (!isUnselectedPackageMiss(error)) throw error
         }
       } else {
-        const selected = candidates[0] as string
+        const selected = candidates[0] as LocalPackageCandidate
+        if (selected.name === name) {
+          const state = {
+            route: { kind: 'native' as const, packageDir: selected.packageDir },
+            packageDir: selected.packageDir,
+          }
+          requests.set(request, state)
+          return state
+        }
+        const localEntry: RuntimeResolutionEntry = {
+          name: selected.name,
+          packageDir: selected.packageDir,
+          version: undefined,
+          declarer: join(layer.localPrefix.slice(0, -sep.length), 'package.json'),
+          scope: 'profile',
+        }
         const state = {
-          route: { kind: 'native' as const, packageDir: selected },
-          packageDir: selected,
+          route: { kind: 'interception' as const, entry: localEntry, after: layer.after },
+          packageDir: selected.packageDir,
         }
         requests.set(request, state)
         return state
@@ -516,14 +601,14 @@ class ResolutionRouter {
     request: string, name: string, parent: string, resolution: CompiledResolution,
     flavor: 'esm' | 'cjs', cjs: CommonJsLookup | undefined,
   ): ResolutionRouteState {
-    const target = resolution.entries.get(name)
+    const target = resolutionEntry(resolution.entries, name)
     if (target === undefined) return { route: { kind: 'native' } }
     const ancestors = this.nodeModulePaths(dirname(parent))
     const ancestorSet = new Set(ancestors)
     const searchPaths = flavor === 'esm' ? ancestors : createRequire(parent).resolve.paths(name) as string[]
     for (const searchPath of searchPaths) {
       const directory = dirname(searchPath)
-      if (ancestorSet.has(searchPath) && readPeerNames(directory).has(name)) {
+      if (ancestorSet.has(searchPath) && hasPackageName(readPeerNames(directory), name)) {
         const route: ResolutionRoute = { kind: 'interception', entry: target, after: join(dirname(directory), 'package.json') }
         if (cjs === undefined) return { route }
         try {
@@ -558,7 +643,15 @@ class ResolutionRouter {
   ): ResolutionRouteState | undefined {
     const name = barePackageName(request)
     const { layer } = parentRoutes
-    if (name === undefined || layer.kind !== 'profile' || !layer.active || !resolution.localPackageNames.has(name)) return undefined
+    if (name === undefined || layer.kind !== 'profile' || !layer.active || !hasPackageName(resolution.localPackageNames, name)) return undefined
+    // Let routeScoped handle an installed alias whose physical directory uses
+    // the other namespace. A missing direct dependency still stays native and
+    // therefore shadows an installation entry, preserving the existing repair
+    // behavior for broken profile installs.
+    const candidateNames = bundlePackageNameCandidates(name)
+    const searchPaths = createRequire(parentRoutes.parent).resolve.paths(candidateNames[0] as string) as string[]
+    if (searchPaths.some(searchPath => searchPath.startsWith(layer.localPrefix)
+      && candidateNames.some(candidate => existsSync(join(searchPath, candidate))))) return undefined
     const state = { route: { kind: 'native' as const } }
     parentRoutes.requests.set(request, state)
     return state
@@ -746,13 +839,16 @@ export function installRuntimeInterception(
         return result
       }
       const routedParent = pathToFileURL(route.kind === 'interception' ? route.entry.declarer : route.parent).href
+      const routedRequest = route.kind === 'interception'
+        ? rewritePackageSpecifier(request, packageRequestName(route.entry))
+        : request
       const previous = delegatedEsm
-      delegatedEsm = { parent: routedParent, request }
+      delegatedEsm = { parent: routedParent, request: routedRequest }
       const restoreImporter = (error: unknown): never => throwWithImporter(error, routedParent, parent)
       try {
         let result: ResolveResult | Promise<ResolveResult>
         try {
-          result = native(request, routedParent, attributes)
+          result = native(routedRequest, routedParent, attributes)
         } catch (error) {
           return restoreImporter(error)
         }
@@ -814,15 +910,18 @@ export function installRuntimeInterception(
     parent: CommonJsParent, main: boolean, options?: CommonJsOptions,
   ): string => {
     const anchor = routed.kind === 'interception' ? routed.entry.declarer : routed.parent
+    const routedRequest = routed.kind === 'interception'
+      ? rewritePackageSpecifier(request, packageRequestName(routed.entry))
+      : request
     const synthetic = new cjs(anchor)
     // Late parent assignment preserves Node's require stack without publishing this routing anchor in parent.children.
     synthetic.parent = parent
     synthetic.filename = anchor
     synthetic.paths = routed.kind === 'interception'
-      ? packageSearchPaths(routed.entry, request, cjs)
+      ? packageSearchPaths(routed.entry, routedRequest, cjs)
       : cjs._nodeModulePaths(dirname(anchor))
     try {
-      return originalFilename.call(cjs, request, synthetic, main, options)
+      return originalFilename.call(cjs, routedRequest, synthetic, main, options)
     } catch (error) {
       return throwWithoutCjsAnchor(error, anchor)
     }
@@ -842,15 +941,18 @@ export function installRuntimeInterception(
     target: { specifier: string; parentURL: string }, conditions: Iterable<string>,
   ): string => {
     const state = router.routeUrl(target.specifier, target.parentURL)
-    const resolveFrom = (parentURL: string): string => fileURLToPath(esmDefaultResolve(
-      target.specifier, { parentURL, conditions: [...conditions] },
+    const resolveFrom = (specifier: string, parentURL: string): string => fileURLToPath(esmDefaultResolve(
+      specifier, { parentURL, conditions: [...conditions] },
     ).url)
     /* v8 ignore next -- the target manifest was found inside the established profile scope */
-    if (state === undefined) return resolveFrom(target.parentURL)
-    if (state.route.kind === 'native') return resolveFrom(target.parentURL)
+    if (state === undefined) return resolveFrom(target.specifier, target.parentURL)
+    if (state.route.kind === 'native') return resolveFrom(target.specifier, target.parentURL)
     const route = state.route
-    if (route.kind === 'native-after-interception') return resolveFrom(pathToFileURL(route.parent).href)
-    return resolveFrom(pathToFileURL(route.entry.declarer).href)
+    if (route.kind === 'native-after-interception') return resolveFrom(target.specifier, pathToFileURL(route.parent).href)
+    return resolveFrom(
+      rewritePackageSpecifier(target.specifier, packageRequestName(route.entry)),
+      pathToFileURL(route.entry.declarer).href,
+    )
   }
   const wrappedFilename: CommonJsModule['_resolveFilename'] = (request, parent, main, options) => {
     if (delegatedCjs || !parent?.filename || options?.paths !== undefined) {

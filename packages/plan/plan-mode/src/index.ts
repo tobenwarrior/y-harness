@@ -18,31 +18,31 @@
  *
  * See packages/plan/plan-mode/README.md.
  *
- * @module @deepseek-ai/dsh-plan-mode
+ * @module @yharness/plan-mode
  */
 
-import { Context, Service } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { Context, Service } from '@yharness/cordis'
+import { brandString } from '@yharness/brand'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
-import type { CommandDefinitionId, CommandId } from '@deepseek-ai/dsh-commands'
-import type {} from '@deepseek-ai/dsh-session-projection'
-import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+import type { Agent, PreStepDecision } from '@yharness/agent'
+import { createUserMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import type { Session, UserMessage } from '@yharness/session'
+import { defineTool } from '@yharness/tools'
+import { UserQuestionError } from '@yharness/user-questions'
+import type { CommandDefinitionId, CommandId } from '@yharness/commands'
+import type {} from '@yharness/session-projection'
+import type { ProjectionDefinition } from '@yharness/session-projection'
 import type { PlanProjection, PlanUnitState } from './types.ts'
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'plan-mode': { kind: 'plan-mode' } & ContextFormed
   }
 }
 export type * from './types.ts'
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /**
      * Whether plan mode is in force from this point on: log-only, non-surface,
@@ -53,7 +53,7 @@ declare module '@deepseek-ai/dsh-session/types' {
   }
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     planMode: PlanModeController
   }
@@ -228,7 +228,7 @@ export class PlanModeController extends Service {
     // The command child activates only when a command registry is composed.
     ctx.inject(['commands'], (commandCtx) => {
       commandCtx.commands.register({
-        definitionId: brandString<CommandDefinitionId>('@deepseek-ai/dsh-plan-mode'),
+        definitionId: brandString<CommandDefinitionId>('@yharness/plan-mode'),
         name: 'plan',
         description: 'Enter or leave plan mode',
         input: { hint: '[off|message]', attachments: true },

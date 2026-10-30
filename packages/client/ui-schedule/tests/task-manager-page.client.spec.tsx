@@ -3,12 +3,12 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { act, cleanup, fireEvent, isInaccessible, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { ScheduleCatalogEntry, ScheduleDeleteResult, ScheduleId, ScheduleUpdateResult } from '@deepseek-ai/dsh-schedule/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { bindSnapshotSelector, makeTranslate, RemoteError } from '@yharness/client-test-runtime'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
+import type { ScheduleCatalogEntry, ScheduleDeleteResult, ScheduleId, ScheduleUpdateResult } from '@yharness/schedule/client'
+import type { SessionId } from '@yharness/session/types'
 import { TaskManagerPage, type TaskManagerPageProps } from '../src/client/TaskManagerPage.tsx'
 import { TaskManagerIcon } from '../src/client/TaskManagerIcon.tsx'
 import { createCatalogSource, type CatalogSnapshot } from '../src/client/catalog-source.ts'
@@ -210,16 +210,11 @@ function emptyNewTaskButton(dictionary: typeof en | typeof zh = en): HTMLElement
   return within(screen.getByRole('status')).getByRole('button', { name: dictionary['empty.action'] })
 }
 
-function detailViewLabels(dictionary: typeof en | typeof zh) {
-  return dictionary === en
-    ? {
-      tablist: 'Task detail views', rules: 'Rules', records: 'Records',
-      empty: 'No delivery record available',
-    }
-    : {
-      tablist: '任务详情视图', rules: '规则', records: '任务运行记录',
-      empty: '暂无任务运行记录',
-    }
+function detailViewLabels(_dictionary: typeof en | typeof zh) {
+  return {
+    tablist: 'Task detail views', rules: 'Rules', records: 'Records',
+    empty: 'No delivery record available',
+  }
 }
 
 function expectDetailView(dictionary: typeof en | typeof zh, active: 'rules' | 'records'): HTMLElement {
@@ -547,14 +542,14 @@ function remoteCatalog() {
   return { ...mounted, list, remove, onDelete }
 }
 
-describe.each([['English', en], ['Chinese', zh]] as const)('original Session availability in %s', (_name, dictionary) => {
+describe.each([['English', en], ['Retired locale fallback', zh]] as const)('original Session availability in %s', (_name, dictionary) => {
   it.each([
-    ['Session list pending', { ...sessions, phase: 'pending' as const }, workspaces, 'Loading original session information.', '正在加载原会话信息'],
-    ['Workspace list pending', sessions, { ...workspaces, phase: 'pending' as const }, 'Loading original session information.', '正在加载原会话信息'],
-    ['archived', sessions, { ...workspaces, archivedSessionIds: [at.sessionId] }, 'The original session is archived.', '原会话已归档'],
-    ['missing', { ...sessions, ids: [], byId: {} }, workspaces, 'The original session is unavailable.', '原会话当前不可用'],
-    ['archive read failed', sessions, { ...workspaces, state: 'error' as const, error: new RemoteError('gateway/internal', 'Archive unavailable', {}) }, 'The original session is unavailable.', '原会话当前不可用'],
-  ] satisfies [string, SessionListState, WorkspaceSnapshot, string, string][])('disables navigation while %s without hiding the task', (_reason, sessionState, workspaceState, english, chinese) => {
+    ['Session list pending', { ...sessions, phase: 'pending' as const }, workspaces, 'Loading original session information.'],
+    ['Workspace list pending', sessions, { ...workspaces, phase: 'pending' as const }, 'Loading original session information.'],
+    ['archived', sessions, { ...workspaces, archivedSessionIds: [at.sessionId] }, 'The original session is archived.'],
+    ['missing', { ...sessions, ids: [], byId: {} }, workspaces, 'The original session is unavailable.'],
+    ['archive read failed', sessions, { ...workspaces, state: 'error' as const, error: new RemoteError('gateway/internal', 'Archive unavailable', {}) }, 'The original session is unavailable.'],
+  ] satisfies [string, SessionListState, WorkspaceSnapshot, string][])('disables navigation while %s without hiding the task', (_reason, sessionState, workspaceState, expected) => {
     const { props } = mount({ records: [ended] }, dictionary, {
       useSessions: select => select(sessionState), useWorkspaces: select => select(workspaceState),
     })
@@ -563,7 +558,7 @@ describe.each([['English', en], ['Chinese', zh]] as const)('original Session ava
     expect(link.hasAttribute('disabled')).toBe(true)
     fireEvent.click(link)
     expect(props.onOpenSession).not.toHaveBeenCalled()
-    expect(screen.getByText(dictionary === en ? english : chinese)).toBeDefined()
+    expect(screen.getByText(expected)).toBeDefined()
     expect(within(link).getByText(at.sessionId)).toBeDefined()
     openMore(dictionary)
     expect(screen.getByRole('menuitem', { name: dictionary['delete.action'] }).hasAttribute('disabled')).toBe(false)
@@ -720,7 +715,7 @@ describe('Task manager catalog', () => {
     expect(document.activeElement).toBe(row)
     h.view.rerender(<TaskManagerPage {...h.props} t={makeTranslate(zh)} />)
     expect(screen.getByRole('button', {
-      name: 'Check metrics', description: /^每 301 秒.*下次计划时间：/,
+      name: 'Check metrics', description: /^Every 301 seconds.*Next scheduled time:/,
     })).toBe(row)
     expect(time.textContent).toBe(absoluteNextRun(every.scheduledAt, zh))
     expect(relativeText(metadata)).toBe(relativeNextRun(every.scheduledAt, zh))
@@ -768,7 +763,7 @@ describe('Task manager catalog', () => {
     }
     for (const dictionary of [en, zh]) {
       const h = mount({ records: [soon] }, dictionary)
-      const expected = dictionary === en ? 'in 2 hours' : '2小时后'
+      const expected = 'in 2 hours'
       const row = screen.getByRole('button', { name: 'Two hours out' })
       const summary = row.querySelector<HTMLElement>(`.${css.rowSummary!}`)?.textContent ?? ''
       expect(summary).toContain(expected)
@@ -868,7 +863,7 @@ describe('Task manager catalog', () => {
 
   it.each([
     { dictionary: en, frequency: 'Daily at 23:00' },
-    { dictionary: zh, frequency: '每天 23:00' },
+    { dictionary: zh, frequency: 'Daily at 23:00' },
   ])('classifies daily wall-clock rules as repeating and omits the host zone: $frequency', ({ dictionary, frequency }) => {
     mount({ records: [...records, daily] }, dictionary)
     const list = screen.getByRole('list', { name: dictionary['list.label'] })
@@ -1275,7 +1270,7 @@ describe('Task manager details', () => {
     expect(visibleText(detail, dictionary['detail.nextRun'])).toHaveLength(0)
     expect(nextRunTime(detail)).toBeNull()
     expect(row.textContent).not.toContain(dictionary['list.nextPrefix'])
-    expect(detail.textContent).not.toMatch(/execution completed|completed successfully|execution succeeded|执行已完成|执行成功/i)
+    expect(detail.textContent).not.toMatch(/execution completed|completed successfully|execution succeeded/i)
     // The linked-Session strip belongs to Rules, so open it before switching views.
     const context = detailContext(detail)!
     const link = within(context).getByRole('button', { name: dictionary['detail.openSession'] })
@@ -1288,12 +1283,12 @@ describe('Task manager details', () => {
     expect(occurrence?.textContent).toBe(formatScheduleNextRun(delivery.scheduledAt, dictionary['time.locale']))
     // The occurrence names its month in the active locale and never shows the
     // retired zero-padded `MM-DD` pair.
-    expect(occurrence?.textContent ?? '').toMatch(/[A-Za-z]{3,}|月/)
+    expect(occurrence?.textContent ?? '').toMatch(/[A-Za-z]{3,}/)
     expect(occurrence?.textContent ?? '').not.toMatch(/\d{2}-\d{2}/)
     expect(receipt.querySelector('details')).toBeNull()
     expect(within(receipt).queryByRole('button')).toBeNull()
     expect(receipt.querySelectorAll('time')).toHaveLength(1)
-    expect(within(detail).queryByRole('region', { name: /history|历史/i })).toBeNull()
+    expect(within(detail).queryByRole('region', { name: /history/i })).toBeNull()
     expect(detail.querySelector('footer')).toBeNull()
     expect(h.props.onDelete).not.toHaveBeenCalled()
   })
@@ -1528,21 +1523,21 @@ describe('Task manager details', () => {
     expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 }))
   })
 
-  it('renders Chinese labels and local time without translating stored user data', () => {
+  it('renders the retired locale fallback without translating stored user data', () => {
     mount({}, zh)
-    expect(screen.getByRole('heading', { level: 1, name: '自动化任务' })).toBeDefined()
-    expect(screen.getByRole('searchbox', { name: '搜索任务' })).toBeDefined()
-    const statuses = screen.getByRole('group', { name: '任务状态' })
-    expect(within(statuses).getAllByRole('button')[0]?.textContent).toBe('全部')
+    expect(screen.getByRole('heading', { level: 1, name: en['title'] })).toBeDefined()
+    expect(screen.getByRole('searchbox', { name: en['search.label'] })).toBeDefined()
+    const statuses = screen.getByRole('group', { name: en['statusFilter.label'] })
+    expect(within(statuses).getAllByRole('button')[0]?.textContent).toBe(en['statusFilter.all'])
     fireEvent.click(screen.getByRole('button', { name: 'Check metrics' }))
-    const detail = screen.getByRole('complementary', { name: '任务详情' })
+    const detail = screen.getByRole('complementary', { name: en['detail.label'] })
     expect(within(detail).getByText(zh['rule.everySeconds'])).toBeDefined()
     expect(nextRunTime(detail)?.textContent).toBe(absoluteNextRun(every.scheduledAt, zh))
     expect(relativeText(detail)).toBe(relativeNextRun(every.scheduledAt, zh))
     chooseDelete(zh)
-    expect(screen.getByRole('dialog', { name: '删除此任务？' })).toBeDefined()
-    expect(screen.getByRole('button', { name: '确认删除' })).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: '关闭删除确认' }))
+    expect(screen.getByRole('dialog', { name: en['delete.title'] })).toBeDefined()
+    expect(screen.getByRole('button', { name: en['delete.confirm'] })).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: en['delete.close'] }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByRole('button', { name: zh['detail.openSession'] })).toBeDefined()
   })
@@ -1553,13 +1548,13 @@ describe('Task manager details', () => {
     const row = screen.getByRole('list')
     expect(time?.textContent).toBe(absoluteNextRun(at.scheduledAt, en))
     expect(relativeText(row)).toBe(relativeNextRun(at.scheduledAt, en))
-    // English names the year; the Chinese date form reads month and day only.
+    // The retired locale alias uses the same English date policy.
     expect(absoluteNextRun(at.scheduledAt, en)).toMatch(/\d{4}/)
-    expect(absoluteNextRun(at.scheduledAt, zh)).not.toMatch(/\d{4}/)
+    expect(absoluteNextRun(at.scheduledAt, zh)).toMatch(/\d{4}/)
     h.view.rerender(<TaskManagerPage {...h.props} t={makeTranslate(zh)} />)
     expect(time?.textContent).toBe(absoluteNextRun(at.scheduledAt, zh))
     expect(relativeText(row)).toBe(relativeNextRun(at.scheduledAt, zh))
-    expect(screen.getByRole('heading', { level: 1, name: '自动化任务' })).toBeDefined()
+    expect(screen.getByRole('heading', { level: 1, name: en['title'] })).toBeDefined()
   })
 
   it('states the next run in the device zone even when the rule stores another one', () => {
@@ -2803,7 +2798,7 @@ describe('Task detail rule header and run-time card', () => {
     expect(timeButton(dictionary).textContent).toBe('23:00')
     // The described hint carries the sentence the staged expression parses to.
     expect(document.getElementById(frequency.getAttribute('aria-describedby')!)?.textContent)
-      .toBe(dictionary === en ? 'Every day at 23:00' : '每天 23:00')
+      .toBe('Every day at 23:00')
     expect(saveFooter()).not.toBeNull()
   })
 
@@ -2830,7 +2825,7 @@ describe('Task detail rule header and run-time card', () => {
     expect(hint.className).toBe(css.ruleHint)
     expect(row.contains(hint)).toBe(false)
     expect(hint.parentElement).toBe(rows.parentElement)
-    expect(hint.textContent).toBe(dictionary === en ? 'Every day at 09:30, 15:30' : '每天 09:30、15:30')
+    expect(hint.textContent).toBe('Every day at 09:30, 15:30')
     // The zone row keeps no hint of its own: its picker names the zone it states,
     // so the row points at nothing.
     expect(zoneButton(dictionary).getAttribute('aria-describedby')).toBeNull()
@@ -2965,7 +2960,7 @@ describe('Task detail rule header and run-time card', () => {
     expect(cronFrequencyButton(dictionary).textContent).toContain(dictionary['cronForm.weekly'])
     expect(weekdayPressed(weekdayGroup(dictionary))).toEqual(['true', 'true', 'true', 'true', 'true', 'false', 'false'])
     expect(timeButton(dictionary).textContent).toBe('09:00')
-    expect(within(card).getByText(dictionary === en ? 'Mon–Fri at 09:00' : '周一至周五 09:00')).toBeDefined()
+    expect(within(card).getByText('Mon–Fri at 09:00')).toBeDefined()
     expect(zoneButton(dictionary).textContent).toContain(displayedZone('Asia/Shanghai', dictionary))
     const detail = screen.getByRole('complementary', { name: dictionary['detail.label'] })
     expect(nextRunTime(detail)?.textContent).toBe(absoluteNextRun(cron.scheduledAt, dictionary))
@@ -3078,7 +3073,7 @@ describe('Task detail rule header and run-time card', () => {
     expect(datesPressed(group)).toEqual([1, 15])
     expect(within(group).getByRole('button', { name: dateName(15, dictionary) }).getAttribute('aria-pressed')).toBe('true')
     expect(timeButton(dictionary).textContent).toBe('08:30')
-    expect(within(card).getByText(dictionary === en ? 'Day 1, 15 of every month at 08:30' : '每月 1、15 日 08:30')).toBeDefined()
+    expect(within(card).getByText('Day 1, 15 of every month at 08:30')).toBeDefined()
   })
 
   it('regenerates the monthly cron expression from date toggles and submits it', () => {
@@ -3380,7 +3375,7 @@ describe('Task detail rule header and run-time card', () => {
 
   it.each([
     [en, 'Daily at 23:00'],
-    [zh, '每天 23:00'],
+    [zh, 'Daily at 23:00'],
   ] as const)('omits a stored zone equal to the host zone from the frequency line', (dictionary, expected) => {
     mount({ records: [daily] }, dictionary)
     fireEvent.click(screen.getByRole('button', { name: 'Daily weather' }))
@@ -3391,9 +3386,7 @@ describe('Task detail rule header and run-time card', () => {
   it.each([en, zh])('names a non-host stored zone with its ICU label in the frequency line', (dictionary) => {
     mount({ records: [{ ...daily, timeZone: 'America/New_York' }] }, dictionary)
     fireEvent.click(screen.getByRole('button', { name: 'Daily weather' }))
-    const expected = dictionary === en
-      ? `Daily at 23:00 (${displayedZone('America/New_York', dictionary)})`
-      : `每天 23:00（${displayedZone('America/New_York', dictionary)}）`
+    const expected = `Daily at 23:00 (${displayedZone('America/New_York', dictionary)})`
     expect(repeatButton(dictionary).textContent).toContain(expected)
     expect(repeatButton(dictionary).textContent).not.toContain('America/New_York')
   })

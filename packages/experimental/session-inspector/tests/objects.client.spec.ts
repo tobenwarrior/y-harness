@@ -1,12 +1,12 @@
 /** Named references use runtime identity and read the latest materialized values. */
 
 import { expect, it, vi } from 'vitest'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { ChatSnapshotBuilder } from '@deepseek-ai/dsh-client-ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts'
-import type { ChatSnapshot } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { ConversationGroupStore } from '@deepseek-ai/dsh-client-ui-conversation/src/client/conversation/group-store.ts'
-import type { ConversationBinding, ConversationSnapshot, GroupKey, NodeKey } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { createSnapshotStore } from '@yharness/client-store'
+import { ChatSnapshotBuilder } from '@yharness/client-ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts'
+import type { ChatSnapshot } from '@yharness/client-ui-chat/client'
+import { ConversationGroupStore } from '@yharness/client-ui-conversation/src/client/conversation/group-store.ts'
+import type { ConversationBinding, ConversationSnapshot, GroupKey, NodeKey } from '@yharness/client-ui-conversation/client'
+import type { SessionId } from '@yharness/session/types'
 import { ChatNodeModel } from '../src/client/views/chat-node/model.ts'
 import { InspectorObjectValue } from '../src/client/views/object-value.ts'
 import { chatNodeWithLocation } from './chat-node-fixture.client.ts'

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@yharness/llm'
 import { Session, SessionId } from '../src/index.ts'
 
 it('exposes only the immutable marker produced during this constructor lifecycle', () => {

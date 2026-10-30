@@ -167,7 +167,7 @@ describe('documentation image viewer', () => {
 
   it.each([
     { locale: 'en-US', title: 'DeepSeek API settings', name: 'View image fullscreen: DeepSeek API settings', trigger: 'image' },
-    { locale: 'zh-CN', title: 'DeepSeek API 配置', name: '全屏查看图片：DeepSeek API 配置', trigger: 'button' },
+    { locale: 'zh-CN', title: 'DeepSeek API settings', name: 'View image fullscreen: DeepSeek API settings', trigger: 'button' },
   ])('opens the loaded image with accessible controls in $locale', async ({ locale, title, name, trigger }) => {
     const { image, state } = render()
     language = locale
@@ -333,9 +333,9 @@ describe('documentation image viewer', () => {
     install()
     const trigger = entry()
     language = 'zh-CN'
-    ready.image.alt = 'API 配置'
+    ready.image.alt = 'API settings'
     required(viewer).refresh()
-    expect(getByRole(document.body, 'button', { name: '全屏查看图片：API 配置' })).toBe(trigger)
+    expect(getByRole(document.body, 'button', { name: 'View image fullscreen: API settings' })).toBe(trigger)
     required(viewer).dispose()
     pending.state.complete = true
     pending.image.dispatchEvent(new Event('load'))

@@ -2,6 +2,7 @@
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { getSystemErrorName } from 'node:util'
+import { resolvePlatformPackageJson } from './platform-package.js'
 
 interface FlockBinding {
   tryLock(fd: number, callback: (errno: number) => void): void
@@ -26,7 +27,7 @@ function loadBinding(): FlockBinding {
     filename = join(report.header.glibcVersionRuntime ? 'glibc' : 'musl', filename)
   }
   const require = createRequire(import.meta.url)
-  const manifest = require.resolve(`@deepseek-ai/node-addon-system-${platform}-${arch}/package.json`)
+  const { manifest } = resolvePlatformPackageJson(require.resolve)
   binding = require(join(dirname(manifest), 'bin', filename)) as FlockBinding
   return binding
 }

@@ -1,6 +1,6 @@
 /** Synthetic source metadata and transcript for browser and controller evidence. */
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionMirror } from '@deepseek-ai/dsh-coding-session/types'
+import { brandString } from '@yharness/brand'
+import type { CodingSessionMirror } from '@yharness/coding-session/types'
 import type { CodingSessionsApi } from '../src/client/controller.ts'
 /** One explicitly read-only original native coding session. */
 export const mirror: CodingSessionMirror = { id: brandString<CodingSessionMirror['id']>('mirror-a'), source: { provider: 'codex', profileId: brandString<CodingSessionMirror['source']['profileId']>('authorized-local-profile'), nativeSessionId: brandString<CodingSessionMirror['source']['nativeSessionId']>('native-original') }, title: 'Parser repair', cwd: '/fixture/project', writerState: 'idle', events: [{ id: brandString<CodingSessionMirror['events'][number]['id']>('native-event-1'), role: 'user', text: 'Inspect parser', digest: 'digest' }], cursor: 'cursor', digest: 'digest', revision: 1, refreshedAt: '2026-10-09T00:00:00Z', status: 'ready', capabilities: { discover: true, read: true, refresh: true, continue: false, reason: 'native-writer-handoff-unavailable' } }

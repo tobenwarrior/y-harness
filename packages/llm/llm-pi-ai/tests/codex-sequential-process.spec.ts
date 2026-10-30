@@ -1,7 +1,7 @@
 /** Owned-process fixture tests distinguish command exit, stream EOF and managed-range quiescence. */
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
 import type { CodexSessionSourceConfig } from '../src/coding-session-source.ts'
 import { openCodexSequentialPeer } from '../src/codex-sequential-process.ts'
 

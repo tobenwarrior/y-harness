@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-experimental-inspector-profile",
+  "name": "@yharness/experimental-inspector-profile",
   "description": "Optional Web bundle for raw Session logs and Chat node inspection",
   "version": "0.2.1-rc.2",
   "icon": "./icon.svg",
@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/experimental/inspector-profile"
   },
   "type": "module",
@@ -38,15 +38,15 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-experimental-inspector": "workspace:*",
-    "@deepseek-ai/dsh-experimental-session-inspector": "workspace:*"
+    "@yharness/experimental-inspector": "workspace:*",
+    "@yharness/experimental-session-inspector": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-include": "workspace:~",
     "js-yaml": "^4.2.0"
   }
 }

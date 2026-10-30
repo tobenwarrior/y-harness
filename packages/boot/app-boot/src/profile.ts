@@ -18,20 +18,23 @@
  * profile directory. Pnpm-managed entries in the profile's `node_modules`
  * resolve first. The runtime resolution supplies packages carried by the
  * installation and selected bundles to Node's ESM and CommonJS resolvers.
- * @module @deepseek-ai/dsh-app-boot/profile
+ * @module @yharness/app-boot/profile
  */
 
 import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
-import { applyEntryPatches, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
-import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import type { DshBundleManifest, DshPackageManifest } from '@deepseek-ai/dsh-package-manifest'
+import type { EntryOptions } from '@yharness/cordis-plugin-loader'
+import { applyEntryPatches, type PatchOptions } from '@yharness/cordis-plugin-include'
+import { resolveDshHome } from '@yharness/home-paths'
+import type { DshBundleManifest, DshPackageManifest } from '@yharness/package-manifest'
 import { evaluatePluginCompatibility, pluginCompatibilityWarning } from './plugin-compatibility.ts'
 import { readProfileVersionExemptions } from './profile-compatibility.ts'
 import { loadOverlayPatches } from './index.ts'
 import { realModuleDirectory } from './profile-resolution/legacy-links.ts'
+import { bundlePackageNameCandidates } from './profile-resolution/package-aliases.ts'
+
+export { bundlePackageNameCandidates } from './profile-resolution/package-aliases.ts'
 
 /** Directory under the Harness home holding every profile. */
 export const PROFILES_DIR = 'profiles'
@@ -178,25 +181,25 @@ export function resolveProfileDir(name: string, home: string = resolveDshHome())
 /** The shipped profile templates auto-initialized on first use, by name. */
 export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
   acp: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
+    bundles: ['@yharness/base', '@yharness/acp-app'],
   },
   web: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+    bundles: ['@yharness/base', '@yharness/web-app'],
   },
   headless: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
+    bundles: ['@yharness/base', '@yharness/headless'],
   },
   sdk: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
+    bundles: ['@yharness/base', '@yharness/sdk-app'],
   },
   'sdk-minimal': {
-    bundles: ['@deepseek-ai/dsh-sdk-minimal'],
+    bundles: ['@yharness/sdk-minimal'],
   },
 }
 
 /** Installation-owned bundle tuples normalized to the shipped template. */
 const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly string[]> = {
-  headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless'],
+  headless: ['@yharness/base', '@yharness/web-app', '@yharness/headless'],
 }
 
 /**
@@ -206,11 +209,11 @@ const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly string[]> = {
 const RETIRED_BUNDLES: ReadonlySet<string> = new Set([
   // The Web composition mounts Schedule itself
   // ([upgrade guide](../../../../docs/upgrade-guide/v0.2.0-rc.2/schedule-bundle-retired/guide.md)).
-  '@deepseek-ai/dsh-experimental-schedule-bundle',
+  '@yharness/experimental-schedule-bundle',
 ])
 
 /** The bundle list a `dsh plugin` init uses for a name with no shipped template. */
-export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base']
+export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@yharness/base']
 
 /**
  * The bundles the dsh installation ships for a person to switch on: each a
@@ -221,10 +224,10 @@ export const DEFAULT_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-bas
  * [admission](../../../../.agents/notes/implemented/architecture/2026-09-21-experimental-capabilities-as-optional-bundles.md)).
  */
 export const OPTIONAL_BUNDLES: readonly string[] = [
-  '@deepseek-ai/dsh-experimental-agent-team-profile',
-  '@deepseek-ai/dsh-experimental-voice-input-bundle',
-  '@deepseek-ai/dsh-experimental-auto-review',
-  '@deepseek-ai/dsh-experimental-inspector-profile',
+  '@yharness/experimental-agent-team-profile',
+  '@yharness/experimental-voice-input-bundle',
+  '@yharness/experimental-auto-review',
+  '@yharness/experimental-inspector-profile',
 ]
 
 const PROFILE_PATCH_TEMPLATE = `# Your patch layer for this dsh profile, applied after every bundle layer:
@@ -369,6 +372,16 @@ function profileDependencyNames(manifest: ProfileManifest): string[] {
   return [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})]
 }
 
+/** Whether two package keys identify the same pre- or post-rebrand package. */
+function samePackageName(left: string, right: string): boolean {
+  return bundlePackageNameCandidates(left).includes(right)
+}
+
+/** Whether a package-name set contains either spelling of a requested package. */
+function hasPackageName(names: ReadonlySet<string>, name: string): boolean {
+  return [...names].some(candidate => samePackageName(candidate, name))
+}
+
 /** Resolve the installation packages that the runtime resolver supplies to every profile. */
 function collectInstallationScopePackages(
   installAnchor: string, skippedBundles: ReadonlySet<string>,
@@ -382,6 +395,7 @@ function collectInstallationScopePackages(
   const canonicalAnchor = join(realModuleDirectory(dirname(installAnchor)), basename(installAnchor))
   const appManifest = readPackageManifest(canonicalAnchor)
   const links = new Map<string, string>()
+  const linkedNames = new Set<string>()
   const declarers = new Map<string, string>()
   const versions = new Map<string, string | undefined>()
   /* v8 ignore next -- a real app manifest always declares its name */
@@ -389,6 +403,7 @@ function collectInstallationScopePackages(
     // The CLI derives the installation anchor from import.meta.url (already real) and the Desktop Host from its
     // runtime directory (not a symlink); the directory is kept as given rather than canonicalized here.
     links.set(appManifest.name, dirname(installAnchor))
+    linkedNames.add(appManifest.name)
     declarers.set(appManifest.name, canonicalAnchor)
     versions.set(appManifest.name, appManifest.version)
   }
@@ -401,7 +416,7 @@ function collectInstallationScopePackages(
     // dependencies, yet out-of-tree plugins import them directly.
     /* v8 ignore next -- a real app manifest always declares dependencies */
     for (const dep of profileDependencyNames(next.manifest)) {
-      if (links.has(dep)) continue
+      if (hasPackageName(linkedNames, dep)) continue
       const dir = packageDirFromAnchor(next.anchor, dep)
       // A declared-but-uninstalled dependency cannot be a loader-visible
       // plugin; skip it rather than fail the whole boot.
@@ -415,6 +430,7 @@ function collectInstallationScopePackages(
         continue
       }
       links.set(dep, dir)
+      linkedNames.add(dep)
       declarers.set(dep, next.anchor)
       versions.set(dep, manifest.version)
       queue.push({ anchor: manifestPath, manifest })
@@ -536,7 +552,8 @@ function readOptionalProfileManifest(profile: Profile | undefined): ProfileManif
 function installedProfilePackageNames(profile: Profile, manifest: ProfileManifest | undefined): string[] {
   if (manifest === undefined) return []
   return profileDependencyNames(manifest)
-    .filter(name => existsSync(join(profile.dir, 'node_modules', name, 'package.json')))
+    .filter(name => bundlePackageNameCandidates(name)
+      .some(candidate => existsSync(join(profile.dir, 'node_modules', candidate, 'package.json'))))
 }
 
 /** Collect the first resolvable package directory for each dependency name. */
@@ -552,7 +569,7 @@ function dependencyClosure(
     const manifest = readPackageManifest(canonicalAnchor)
     /* v8 ignore next -- an installable package manifest always declares its name */
     if (manifest.name === undefined) continue
-    if (!visited.has(manifest.name)) {
+    if (!hasPackageName(visited, manifest.name)) {
       visited.add(manifest.name)
       links.set(manifest.name, dirname(canonicalAnchor))
       declarers?.set(manifest.name, canonicalAnchor)
@@ -563,7 +580,7 @@ function dependencyClosure(
       // Service Provider packages commonly expose Service Definitions as peers.
       /* v8 ignore next -- an installable package manifest always declares dependencies or peers */
       for (const dep of profileDependencyNames(next.manifest)) {
-        if (visited.has(dep)) continue
+        if (hasPackageName(visited, dep)) continue
         const dir = packageDirFromAnchor(next.anchor, dep)
         // A declared-but-uninstalled dependency cannot be loader-visible.
         if (dir === undefined) continue
@@ -587,10 +604,14 @@ function collectProfileScopePackages(
   versions?: Map<string, string | undefined>,
 ): Map<string, string> {
   const bundleAnchors = profile.layers
-    .filter(layer => !installationPackageNames.has(layer.packageName))
+    .filter(layer => !hasPackageName(installationPackageNames, layer.packageName))
     .map(layer => join(layer.packageDir, 'package.json'))
   const bundleLinks = dependencyClosure(bundleAnchors, installationPackageNames, declarers, versions)
-  for (const layer of profile.layers) bundleLinks.delete(layer.packageName)
+  for (const layer of profile.layers) {
+    for (const name of bundleLinks.keys()) {
+      if (samePackageName(name, layer.packageName)) bundleLinks.delete(name)
+    }
+  }
   return bundleLinks
 }
 
@@ -627,7 +648,10 @@ export function writeProfileManifest(dir: string, manifest: ProfileManifest): vo
 
 /** Return whether two bundle lists have the same values in the same order. */
 function sameBundles(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
+  return left.length === right.length && left.every((value, index) => {
+    const other = right[index]
+    return other !== undefined && samePackageName(value, other)
+  })
 }
 
 /** Return `manifest` with `dsh.profile.bundles` replaced, preserving all other fields. */
@@ -666,7 +690,7 @@ function normalizeShippedProfile(name: string, dir: string, manifest: ProfileMan
  */
 function dropRetiredBundles(dir: string, manifest: ProfileManifest): ProfileManifest {
   const bundles = manifest.dsh?.profile?.bundles ?? []
-  const kept = bundles.filter(bundle => !RETIRED_BUNDLES.has(bundle))
+  const kept = bundles.filter(bundle => !hasPackageName(RETIRED_BUNDLES, bundle))
   if (kept.length === bundles.length) return manifest
   const normalized = withBundles(manifest, kept)
   writeProfileManifest(dir, normalized)
@@ -683,10 +707,13 @@ function dropRetiredBundles(dir: string, manifest: ProfileManifest): ProfileMani
  */
 function packageDirFromAnchor(anchor: string, packageName: string): string | undefined {
   // resolve.paths returns null only for builtins, which no bundle name is.
-  /* v8 ignore next */
-  for (const searchPath of createRequire(anchor).resolve.paths(packageName) ?? []) {
-    const candidate = join(searchPath, packageName)
-    if (existsSync(join(candidate, 'package.json'))) return candidate
+  const candidateNames = bundlePackageNameCandidates(packageName)
+  const searchPaths = createRequire(anchor).resolve.paths(candidateNames[0] as string) ?? []
+  for (const searchPath of searchPaths) {
+    for (const candidateName of candidateNames) {
+      const candidate = join(searchPath, candidateName)
+      if (existsSync(join(candidate, 'package.json'))) return candidate
+    }
   }
   return undefined
 }
@@ -694,7 +721,7 @@ function packageDirFromAnchor(anchor: string, packageName: string): string | und
 /**
  * Resolve one bundle package's directory: installation anchor first, then the
  * profile directory. The installation-first order is the contract that
- * `@deepseek-ai/dsh-base` (and every other in-box bundle) always comes from
+ * `@yharness/base` (and every other in-box bundle) always comes from
  * the same installation as the running dsh, never from a profile-local copy.
  * Resolution does not require the package to export `./package.json`.
  * @param binName - the diagnostic prefix on the thrown error.

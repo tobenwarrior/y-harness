@@ -4,10 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import type { ITheme } from '@xterm/xterm'
-import type { ThemeSnapshot } from '@deepseek-ai/dsh-client-ui-theme/client'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { TerminalViewState } from '@deepseek-ai/dsh-api-terminal-controller/client'
-import type { WebTerminalId } from '@deepseek-ai/dsh-api-terminal-controller/types'
+import type { ThemeSnapshot } from '@yharness/client-ui-theme/client'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import type { TerminalViewState } from '@yharness/api-terminal-controller/client'
+import type { WebTerminalId } from '@yharness/api-terminal-controller/types'
 import { TerminalBody, type TerminalBodyProps } from '../src/client/terminal.tsx'
 import { TerminalTitle } from '../src/client/TerminalTitle.tsx'
 import { en, zh } from '../src/client/locales.ts'
@@ -331,13 +331,13 @@ it.each(titleSurfaces)('handles Escape, unchanged names and IME composition whil
   fireEvent.blur(input)
   expect(h.model.rename).not.toHaveBeenCalled()
   input = edit()
-  fireEvent.change(input, { target: { value: '开发' } })
+  fireEvent.change(input, { target: { value: '\u5f00\u53d1' } })
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
   fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })
   expect(title.getByRole('textbox', { name: en.rename })).toBe(input)
   expect(h.model.rename).not.toHaveBeenCalled()
   fireEvent.blur(input)
-  expect(h.model.rename).toHaveBeenCalledWith('开发')
+  expect(h.model.rename).toHaveBeenCalledWith('\u5f00\u53d1')
 })
 
 it.each(titleSurfaces)('removes the native $name listener when its title unmounts', (surface) => {

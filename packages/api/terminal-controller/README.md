@@ -3,7 +3,7 @@ description: "Interactive user terminals with execution-environment shell defaul
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-api-terminal-controller
+# @yharness/api-terminal-controller
 
 ## Summary
 

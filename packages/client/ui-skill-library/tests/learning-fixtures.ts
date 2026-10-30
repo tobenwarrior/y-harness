@@ -1,4 +1,4 @@
-import type { SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningProposal, SkillLearningProposalId, SkillLearningStatus, SkillLibraryId } from '@deepseek-ai/dsh-skill-library/types'
+import type { SkillLearningEvidence, SkillLearningEvidenceId, SkillLearningProposal, SkillLearningProposalId, SkillLearningStatus, SkillLibraryId } from '@yharness/skill-library/types'
 
 /** Completed work has observations without implied verification. */
 export const evidence: SkillLearningEvidence = { id: 'evidence:task' as SkillLearningEvidenceId, projectId: 'project', sessionId: 'session:task', task: 'Resolve release regression', completed: true, substantial: true, eventRefs: ['event:completed'], observations: ['The release needs a focused test before publishing.'], checks: [], createdAt: '2026-10-09T00:00:00Z' }

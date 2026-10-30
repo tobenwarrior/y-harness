@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
 import { expect, it, onTestFinished, vi } from 'vitest'
-import { getDshRuntimeVersion, initProfile, readProfileManifest } from '@deepseek-ai/dsh-app-boot'
+import { getDshRuntimeVersion, initProfile, readProfileManifest } from '@yharness/app-boot'
 import { anchorPathSpec, readProfileRegistry, runPluginCommand, runProfilePnpm, viewProfilePackage } from '../src/operations.ts'
 
 /** What execa resolves for a run that settled, including the buffered output the pre-install lookup is read for. */
@@ -408,6 +408,35 @@ it('detects a version update that keeps the dependency spec and removes a lockfi
   expect(existsSync(join(dir, 'pnpm-lock.yaml'))).toBe(false)
 })
 
+it('checks a canonical installed package for a legacy dependency key and preserves its lockfile on refusal', async () => {
+  const { dir, context, pnpm } = fixture()
+  const legacy = '@deepseek-ai/dsh-addon'
+  const canonical = '@yharness/addon'
+  const manifest = readProfileManifest('test', dir)
+  manifest.dependencies = { [legacy]: '^1' }
+  writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+  const packageDir = join(dir, 'node_modules', '@yharness', 'addon')
+  mkdirSync(packageDir, { recursive: true })
+  const installedManifest = (peer: string) => JSON.stringify({
+    name: canonical, version: '1.0.0', peerDependencies: { '@yharness/cli': peer },
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  })
+  writeFileSync(join(packageDir, 'package.json'), installedManifest('*'))
+  writeFileSync(join(packageDir, 'cordis.patch.yml'), '[]\n')
+  writeFileSync(join(dir, 'pnpm-lock.yaml'), 'legacy-lock\n')
+  pnpm.mutate = () => { writeFileSync(join(packageDir, 'package.json'), installedManifest('>=999.0.0')) }
+
+  const outcome = await runProfilePnpm(context, ['install'], { execution: 'service', outputBytes: 8192 })
+
+  expect(outcome.exitCode).toBe(1)
+  expect(outcome.incompatible).toEqual([{
+    name: canonical, version: '1.0.0', runtimeVersion: getDshRuntimeVersion(),
+    peers: { '@yharness/cli': '>=999.0.0' },
+  }])
+  expect(readFileSync(join(dir, 'pnpm-lock.yaml'), 'utf8')).toBe('legacy-lock\n')
+  expect(readFileSync(join(dir, 'package.json'), 'utf8')).toContain(JSON.stringify({ [legacy]: '^1' }))
+})
+
 it('does not fail an unrelated installation on an untouched incompatible dependency', async () => {
   const { context, dir, pnpm } = fixture()
   installGuarded(dir, 'incompatible')
@@ -588,7 +617,7 @@ it('initializes missing profiles under the same lock and reports initialization'
     await runPluginCommand({ ...context, profile }, ['root'], {
       execution: 'service', outputBytes: 100, lockWaitMs: 1000, onOutput: (text) => { messages.push(text) },
     })
-    expect(readProfileManifest('test', join(home, 'profiles', profile)).dsh?.profile?.bundles).toContain('@deepseek-ai/dsh-base')
+    expect(readProfileManifest('test', join(home, 'profiles', profile)).dsh?.profile?.bundles).toContain('@yharness/base')
   }
   expect(messages.filter(text => text.includes('initialized profile'))).toHaveLength(2)
 })

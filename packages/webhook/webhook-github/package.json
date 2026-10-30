@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-webhook-github",
-  "description": "Signed GitHub HTTP webhook adapter for the DeepSeek Harness webhook runtime",
+  "name": "@yharness/webhook-github",
+  "description": "Signed GitHub HTTP webhook adapter for the Y Harness webhook runtime",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/webhook/webhook-github"
   },
   "type": "module",
@@ -32,24 +32,24 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-webhook": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/webhook": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-util-values": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/util-values": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "@octokit/webhooks": "^14.2.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-webhook": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/webhook": "workspace:*"
   }
 }

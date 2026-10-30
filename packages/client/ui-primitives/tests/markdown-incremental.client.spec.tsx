@@ -348,31 +348,31 @@ describe('freeze dynamics around frontier-sensitive constructs', () => {
 })
 
 describe('multibyte content', () => {
-  const CJK_DOC = [
-    '# 标题 🎉',
+  const MULTIBYTE_DOC = [
+    '# Title 🎉',
     '',
-    '这是一段包含 **加粗**、`行内代码` 与表情 😀🚀 的中文段落。',
+    'This paragraph contains **bold**, `inline code`, and emoji 😀🚀.',
     '',
-    '- 列表项一 ✅',
-    '- 列表项二',
+    '- First list item ✅',
+    '- Second list item',
     '',
-    '> 引用一行,带表情 🐟',
+    '> A quoted line with emoji 🐟',
     '',
     '```',
-    '中文代码 🎯',
+    'Code sample 🎯',
     '```',
     '',
-    '| 键 | 值 |',
+    '| Key | Value |',
     '| --- | --- |',
-    '| 甲 | 乙 |',
+    '| A | B |',
     '',
-    '结尾段落,足够多的块让前面全部冻结。🌊',
+    'Final paragraph, enough blocks to freeze everything above.🌊',
   ].join('\n')
 
   it('code-unit chunking (splitting surrogate pairs mid-stream) matches fresh renders', () => {
     const live = render(<MarkdownText text="" streaming />)
-    for (let end = 1; end < CJK_DOC.length + 1; end += 1) {
-      const prefix = CJK_DOC.slice(0, Math.min(end, CJK_DOC.length))
+    for (let end = 1; end < MULTIBYTE_DOC.length + 1; end += 1) {
+      const prefix = MULTIBYTE_DOC.slice(0, Math.min(end, MULTIBYTE_DOC.length))
       live.rerender(<MarkdownText text={prefix} streaming />)
       const fresh = render(<MarkdownText text={prefix} streaming />)
       expect(live.container.innerHTML).toBe(fresh.container.innerHTML)
@@ -383,11 +383,11 @@ describe('multibyte content', () => {
 
   it('freeze-cut offsets agree with one-shot parse offsets on astral content', () => {
     const parser = new IncrementalMarkdownParser(parseGfm)
-    let result = parser.update(CJK_DOC.slice(0, 3))
-    for (let end = 6; end < CJK_DOC.length + 3; end += 3) {
-      result = parser.update(CJK_DOC.slice(0, Math.min(end, CJK_DOC.length)))
+    let result = parser.update(MULTIBYTE_DOC.slice(0, 3))
+    for (let end = 6; end < MULTIBYTE_DOC.length + 3; end += 3) {
+      result = parser.update(MULTIBYTE_DOC.slice(0, Math.min(end, MULTIBYTE_DOC.length)))
     }
-    const oneShot = parseGfm(CJK_DOC).children.map(node => node.position?.start.offset)
+    const oneShot = parseGfm(MULTIBYTE_DOC).children.map(node => node.position?.start.offset)
     expect([...result.frozen, ...result.tail].map(block => block.key)).toEqual(oneShot)
     expect(result.frozen.length).toBeGreaterThan(3)
   })

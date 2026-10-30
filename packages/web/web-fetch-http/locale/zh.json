@@ -1,6 +1,5 @@
 {
   "meta": {
-    "title": "公开网页获取",
-    "description": "读取无需登录的 HTTP 或 HTTPS 网页内容。"
+    "title": "web-fetch-http"
   }
 }

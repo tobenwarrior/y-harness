@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-ssh",
+  "name": "@yharness/ssh",
   "description": "Shared OpenSSH connection and versioned POSIX remote helper",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/ssh/ssh"
   },
   "type": "module",
@@ -45,39 +45,39 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-fs": "workspace:*",
-    "@deepseek-ai/dsh-fs-local": "workspace:*",
-    "@deepseek-ai/dsh-fs-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/fs": "workspace:*",
+    "@yharness/fs-local": "workspace:*",
+    "@yharness/fs-sandbox": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-local": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/brand": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-fs": "workspace:*",
-    "@deepseek-ai/dsh-fs-local": "workspace:*",
-    "@deepseek-ai/dsh-fs-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-ptc-runtime-node": "workspace:*",
-    "@deepseek-ai/dsh-fs-ssh": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-ssh": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-ssh": "workspace:*",
-    "@deepseek-ai/dsh-lsp": "workspace:*",
-    "@deepseek-ai/dsh-lsp-stdio": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/fs": "workspace:*",
+    "@yharness/fs-local": "workspace:*",
+    "@yharness/fs-sandbox": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-local": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/ptc-runtime-node": "workspace:*",
+    "@yharness/fs-ssh": "workspace:*",
+    "@yharness/subprocess-ssh": "workspace:*",
+    "@yharness/sandbox-ssh": "workspace:*",
+    "@yharness/lsp": "workspace:*",
+    "@yharness/lsp-stdio": "workspace:*",
+    "@yharness/brand": "workspace:*"
   }
 }

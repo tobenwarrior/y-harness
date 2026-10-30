@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ConversationNodeAssembler, type TurnLocation } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionLiveEventEntry } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ChatNode, ChatSnapshot } from '@deepseek-ai/dsh-client-ui-chat/client'
+import { ConversationNodeAssembler, type TurnLocation } from '@yharness/client-ui-conversation/client'
+import type { SessionLiveEventEntry } from '@yharness/api-session-controller/client'
+import type { ChatNode, ChatSnapshot } from '@yharness/client-ui-chat/client'
 import { keyedObservableHook } from '../../ui-renderer/src/client/bindings.tsx'
 import { ChatSnapshotBuilder, chatViewDefinition } from '../../ui-chat/src/client/conversation-nodes/chat-snapshot-builder.ts'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
+import type { SessionId } from '@yharness/session/types'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { PlanCards, PlanReviewOpen } from '../src/client/PlanCard.tsx'
 import { PlanPreview, PlanTitle } from '../src/client/PlanPreview.tsx'
@@ -22,7 +22,7 @@ afterEach(cleanup)
 const markdown = '# Keep this plan\n\n## Goal\n\n- Review\n- Implement'
 const call = { type: 'tool/call', seq: 12, data: { turn: 1, name: 'exit_plan_mode', callId: 'call:1', arguments: JSON.stringify({ plan: markdown }) } }
 const plan = submittedPlan(call)!
-const target = { session: { kind: 'session' as const, sessionId: 'session / 中文' as SessionId }, callId: plan.callId }
+const target = { session: { kind: 'session' as const, sessionId: 'session / \u{4E2D}\u{6587}' as SessionId }, callId: plan.callId }
 const t = makeTranslate(en, commonEn)
 
 function planHook(plans: readonly typeof plan[]): Parameters<typeof PlanCards>[0]['usePlans'] {
@@ -64,7 +64,7 @@ describe('submitted plan identity', () => {
   it('round-trips opaque identifiers and refuses malformed addresses', () => {
     expect(parsePlanAddress(planAddress(target))).toEqual(target)
     for (const mode of ['one-shot', 'continuable'] as const) {
-      const child = { session: { kind: 'subagent' as const, parentSessionId: target.session.sessionId, childSessionId: 'child / 中文' as SessionId, mode }, callId: plan.callId }
+      const child = { session: { kind: 'subagent' as const, parentSessionId: target.session.sessionId, childSessionId: 'child / \u{4E2D}\u{6587}' as SessionId, mode }, callId: plan.callId }
       expect(parsePlanAddress(planAddress(child))).toEqual(child)
     }
     for (const address of ['file:///plan.md', 'dsh-resource://plan/s/c/extra', 'dsh-resource://plan/s/%XX', 'dsh-resource://plan/s/c?text=x',

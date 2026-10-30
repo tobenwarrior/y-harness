@@ -33,7 +33,7 @@ try {
   createPluginProfile(profile)
   await writeFile(join(project, 'desktop-runtime.json'), JSON.stringify({
     schemaVersion: 1, release, ...desktopTargetPlatform(target), files: [],
-    sharedPackages: ['@deepseek-ai/dsh', '@deepseek-ai/dsh-desktop-host']
+    sharedPackages: ['@yharness/cli', '@yharness/desktop-host']
       .map(name => ({ name, version: manifest.version, path: `node_modules/${name}` })),
   }))
   await cp(join(repo, 'apps/desktop/lib/types'), join(application, 'lib'), { recursive: true })
@@ -58,7 +58,7 @@ try {
   ]))
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     /^(?:path|systemroot|windir|comspec|pathext)$/iu.test(name)))
-  const child = spawn(electron, [fileURLToPath(new URL('../tests/fixtures/workspace-updates.mjs', import.meta.url)), '--lang=zh-CN',
+  const child = spawn(electron, [fileURLToPath(new URL('../tests/fixtures/workspace-updates.mjs', import.meta.url)), '--lang=en-US',
     ...(interactive ? ['--interactive'] : [])], {
     cwd: root, env: { ...environment, DSH_HOME: join(root, 'home'), USERPROFILE: root, HOME: root,
       TEMP: root, TMP: root, TMPDIR: root, DSH_WORKSPACE_UPDATE_ROOT: root, DSH_WORKSPACE_UPDATE_TOKEN: randomUUID(),

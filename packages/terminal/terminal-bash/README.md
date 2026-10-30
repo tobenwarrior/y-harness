@@ -3,11 +3,11 @@ description: "The shipped shell backend for persistent terminal sessions: intera
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-terminal-bash
+# @yharness/terminal-bash
 
 ## Summary
 
-`dsh-terminal-bash` starts a persistent interactive shell under the deployment's sandbox policy: the session stays alive across tool calls, readiness for input is detected, and bounded line-oriented output is retained for reads. It provides the `shell` backend type and supports bash on POSIX and pwsh on Windows through a `shellDialect` setting. The same backend composes with local or remote execution worlds through the mounted subprocess provider. Full-screen terminal applications are outside its line-oriented contract.
+`yharness-terminal-bash` starts a persistent interactive shell under the deployment's sandbox policy: the session stays alive across tool calls, readiness for input is detected, and bounded line-oriented output is retained for reads. It provides the `shell` backend type and supports bash on POSIX and pwsh on Windows through a `shellDialect` setting. The same backend composes with local or remote execution worlds through the mounted subprocess provider. Full-screen terminal applications are outside its line-oriented contract.
 
 ## Table of Contents
 
@@ -23,23 +23,23 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this backend when a composition needs persistent shell sessions — state such as cwd, exported variables, functions, or running interactive children must survive across tool calls. It is the default `shell` type: a composition that mounts `@deepseek-ai/dsh-terminal` without it has no sessions to open.
+Mount this backend when a composition needs persistent shell sessions — state such as cwd, exported variables, functions, or running interactive children must survive across tool calls. It is the default `shell` type: a composition that mounts `@yharness/terminal` without it has no sessions to open.
 
 ### When to choose it
 
-Choose this backend when work needs an interactive shell or REPL whose state persists: stepping a debugger, exploring in a Python or Node REPL, or returning to a shell after interrupting a foreground command. Choose the one-shot bash tool for bounded commands that should start and end in one call. The bash dialect targets POSIX; the pwsh dialect targets Windows hosts where `dsh-pwsh-local` can resolve a pwsh executable.
+Choose this backend when work needs an interactive shell or REPL whose state persists: stepping a debugger, exploring in a Python or Node REPL, or returning to a shell after interrupting a foreground command. Choose the one-shot bash tool for bounded commands that should start and end in one call. The bash dialect targets POSIX; the pwsh dialect targets Windows hosts where `yharness-pwsh-local` can resolve a pwsh executable.
 
 ### Composition
 
 Mount the terminal service, a subprocess provider, the sandbox and policy services, this backend, and a tool package:
 
 ```yaml
-- name: '@deepseek-ai/dsh-terminal'
-- name: '@deepseek-ai/dsh-subprocess-local'
-- name: '@deepseek-ai/dsh-sandbox-local'
-- name: '@deepseek-ai/dsh-sandbox-policy'
-- name: '@deepseek-ai/dsh-terminal-bash'
-- name: '@deepseek-ai/dsh-tool-terminal'
+- name: '@yharness/terminal'
+- name: '@yharness/subprocess-local'
+- name: '@yharness/sandbox-local'
+- name: '@yharness/sandbox-policy'
+- name: '@yharness/terminal-bash'
+- name: '@yharness/tool-terminal'
 ```
 
 `danger-full-access` starts the shell directly. Confined modes require a same-world `ctx.sandbox` provider: without one, the spawn fails before the shell starts. Confinement preparation receives the opening signal; cancellation prevents terminal allocation even if the provider returns later.
@@ -55,7 +55,7 @@ Mount the terminal service, a subprocess provider, the sandbox and policy servic
 | `timeoutMs` | `30000` | Absolute bound on one send wait |
 | `disposeGraceMs` | `3000` | Grace before teardown escalates to `SIGKILL` |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-terminal-bash) is the exhaustive source for every field, including the readiness timings (`pollIntervalMs`, `exactProbeAfterMs`, `idleSilenceMs`, `handoffGraceMs`, `promptTailGraceMs`), terminal size (`rows`, `cols`), and scrollback bounds (`scrollbackLines`, `scrollbackMaxBytes`).
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessterminal-bash) is the exhaustive source for every field, including the readiness timings (`pollIntervalMs`, `exactProbeAfterMs`, `idleSilenceMs`, `handoffGraceMs`, `promptTailGraceMs`), terminal size (`rows`, `cols`), and scrollback bounds (`scrollbackLines`, `scrollbackMaxBytes`).
 
 ### Shell dialects and readiness
 
@@ -131,7 +131,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-This package registers no prompt or tool. Through `@deepseek-ai/dsh-tool-terminal` or another PTY consumer, the model may receive bounded startup output, send deltas, scrollback pages, readiness reasons, and cleanup errors.
+This package registers no prompt or tool. Through `@yharness/tool-terminal` or another PTY consumer, the model may receive bounded startup output, send deltas, scrollback pages, readiness reasons, and cleanup errors.
 
 #### Token effect
 

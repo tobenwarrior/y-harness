@@ -1,19 +1,19 @@
 /** Registers the sidebar shell and global panel navigation. */
-import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@yharness/client-product-analytics/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-renderer/client'
 // Type-only: pulls the Session root standard-props merge.
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@yharness/client-ui-session/client'
 import type { SidebarPanelMetadata, SidebarRootInjected } from './contract/slots.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
-import { en, zh, type SidebarKey } from './locales.ts'
+import { en, type SidebarKey } from './locales.ts'
 
 export type {
   SidebarBrandMarkOwnerProps, SidebarBrandNameOwnerProps, SidebarFooterActionOwnerProps,
@@ -22,7 +22,7 @@ export type {
 } from './contract/slots.ts'
 export type { SidebarKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Sidebar controls and global panel copy. */
     sidebar: SidebarKey
@@ -44,7 +44,7 @@ export const inject = ['slots', 'layout', 'uiWorkspace', 'locale', 'shortcuts']
  */
 export function apply(ctx: ClientContext): void {
   const workspaceNavigation = ctx.get('uiWorkspace') as unknown as WorkspaceNavigation
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar: dictionaries')
   const panels = createSnapshotStore<readonly SidebarPanelMetadata[]>([])
   const syncPanels = (): void => {
     const next = ctx.slots.entriesOfSlot('sidebar.panellist').map(({ options }) => {

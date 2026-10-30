@@ -3,11 +3,11 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
-import type { ScheduleCatalogEntry, ScheduleId } from '@deepseek-ai/dsh-schedule/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import type { ToolCallViewProps } from '@yharness/client-ui-tool/client'
+import type { ScheduleCatalogEntry, ScheduleId } from '@yharness/schedule/client'
+import type { SessionId } from '@yharness/session/types'
+import { PartialArguments } from '@yharness/util-values'
 import { ScheduleCreateCard, type ScheduleCreateCardProps } from '../src/client/ScheduleCreateCard.tsx'
 import { narrowScheduleRecord, scheduleCreateCardModel } from '../src/client/schedule-create-card.ts'
 import { zoneLabel } from '../src/client/schedule-format.ts'
@@ -229,13 +229,13 @@ describe('ScheduleCreateCard', () => {
 
   it('opens the task in the active locale', () => {
     render(<ScheduleCreateCard {...props(settled(dailyTask), vi.fn(), makeTranslate(zh))} />)
-    expect(screen.getByRole('button', { name: '打开任务详情：Check the deployment' })).toBeDefined()
-    expect(screen.getByRole('button', { name: '打开' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Open task details: Check the deployment' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Open' })).toBeDefined()
   })
 
   it('shows the weekly frequency in the active locale', () => {
     render(<ScheduleCreateCard {...props(settled(weeklyTask), vi.fn(), makeTranslate(zh))} />)
-    expect(screen.getByText(`每周一、三 09:00（${zoneLabel('Asia/Shanghai', makeTranslate(zh))}）`)).toBeDefined()
+    expect(screen.getByText(`Weekly on Mon, Wed at 09:00 (${zoneLabel('Asia/Shanghai', makeTranslate(zh))})`)).toBeDefined()
   })
 
   it('keeps a pending call as a title row with no open action and no result body', () => {

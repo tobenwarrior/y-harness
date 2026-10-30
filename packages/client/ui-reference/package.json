@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-reference",
+  "name": "@yharness/client-ui-reference",
   "description": "Unified Web @file and @session reference source",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/ui-reference"
   },
   "type": "module",
@@ -28,12 +28,12 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-api-remotes",
-        "@deepseek-ai/dsh-api-session-controller",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-input-trigger",
-        "@deepseek-ai/dsh-client-ui-sidebar-right"
+        "@yharness/api-remotes",
+        "@yharness/api-session-controller",
+        "@yharness/client-connection",
+        "@yharness/client-locale",
+        "@yharness/client-ui-input-trigger",
+        "@yharness/client-ui-sidebar-right"
       ],
       "platform": "web"
     }
@@ -44,23 +44,23 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-api-remotes": "workspace:*",
-    "@deepseek-ai/dsh-api-session-controller": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-client-locale": "workspace:*",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-input-trigger": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-primitives": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-slots": "workspace:*",
-    "@deepseek-ai/dsh-file-reference": "workspace:*",
-    "@deepseek-ai/dsh-session-reference": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-util-workspace-path": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-client-ui-sidebar-right": "workspace:*"
+    "@yharness/api-remotes": "workspace:*",
+    "@yharness/api-session-controller": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/client-locale": "workspace:*",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/client-ui-input-trigger": "workspace:*",
+    "@yharness/client-ui-primitives": "workspace:*",
+    "@yharness/client-ui-slots": "workspace:*",
+    "@yharness/file-reference": "workspace:*",
+    "@yharness/session-reference": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/util-workspace-path": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/client-ui-sidebar-right": "workspace:*"
   },
   "files": [
     "lib/index.js",

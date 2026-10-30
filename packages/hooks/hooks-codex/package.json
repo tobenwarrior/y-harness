@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-hooks-codex",
-  "description": "Bridge plugin: run a Codex hooks.json hook config on the DeepSeek Harness interception seams",
+  "name": "@yharness/hooks-codex",
+  "description": "Bridge plugin: run a Codex hooks.json hook config on the Y Harness interception seams",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/hooks/hooks-codex"
   },
   "type": "module",
@@ -27,30 +27,30 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-hook-protocol": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/agent": "workspace:*",
+    "@yharness/hook-protocol": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-shell": "workspace:*",
-    "@deepseek-ai/dsh-bash-local": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-hook-protocol": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session-projection": "workspace:*"
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/shell": "workspace:*",
+    "@yharness/bash-local": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/hook-protocol": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session-projection": "workspace:*"
   }
 }

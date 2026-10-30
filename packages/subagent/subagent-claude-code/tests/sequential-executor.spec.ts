@@ -4,28 +4,28 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PassThrough } from 'node:stream'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type { Options, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
-import * as Policy from '@deepseek-ai/dsh-sandbox-policy'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
+import * as Llm from '@yharness/llm'
+import * as Sessions from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
+import * as Policy from '@yharness/sandbox-policy'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
 import * as Library from '../../../skill/skill-library/src/index.ts'
-import { SandboxProvider, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { SandboxProvider, type SandboxPolicy } from '@yharness/sandbox'
+import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@yharness/subprocess'
 import { claudeSequentialProjectDirectory, createClaudeSequentialExecutor, type ClaudeSequentialExecutor, type ClaudeSequentialSdk, type ClaudeSequentialSelection } from '../src/sequential.ts'
 import { assistantBody } from './sdk-message-fixture.ts'
 
@@ -148,11 +148,11 @@ async function fixture(script: Script = normalFrames, diagnostics = '') {
     ['storage-domain', Domain], ['session-persistence-jsonl', Jsonl], ['workspace', Workspace], ['typert-registry', Typert], ['skill-library', Library],
     ['fixture-confine', { default: Confine }], ['fixture-processes', { default: Processes }],
   ]
-  const modules = new Map<string, unknown>(moduleEntries.map(([name, module]) => [`@deepseek-ai/dsh-${name}`, module]))
+  const modules = new Map<string, unknown>(moduleEntries.map(([name, module]) => [`@yharness/${name}`, module]))
   const config: Record<string, object> = { 'storage-json': { root: join(root, 'storage') }, 'storage-domain': { backend: 'json' },
     'session-persistence-jsonl': { root: join(root, 'sessions'), compression: 'none' }, 'sandbox-policy': { mode: 'workspace-write' },
     'agent-loop': { agents: [] }, 'skill-library': { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 } }
-  const path = join(root, 'cordis.yml'); await writeFile(path, JSON.stringify([...modules.keys()].map(name => ({ name, config: config[name.replace('@deepseek-ai/dsh-', '')] }))))
+  const path = join(root, 'cordis.yml'); await writeFile(path, JSON.stringify([...modules.keys()].map(name => ({ name, config: config[name.replace('@yharness/', '')] }))))
   ctx.baseUrl = pathToFileURL(root).href + '/'; await ctx.plugin(Loader); ctx.loader.builtins.include = Include
   const internal: ModuleLoaderV2 = { version: 'v2', loadCache: new Map(), async import(specifier) {
     if (!modules.has(specifier)) throw new Error(`Unknown fixture module ${specifier}`); return modules.get(specifier)

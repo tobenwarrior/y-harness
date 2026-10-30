@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { ClientEntryState } from '@deepseek-ai/dsh-client-modules/client'
-import type { PluginEntryId } from '@deepseek-ai/dsh-api-remotes/client'
-import { Context } from '@deepseek-ai/cordis'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { ClientEntryState } from '@yharness/client-modules/client'
+import type { PluginEntryId } from '@yharness/api-remotes/client'
+import { Context } from '@yharness/cordis'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { PluginInventorySettingsTab } from '../src/client/PluginInventorySettingsTab.tsx'
@@ -12,7 +12,7 @@ import type {
   PluginInventorySettingsTabInjected,
   PluginInventorySettingsTabProps,
 } from '../src/client/PluginInventorySettingsTab.tsx'
-import { en, zh, type PluginInventoryLocaleKey } from '../src/client/locales.ts'
+import { en, type PluginInventoryLocaleKey } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
@@ -22,6 +22,9 @@ const t = ((key: PluginInventoryLocaleKey, params?: Record<string, string>): str
     (text, [name, value]) => text.replaceAll(`{${name}}`, value),
     en[key],
   )) as PluginInventorySettingsTabProps['t']
+
+// A distinct non-shipped locale keeps metadata and search resolution covered without retired locale data.
+const alt = { ...en } satisfies typeof en
 
 function props(
   list: PluginInventorySettingsTabInjected['list'],
@@ -42,8 +45,9 @@ function localizedProps(list: PluginInventorySettingsTabInjected['list']) {
   const ctx = new Context()
   onTestFinished(async () => { await ctx.fiber.dispose() })
   const locale = new LocaleRuntime(ctx)
-  ctx.effect(() => locale.register('settings.pluginInventory', 'en', en), 'test: English inventory dictionary')
-  ctx.effect(() => locale.register('settings.pluginInventory', 'zh', zh), 'test: Chinese inventory dictionary')
+  locale.addLanguage({ id: 'alt', label: 'Alternate', fallback: 'en' })
+  locale.register('settings.pluginInventory', 'en', en)
+  locale.register('settings.pluginInventory', 'alt', alt)
   locale.setLocale('en')
   const pageProps: PluginInventorySettingsTabProps = {
     ...props(list, preset => preset.name ?? preset.id, text => locale.resolveText(text)),
@@ -57,20 +61,20 @@ const SNAPSHOT = {
   entries: [
     { entryId: 'telemetry', moduleName: '@fixture/telemetry', enabled: true, fiberPhase: 'failed' },
     { entryId: 'timer', moduleName: 'cordis:timer', enabled: true, fiberPhase: 'active' },
-    { entryId: '8a1b2c3d', moduleName: '@deepseek-ai/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
+    { entryId: '8a1b2c3d', moduleName: '@yharness/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
     { entryId: 'unobserved', moduleName: '@fixture/unobserved-name', enabled: true, fiberPhase: null },
-    { entryId: 'bash-host', moduleName: '@deepseek-ai/dsh-tool-bash', enabled: false, fiberPhase: null },
-    { entryId: 'fs-host', moduleName: '@deepseek-ai/dsh-tool-fs', enabled: false, fiberPhase: null },
+    { entryId: 'bash-host', moduleName: '@yharness/tool-bash', enabled: false, fiberPhase: null },
+    { entryId: 'fs-host', moduleName: '@yharness/tool-fs', enabled: false, fiberPhase: null },
     { entryId: 'dormant', moduleName: '@fixture/dormant', enabled: false, fiberPhase: null },
   ],
   agentPresets: [
     {
       id: 'standard',
-      name: '标准模式',
+      name: 'Standard mode',
       isDefault: true,
       rows: [
-        { entryId: 'bash', moduleName: '@deepseek-ai/dsh-tool-bash', enabled: true, fiberPhase: 'active' },
-        { entryId: 'fs', moduleName: '@deepseek-ai/dsh-tool-fs', enabled: true, fiberPhase: null },
+        { entryId: 'bash', moduleName: '@yharness/tool-bash', enabled: true, fiberPhase: 'active' },
+        { entryId: 'fs', moduleName: '@yharness/tool-fs', enabled: true, fiberPhase: null },
         {
           entryId: 'pwsh',
           moduleName: '@fixture/pwsh',
@@ -87,12 +91,12 @@ const SNAPSHOT = {
       id: 'ptc',
       isDefault: false,
       rows: [
-        { entryId: 'bash', moduleName: '@deepseek-ai/dsh-tool-bash', enabled: true, fiberPhase: null },
-        { entryId: 'bash-fork', moduleName: '@deepseek-ai/dsh-tool-bash', enabled: true, fiberPhase: null },
-        { entryId: 'fs', moduleName: '@deepseek-ai/dsh-tool-fs', enabled: 'conditional', fiberPhase: null },
+        { entryId: 'bash', moduleName: '@yharness/tool-bash', enabled: true, fiberPhase: null },
+        { entryId: 'bash-fork', moduleName: '@yharness/tool-bash', enabled: true, fiberPhase: null },
+        { entryId: 'fs', moduleName: '@yharness/tool-fs', enabled: 'conditional', fiberPhase: null },
       ],
     },
-    { id: 'shattered', name: '坏预设', isDefault: false, broken: 'the composition file is missing', rows: [] },
+    { id: 'shattered', name: 'Broken preset', isDefault: false, broken: 'the composition file is missing', rows: [] },
   ],
 } as unknown as Snapshot
 
@@ -109,10 +113,10 @@ const presetToggle = (): HTMLElement => screen.getByRole('button', { name: en.pr
 describe('PluginInventorySettingsTab', () => {
   it.each(['global', 'preset'])('shortens package and module name fallbacks in the %s inventory', async (scope) => {
     const names = [
-      ['@deepseek-ai/dsh-tool-subagent', 'tool-subagent'],
-      ['@deepseek-ai/dsh-host-web', 'web'],
-      ['@deepseek-ai/dsh-client-tabs', 'tabs'],
-      ['@deepseek-ai/cordis-plugin-hmr', 'hmr'],
+      ['@yharness/tool-subagent', 'tool-subagent'],
+      ['@yharness/host-web', 'web'],
+      ['@yharness/client-tabs', 'tabs'],
+      ['@yharness/cordis-plugin-hmr', 'hmr'],
       ['cordis:timer', 'timer'],
       ['@acme/dsh-sidebar/navigation', 'sidebar/navigation'],
       ['plain-plugin', 'plain-plugin'],
@@ -143,7 +147,7 @@ describe('PluginInventorySettingsTab', () => {
       }
     }
     fireEvent.change(screen.getByRole('searchbox', { name: en.search }), {
-      target: { value: '@deepseek-ai/dsh-tool-subagent' },
+      target: { value: '@yharness/tool-subagent' },
     })
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: /^tool-subagent, include:short-0-/ })).toHaveLength(2)
@@ -153,27 +157,27 @@ describe('PluginInventorySettingsTab', () => {
     const { locale, pageProps } = localizedProps(async () => ({
       entries: [{
         entryId: 'include:navigation' as PluginEntryId, moduleName: '@acme/dsh-navigation', enabled: true, fiberPhase: null,
-        meta: { title: { en: 'dsh-Navigation', zh: 'dsh-导航' } },
+        meta: { title: { en: 'dsh-Navigation', alt: 'dsh-Navigation (alternate)' } },
       }],
     }))
     const view = render(<PluginInventorySettingsTab {...pageProps} />)
     await screen.findByRole('searchbox', { name: en.search })
     fireEvent.click(globalToggle())
     expect(screen.getByRole('button', { name: 'dsh-Navigation, include:navigation, Enabled' })).toBeTruthy()
-    locale.setLocale('zh')
+    locale.setLocale('alt')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
-    expect(screen.getByRole('button', { name: 'dsh-导航, include:navigation, 已启用' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'dsh-Navigation (alternate), include:navigation, Enabled' })).toBeTruthy()
   })
 
   it('localizes global and preset metadata at render time while preserving identities and query state', async () => {
-    const globalError = 'locale/zh.json: invalid title'
+    const globalError = 'locale/alt.json: invalid title'
     const presetError = 'locale/fr.json: invalid description'
     const snapshot: Snapshot = {
       entries: [{
         entryId: 'include:global-navigation' as PluginEntryId, moduleName: '@acme/navigation', enabled: true, fiberPhase: 'active',
         meta: {
-          title: { en: 'Navigation', zh: '导航' },
-          description: { en: 'Global navigation controls', zh: '全局导航控件' },
+          title: { en: 'Navigation', alt: 'Navigation (alternate)' },
+          description: { en: 'Global navigation controls', alt: 'Global navigation controls (alternate)' },
           error: globalError,
         },
       }],
@@ -182,8 +186,8 @@ describe('PluginInventorySettingsTab', () => {
         rows: [{
           entryId: 'include:preset-runner', moduleName: '@acme/runner', enabled: true, fiberPhase: null,
           meta: {
-            title: { en: 'Session runner', zh: '会话执行器' },
-            description: { en: 'Run per session', zh: '运行会话命令' },
+            title: { en: 'Session runner', alt: 'Session runner (alternate)' },
+            description: { en: 'Run per session', alt: 'Alternate per-session command' },
             error: presetError,
           },
         }],
@@ -207,25 +211,25 @@ describe('PluginInventorySettingsTab', () => {
     expect(screen.getByText(en.moduleLabel).nextElementSibling?.textContent).toBe('@acme/runner')
     expect(view.container.querySelector('[data-loader-entry]')?.textContent).toBe('include:preset-runner')
 
-    locale.setLocale('zh')
+    locale.setLocale('alt')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
-    expect(screen.getByRole('button', { name: '导航, include:global-navigation, 已启用' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '会话执行器, include:preset-runner, 已启用' })).toBeTruthy()
-    expect(screen.getByText('全局导航控件')).toBeTruthy()
-    expect(screen.getByText('运行会话命令')).toBeTruthy()
-    expect(screen.getByText(zh.metadataError.replace('{error}', presetError))).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Navigation (alternate), include:global-navigation, Enabled' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Session runner (alternate), include:preset-runner, Enabled' })).toBeTruthy()
+    expect(screen.getByText('Global navigation controls (alternate)')).toBeTruthy()
+    expect(screen.getByText('Alternate per-session command')).toBeTruthy()
+    expect(screen.getByText(alt.metadataError.replace('{error}', presetError))).toBeTruthy()
     expect(view.container.querySelector('[data-loader-entry]')?.textContent).toBe('include:preset-runner')
-    const search = screen.getByRole('searchbox', { name: zh.search })
-    for (const query of ['导航', '全局导航控件', '@acme/navigation', 'include:global-navigation']) {
+    const search = screen.getByRole('searchbox', { name: alt.search })
+    for (const query of ['Navigation (alternate)', 'Global navigation controls (alternate)', '@acme/navigation', 'include:global-navigation']) {
       fireEvent.change(search, { target: { value: query } })
       expect(screen.getAllByRole('listitem')).toHaveLength(1)
-      expect(screen.getByRole('button', { name: '导航, include:global-navigation, 已启用' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Navigation (alternate), include:global-navigation, Enabled' })).toBeTruthy()
     }
-    fireEvent.change(search, { target: { value: '运行会话命令' } })
+    fireEvent.change(search, { target: { value: 'Alternate per-session command' } })
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: '会话执行器, include:preset-runner, 已启用' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Session runner (alternate), include:preset-runner, Enabled' })).toBeTruthy()
     fireEvent.change(search, { target: { value: 'Run per session' } })
-    expect(screen.getByText(zh.emptySearch)).toBeTruthy()
+    expect(screen.getByText(alt.emptySearch)).toBeTruthy()
     locale.setLocale('en')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
     expect(screen.getByRole('button', { name: 'Session runner, include:preset-runner, Enabled' })).toBeTruthy()
@@ -241,11 +245,11 @@ describe('PluginInventorySettingsTab', () => {
       },
       {
         entryId: 'include:commands' as PluginEntryId, moduleName: '@acme/dsh-sidebar/commands', enabled: true, fiberPhase: null,
-        meta: { title: { en: 'English title' }, description: { en: 'Package description.', zh: '中文命令说明。' } },
+        meta: { title: { en: 'English title' }, description: { en: 'Package description.', alt: 'Alternate command description.' } },
       },
       {
         entryId: 'include:theme' as PluginEntryId, moduleName: '@acme/dsh-theme/client', enabled: true, fiberPhase: null,
-        meta: { title: { en: '@acme/dsh-theme', zh: '主题插件' }, description: { en: '', zh: '中文主题说明。' } },
+        meta: { title: { en: '@acme/dsh-theme', alt: 'Theme plugin (alternate)' }, description: { en: '', alt: 'Alternate theme description.' } },
       },
     ]
     const snapshot: Snapshot = scope === 'global'
@@ -262,25 +266,25 @@ describe('PluginInventorySettingsTab', () => {
     expect(screen.getByText('Package description.')).toBeTruthy()
     const theme = screen.getByRole('button', { name: '@acme/dsh-theme, include:theme, Enabled' })
     expect(theme.getAttribute('aria-describedby')).toBeNull()
-    expect(screen.queryByText('中文主题说明。')).toBeNull()
+    expect(screen.queryByText('Alternate theme description.')).toBeNull()
 
-    locale.setLocale('zh')
+    locale.setLocale('alt')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
     for (const [name, description] of [
-      ['sidebar/navigation, include:navigation, 已启用', 'Navigation description.'],
-      ['English title, include:commands, 已启用', '中文命令说明。'],
-      ['主题插件, include:theme, 已启用', '中文主题说明。'],
+      ['sidebar/navigation, include:navigation, Enabled', 'Navigation description.'],
+      ['English title, include:commands, Enabled', 'Alternate command description.'],
+      ['Theme plugin (alternate), include:theme, Enabled', 'Alternate theme description.'],
     ] as const) {
       const card = screen.getByRole('button', { name })
       expect(screen.getByText(description)).toBeTruthy()
       expect(document.getElementById(card.getAttribute('aria-describedby')!)?.textContent).toBe(description)
     }
     expect(screen.queryByText('Package description.')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '主题插件, include:theme, 已启用' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Theme plugin (alternate), include:theme, Enabled' }))
     expect(view.container.querySelector('[data-loader-entry]')?.textContent).toBe('include:theme')
-    expect(screen.getByText(zh.moduleLabel).nextElementSibling?.textContent).toBe('@acme/dsh-theme/client')
+    expect(screen.getByText(alt.moduleLabel).nextElementSibling?.textContent).toBe('@acme/dsh-theme/client')
 
-    fireEvent.change(screen.getByRole('searchbox', { name: zh.search }), { target: { value: '中文主题说明。' } })
+    fireEvent.change(screen.getByRole('searchbox', { name: alt.search }), { target: { value: 'Alternate theme description.' } })
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
     locale.setLocale('en')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
@@ -292,7 +296,7 @@ describe('PluginInventorySettingsTab', () => {
   })
 
   it('keeps metadata-error-only rows inspectable by their full module specifier', async () => {
-    const error = 'locale/zh.json: invalid title'
+    const error = 'locale/alt.json: invalid title'
     await renderReady({
       entries: [{
         entryId: 'include:legacy' as PluginEntryId, moduleName: '@acme/dsh-legacy', enabled: false, fiberPhase: null,
@@ -312,12 +316,12 @@ describe('PluginInventorySettingsTab', () => {
     const view = await renderReady()
 
     const switcher = screen.getByRole('button', { name: en.switcherLabel })
-    expect(switcher.textContent).toBe('标准模式 (default)')
+    expect(switcher.textContent).toBe('Standard mode (default)')
     fireEvent.click(switcher)
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
-      '标准模式 (default)',
+      'Standard mode (default)',
       'ptc',
-      '坏预设 (failed to load)',
+      'Broken preset (failed to load)',
     ])
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
@@ -344,7 +348,7 @@ describe('PluginInventorySettingsTab', () => {
     // A preset row expands into its source facts.
     fireEvent.click(screen.getByRole('button', { name: 'pwsh, Conditional' }))
     expect(screen.getByText(en.fromPreset)).toBeTruthy()
-    expect(screen.getByText('标准模式')).toBeTruthy()
+    expect(screen.getByText('Standard mode')).toBeTruthy()
     expect(screen.getByText(en.condition)).toBeTruthy()
     expect(screen.getByText('process.platform === \'win32\'')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'pwsh, Conditional' }))
@@ -398,8 +402,8 @@ describe('PluginInventorySettingsTab', () => {
         id: 'same-module',
         isDefault: true,
         rows: [
-          { entryId: 'tool-subagent-primary', moduleName: '@deepseek-ai/dsh-tool-subagent', enabled: true, fiberPhase: null },
-          { entryId: longId, moduleName: '@deepseek-ai/dsh-tool-subagent', enabled: false, fiberPhase: null },
+          { entryId: 'tool-subagent-primary', moduleName: '@yharness/tool-subagent', enabled: true, fiberPhase: null },
+          { entryId: longId, moduleName: '@yharness/tool-subagent', enabled: false, fiberPhase: null },
         ],
       }],
     })
@@ -425,7 +429,7 @@ describe('PluginInventorySettingsTab', () => {
     await renderReady({
       entries: [
         { entryId: 'timer' as PluginEntryId, moduleName: 'cordis:timer', enabled: true, fiberPhase: 'active' },
-        { entryId: 'include:hmr' as PluginEntryId, moduleName: '@deepseek-ai/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
+        { entryId: 'include:hmr' as PluginEntryId, moduleName: '@yharness/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
         { entryId: 'typert' as PluginEntryId, moduleName: '@fixture/typert-registry', enabled: true, fiberPhase: null },
       ],
     })
@@ -457,7 +461,7 @@ describe('PluginInventorySettingsTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'tool-bash, bash-host, Via presets' }))
     expect(screen.getByText(en.presetProvidedDetail)).toBeTruthy()
     expect(screen.getByText(en.enabledIn)).toBeTruthy()
-    expect(screen.getByText('标准模式 · ptc')).toBeTruthy()
+    expect(screen.getByText('Standard mode · ptc')).toBeTruthy()
 
     // The failed global card reports its runtime state.
     fireEvent.click(screen.getByRole('button', { name: 'telemetry, Failed' }))
@@ -489,7 +493,7 @@ describe('PluginInventorySettingsTab', () => {
     // An unnamed preset labels its source by id.
     expect(screen.getByText(en.fromPreset).nextElementSibling?.textContent).toBe('ptc')
 
-    pickPreset('坏预设 (failed to load)')
+    pickPreset('Broken preset (failed to load)')
     expect(screen.getByRole('alert').textContent).toBe('the composition file is missing')
     expect(view.container.querySelector('[data-preset-plugin-count]')?.getAttribute('data-preset-plugin-count')).toBe('0')
   })
@@ -530,7 +534,7 @@ describe('PluginInventorySettingsTab', () => {
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
       'Localized standard (default)',
       'Localized ptc',
-      '坏预设 (failed to load)',
+      'Broken preset (failed to load)',
     ])
     fireEvent.keyDown(document, { key: 'Escape' })
 
@@ -551,7 +555,7 @@ describe('PluginInventorySettingsTab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'tool-bash, bash-host, Via presets' }))
     fireEvent.click(screen.getByRole('button', { name: en.viewInPreset }))
     expect(screen.getByRole('button', { name: en.switcherLabel }).textContent)
-      .toBe('标准模式 (default)')
+      .toBe('Standard mode (default)')
   })
 
   it('searches across scopes and points at matches in other presets', async () => {
@@ -588,7 +592,7 @@ describe('PluginInventorySettingsTab', () => {
   it('renders a rosterless deployment as one global list, folded until opened', async () => {
     const view = await renderReady({
       entries: [
-        { entryId: 'hmr', moduleName: '@deepseek-ai/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
+        { entryId: 'hmr', moduleName: '@yharness/cordis-plugin-hmr', enabled: true, fiberPhase: 'active' },
         { entryId: 'off', moduleName: '@fixture/off', enabled: false, fiberPhase: null },
       ],
     } as unknown as Snapshot)
@@ -676,14 +680,14 @@ it('shows current-page sync errors and retries without re-reading Host inventory
 describe('first-party inventory description display', () => {
   afterEach(() => { vi.unstubAllEnvs() })
 
-  it.each(['global', 'preset'].flatMap(scope => [undefined, 'Y Harness', 'Atlas', '星图 $& $`']
+  it.each(['global', 'preset'].flatMap(scope => [undefined, 'Y Harness', 'Atlas', 'Display $& $`']
     .map(displayName => [scope, displayName] as const)))('projects %s descriptions for %s in cards, details and search', async (scope, displayName) => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
     const raw = 'Tools for DeepSeek Harness; DeepSeek Account; MIT copyright DeepSeek'
     const meta = { description: { en: raw } }
     const row = {
       entryId: 'include:description' as PluginEntryId,
-      moduleName: '@deepseek-ai/dsh-agent', enabled: true, fiberPhase: null, meta,
+      moduleName: '@yharness/agent', enabled: true, fiberPhase: null, meta,
     }
     const snapshot: Snapshot = scope === 'global'
       ? { entries: [row] }
@@ -691,7 +695,7 @@ describe('first-party inventory description display', () => {
     const view = await renderReady(snapshot)
     if (scope === 'global') fireEvent.click(globalToggle())
     const card = screen.getByRole('button', { name: 'agent, include:description, Enabled' })
-    const expected = `Tools for ${displayName ?? 'DeepSeek Harness'}; DeepSeek Account; MIT copyright DeepSeek`
+    const expected = `Tools for ${displayName ?? 'Y Harness'}; DeepSeek Account; MIT copyright DeepSeek`
     expect(document.getElementById(card.getAttribute('aria-describedby')!)?.textContent).toBe(expected)
     expect(card.closest('li')?.getAttribute('data-plugin-module')).toBe(row.moduleName)
     fireEvent.click(card)
@@ -712,9 +716,9 @@ describe('first-party inventory description display', () => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
     const values = [
       ['@acme/dsh-navigation', 'Upstream DeepSeek Harness credit; Y Harness; MIT licence'],
-      ['@deepseek-ai/cordis-plugin-hmr', 'Vendor DeepSeek Harness credit; MIT licence'],
-      ['@deepseek-ai/dsh-web-search-deepseek', 'DeepSeek provider; DeepSeek Account; MIT copyright DeepSeek'],
-      ['@deepseek-ai/dsh-agent', 'Y Harness extension; MIT licence'],
+      ['@yharness/cordis-plugin-hmr', 'Vendor DeepSeek Harness credit; MIT licence'],
+      ['@yharness/web-search-deepseek', 'DeepSeek provider; DeepSeek Account; MIT copyright DeepSeek'],
+      ['@yharness/agent', 'Y Harness extension; MIT licence'],
     ] as const
     const rows = values.map(([moduleName, description], index) => ({
       entryId: `include:protected-${String(index)}` as PluginEntryId,
@@ -733,17 +737,17 @@ describe('first-party inventory description display', () => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
     const snapshot: Snapshot = { entries: [{
       entryId: 'include:localized-description' as PluginEntryId,
-      moduleName: '@deepseek-ai/dsh-agent', enabled: true, fiberPhase: null,
-      meta: { description: { en: 'DeepSeek Harness agent tools', zh: '当前语言的工具说明' } },
+      moduleName: '@yharness/agent', enabled: true, fiberPhase: null,
+      meta: { description: { en: 'DeepSeek Harness agent tools', alt: 'Alternate-language agent tools' } },
     }] }
     const { locale, pageProps } = localizedProps(async () => snapshot)
     const view = render(<PluginInventorySettingsTab {...pageProps} />)
     await screen.findByRole('searchbox', { name: en.search })
     fireEvent.click(globalToggle())
     expect(screen.getByText('Atlas agent tools')).toBeTruthy()
-    locale.setLocale('zh')
+    locale.setLocale('alt')
     view.rerender(<PluginInventorySettingsTab {...pageProps} />)
-    expect(screen.getByText('当前语言的工具说明')).toBeTruthy()
+    expect(screen.getByText('Alternate-language agent tools')).toBeTruthy()
     expect(screen.queryByText('Atlas agent tools')).toBeNull()
   })
 })

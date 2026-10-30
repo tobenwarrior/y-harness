@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Command-line entry for dsh.
- * @module @deepseek-ai/dsh/bin
+ * Command-line entry for Y Harness.
+ * @module @yharness/cli/bin
  */
 
 /* v8 ignore file -- built-bin acceptance exercises this self-executing dispatch. */
 
-import { getDshRuntimeVersion, loadLayeredEnv, StartupError } from '@deepseek-ai/dsh-app-boot'
-import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { getDshRuntimeVersion, loadLayeredEnv, StartupError } from '@yharness/app-boot'
+import { resolveDshHome } from '@yharness/home-paths'
 import { parseDshArgs } from './args.ts'
+import { CLI_NAME } from './cli-name.ts'
 import { reportStartupFailure } from './startup-diagnostics.ts'
 import type { RunProfileOptions } from './profile-boot.ts'
 
@@ -19,7 +20,7 @@ export type RunCliOptions = Pick<RunProfileOptions, 'packageManager'> & {
 }
 
 /**
- * Run the public dsh command-line interface.
+ * Run the public Y Harness command-line interface.
  * @param options - Package runtime and Desktop profile access supplied by the installation.
  * @returns a promise that settles when the selected command mode finishes.
  */
@@ -69,7 +70,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
     }
     default:
       invocation satisfies never
-      throw new Error(`dsh: unhandled invocation mode ${JSON.stringify(invocation)}`)
+      throw new Error(`${CLI_NAME}: unhandled invocation mode ${JSON.stringify(invocation)}`)
   }
 }
 

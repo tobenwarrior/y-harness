@@ -1,7 +1,7 @@
 /** JSON validation for durable evidence, full proposals and separate semantic policies. */
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { brandString } from '@yharness/brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
 import type {
   SkillLibraryId,
   SkillLearningEvidence,

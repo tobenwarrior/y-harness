@@ -9,13 +9,13 @@
 
 import type { Duplex, Readable, Writable } from 'node:stream'
 
-/** Namespace prefix reserved for DeepSeek Harness-managed child environment facts. */
+/** Namespace prefix reserved for Y Harness-managed child environment facts. */
 export const DSH_ENV_PREFIX = 'DSH_' as const
 
 /** One environment key inside the managed {@link DSH_ENV_PREFIX} namespace. */
 export type DshEnvironmentKey = `${typeof DSH_ENV_PREFIX}${string}`
 
-/** Trusted DeepSeek Harness variables for one child-process execution. */
+/** Trusted Y Harness variables for one child-process execution. */
 export type DshEnvironment = Readonly<Record<DshEnvironmentKey, string>>
 
 /** One captured stream: the (possibly truncated) text plus recovery info. */
@@ -197,7 +197,7 @@ export interface SubprocessHandle {
 
 /**
  * Signals supported by the terminal-process primitive. Kept member-identical
- * to `TerminalSignal` in `@deepseek-ai/dsh-terminal` without a cross-seam dependency;
+ * to `TerminalSignal` in `@yharness/terminal` without a cross-seam dependency;
  * change both together.
  */
 export type SubprocessTerminalSignal = 'SIGINT' | 'SIGTERM' | 'SIGKILL' | 'SIGTSTP' | 'SIGHUP'

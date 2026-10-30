@@ -1,7 +1,6 @@
 # Scoped upstream sync
 
-Y Harness tracks the official [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
-fork-first: the paths named in [`config.json`](config.json) follow upstream, and
+Y Harness tracks its configured upstream source fork-first: the paths named in [`config.json`](config.json) follow upstream, and
 everything else is this fork's own work (providers, branding, launcher, bundles).
 `master` is a squashed import with no ancestry shared with `upstream/master`, so
 a merge cannot express that split — this tool expresses it as a path allowlist
@@ -84,5 +83,5 @@ Without them the job still uploads the patch and report as artifacts.
 
 ## Requirements
 
-- The `upstream` remote must exist (`git remote add upstream https://github.com/deepseek-ai/deepseek-harness.git`).
+- The `upstream` remote must exist and point to the source repository (`git remote add upstream <upstream-repository-url>`).
 - The working tree must be clean for `--apply`.

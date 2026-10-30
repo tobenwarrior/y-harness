@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { reduceInstructionRedundancy, mechanicalMaintenanceValid } from '../src/semantic-maintenance.ts'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type { SkillLearningProposal, SkillLearningProposalId, SkillLibraryId } from '../src/types.ts'
 
 function proposal(before: string, after: string): SkillLearningProposal {

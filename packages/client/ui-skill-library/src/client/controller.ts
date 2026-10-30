@@ -1,7 +1,7 @@
 /** Remote inventory and operation state retained across panel navigation. */
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { RemoteResult } from '@yharness/typert-protocol'
 import type {
   SkillLibraryId, SkillLibraryItem, SkillLibraryList, SkillLibraryDetail, SkillCleanupProposal,
   SkillLibraryListRequest, SkillLibraryIdRequest, SkillLibraryHashRequest, SkillLibraryPinRequest,
@@ -11,7 +11,7 @@ import type {
   SkillLearningStatus, SkillLearningProposeRequest, SkillLearningListRequest, SkillLearningProposalRequest,
   SkillLearningApplyRequest, SkillLearningPolicyRequest, SkillLearningPolicy, SkillLearningPolicyId,
   SkillLearningAutomaticRequest, SkillLearningOptIn, SkillLearningCleanupRequest, SkillLearningRevokePolicyRequest,
-} from '@deepseek-ai/dsh-skill-library/types'
+} from '@yharness/skill-library/types'
 
 type Method<Request, Value> = (request: Request) => Promise<RemoteResult<Value>>
 

@@ -1,8 +1,8 @@
 /** Optional native loop controls; mounting detects a stored sign-in and publishes the catalog. */
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Button, DisclosureRow, IconChecklistOutlineRegular, IconInfoOutlineRegular, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { CodexBackendModelView, CodexBackendView } from '@deepseek-ai/dsh-api-remotes/client'
+import { Button, DisclosureRow, IconChecklistOutlineRegular, IconInfoOutlineRegular, Tag } from '@yharness/client-ui-primitives'
+import type { CodexBackendModelView, CodexBackendView } from '@yharness/api-remotes/client'
 import type { ModelsOperations } from './operations.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'

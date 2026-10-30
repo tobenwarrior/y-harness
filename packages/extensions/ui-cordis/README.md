@@ -3,7 +3,7 @@ description: "Historical Cordis cards and controls for process-local runner defi
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-cordis
+# @yharness/client-ui-cordis
 
 ## Summary
 
