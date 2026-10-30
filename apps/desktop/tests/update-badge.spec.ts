@@ -112,11 +112,11 @@ describe('updateBadgeDemandsAttention', () => {
 
 describe('deriveBuildFlavor', () => {
   it('treats a .dev. bundle identifier as a development build', () => {
-    // The running bundle id is com.deepseek.harness.dev.659405b693f0.
+    // The running bundle id is com.yharness.desktop.dev.659405b693f0.
     expect(deriveBuildFlavor({
       isPackaged: true,
       updateConfigPresent: true,
-      bundleId: 'com.deepseek.harness.dev.659405b693f0',
+      bundleId: 'com.yharness.desktop.dev.659405b693f0',
     })).toBe('development')
   })
 

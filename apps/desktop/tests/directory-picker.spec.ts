@@ -67,16 +67,18 @@ describe('Desktop directory picker', () => {
 
   it('rejects other windows, subframes, shell pages, remote pages, and missing windows', async () => {
     const f = fixture()
-    await expect(f.handler({ ...f.event, sender: {} } as IpcMainInvokeEvent)).rejects.toThrow('unowned renderer')
-    await expect(f.handler({ ...f.event, senderFrame: {} } as IpcMainInvokeEvent)).rejects.toThrow('unowned renderer')
+    await expect(f.handler({ ...f.event, sender: {} } as IpcMainInvokeEvent)).rejects.toThrow(
+      'Y Harness desktop: rejected directory picker from an unowned renderer')
+    await expect(f.handler({ ...f.event, senderFrame: {} } as IpcMainInvokeEvent)).rejects.toThrow(
+      'Y Harness desktop: rejected directory picker from an unowned renderer')
     for (const url of ['dsh-app://shell/startup.html', 'https://example.com/', 'http://127.0.0.1/']) {
       f.frame.url = url
-      await expect(f.handler(f.event)).rejects.toThrow('unowned renderer')
+      await expect(f.handler(f.event)).rejects.toThrow('Y Harness desktop: rejected IPC from an unowned renderer')
     }
     f.window.isDestroyed.mockReturnValue(true)
-    await expect(f.handler(f.event)).rejects.toThrow('unowned renderer')
+    await expect(f.handler(f.event)).rejects.toThrow('Y Harness desktop: rejected directory picker from an unowned renderer')
     f.detach()
-    await expect(f.handler(f.event)).rejects.toThrow('unowned renderer')
+    await expect(f.handler(f.event)).rejects.toThrow('Y Harness desktop: rejected directory picker from an unowned renderer')
     expect(electron.showOpenDialog).not.toHaveBeenCalled()
   })
 })

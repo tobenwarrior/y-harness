@@ -2117,7 +2117,7 @@ describe('desktop main startup', () => {
       level: 'error', message: 'client-modules: bundle script plugins/??a/client.js&rev=1 failed to load',
       sourceId: 'dsh-app://app/assets/entry.js', lineNumber: 12,
     })
-    host.onFailure!(new Error('dsh desktop host exited with 1: fatal uncaught exception: ENOENT'))
+    host.onFailure!(new Error('Y Harness desktop host exited with 1: fatal uncaught exception: ENOENT'))
     await host.stopping.promise
     expect(writeCrashReport).toHaveBeenCalledOnce()
     const [directory, report] = vi.mocked(writeCrashReport).mock.calls[0]!
@@ -2238,7 +2238,21 @@ describe('desktop main startup', () => {
     await import('../src/main.ts')
     await harness.dialogShown.promise
     const options = harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions
-    expect(options.detail).toContain('DSH_DESKTOP_PRIMARY_RUNTIME_DIR is required for an unpackaged launch')
+    expect(options.detail).toContain('Y Harness could not find its desktop runtime. Open Y Harness using its launcher and try again.')
+    expect(options.detail).not.toContain('DSH_DESKTOP_PRIMARY_RUNTIME_DIR')
+    expect(harness.hosts).toHaveLength(0)
+  })
+
+  it('does not expose the internal host inspection setting in an invalid-port diagnostic', async () => {
+    harness.app.isPackaged = false
+    vi.stubEnv('DSH_DESKTOP_HOST_INSPECT_PORT', '0')
+    await import('../src/main.ts')
+    await harness.preparing.promise
+    harness.prepared.resolve()
+    await harness.dialogShown.promise
+    const detail = (harness.dialog.showMessageBox.mock.calls[0]![0] as MessageBoxOptions).detail
+    expect(detail).toContain('Y Harness desktop host inspection port must be an integer from 1 through 65535')
+    expect(detail).not.toContain('DSH_DESKTOP_HOST_INSPECT_PORT')
     expect(harness.hosts).toHaveLength(0)
   })
 

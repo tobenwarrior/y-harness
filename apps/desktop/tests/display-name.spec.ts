@@ -38,14 +38,14 @@ it('refreshes only the development bundle display label when the configuration c
   const electron = join(source, 'MacOS', 'Electron')
   writeFileSync(electron, '')
   const options = { electron, appRoot: '/workspace/y-harness', directory: join(root, 'development'),
-    home: '/state/harness', userData: '/state/electron', mainPort: 9229, rendererPort: 9222,
+    home: '/state/harness', userData: '/state/electron', primaryRuntime: '/state/runtime', mainPort: 9229, rendererPort: 9222,
     hostPort: 9230, openDevtools: '0' }
   const executable = await prepareDevelopmentApp(options)
   const bundle = join(options.directory, 'Y harness.app', 'Contents')
   const original = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
   const launcher = readFileSync(executable, 'utf8')
   expect(executable).toBe(join(bundle, 'MacOS', 'YHarness'))
-  expect(original).toMatchObject({ CFBundleIdentifier: 'com.deepseek.harness.dev.5b4a44c1d7c6',
+  expect(original).toMatchObject({ CFBundleIdentifier: 'com.yharness.desktop.dev.5b4a44c1d7c6',
     CFBundleName: 'Y harness', CFBundleDisplayName: 'Y Harness', CFBundleIconFile: 'electron.icns',
     CFBundleExecutable: 'YHarness', CFBundleURLTypes: [{ CFBundleURLName: 'Y harness',
       CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }] })
@@ -58,7 +58,7 @@ it('refreshes only the development bundle display label when the configuration c
   const branded = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
   expect(branded).toEqual({ ...original, CFBundleDisplayName: 'Atlas' })
   expect(readFileSync(executable, 'utf8')).toBe(launcher)
-  expect(JSON.parse(readFileSync(join(bundle, 'Resources', 'dsh-development.json'), 'utf8')))
+  expect(JSON.parse(readFileSync(join(bundle, 'Resources', 'yharness-development.json'), 'utf8')))
     .toMatchObject({ displayName: 'Atlas' })
   displayName.mockReturnValue(undefined)
   expect(await prepareDevelopmentApp(options)).toBe(executable)

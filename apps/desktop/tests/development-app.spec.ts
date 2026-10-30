@@ -22,8 +22,9 @@ function launcherFixture(openDevtools = '1', disableInspectors = false) {
   const launcher = join(root, 'launcher')
   const home = join(root, "home ' $(false)")
   const userData = join(root, 'browser data')
+  const primaryRuntime = join(root, 'runtime', 'primary')
   writeFileSync(launcher, developmentLauncher({ electron: binary, appRoot: root, directory: root,
-    home, userData, mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools,
+    home, userData, primaryRuntime, mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools,
     disableInspectors, managed: disableInspectors }, bundle))
   const environment = { ...process.env }
   delete environment.DSH_DESKTOP_MAIN_INSPECT_PORT
@@ -32,7 +33,7 @@ function launcherFixture(openDevtools = '1', disableInspectors = false) {
   delete environment.DSH_DESKTOP_OPEN_DEVTOOLS
   delete environment.DSH_DESKTOP_USER_DATA_DIR
   delete environment.DSH_DESKTOP_GITHUB_MANAGED
-  return { launcher, home, userData, root, environment, binary, bundle }
+  return { launcher, home, userData, primaryRuntime, root, environment, binary, bundle }
 }
 
 describe.skipIf(process.platform === 'win32')('development bundle executable', () => {
@@ -54,6 +55,54 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
     })
     expect(result.trimEnd().split('\n')).toEqual([fixture.home, '1', '0', '19330', '--inspect=127.0.0.1:19329',
       '--remote-debugging-port=19322', `--user-data-dir=${fixture.userData}`, fixture.root, '--test-launch-argument'])
+  })
+
+  it('routes a direct managed bundle launch back through the installed updater', () => {
+    const fixture = launcherFixture('0', true)
+    const appPath = join(fixture.root, 'Applications', 'Y Harness GitHub.app')
+    writeFileSync(fixture.launcher, developmentLauncher({
+      electron: fixture.binary, appRoot: fixture.root, directory: fixture.root, home: fixture.home,
+      userData: fixture.userData, primaryRuntime: fixture.primaryRuntime, mainPort: 9229, rendererPort: 9222,
+      hostPort: 9230, openDevtools: '0', disableInspectors: true, managed: true,
+      managedOpenCommand: '/usr/bin/printf', managedAppPath: appPath,
+    }, fixture.bundle))
+    const result = execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: fixture.environment })
+    expect(result).toBe(`${appPath}`)
+  })
+
+  it('persists the prepared runtime for a cold launch without inherited runtime state', () => {
+    const fixture = launcherFixture('0')
+    writeFileSync(fixture.binary, '#!/bin/sh\nprintf "%s\\n" "$DSH_DESKTOP_PRIMARY_RUNTIME_DIR"\n', { mode: 0o755 })
+    writeFileSync(fixture.launcher, developmentLauncher({
+      electron: fixture.binary, appRoot: fixture.root, directory: fixture.root, home: fixture.home,
+      userData: fixture.userData, primaryRuntime: fixture.primaryRuntime, mainPort: 9229, rendererPort: 9222,
+      hostPort: 9230, openDevtools: '0',
+    }, fixture.bundle))
+    const environment = { ...fixture.environment }
+    delete environment.DSH_DESKTOP_PRIMARY_RUNTIME_DIR
+    expect(execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: environment }))
+      .toBe(`${fixture.primaryRuntime}\n`)
+  })
+
+  it('preserves managed updater status through a cold launch', () => {
+    const fixture = launcherFixture('0', true)
+    writeFileSync(fixture.binary,
+      '#!/bin/sh\nprintf "%s\\n" "$DSH_DESKTOP_PRIMARY_RUNTIME_DIR" "$DSH_DESKTOP_GITHUB_STATUS" "$DSH_DESKTOP_GITHUB_BUILD_COMMIT"\n',
+      { mode: 0o755 })
+    writeFileSync(fixture.launcher, developmentLauncher({
+      electron: fixture.binary, appRoot: fixture.root, directory: fixture.root, home: fixture.home,
+      userData: fixture.userData, primaryRuntime: fixture.primaryRuntime, mainPort: 9229, rendererPort: 9222,
+      hostPort: 9230, openDevtools: '0', disableInspectors: true, managed: true,
+    }, fixture.bundle))
+    const status = join(fixture.root, 'managed', 'update-status.json')
+    const environment = {
+      ...fixture.environment,
+      DSH_DESKTOP_GITHUB_MANAGED: '1',
+      DSH_DESKTOP_GITHUB_STATUS: status,
+      DSH_DESKTOP_GITHUB_BUILD_COMMIT: 'a'.repeat(40),
+    }
+    expect(execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: environment }))
+      .toBe(`${fixture.primaryRuntime}\n${status}\n${'a'.repeat(40)}\n`)
   })
 
   it.skipIf(process.platform !== 'darwin')('normalizes ports and reuses the managed runtime', () => {
@@ -170,7 +219,9 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
 describe.skipIf(process.platform === 'win32')('managed development launcher', () => {
   it('omits all debugger ports when inspectors are disabled', () => {
     const fixture = launcherFixture('0', true)
-    const result = execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: fixture.environment })
+    const result = execFileSync('/bin/sh', [fixture.launcher], {
+      encoding: 'utf8', env: { ...fixture.environment, DSH_DESKTOP_GITHUB_MANAGED: '1' },
+    })
     expect(result.trimEnd().split('\n')).toEqual([fixture.home, '0', '0', '',
       `--user-data-dir=${fixture.userData}`, fixture.root])
   })

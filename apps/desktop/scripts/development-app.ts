@@ -16,12 +16,18 @@ export interface DevelopmentAppOptions {
   readonly directory: string
   readonly home: string
   readonly userData: string
+  /** Runtime directory prepared for this app's target, persisted for cold launches. */
+  readonly primaryRuntime: string
   readonly mainPort: number
   readonly rendererPort: number
   readonly hostPort: number
   readonly openDevtools: string
   readonly disableInspectors?: boolean
   readonly managed?: boolean
+  /** Test seam for the managed launch handoff command. */
+  readonly managedOpenCommand?: string
+  /** Test seam for the managed app path used by the launch handoff. */
+  readonly managedAppPath?: string
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'` }
@@ -38,7 +44,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
   const source = dirname(dirname(dirname(options.electron)))
   const bundle = join(options.directory, 'Y harness.app')
   const executable = join(bundle, 'Contents', 'MacOS', 'YHarness')
-  const stamp = join(bundle, 'Contents', 'Resources', 'dsh-development.json')
+  const stamp = join(bundle, 'Contents', 'Resources', 'yharness-development.json')
   const launcher = developmentLauncher(options, bundle)
   const identity = JSON.stringify({ ...options, displayName, launcher,
     plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8'),
@@ -48,7 +54,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
     execFileSync('/usr/bin/ditto', [source, bundle])
     const plist = join(bundle, 'Contents', 'Info.plist')
     const values = {
-      CFBundleIdentifier: `com.deepseek.harness.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
+      CFBundleIdentifier: `com.yharness.desktop.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
       CFBundleName: 'Y harness',
       CFBundleDisplayName: displayName ?? 'Y Harness',
       CFBundleExecutable: 'YHarness',
@@ -76,6 +82,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
 export function developmentLauncher(options: DevelopmentAppOptions, bundle: string): string {
   const environment = {
     DSH_HOME: options.home,
+    DSH_DESKTOP_PRIMARY_RUNTIME_DIR: options.primaryRuntime,
     DSH_DESKTOP_DEV_APP: options.managed === true ? '0' : '1',
     ELECTRON_ENABLE_LOGGING: '1',
   }
@@ -83,9 +90,18 @@ export function developmentLauncher(options: DevelopmentAppOptions, bundle: stri
     `--user-data-dir=${options.userData}`,
     options.appRoot,
   ]
+  const managedHandoff = options.managed === true ? [
+    'if [ "${DSH_DESKTOP_GITHUB_MANAGED-}" != "1" ]; then',
+    `  ${quote(options.managedOpenCommand ?? '/usr/bin/open')} ${options.managedAppPath === undefined
+      ? '"$HOME/Applications/Y Harness GitHub.app"'
+      : quote(options.managedAppPath)}`,
+    '  exit $?',
+    'fi',
+  ] : []
   if (options.disableInspectors === true) {
     return [
       '#!/bin/sh',
+      ...managedHandoff,
       'unset DSH_DESKTOP_HOST_INSPECT_PORT',
       'export DSH_DESKTOP_OPEN_DEVTOOLS=0',
       ...Object.entries(environment).map(([key, value]) => `export ${key}=${quote(value)}`),
@@ -96,6 +112,7 @@ export function developmentLauncher(options: DevelopmentAppOptions, bundle: stri
   }
   return [
     '#!/bin/sh',
+    ...managedHandoff,
     'debug_port_error() {',
     '  printf "desktop development: %s must be a decimal integer from 1 through 65535\\n" "$1" >&2',
     '  exit 1',

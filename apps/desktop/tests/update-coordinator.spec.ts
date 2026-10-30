@@ -70,8 +70,8 @@ describe('desktop release metadata', () => {
       nodeVersion: '24.17.0',
       pnpmVersion: '11.7.0',
     }
-    expect(() => parseDesktopRelease({ ...base, version: 'latest' })).toThrow(/invalid desktop release metadata/u)
-    expect(() => parseDesktopRelease({ ...base, hostProtocolVersion: 999 })).toThrow(/invalid desktop release metadata/u)
+    expect(() => parseDesktopRelease({ ...base, version: 'latest' })).toThrow('Y Harness desktop: invalid desktop release metadata')
+    expect(() => parseDesktopRelease({ ...base, hostProtocolVersion: 999 })).toThrow('Y Harness desktop: invalid desktop release metadata')
   })
 })
 
