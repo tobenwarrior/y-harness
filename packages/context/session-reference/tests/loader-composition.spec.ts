@@ -5,21 +5,21 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import * as systemPromptPlugin from '@deepseek-ai/dsh-system-prompt'
-import * as toolsPlugin from '@deepseek-ai/dsh-tools'
-import * as fsPlugin from '@deepseek-ai/dsh-fs-local'
-import * as toolFsPlugin from '@deepseek-ai/dsh-tool-fs'
-import * as sessionPlugin from '@deepseek-ai/dsh-session'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import * as queryPlugin from '@deepseek-ai/dsh-session-query-sqlite'
-import * as referencePlugin from '@deepseek-ai/dsh-session-reference'
-import * as spillPlugin from '@deepseek-ai/dsh-spill-local'
-import { sessionDir } from '@deepseek-ai/dsh-spill-local'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import { agentEvents, type Agent } from '@yharness/agent'
+import { createUserMessage, ToolCallId } from '@yharness/llm'
+import * as systemPromptPlugin from '@yharness/system-prompt'
+import * as toolsPlugin from '@yharness/tools'
+import * as fsPlugin from '@yharness/fs-local'
+import * as toolFsPlugin from '@yharness/tool-fs'
+import * as sessionPlugin from '@yharness/session'
+import { Session, SessionId } from '@yharness/session'
+import * as queryPlugin from '@yharness/session-query-sqlite'
+import * as referencePlugin from '@yharness/session-reference'
+import * as spillPlugin from '@yharness/spill-local'
+import { sessionDir } from '@yharness/spill-local'
 import * as sourcePlugin from './fixtures/source-session.ts'
 
 let context: Context | undefined
@@ -44,14 +44,14 @@ describe('session-reference real Loader composition', () => {
     await ctx.plugin(Loader)
     ctx.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
-      ['@deepseek-ai/dsh-session', sessionPlugin],
-      ['@deepseek-ai/dsh-system-prompt', systemPromptPlugin],
-      ['@deepseek-ai/dsh-tools', toolsPlugin],
-      ['@deepseek-ai/dsh-fs-local', fsPlugin],
-      ['@deepseek-ai/dsh-tool-fs', toolFsPlugin],
-      ['@deepseek-ai/dsh-session-query-sqlite', queryPlugin],
-      ['@deepseek-ai/dsh-session-reference', referencePlugin],
-      ['@deepseek-ai/dsh-spill-local', spillPlugin],
+      ['@yharness/session', sessionPlugin],
+      ['@yharness/system-prompt', systemPromptPlugin],
+      ['@yharness/tools', toolsPlugin],
+      ['@yharness/fs-local', fsPlugin],
+      ['@yharness/tool-fs', toolFsPlugin],
+      ['@yharness/session-query-sqlite', queryPlugin],
+      ['@yharness/session-reference', referencePlugin],
+      ['@yharness/spill-local', spillPlugin],
       ['./source-session.ts', sourcePlugin],
     ])
     ctx.loader.internal = {
@@ -122,7 +122,7 @@ describe('session-reference real Loader composition', () => {
       .map(body => body.split('\n').filter(line => line.startsWith('"'))
         .map(line => JSON.parse(line) as string).join(''))
     expect(messages).toEqual([
-      'EARLY_SOURCE_FACT\n' + 'Historical detail 界.\n'.repeat(30)
+      'EARLY_SOURCE_FACT\n' + 'Historical detail \u{754C}.\n'.repeat(30)
         + 'x'.repeat(4096) + 'GIANT_LINE_MIDDLE_FACT' + 'y'.repeat(4096),
       'LATEST_SOURCE_FACT\nThe captured answer is forty-two.',
     ])

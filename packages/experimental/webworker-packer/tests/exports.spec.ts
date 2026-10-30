@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { expect, it, type TestContext } from 'vitest'
 import { packVfsImage, type PackOptions } from '../src/pack.ts'
 
-const SUBJECT = '@deepseek-ai/dsh-image-export-fixture'
+const SUBJECT = '@yharness/image-export-fixture'
 
 function fixture(test: TestContext, face: unknown, source = 'export const value = 1'): PackOptions {
   const root = mkdtempSync(join(tmpdir(), 'dsh-image-exports-'))
@@ -56,6 +56,11 @@ it.for([
 it('rejects a runtime import of a declaration-only export', (test) => {
   const options = fixture(test, { types: './lib/index.d.ts' }, `export { value } from '${SUBJECT}/contract'`)
   expect(() => packVfsImage(options)).toThrow('does not export "./contract"')
+})
+
+it('rejects an unresolved request from a canonical first-party package', (test) => {
+  const options = fixture(test, { types: './lib/index.d.ts' }, "import '@yharness/missing-runtime'; export const value = 1")
+  expect(() => packVfsImage(options)).toThrow(/unresolvable module request/)
 })
 
 it('rejects an assembly entry that requests a declaration-only export', (test) => {

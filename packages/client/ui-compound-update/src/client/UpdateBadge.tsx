@@ -2,9 +2,9 @@
 import type { ReactNode } from 'react'
 import {
   IconDownloadOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+} from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-sidebar/client'
 import type { CompoundUpdateFace } from './controller.ts'
 import css from './UpdateBadge.module.css'
 

@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import LlmRuntime, { BlockAssembler } from '@deepseek-ai/dsh-llm'
-import AuthorizationService from '@deepseek-ai/dsh-authorization'
-import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import LlmRuntime, { BlockAssembler } from '@yharness/llm'
+import AuthorizationService from '@yharness/authorization'
+import LocalCredentialProvider from '@yharness/credentials-local'
 import * as LlmPiAi from '../src/index.ts'
 import { credentialStoreFrom, recordKeyFor } from '../src/auth.ts'
 import type { NousGrant } from '../src/nous-protocol.ts'
@@ -56,16 +56,16 @@ async function loadComposition(clientId?: string, existingDirectory?: string): P
   const configPath = join(dir, 'cordis.yml')
   await writeFile(configPath, [
     '- id: llm',
-    "  name: '@deepseek-ai/dsh-llm'",
+    "  name: '@yharness/llm'",
     '- id: credentials',
-    "  name: '@deepseek-ai/dsh-credentials-local'",
+    "  name: '@yharness/credentials-local'",
     '  config:',
     `    path: ${JSON.stringify(join(dir, '.credentials.yaml'))}`,
     '    watch: false',
     '- id: authorization',
-    "  name: '@deepseek-ai/dsh-authorization'",
+    "  name: '@yharness/authorization'",
     '- id: llm-pi-ai',
-    "  name: '@deepseek-ai/dsh-llm-pi-ai'",
+    "  name: '@yharness/llm-pi-ai'",
     '  config:',
     ...clientId === undefined ? [] : [`    nousClientId: ${JSON.stringify(clientId)}`],
     '    providers:',
@@ -84,10 +84,10 @@ async function loadComposition(clientId?: string, existingDirectory?: string): P
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-llm', LlmRuntime],
-    ['@deepseek-ai/dsh-credentials-local', LocalCredentialProvider],
-    ['@deepseek-ai/dsh-authorization', AuthorizationService],
-    ['@deepseek-ai/dsh-llm-pi-ai', LlmPiAi],
+    ['@yharness/llm', LlmRuntime],
+    ['@yharness/credentials-local', LocalCredentialProvider],
+    ['@yharness/authorization', AuthorizationService],
+    ['@yharness/llm-pi-ai', LlmPiAi],
   ])
   const internal: ModuleLoaderV2 = {
     version: 'v2', loadCache: new Map(),

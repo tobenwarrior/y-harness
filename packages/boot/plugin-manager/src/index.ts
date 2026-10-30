@@ -4,21 +4,21 @@ import { existsSync, readFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { Context } from '@deepseek-ai/cordis'
-import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
-import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
-import z from '@deepseek-ai/schemastery'
-import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
-import { pluginEntryId, readPluginInventory } from '@deepseek-ai/dsh-host-plugin-inventory'
+import { withFileLock, writeFileAtomic } from '@yharness/atomic-write'
+import { Context } from '@yharness/cordis'
+import type { EntryOptions } from '@yharness/cordis-plugin-loader'
+import type { PatchOptions } from '@yharness/cordis-plugin-include'
+import z from '@yharness/schemastery'
+import { TypertRemoteService, Remote } from '@yharness/typert-protocol'
+import { pluginEntryId, readPluginInventory } from '@yharness/host-plugin-inventory'
 import {
-  readPluginMeta, readProfileManifest, resolveBundleDir, loadOverlayPatches, composeEntries,
+  bundlePackageNameCandidates, readPluginMeta, readProfileManifest, resolveBundleDir, loadOverlayPatches, composeEntries,
   reconcileProfilePatches, readProfilePatches, OPTIONAL_BUNDLES, bundlePatchPaths,
   evaluatePluginCompatibility, readProfileCompatibility, readProfileVersionExemptions,
   setProfileVersionExemption, PROFILE_COMPATIBILITY_FILENAME,
-} from '@deepseek-ai/dsh-app-boot'
-import type {} from '@deepseek-ai/dsh-hmr'
-import type { ProfileContext, ProfileManifest } from '@deepseek-ai/dsh-app-boot'
+} from '@yharness/app-boot'
+import type {} from '@yharness/hmr'
+import type { ProfileContext, ProfileManifest } from '@yharness/app-boot'
 import { bundleManifest, readProfileRegistry, registryArguments, runProfilePnpm, saveManifest, viewProfilePackage } from './operations.ts'
 import { classifyInstallFailure } from './install-failure.ts'
 import { dependencySpec, InvalidInstallSpecError, parseInstallSpec, type ParsedInstallSpec } from './install-spec.ts'
@@ -64,15 +64,15 @@ export interface Config {
 const REGISTRY_URL = /^https?:\/\/\S+$/
 
 const protectedModules = new Set([
-  '@deepseek-ai/dsh-plugin-manager', '@deepseek-ai/cordis-plugin-loader',
-  '@deepseek-ai/cordis-plugin-include', '@deepseek-ai/dsh-api-gateway',
-  '@deepseek-ai/dsh-host-webserver', '@deepseek-ai/dsh-client-modules',
-  '@deepseek-ai/dsh-client-ui-settings-plugin-inventory', '@deepseek-ai/dsh-client-ui-plugin-manager',
-  '@deepseek-ai/dsh-host-plugin-inventory', '@deepseek-ai/dsh-typert-registry',
-  '@deepseek-ai/dsh-api-remotes',
-  '@deepseek-ai/cordis-plugin-timer', '@deepseek-ai/dsh-client-connection',
-  '@deepseek-ai/dsh-host-frontend-static', '@deepseek-ai/dsh-tools',
-  '@deepseek-ai/dsh-hmr',
+  '@yharness/plugin-manager', '@yharness/cordis-plugin-loader',
+  '@yharness/cordis-plugin-include', '@yharness/api-gateway',
+  '@yharness/host-webserver', '@yharness/client-modules',
+  '@yharness/client-ui-settings-plugin-inventory', '@yharness/client-ui-plugin-manager',
+  '@yharness/host-plugin-inventory', '@yharness/typert-registry',
+  '@yharness/api-remotes',
+  '@yharness/cordis-plugin-timer', '@yharness/client-connection',
+  '@yharness/host-frontend-static', '@yharness/tools',
+  '@yharness/hmr',
 ])
 
 /** The profile files an installation writes and a failed or cancelled one restores. */
@@ -88,6 +88,19 @@ function flatten(rows: EntryOptions[]): EntryOptions[] {
 
 /** Preserve the exact observed diagnostic, including non-Error failures. */
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error) }
+
+function samePackageName(left: string, right: string): boolean {
+  return bundlePackageNameCandidates(left).includes(right)
+}
+
+function hasPackageName(names: Iterable<string>, name: string): boolean {
+  for (const candidate of names) if (samePackageName(candidate, name)) return true
+  return false
+}
+
+function hasManifestName(manifest: object, name: string): boolean {
+  return Object.keys(manifest).some(candidate => samePackageName(candidate, name))
+}
 
 /** An expected refusal keeps its code; anything else becomes an operation error carrying its exact diagnostic. */
 function managementError(error: unknown): ManagementError {
@@ -165,7 +178,7 @@ function parsedForRegistry(spec: string): ParsedInstallSpec {
   }
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Persistent management of the current profile's composition and packages. */
     pluginManager: PluginManager
@@ -260,7 +273,7 @@ export class PluginManager extends TypertRemoteService {
       const actual = [...this.ctx.loader.entries()].find(row => row.id === entry.entryId)
       const candidates = rows.filter(row => row.id === actual?.options.id)
       const candidate = candidates[0]
-      if (protectedModules.has(entry.moduleName) || entry.entryId === this.ownerEntryId) {
+      if (hasPackageName(protectedModules, entry.moduleName) || entry.entryId === this.ownerEntryId) {
         return { ...entry, readOnlyReason: 'management-required' as const }
       }
       if (candidate === undefined || candidates.length > 1 || candidate.name !== entry.moduleName
@@ -284,20 +297,27 @@ export class PluginManager extends TypertRemoteService {
     const recorded = manifest.dependencies ?? {}
     const dependencies = Object.keys(recorded)
     const installation = JSON.parse(readFileSync(this.profile.installAnchor, 'utf8')) as InstallationManifest
-    const names = [...new Set([...selected, ...dependencies, ...Object.keys(installation.dependencies ?? {})])]
+    const installationNames = Object.keys(installation.dependencies ?? {})
+    const names: string[] = []
+    for (const candidate of [...selected, ...dependencies, ...installationNames]) {
+      if (!hasPackageName(names, candidate)) names.push(candidate)
+    }
     const bundles: BundleInfo[] = []
     for (const name of names) {
-      const installed = dependencies.includes(name)
-      const optional = OPTIONAL_BUNDLES.includes(name)
-      const enabled = selected.includes(name)
-      const shipped = Object.hasOwn(installation.dependencies ?? {}, name)
+      const installed = hasPackageName(dependencies, name)
+      const optional = hasPackageName(OPTIONAL_BUNDLES, name)
+      const enabled = hasPackageName(selected, name)
+      const shipped = hasPackageName(installationNames, name)
       // Bundle resolution reads the installation first, so a profile dependency the installation manifest also names,
       // like one it forbids removing, is not the loaded copy.
       const owned = installed && !shipped
       // A selection neither the profile nor the installation holds, such as a retired bundle, is removed by deselecting it.
       const removable = owned || (enabled && !installed && !shipped)
+      const dependencyName = dependencies.find(candidate => samePackageName(candidate, name))
       const sourceOf = (packageName?: string): { source?: string } =>
-        owned ? { source: dependencySpec(name, recorded[name] as string, this.profile.dir, packageName) } : {}
+        owned && dependencyName !== undefined
+          ? { source: dependencySpec(dependencyName, recorded[dependencyName] as string, this.profile.dir, packageName) }
+          : {}
       const readOnlyReason = this.protectsManager(name) ? 'management-required' as const : undefined
       try {
         const info = bundleManifest(name, this.profile.dir, this.profile.installAnchor)
@@ -572,7 +592,7 @@ export class PluginManager extends TypertRemoteService {
       result.stage = 'enable'
       return this.configure(async () => {
         if (options?.enabled !== false) await this.selectBundle(name, true)
-        if (Object.hasOwn(before, name)) return 'restart-required'
+        if (hasManifestName(before, name)) return 'restart-required'
         await this.refreshPackages()
         if (options?.enabled !== false) result.warnings = await this.reload()
       })
@@ -616,10 +636,12 @@ export class PluginManager extends TypertRemoteService {
   @Remote
   removeBundle(name: string): Promise<ChangeResult> {
     return this.change(async (result) => {
+      let installedName = name
       const installed = await this.configure(async () => {
-        const bundle = (await this.listBundles()).find(item => item.name === name)
+        const bundle = (await this.listBundles()).find(item => samePackageName(item.name, name))
         if (bundle === undefined || !bundle.removable) throw new ManagementFailure('not-removable')
-        if (this.ownerContext.get('hmr') === undefined && (this.profile.startedBundles.includes(name)
+        installedName = bundle.name
+        if (this.ownerContext.get('hmr') === undefined && (hasPackageName(this.profile.startedBundles, name)
           || (bundle.error === undefined && this.bundleRows(name).some(row => [...this.ctx.loader.entries()]
             .some(entry => entry.options.id === row.id && entry.fiber !== undefined))))) {
           throw new ManagementFailure('stop-profile')
@@ -636,7 +658,7 @@ export class PluginManager extends TypertRemoteService {
         return bundle.installed
       })
       if (!installed) return
-      result.packageResult = await this.runPnpm(['remove', name])
+      result.packageResult = await this.runPnpm(['remove', installedName])
       if (result.packageResult.exitCode !== 0 || result.packageResult.timedOut === true) {
         throw new Error(result.packageResult.output)
       }
@@ -699,7 +721,6 @@ export class PluginManager extends TypertRemoteService {
       this.ownerContext.emit('plugin-manager/install-log', {
         ...identity, jobId, argv, cwd, stream: 'stdout', text: '', exitCode: signal?.aborted === true ? null : result.exitCode,
       })
-      // A terminated run keeps its own kind even when pnpm trapped the signal and exited 0.
       if (result.exitCode === 0 && result.timedOut !== true) return result
       return {
         ...result,
@@ -734,7 +755,8 @@ export class PluginManager extends TypertRemoteService {
   private async selectBundle(name: string, enabled: boolean): Promise<void> {
     const manifest = readProfileManifest('dsh', this.profile.dir)
     const previous = manifest.dsh?.profile?.bundles ?? []
-    if (enabled || !previous.includes(name)) {
+    const selected = hasPackageName(previous, name)
+    if (enabled || !selected) {
       const metadata = bundleManifest(name, this.profile.dir, this.profile.installAnchor)
       if (metadata === undefined) throw new ManagementFailure('not-bundle')
       if (enabled) {
@@ -743,10 +765,10 @@ export class PluginManager extends TypertRemoteService {
         this.bundleRows(name)
       }
     }
-    if (!enabled && previous.includes(name)) {
+    if (!enabled && selected) {
       if (this.protectsManager(name)) throw new ManagementFailure('management-required')
     }
-    const bundles = enabled ? [...previous, ...previous.includes(name) ? [] : [name]] : previous.filter(item => item !== name)
+    const bundles = enabled ? [...previous, ...selected ? [] : [name]] : previous.filter(item => !samePackageName(item, name))
     if (JSON.stringify(previous) === JSON.stringify(bundles)) return
     manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } }
     await saveManifest(this.profile.dir, manifest)
@@ -761,13 +783,13 @@ export class PluginManager extends TypertRemoteService {
   }
 
   private protectsManager(name: string): boolean {
-    if (this.managementBundles.has(name)) return true
+    if (hasPackageName(this.managementBundles, name)) return true
     let rows: EntryOptions[]
     try { rows = this.bundleRows(name) } catch (_error) {
       // Unreadable bundles contribute no new rows; listBundles reports their diagnostics.
       return false
     }
-    const protectedBundle = rows.some(row => protectedModules.has(row.name) || `include:${row.id}` === this.ownerEntryId)
+    const protectedBundle = rows.some(row => hasPackageName(protectedModules, row.name) || `include:${row.id}` === this.ownerEntryId)
     if (protectedBundle) this.managementBundles.add(name)
     return protectedBundle
   }
@@ -782,7 +804,7 @@ export class PluginManager extends TypertRemoteService {
     if (this.ownerContext.get('hmr') === undefined) {
       const selected = readProfileManifest('dsh', this.profile.dir).dsh?.profile?.bundles ?? []
       // Deselected startup bundles still run without HMR and need the existing package table.
-      if (this.profile.startedBundles.some(name => !selected.includes(name))) return
+      if (this.profile.startedBundles.some(name => !hasPackageName(selected, name))) return
     }
     await this.ownerContext.get('pluginPackages')?.refresh()
   }

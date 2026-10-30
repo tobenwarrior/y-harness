@@ -1,22 +1,22 @@
 import { MESSAGES_RESPONSE } from './messages-response.ts'
-import { createUserMessage, LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter, ReasoningEffortId } from '@yharness/llm'
+import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@yharness/llm'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { Context } from '@yharness/cordis'
+import AgentRegistry, { type Agent, type AgentHandle } from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
+import { mountAgentLoopTestDependencies } from '@yharness/agent-loop-testkit'
 
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
-import SubagentRuntime, { type SubagentResult, type SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
-import type { JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol'
+import SessionStore, { SessionId } from '@yharness/session'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
+import * as LlmDeepSeek from '@yharness/llm-deepseek-api-key'
+import SubagentRuntime, { type SubagentResult, type SubagentRunEndInfo } from '@yharness/subagent'
+import type { JsonRpcTransportPeer } from '@yharness/sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '../src/index.ts'
 
 class FakeTransport implements JsonRpcTransportPeer {
@@ -1083,7 +1083,7 @@ describe('HarnessSdkJsonRpcServer', () => {
 
       await expect(server.handleRequest('does/not/exist', {}))
         .rejects
-        .toThrow('unknown DeepSeek Harness SDK runtime method: does/not/exist')
+        .toThrow('unknown Y Harness SDK runtime method: does/not/exist')
 
       await server.shutdown()
     } finally {

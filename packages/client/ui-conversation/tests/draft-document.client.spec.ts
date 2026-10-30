@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /** Structured draft import, persistence, and reference restoration through the real input shell. */
 import { setImmediate } from 'node:timers/promises'
-import { Context } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { Context } from '@yharness/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
 import { $getRoot, $nodesOfType, REDO_COMMAND, UNDO_COMMAND } from 'lexical'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { DraftReference, DraftSnapshot, Occurrence } from '../src/client/contract/draft-editor.ts'
@@ -22,8 +22,8 @@ const folder: ReferenceContent = {
   source: 'reference', ref: '@src/', label: 'src/', appearance: 'folder', clipboardText: '@src/',
 }
 const session: ReferenceContent = {
-  source: 'reference', ref: '@[研究记录](dsh-session:c291cmNl)', label: '研究记录', appearance: 'session',
-  clipboardText: '@[研究记录](dsh-session:c291cmNl)',
+  source: 'reference', ref: '@[\u{7814}\u{7A76}\u{8BB0}\u{5F55}](dsh-session:c291cmNl)', label: '\u{7814}\u{7A76}\u{8BB0}\u{5F55}', appearance: 'session',
+  clipboardText: '@[\u{7814}\u{7A76}\u{8BB0}\u{5F55}](dsh-session:c291cmNl)',
 }
 
 function documentOf(...parts: readonly (string | ReferenceContent)[]): DraftSnapshot {
@@ -100,7 +100,7 @@ function expectInitializationBlocked(shell: SessionInputShell): void {
 }
 
 describe('draft document values', () => {
-  it.each(['', 'plain text', 'first\nsecond\n', '\n\n', '🙂 中文 e\u0301\n第二行'])('round-trips plain text %j', (text) => {
+  it.each(['', 'plain text', 'first\nsecond\n', '\n\n', '🙂 \u{4E2D}\u{6587} e\u0301\n\u{7B2C}\u{4E8C}\u{884C}'])('round-trips plain text %j', (text) => {
     const expected = { text, references: [] }
     expect(resolveDraftInput(text)).toEqual(expected)
     expect(parseStoredDraft(text)).toEqual(expected)
@@ -192,7 +192,7 @@ describe('draft document values', () => {
 
 describe('draft documents in the input shell', () => {
   it('imports file, folder, session, repeated, and invalid references on the first document', () => {
-    const draft = documentOf('🙂 文件 ', file, '\n目录 ', folder, '\n会话 ', session, ' 再次 ', file, ' ', {
+    const draft = documentOf('🙂 \u{6587}\u{4EF6} ', file, '\n\u{76EE}\u{5F55} ', folder, '\n\u{4F1A}\u{8BDD} ', session, ' \u{518D}\u{6B21} ', file, ' ', {
       ...session, invalid: true,
     })
     const shell = makeShell()

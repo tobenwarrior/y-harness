@@ -92,7 +92,7 @@ function open(): HTMLDialogElement {
 describe('documentation Mermaid viewer', () => {
   it.each([
     { heading: 'Agent lifecycle', language: 'en-US', expected: 'Agent lifecycle' },
-    { heading: '  \n  ', language: 'zh-CN', expected: '图表查看器' },
+    { heading: '  \n  ', language: 'zh-CN', expected: 'Diagram viewer' },
     { heading: null, language: 'en-US', expected: 'Diagram viewer' },
   ])('uses the visible title as the dialog name for $heading', ({ heading, language, expected }) => {
     render()
@@ -250,9 +250,9 @@ describe('documentation Mermaid viewer', () => {
     open()
     locale = 'zh-CN'
     viewer.refresh()
-    getByRole(document.body, 'button', { name: '全屏查看图表' }).click()
-    expect(getByRole(document.body, 'dialog', { name: '图表查看器' })).toBeTruthy()
-    getByRole(document.body, 'button', { name: '关闭' }).click()
+    getByRole(document.body, 'button', { name: 'View diagram fullscreen' }).click()
+    expect(getByRole(document.body, 'dialog', { name: 'Diagram viewer' })).toBeTruthy()
+    getByRole(document.body, 'button', { name: 'Close' }).click()
     expect(panzoom.destroy).toHaveBeenCalledTimes(3)
   })
 

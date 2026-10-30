@@ -52,6 +52,17 @@ describe('plugin compatibility', () => {
     expect(check({})).toBeUndefined()
   })
 
+  it('checks canonical Y Harness peers while preserving provider and unrelated names', () => {
+    expect(check({
+      '@yharness/cli': runtime,
+      '@yharness/session': runtime,
+      '@yharness/llm-deepseek': runtime,
+      '@deepseek-ai/cordis': '^99.0.0',
+    })).toBeUndefined()
+    expect(check({ '@yharness/session': '^0.2.0' })?.peers)
+      .toEqual({ '@yharness/session': '^0.2.0' })
+  })
+
   it.each(['*', '^0.1.0', '~0.1.0', '>=0.1.0 <0.2.0', '0.1.x', '0.1.0 - 0.1.9', '^0.2.0 || ^0.1.0', runtime])(
     'includes prereleases in supported semver range %s', (range) => {
       expect(check({ '@deepseek-ai/dsh': range, '@deepseek-ai/dsh-session': range })).toBeUndefined()

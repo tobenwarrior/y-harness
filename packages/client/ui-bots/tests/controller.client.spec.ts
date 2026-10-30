@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { BotId, type BotView } from '@deepseek-ai/dsh-bots/client'
+} from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { BotId, type BotView } from '@yharness/bots/client'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
 function bot(id: string, sessionId: string, patch: Partial<BotView> = {}): BotView {

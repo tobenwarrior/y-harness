@@ -1,7 +1,7 @@
 /** Terminal screen continuity and process ownership under real output scheduling. */
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SubprocessOutcome, SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessOutcome, SubprocessTerminalHandle } from '@yharness/subprocess'
 import { BrowserTerminal } from '../src/terminal.ts'
 import { TerminalFollower } from '../src/stream.ts'
 import type { TerminalAttachmentId, TerminalFrame, WebTerminalId, WebTerminalInfo } from '../src/types.ts'
@@ -58,11 +58,11 @@ describe('BrowserTerminal', () => {
   it('preserves split UTF-8, gives the newest attachment input, and resizes both PTY and recovery screen', async () => {
     const { terminal, output, handle } = fixture()
     const first = await attach(terminal)
-    const encoded = Buffer.from('终端')
+    const encoded = Buffer.from('\u{7EC8}\u{7AEF}')
     output.write(encoded.subarray(0, 2))
     await expect.poll(() => output.readableLength).toBe(0)
     output.write(encoded.subarray(2))
-    expect(await readFrame(first.iterator)).toMatchObject({ type: 'output', data: '终端' })
+    expect(await readFrame(first.iterator)).toMatchObject({ type: 'output', data: '\u{7EC8}\u{7AEF}' })
     const second = await attach(terminal, 'second')
     await expect(terminal.write(attachment('first'), 'ignored')).rejects.toMatchObject({ code: 'terminal/control-unavailable', details: { reason: 'read-only' } })
     await terminal.write(attachment('second'), '\t')
@@ -199,8 +199,8 @@ describe('BrowserTerminal', () => {
   it('preserves a leading UTF-8 BOM in the terminal output stream', async () => {
     const { terminal, output } = fixture()
     const first = await attach(terminal)
-    output.write(Buffer.from('\uFEFF终端'))
-    expect(await readFrame(first.iterator)).toMatchObject({ type: 'output', data: '\uFEFF终端' })
+    output.write(Buffer.from('\uFEFF\u{7EC8}\u{7AEF}'))
+    expect(await readFrame(first.iterator)).toMatchObject({ type: 'output', data: '\uFEFF\u{7EC8}\u{7AEF}' })
   })
 
   it('shares concurrent close attempts and permits retry after termination fails', async () => {

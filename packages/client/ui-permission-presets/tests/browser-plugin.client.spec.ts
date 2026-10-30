@@ -7,27 +7,27 @@
  * disposal removes the contribution (HMR safety). The same plugin registers
  * its Settings row and invalidates that row on host settings changes.
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { remoteDefaultResponses } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/remote-default-responses.ts'
-import { RemoteMock } from '@deepseek-ai/dsh-remote-mock'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { CommandDecoration, PopupSelectSpec } from '@deepseek-ai/dsh-client-ui-commands/client'
-import { PopupSelectController } from '@deepseek-ai/dsh-client-ui-commands/client'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import type { SessionId } from '@yharness/session/types'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { TestRemote } from '@yharness/client-test-runtime'
+import { remoteDefaultResponses } from '@yharness/client-test-runtime/src/assembly/remote-default-responses.ts'
+import { RemoteMock } from '@yharness/remote-mock'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import type { CommandDecoration, PopupSelectSpec } from '@yharness/client-ui-commands/client'
+import { PopupSelectController } from '@yharness/client-ui-commands/client'
 import type {
   PermissionCatalog, PermissionSelection,
-} from '@deepseek-ai/dsh-permission-presets/client'
+} from '@yharness/permission-presets/client'
 import {
   PermissionRow, type PermissionRowInjected,
 } from '../src/client/PermissionRow.tsx'
 import { PermissionSelect } from '../src/client/PermissionSelect.tsx'
 import type { PermissionSelectInjected } from '../src/client/PermissionSelect.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { accessEn, accessZh, en, zh } from '../src/client/locales.ts'
+import { accessEn, en } from '../src/client/locales.ts'
 
 const sid = (k: string): SessionId => k as SessionId
 
@@ -225,13 +225,13 @@ describe('ui-permission browser plugin', () => {
     })
     b.locale.setLocale('zh')
     const localized = await b.popup().options(proj, new AbortController().signal)
-    expect(localized.map(option => option.label)).toEqual([zh['preset.readOnly'], zh['preset.workspaceWrite'], zh['preset.fullAccess'], accessZh['auto.label']])
+    expect(localized.map(option => option.label)).toEqual([en['preset.readOnly'], en['preset.workspaceWrite'], en['preset.fullAccess'], accessEn['auto.label']])
     expect(localized.find(option => option.id === 'danger-full-access')?.confirmation).toEqual({
-      title: '确认启用完全权限？',
-      description: accessZh['confirm.description'],
-      acknowledgeLabel: '我已了解风险，并愿意继续',
-      cancelLabel: '取消',
-      confirmLabel: '启用完全权限',
+      title: en['confirm.title'],
+      description: accessEn['confirm.description'],
+      acknowledgeLabel: en['confirm.acknowledge'],
+      cancelLabel: en['confirm.cancel'],
+      confirmLabel: en['confirm.enable'],
     })
     b.setCatalog({ ...CATALOG, options: [
       { value: 'workspace-write', name: 'Project Files' },
@@ -309,7 +309,7 @@ describe('ui-permission browser plugin', () => {
     b.values.set(sid('s1'), { currentValue: 'workspace-write' })
     const options = await b.popup().options(proj, new AbortController().signal)
     expect(options.find(option => option.id === 'auto')?.detail)
-      .toBe('无沙箱运行；每次原生工具调用和 PTC 内层调用前由同一模型进行实验性审查。')
+      .toBe(accessEn['auto.description'])
   })
 
   it('a pick submits the /permission line; rejection and unmatched throw', async () => {

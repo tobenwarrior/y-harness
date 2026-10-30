@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-modules",
+  "name": "@yharness/client-modules",
   "description": "Client module system, dual-face: node half composes the __DSH_BOOT__ entry graph (incremental dsh.client scan, bundle route, index tap, webPlugins service); browser half is the lazy-CJS module table the vendored cordis Loader consumes as its internal seam",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/modules"
   },
   "type": "module",
@@ -38,11 +38,11 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-package-manifest": "workspace:*",
-    "@deepseek-ai/dsh-client-store": "workspace:*"
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/package-manifest": "workspace:*",
+    "@yharness/client-store": "workspace:*"
   },
   "files": [
     "lib/index.js",
@@ -50,6 +50,6 @@
     "lib/types/**/*.d.ts"
   ],
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

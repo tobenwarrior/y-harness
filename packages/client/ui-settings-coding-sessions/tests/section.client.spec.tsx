@@ -7,9 +7,9 @@ import { CodingSessionsController } from '../src/client/controller.ts'
 import { CodingSessionsSection } from '../src/client/CodingSessionsSection.tsx'
 import type { CodingSessionsSectionProps } from '../src/client/CodingSessionsSection.tsx'
 import { en } from '../src/client/locales.ts'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionExecutionSession, CodingSessionMirror } from '@deepseek-ai/dsh-coding-session/types'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import { brandString } from '@yharness/brand'
+import type { CodingSessionExecutionSession, CodingSessionMirror } from '@yharness/coding-session/types'
 import { fixtureApi, mirror } from './fixtures.client.ts'
 const dictionary = { ...commonEn, ...en }
 const t: CodingSessionsSectionProps['t'] = key => dictionary[key]

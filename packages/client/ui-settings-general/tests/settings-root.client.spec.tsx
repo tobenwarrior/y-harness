@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
-import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ShortcutCatalogEntry, ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useEffect, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createSettingsShellStore } from '../src/client/shell-store.ts'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import { SessionId } from '@yharness/session/types'
 import type { SettingsRootComponentProps } from '../src/client/shell-contract.ts'
 import { SettingsRoot } from '../src/client/SettingsRoot.tsx'
 import { en, zh } from '../src/client/locales.ts'
 import type { DesktopUpdateView } from '../src/types.ts'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal } from '@yharness/client-ui-primitives'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined, reload: () => {} })) as GlobalStandardProps['useResource']
@@ -173,18 +173,18 @@ describe('SettingsRoot trigger', () => {
     const presentation = { phase: 'installing' as const, version: '1.0.1' }
     const f = mount({ dictionary: zh, connectionState: 'connecting',
       desktopUpdate: { failed: false, opening: false, presentation } })
-    expect(screen.getByRole('button', { name: '正在准备重启…' })).toBeTruthy()
-    expect(screen.queryByText('重新连接中')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Preparing to restart…' })).toBeTruthy()
+    expect(screen.queryByText('Reconnecting')).toBeNull()
     f.setDesktopUpdate({ failed: false, opening: false,
       presentation: { phase: 'error', version: presentation.version, failure: 'install' } })
-    expect(screen.queryByRole('button', { name: '重试更新' })).toBeNull()
-    expect(screen.getByText('重新连接中')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry update' })).toBeNull()
+    expect(screen.getByText('Reconnecting')).toBeTruthy()
   })
   it.each([
     { column: 'expanded English', wide: true, dictionary: en, name: 'Settings' },
     { column: 'collapsed English', wide: false, dictionary: en, name: 'Settings' },
-    { column: 'expanded Chinese', wide: true, dictionary: zh, name: '设置' },
-    { column: 'collapsed Chinese', wide: false, dictionary: zh, name: '设置' },
+    { column: 'expanded legacy alias', wide: true, dictionary: zh, name: 'Settings' },
+    { column: 'collapsed legacy alias', wide: false, dictionary: zh, name: 'Settings' },
   ])('uses the locale name and accepts keyboard-style activation for the $column trigger', ({
     wide, dictionary, name,
   }) => {
@@ -235,21 +235,21 @@ describe('SettingsRoot trigger', () => {
     vi.useFakeTimers()
     const mounted = mount({ dictionary: zh })
     mounted.setConnectionState('connecting')
-    const attempt = screen.getByRole('button', { name: '连接中断，正在重试，点击立即重连' })
-    expect(attempt.textContent).toContain('重新连接中')
+    const attempt = screen.getByRole('button', { name: 'Reconnecting, reconnect now' })
+    expect(attempt.textContent).toContain('Reconnecting')
     fireEvent.click(attempt)
     expect(mounted.reconnect).toHaveBeenCalledOnce()
-    expect(attempt.textContent).toContain('重新连接中')
+    expect(attempt.textContent).toContain('Reconnecting')
     // An attempt that resolves mid-hold keeps its label until the hold ends.
     act(() => { vi.advanceTimersByTime(100) })
     mounted.setConnectionState('connected')
-    expect(screen.getByRole('button', { name: '连接中断，正在重试，点击立即重连' }).textContent)
-      .toContain('重新连接中')
+    expect(screen.getByRole('button', { name: 'Reconnecting, reconnect now' }).textContent)
+      .toContain('Reconnecting')
     act(() => { vi.advanceTimersByTime(700) })
-    expect(screen.getByRole('status', { name: '连接成功' })).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'Connected' })).toBeTruthy()
     // The full two-second confirmation follows the delayed appearance.
     act(() => { vi.advanceTimersByTime(1_999) })
-    expect(screen.getByRole('status', { name: '连接成功' })).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'Connected' })).toBeTruthy()
     act(() => { vi.advanceTimersByTime(1) })
     act(() => { vi.advanceTimersByTime(150) })
     expect(screen.queryByRole('status')).toBeNull()

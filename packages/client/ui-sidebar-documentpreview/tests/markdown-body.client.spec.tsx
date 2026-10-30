@@ -2,7 +2,7 @@
 /** Markdown preview uses one accumulated document across page arrivals and EOF. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import { MarkdownBody, type MarkdownBodyProps } from '../src/client/markdown/MarkdownBody.tsx'
 import { en, zh } from '../src/client/markdown/locales.ts'
 import type { DocumentContent } from '../src/client/document/contract.ts'
@@ -125,8 +125,8 @@ describe('MarkdownBody', () => {
     expect(view.getByRole('button', { name: 'Copy' })).toBeDefined()
     dictionary = zh
     view.rerender(<MarkdownBody {...props(value, t)} />)
-    expect(view.getByRole('button', { name: '复制' })).toBeDefined()
-    expect(view.getByRole('heading', { name: '脚注' })).toBeDefined()
+    expect(view.getByRole('button', { name: 'Copy' })).toBeDefined()
+    expect(view.getByRole('heading', { name: 'Footnotes' })).toBeDefined()
   })
 
   it('renders leading YAML frontmatter as fields instead of a heading', async () => {

@@ -159,9 +159,9 @@ The labels below describe recorded activity, not successful outcomes. For exampl
 | Not closed, without a running tool | Use the analysis label even when completed-tool counts are nonzero. Standard may append running reasoning detail. |
 | Closed, zero categories | Use the completed-analysis label. |
 | Closed, one category | Use its closed label without a count. |
-| Closed, two categories | Join ranked labels with “and”. Chinese removes the second leading `已` only when both labels start with it. |
+| Closed, two categories | Join ranked labels with “and”; custom language packs may adjust repeated leading words. |
 | Closed, three categories | Join all three ranked labels with commas. |
-| Closed, more than three categories | Show the first three labels followed by “etc.” (`等` in Chinese). |
+| Closed, more than three categories | Show the first three labels followed by “etc.” |
 
 English lowercases the initial letter of joined labels after the first. Closing a group immediately selects the completed summary; the 150ms minimum applies to running-title changes, not to delaying completion. Detailed hides group headers in running Turns, including groups ended by a reply or steering before their Turn ends. Verbose also hides historical group headers.
 

@@ -3,7 +3,7 @@ description: "Shared subprocess and direct-agent harness for keyless example smo
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-loader-smoke
+# @yharness/loader-smoke
 
 ## Summary
 

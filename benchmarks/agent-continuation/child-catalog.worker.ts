@@ -1,13 +1,13 @@
 /** Cold parent-catalog observations beside fork children with tool-heavy inherited histories. */
 
 import { performance } from 'node:perf_hooks'
-import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
-import SubagentRuntime, { SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
+import { Context } from '@yharness/cordis'
+import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SessionQueryEngine from '@yharness/session-query'
+import SubagentRuntime, { SUBAGENT_DESCRIPTOR_VERSION } from '@yharness/subagent'
 import { assertBuiltBenchmarkRuntime } from '../support/built-worker.ts'
 import { PARENT_ID, syntheticHistory, TIME_ZERO, WORKLOAD } from './workload.ts'
 
@@ -99,8 +99,8 @@ async function run(root: string, mode: string): Promise<CatalogReport | { seeded
 }
 
 assertBuiltBenchmarkRuntime(import.meta.url, Object.fromEntries([
-  '@deepseek-ai/dsh-subagent', '@deepseek-ai/dsh-session-query',
-  '@deepseek-ai/dsh-session-persistence-jsonl',
+  '@yharness/subagent', '@yharness/session-query',
+  '@yharness/session-persistence-jsonl',
 ].map(name => [name, import.meta.resolve(name)])))
 const [root, mode] = process.argv.slice(2)
 if (root === undefined || (mode !== 'seed' && mode !== 'catalog')) {

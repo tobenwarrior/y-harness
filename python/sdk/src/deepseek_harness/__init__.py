@@ -1,11 +1,27 @@
-from .api import DeepSeekHarness, DeepSeekHarnessConfig, RunResult, Session
-from .client import HarnessClient, HarnessConfig
-from .errors import SdkProtocolError
-from .models import IncomingRequest, InitializeResponse, JsonObject, Notification, ServerInfo
+"""Compatibility imports for the pre-rebrand ``deepseek_harness`` module."""
+
+from yharness import (
+    DeepSeekHarness,
+    DeepSeekHarnessConfig,
+    HarnessClient,
+    HarnessConfig,
+    IncomingRequest,
+    InitializeResponse,
+    JsonObject,
+    Notification,
+    RunResult,
+    SdkProtocolError,
+    ServerInfo,
+    Session,
+    YHarness,
+    YHarnessConfig,
+)
 
 __all__ = [
     "DeepSeekHarness",
     "DeepSeekHarnessConfig",
+    "YHarness",
+    "YHarnessConfig",
     "Session",
     "RunResult",
     "HarnessClient",

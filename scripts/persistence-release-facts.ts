@@ -28,17 +28,17 @@ function structuralChanges(entry: PersistenceReleaseEntry, language: Language): 
   if (entry.record.previous === null) {
     return language === 'en'
       ? 'This entry establishes the historical comparison starting point. Its declaration lists every extracted root; it makes no compatibility judgment about earlier versions.'
-      : '本条记录建立历史比较起点。机器声明列出所有提取的根类型，不对更早版本作兼容性判断。'
+      : '\u672c\u6761\u8bb0\u5f55\u5efa\u7acb\u5386\u53f2\u6bd4\u8f83\u8d77\u70b9。\u673a\u5668\u58f0\u660e\u5217\u51fa\u6240\u6709\u63d0\u53d6\u7684\u6839\u7c7b\u578b，\u4e0d\u5bf9\u66f4\u65e9\u7248\u672c\u4f5c\u517c\u5bb9\u6027\u5224\u65ad。'
   }
   if (entry.differences.length === 0) {
     return language === 'en'
       ? 'Normalized root types and their transitive digests are unchanged from the preceding tag.'
-      : '规范化后的根类型及其传递引用摘要与前一 tag 相同。'
+      : '\u89c4\u8303\u5316\u540e\u7684\u6839\u7c7b\u578b\u53ca\u5176\u4f20\u9012\u5f15\u7528\u6458\u8981\u4e0e\u524d\u4e00 tag \u76f8\u540c。'
   }
   const summary = language === 'en'
     ? `Detected ${count(entry.record.changes.length, 'changed root')} and ${count(entry.differences.length, 'structural difference')}. The minimum below is calculated using current rules for comparison only; it does not assert historical compliance, migration correctness, or runtime compatibility.`
-    : `检测到 ${entry.record.changes.length} 个根类型变化、${entry.differences.length} 项结构差异。下表的最低要求按当前规则计算，只用于比较；不表示旧版本曾遵守这些规则，也不证明迁移或运行时兼容性。`
-  const heading = language === 'en' ? '| Path | Change | Current minimum |' : '| 路径 | 变化 | 当前最低要求 |'
+    : `\u68c0\u6d4b\u5230 ${entry.record.changes.length} \u4e2a\u6839\u7c7b\u578b\u53d8\u5316、${entry.differences.length} \u9879\u7ed3\u6784\u5dee\u5f02。\u4e0b\u8868\u7684\u6700\u4f4e\u8981\u6c42\u6309\u5f53\u524d\u89c4\u5219\u8ba1\u7b97，\u53ea\u7528\u4e8e\u6bd4\u8f83；\u4e0d\u8868\u793a\u65e7\u7248\u672c\u66fe\u9075\u5b88\u8fd9\u4e9b\u89c4\u5219，\u4e5f\u4e0d\u8bc1\u660e\u8fc1\u79fb\u6216\u8fd0\u884c\u65f6\u517c\u5bb9\u6027。`
+  const heading = language === 'en' ? '| Path | Change | Current minimum |' : '| \u8def\u5f84 | \u53d8\u5316 | \u5f53\u524d\u6700\u4f4e\u8981\u6c42 |'
   const rows = entry.differences.map((change) => {
     const path = change.path.replaceAll('`', '\\`').replaceAll('|', '\\|')
     return `| \`${path}\` | \`${change.kind}\` | \`${change.requiresVersionBump ? 'version-bump' : 'same-version'}\` |`
@@ -70,7 +70,7 @@ export function persistenceReleaseFactArtifacts(root: string, archive: Persisten
   const index = (language: Language): string => {
     const heading = language === 'en'
       ? '| Tag | Source date (UTC) | Session version | Roots / types | Changed roots |'
-      : '| Tag | 源码日期（UTC） | Session 版本 | 根 / 类型 | 变化根 |'
+      : '| Tag | \u6e90\u7801\u65e5\u671f（UTC） | Session \u7248\u672c | \u6839 / \u7c7b\u578b | \u53d8\u5316\u6839 |'
     const rows = archive.entries.map((entry, index) => {
       const tag = entry.release.tag
       const date = new Date(entry.release.sourceDate).toISOString().slice(0, 10)
@@ -102,7 +102,7 @@ export function persistenceReleaseFactArtifacts(root: string, archive: Persisten
       const path = `${entry.release.tag}${language === 'zh' ? '.zh' : ''}.md`
       const inventory = language === 'en'
         ? `${count(entry.roots.size, 'root')} / ${count(typeCounts[index] as number, 'type')}`
-        : `${entry.roots.size} 个根类型 / ${typeCounts[index]} 种类型`
+        : `${entry.roots.size} \u4e2a\u6839\u7c7b\u578b / ${typeCounts[index]} \u79cd\u7c7b\u578b`
       return replaceFacts(replaceFacts(read(path), 'inventory', inventory, path),
         'changes', '\n\n' + structuralChanges(entry, language) + '\n\n', path)
     }

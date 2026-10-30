@@ -1,11 +1,11 @@
 /** Product analytics policy adapter for the shared Cordis OTel service. */
-import { Context, Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
+import { Context, Service } from '@yharness/cordis'
+import z from '@yharness/schemastery'
 import { validateHeaderValue } from 'node:http'
 import { CompressionAlgorithm } from '@opentelemetry/otlp-exporter-base'
-import type { EventLogReporter, OTelEventRecord, OTelEventScalar } from '@deepseek-ai/dsh-otel'
+import type { EventLogReporter, OTelEventRecord, OTelEventScalar } from '@yharness/otel'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context { productTelemetry: ProductTelemetry }
 }
 
@@ -44,8 +44,8 @@ const positiveInteger = () => z.number().step(1).min(1).max(2_147_483_647)
 
 /** Loader validation and defaults for application compositions. */
 export const Config: z<Partial<Config>, Config> = z.object({
-  endpoint: z.string().default('https://dsh-otel-collector.deepseeksvc.com/v1/logs'),
-  channel: z.string().min(1).default('dsh_otel_report'),
+  endpoint: z.string().min(1).required(),
+  channel: z.string().min(1).default('yharness_otel_report'),
   serviceName: z.string().required(),
   serviceVersion: z.string().required(),
   compression: z.union(['none', 'gzip']),
@@ -64,14 +64,22 @@ export default class ProductTelemetry extends Service {
   private readonly reporter: EventLogReporter
 
   constructor(ctx: Context, config: Config) {
+    const endpointValue = config.endpoint.trim()
+    if (endpointValue.length === 0) {
+      throw new Error('product-telemetry-otel: endpoint must be a non-empty HTTP(S) URL')
+    }
+    const channel = config.channel.trim()
+    if (channel.length === 0) {
+      throw new Error('product-telemetry-otel: channel must be a non-empty HTTP header value')
+    }
     let endpoint: URL
     try {
-      endpoint = new URL(config.endpoint)
+      endpoint = new URL(endpointValue)
     } catch (cause) {
       throw new Error('product-telemetry-otel: endpoint must be a valid HTTP(S) URL', { cause })
     }
     try {
-      validateHeaderValue('x-channel', config.channel)
+      validateHeaderValue('x-channel', channel)
     } catch (cause) {
       throw new Error('product-telemetry-otel: channel must be a valid HTTP header value', { cause })
     }
@@ -84,11 +92,11 @@ export default class ProductTelemetry extends Service {
     super(ctx, 'productTelemetry')
     const reporter = ctx.otel.createEventReporter({
       exporter: {
-        url: config.endpoint, headers: { 'x-channel': config.channel }, timeoutMillis: config.timeoutMillis,
+        url: endpointValue, headers: { 'x-channel': channel }, timeoutMillis: config.timeoutMillis,
         ...(config.compression === undefined ? {} : { compression: config.compression === 'gzip' ? CompressionAlgorithm.GZIP : CompressionAlgorithm.NONE }),
       },
       resourceAttributes: { 'service.name': config.serviceName, 'service.version': config.serviceVersion },
-      scope: { name: '@deepseek-ai/dsh-host-product-telemetry-otel' },
+      scope: { name: '@yharness/host-product-telemetry-otel' },
       processor: {
         maxExportBatchSize: config.maxExportBatchSize, maxQueueSize: config.maxQueueSize,
         scheduledDelayMillis: config.scheduledDelayMillis, exportTimeoutMillis: config.exportTimeoutMillis,

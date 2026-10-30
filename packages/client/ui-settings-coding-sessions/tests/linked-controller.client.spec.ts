@@ -1,8 +1,8 @@
 /** Public-operation fixtures pin reviewed revisions and prohibit automatic repair/replay. */
 import { describe, expect, it, vi } from 'vitest'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { RemoteError } from '@yharness/client-test-runtime'
 import { CodingSessionsController } from '../src/client/controller.ts'
-import type { CodingSessionLinkRecord } from '@deepseek-ai/dsh-coding-session/types'
+import type { CodingSessionLinkRecord } from '@yharness/coding-session/types'
 import { mirror, ok } from './fixtures.client.ts'
 import { coldId, liveId, otherId, destinationRevision, link, summary, interrupted, linkedFixture } from './linked-fixtures.client.ts'
 async function select(api = linkedFixture()) {

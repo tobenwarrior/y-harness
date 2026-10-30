@@ -6,13 +6,15 @@ import { constants } from 'node:fs'
 import { access, link, lstat, mkdir, readFile, readlink, rename, stat, symlink, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
-import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { withFileLock, writeFileAtomic } from '@yharness/atomic-write'
 
 /** Fixed installation locations supplied by the Desktop shell. */
 export interface FileCommandInstallation {
   readonly destination: string
   readonly launcher: string
   readonly linkHelper: string
+  /** Receipt filename used for this command, preserving the legacy name by default. */
+  readonly receiptName?: string
 }
 
 type Entry = { readonly kind: 'symlink'; readonly fingerprint: string; readonly target: string }
@@ -53,7 +55,7 @@ function digest(value: unknown): string {
 }
 
 function receiptPath(options: FileCommandInstallation): string {
-  return join(dirname(options.destination), '.dsh-desktop-command.json')
+  return join(dirname(options.destination), options.receiptName ?? '.dsh-desktop-command.json')
 }
 
 async function readEntry(path: string): Promise<Entry> {

@@ -5,17 +5,17 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-connection'
-import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import z from '@deepseek-ai/schemastery'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-connection'
+import type {} from '@yharness/sandbox-policy'
+import z from '@yharness/schemastery'
 import {
   BUNDLED_SKILL_RANK,
   type SkillCandidate,
   type SkillLookupOptions,
   type SkillProvider,
   type SkillProviderControl,
-} from '@deepseek-ai/dsh-skill'
+} from '@yharness/skill'
 import { parse as parseYaml } from 'yaml'
 import { MapServiceBridge, registerMapRoutes } from './map-service.ts'
 import { activeOverlay, overlayRoot as defaultOverlayRoot } from './overlay.ts'

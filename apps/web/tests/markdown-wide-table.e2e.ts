@@ -22,13 +22,13 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createMessage, createUserMessage } from '@yharness/llm'
 import {
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
-} from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-title'
+} from '@yharness/session'
+import type {} from '@yharness/session-title'
 import {
   assertFixtureInventory,
   compareOrRefreshGolden,
@@ -75,7 +75,7 @@ const WIDTHS = [1680, 1100, 640]
 const SENTENCE = 'This cell carries one full sentence so the unwrapped table is far wider than the message column.'
 /** Unbroken path-like token (no scheme, so GFM does not autolink it and no anchor joins the tab order). */
 const LONG_TOKEN = 'workspace/deepseek-harness/packages/client/ui-primitives/src/markdown/render.tsx/'.repeat(3)
-const CJK_SENTENCE = '这个单元格包含一段较长的中文说明，用来验证长内容在窄列宽下按最小可读宽度换行而不是把列压缩到无法阅读。'
+const CJK_SENTENCE = '\u{8FD9}\u{4E2A}\u{5355}\u{5143}\u{683C}\u{5305}\u{542B}\u{4E00}\u{6BB5}\u{8F83}\u{957F}\u{7684}\u{4E2D}\u{6587}\u{8BF4}\u{660E}，\u{7528}\u{6765}\u{9A8C}\u{8BC1}\u{957F}\u{5185}\u{5BB9}\u{5728}\u{7A84}\u{5217}\u{5BBD}\u{4E0B}\u{6309}\u{6700}\u{5C0F}\u{53EF}\u{8BFB}\u{5BBD}\u{5EA6}\u{6362}\u{884C}\u{800C}\u{4E0D}\u{662F}\u{628A}\u{5217}\u{538B}\u{7F29}\u{5230}\u{65E0}\u{6CD5}\u{9605}\u{8BFB}。'
 
 /** The assistant markdown includes fitting and overflowing wide tables. */
 function tablesMarkdown(): string {
@@ -105,7 +105,7 @@ function tablesMarkdown(): string {
     `| ${LONG_CELL_MARKER} | Value |`,
     '| --- | --- |',
     `| path | ${LONG_TOKEN} |`,
-    `| 说明 | ${CJK_SENTENCE} |`,
+    `| \u{8BF4}\u{660E} | ${CJK_SENTENCE} |`,
     '',
     TAIL_MARKER,
   ].join('\n')

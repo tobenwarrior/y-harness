@@ -1,16 +1,16 @@
 /** Cancellable sequential tasks retain current native facts separately from ordinary turns and imported history. */
 import { randomUUID } from 'node:crypto'
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Session, SessionEvent, SessionEventMap } from '@deepseek-ai/dsh-session'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { assertNever } from '@deepseek-ai/dsh-util-values'
+import type { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type { Session, SessionEvent, SessionEventMap } from '@yharness/session'
+import { brandString } from '@yharness/brand'
+import { assertNever } from '@yharness/util-values'
 import type { SkillLearningRuntimeController } from './learning-runtime.ts'
 import type { SkillLearningEvidence, SkillLearningNativeAction, SkillLearningNativeIdentity, SkillLearningNativeItem,
   SkillSequentialTaskHooks, SkillSequentialTaskId, SkillSequentialTaskSource } from './learning-types.ts'
 import { nativeObservationInstructions } from './native-observation.ts'
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Log-only fresh task admission; historical native messages cannot produce this event. */
     'skill/sequential-task-start': { readonly taskId: SkillSequentialTaskId; readonly source: SkillSequentialTaskSource; readonly task: string }

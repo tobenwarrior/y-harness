@@ -7,24 +7,24 @@
  * Feature-owned rows and sections stay with their features.
  * Export discipline: packages/client/AGENTS.md.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { Context as ClientContext } from '@yharness/cordis'
 // Type-only: pulls the ctx.remote merge and its fixed Host facts.
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { closeTopModal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type {} from '@yharness/api-remotes/client'
+import type { ConnectionHandle } from '@yharness/client-connection/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { closeTopModal } from '@yharness/client-ui-primitives'
 // Type-only: the settings slot declarations plus the ctx.configForms Context
 // merge. Cross-plugin collaboration goes through the service, never a value
 // import (client bundle purity gate).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@yharness/client-ui-settings/client'
 // Type-only: pulls ctx.locale into this program.
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
 import type {
   SettingsOnboardingStep, SettingsRootInjected, SettingsSectionRow,
 } from './shell-contract.ts'
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
 import { createSettingsShellStore } from './shell-store.ts'
 import { SettingsRoot } from './SettingsRoot.tsx'
 import { DesktopUpdateBadge, DesktopUpdateFooterAction } from './DesktopUpdateIndicator.tsx'
@@ -38,7 +38,7 @@ import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperTo
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
 import { SettingsDocumentStore } from './settings-document-store.ts'
-import { en, zh, type SettingsKey } from './locales.ts'
+import { en, type SettingsKey } from './locales.ts'
 
 export type {
   CloseLabelProps, HeaderContentProps, TriggerContentProps,
@@ -51,7 +51,7 @@ export type { SettingsDocumentState } from './settings-document-store.ts'
 export { SettingsDocumentStore } from './settings-document-store.ts'
 export type { SettingsKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Shell chrome + shell-owned General section copy. */
     settings: SettingsKey
@@ -85,7 +85,7 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
     name: 'settings.general.item', id: 'current-version', order: 100, locale: NS,
   }, CurrentVersionRow))
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-general: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-settings-general: dictionaries')
   const connection = ctx.get('connection') as ConnectionHandle
   const carrier = (globalThis as typeof globalThis & { dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge } }).dshDesktop
   const desktopUpdate = new DesktopUpdateSource(carrier?.protocolVersion === 1 ? carrier.updates : undefined)
@@ -105,10 +105,10 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store }, openDesktopUpdate: () => { desktopUpdate.open() } }),
   }, DesktopUpdateFooterAction))
   // Windows collapses the sidebar to a zero-width caption surface, so its
-  // footer track is hidden; retain the legacy status marker in the opener.
+  // footer track is hidden; retain a dedicated action beside the opener.
   ctx.slots.inject('sidebar.toggle.badge', () => ctx.slots.register({
     name: 'sidebar.toggle.badge', locale: NS,
-    inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store, connectionState: connection.state } }),
+    inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store, connectionState: connection.state }, openDesktopUpdate: () => { desktopUpdate.open() } }),
   }, DesktopUpdateBadge))
 
   // Copy freshness is framework-owned: components read the standard `t`

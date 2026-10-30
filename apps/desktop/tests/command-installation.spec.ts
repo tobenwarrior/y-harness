@@ -63,6 +63,19 @@ describe.skipIf(process.platform === 'win32')('macOS command entry ownership', (
     expect(await readFile(f.options.launcher, 'utf8')).toBe('desktop\n')
   })
 
+  it('keeps the canonical receipt separate from the legacy command receipt', async () => {
+    const f = await fixture()
+    const canonical = { ...f.options, destination: join(f.root, 'yharness'), receiptName: '.yharness-desktop-command.json' }
+    const legacy = await installFileCommand(f.options, (await inspectFileCommand(f.options)).fingerprint)
+    const installed = await installFileCommand(canonical, (await inspectFileCommand(canonical)).fingerprint)
+    expect(legacy.managed).toBe(true)
+    expect(installed.managed).toBe(true)
+    expect(await readFile(join(f.root, '.dsh-desktop-command.json'), 'utf8')).toContain(f.options.launcher)
+    expect(await readFile(join(f.root, '.yharness-desktop-command.json'), 'utf8')).toContain(f.options.launcher)
+    await removeFileCommand(canonical, installed.fingerprint)
+    await removeFileCommand(f.options, legacy.fingerprint)
+  })
+
   it('preserves the raw target of an existing relative npm link and restores it', async () => {
     const f = await fixture()
     await writeFile(join(f.root, 'npm-cli'), 'npm\n', { mode: 0o755 })

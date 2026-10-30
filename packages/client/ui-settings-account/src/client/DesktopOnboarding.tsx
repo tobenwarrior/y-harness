@@ -1,7 +1,7 @@
 /** Coordinates onboarding navigation, transitions and the shared native recharge page. */
-import type { ProductEventMap } from '@deepseek-ai/dsh-client-product-analytics/client'
+import type { ProductEventMap } from '@yharness/client-product-analytics/client'
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@yharness/client-ui-primitives'
 import { hasOnboardingCredit } from './onboarding-balance.ts'
 import { OnboardingSurface } from './OnboardingSurface.tsx'
 import type { DesktopOnboardingProps } from './onboarding-contract.ts'
@@ -104,8 +104,8 @@ export function DesktopOnboarding({
   return <>
     <OnboardingSurface exiting={exiting} labelledBy="desktop-onboarding-title">
       <section key={step} ref={page} className={`${css.page} ${dialog !== null ? css.blurred : ''}`} data-desktop-onboarding={step} lang={locale} aria-labelledby="desktop-onboarding-title" aria-busy={busy}>
-        {step === 'welcome' && <OnboardingWelcomeStep t={t} locale={locale} heading={heading} busy={busy} onStart={() => { click('next'); go('credit') }} />}
-        {step === 'credit' && <OnboardingCreditStep t={t} locale={locale} heading={heading} busy={busy}
+        {step === 'welcome' && <OnboardingWelcomeStep t={t} heading={heading} busy={busy} onStart={() => { click('next'); go('credit') }} />}
+        {step === 'credit' && <OnboardingCreditStep t={t} heading={heading} busy={busy}
           funded={state.creditFunded} canRecharge={canRecharge} onContinue={() => { click('continue'); go('purpose') }} onRecharge={() => { click('charge'); recharge() }} onLater={() => { click('later'); later() }} />}
         {step === 'purpose' && <OnboardingPurposeStep t={t} heading={heading} busy={busy} purpose={progress.purpose}
           onSelect={(purpose) => { void update({ purpose }) }} onContinue={() => { click('next'); purposeNext() }} />}

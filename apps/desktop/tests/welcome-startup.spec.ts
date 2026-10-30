@@ -4,7 +4,7 @@ vi.mock('../src/web-document.ts', () => ({ authenticateWebHost: async () => 'tes
 import { afterEach, expect, it, vi } from 'vitest'
 import type { BrowserWindowConstructorOptions } from 'electron'
 import type { DesktopLocale } from '../src/locale.ts'
-import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
+import type { AccountView } from '@yharness/deepseek-account/types'
 import type { WelcomeOperations } from '../src/welcome-api.ts'
 import { DESKTOP_IPC } from '../src/ipc.ts'
 
@@ -208,7 +208,7 @@ it.each([false, true])('opens the workspace without DeepSeek login or a model ke
   expect(state.loadWorkspace).toHaveBeenCalledExactlyOnceWith('dsh-app://app/')
   expect(state.showWorkspace).toHaveBeenCalledOnce()
   expect(state.beforeWelcome).not.toHaveBeenCalled()
-  expect(state.dialogLocale!().id).toBe('zh-CN')
+  expect(state.dialogLocale!().id).toBe('en')
   expect(state.moveTopWorkspace).toHaveBeenCalledTimes(updated ? 1 : 0)
   const contents = state.contents as { mainFrame: { url: string }; send: ReturnType<typeof vi.fn> }
   const event = { sender: contents, senderFrame: contents.mainFrame }
@@ -223,7 +223,7 @@ it.each([false, true])('opens the workspace without DeepSeek login or a model ke
   expect(state.menu).toHaveBeenCalledTimes(initialMenus)
   changed(event, 'en')
   expect(state.dialogLocale!().id).toBe('en')
-  expect(state.menu).toHaveBeenCalledTimes(initialMenus + 1)
+  expect(state.menu).toHaveBeenCalledTimes(initialMenus)
 })
 
 it('keeps the workspace open after DeepSeek sign-out or session expiry without a model key', async () => {

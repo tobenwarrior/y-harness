@@ -6,12 +6,12 @@
  * compares it with {@link VENDORED_VERSION}, and reports the difference on a
  * same-origin route the browser half renders as an update indicator.
  *
- * @module @deepseek-ai/dsh-skill-compound
+ * @module @yharness/skill-compound
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { activeOverlay, overlayRoot, updateOverlay, type OverlayRevision } from './overlay.ts'
 import { resolveUpstreamCommit, UPSTREAM_REPOSITORY as RESOLVER_REPOSITORY } from './upstream-head.ts'
 export { resolveUpstreamCommit } from './upstream-head.ts'

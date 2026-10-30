@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector, RemoteError } from '@yharness/client-test-runtime'
 import type { GeneralSectionComponentProps } from '../src/client/GeneralSection.tsx'
 import { GeneralSection } from '../src/client/GeneralSection.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
 import type { TriggerContentProps } from '../src/client/chrome.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
 import { DeveloperToolsRow } from '../src/client/DeveloperToolsRow.tsx'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
+import { createSnapshotStore } from '@yharness/client-store'
+import { SettingsDescribeMirror } from '@yharness/client-ui-settings/src/client/settings-mirror.ts'
 import { SettingsDocumentStore } from '../src/client/settings-document-store.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
@@ -88,20 +88,37 @@ describe('Desktop collapsed update action', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe('Update available')
   })
 
-  it('keeps the legacy status marker only in the Windows caption collapse', () => {
+  it('keeps the Windows caption update action separate and actionable in every status', () => {
     document.documentElement.setAttribute('data-windows-titlebar', '')
-    const state: DesktopUpdateView = { failed: false, opening: false, presentation: { phase: 'available' } }
+    let state: DesktopUpdateView = { failed: false, opening: false, presentation: { phase: 'available' } }
+    const openDesktopUpdate = vi.fn()
     const props = {
       ...kit,
       t,
       useDesktopUpdate: (select => select(state)) as Parameters<typeof DesktopUpdateBadge>[0]['useDesktopUpdate'],
       useConnectionState: (select => select('connected')) as Parameters<typeof DesktopUpdateBadge>[0]['useConnectionState'],
+      openDesktopUpdate,
     }
     const view = render(<DesktopUpdateBadge {...props} />)
-    expect(screen.getByRole('img', { name: 'Update' })).toBeTruthy()
+    const available = screen.getByRole('button', { name: 'Update' })
+    fireEvent.click(available)
+    expect(openDesktopUpdate).toHaveBeenCalledOnce()
+
+    state = { failed: false, opening: false, presentation: { phase: 'downloading', version: '1.0.1', percent: 58 } }
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    const progress = screen.getByRole('button', { name: '58%' })
+    expect(progress.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(progress)
+    expect(openDesktopUpdate).toHaveBeenCalledOnce()
+
+    state = { failed: false, opening: false, presentation: { phase: 'error', failure: 'install' } }
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry update' }))
+    expect(openDesktopUpdate).toHaveBeenCalledTimes(2)
+
     document.documentElement.removeAttribute('data-windows-titlebar')
     view.rerender(<DesktopUpdateBadge {...props} />)
-    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
   })
 })
 
@@ -258,7 +275,7 @@ it('reports a failed developer-tool write and allows retry', async () => {
 describe('current version', () => {
   it.each([
     ['Current version: 1.2.3-rc.4', en],
-    ['当前版本：1.2.3-rc.4', zh],
+    ['Current version: 1.2.3-rc.4', zh],
   ])('renders the localized release label %s', (expected, dictionary) => {
     vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3-rc.4')
     const translate: TriggerContentProps['t'] = (key, params) => {

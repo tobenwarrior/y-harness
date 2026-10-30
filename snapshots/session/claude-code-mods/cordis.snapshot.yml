@@ -39,7 +39,7 @@
     - id: claude-code-mod-token-weather
       name: '@deepseek-ai/dsh-experimental-claude-code-mods/examples/token-weather/index.ts'
     - id: llm-replay
-      name: '@deepseek-ai/dsh-llm-replay'
+      name: '@yharness/llm-replay'
       config:
         providers:
           - id: deepseek-official

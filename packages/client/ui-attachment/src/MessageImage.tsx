@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { IconLoadingOutlineRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import { ImageLightbox } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ImageLightboxLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ImageAttachmentRef } from '@yharness/attachment'
+import { IconLoadingOutlineRegular, IconRefreshOutlineRegular } from '@yharness/client-ui-primitives'
+import { ImageLightbox } from '@yharness/client-ui-primitives'
+import type { ImageLightboxLabels } from '@yharness/client-ui-primitives'
 import css from './MessageImage.module.css'
 
 /** Loads a session-authorized durable image URL and may expose a cached URL synchronously. */
@@ -42,7 +42,7 @@ export interface MessageImageLabels {
   lightbox: ImageLightboxLabels
 }
 
-/** Display box for a lone image (DeepSeek Chat rule): long edge 240px with
+/** Display box for a lone image: long edge 240px with
  * the rendered aspect ratio clamped to [0.25, 4] — the overflow is cropped by
  * `object-fit: cover` — and never upscaled past the image's natural size. The
  * crop anchor keeps the top of very tall images and the left of very wide

@@ -3,7 +3,7 @@ description: "The process-local background-job registry for users and maintainer
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-jobs-local
+# @yharness/jobs-local
 
 ## Summary
 
@@ -34,7 +34,7 @@ Choose it when jobs should live in the harness process and die with it. Avoid it
 Loading the plugin registers `ctx.jobs`; every field is optional.
 
 ```yaml
-- name: '@deepseek-ai/dsh-jobs-local'
+- name: '@yharness/jobs-local'
 ```
 
 | Field | Default | Meaning |
@@ -44,7 +44,7 @@ Loading the plugin registers `ctx.jobs`; every field is optional.
 | `settledRetainBytes` | `16384` | Ring retention kept after a job settles, in UTF-8 bytes; bytes the model has not read stay until its first terminal read |
 | `pumpPollMs` | `150` | Poll interval for a job's pull sources, in milliseconds |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-jobs-local) is the exhaustive source for the accepted fields.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessjobs-local) is the exhaustive source for the accepted fields.
 
 ### What each owner gets
 

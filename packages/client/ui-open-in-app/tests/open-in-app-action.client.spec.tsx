@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, act } from '@testing-library/react'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { ShortcutCatalogEntry, ShortcutCommandId } from '@yharness/client-shortcuts/client'
 import { OpenInAppAction, type OpenInAppActionProps } from '../src/client/OpenInAppAction.tsx'
 import { OpenInAppController } from '../src/client/controller.ts'
 import { zh } from '../src/client/locales.ts'
@@ -112,7 +112,7 @@ describe('OpenInAppAction launching', () => {
     const b = bench({ apps: ['finder', 'cursor', 'terminal'], absolutePath: '/w/dir' })
     render(<OpenInAppAction {...b.props} />)
     fireEvent.click(screen.getByRole('button', { name: zh['path.more'] }))
-    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['访达（默认）', 'Cursor', '终端'])
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Finder (default)', 'Cursor', 'Terminal'])
     expect(screen.queryByText(zh['path.reveal'])).toBeNull()
     await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Cursor' })) })
     expect(b.launch).toHaveBeenCalledWith('cursor', '/w/dir')

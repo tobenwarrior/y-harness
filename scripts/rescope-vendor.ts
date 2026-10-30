@@ -1,5 +1,5 @@
 /**
- * Rescope the vendored Cordis packages into the `@deepseek-ai` scope, and undo
+ * Rescope the vendored Cordis packages into the `@yharness` scope, and undo
  * that rescope with `--reverse`. Every harness package declares `cordis` as a
  * peer dependency, so publication carries this framework layer too; publishing
  * it under the upstream names would squat them on the registry
@@ -10,7 +10,7 @@
  * scalar. A match needs a quote (or `name: `) immediately left and the matching
  * quote — optionally after a `/subpath` — immediately right, which excludes
  * `cordis.yml`, the Loader's `cordis:` builtin prefix, `cordis-config-entry`,
- * `@deepseek-ai/dsh-tool-cordis`, and `cordiverse/cordis`, and makes the
+ * `@yharness/tool-cordis`, and `cordiverse/cordis`, and makes the
  * rewrite idempotent because the scoped name's `cordis` is preceded by `/`.
  * Markdown follows the rename inside every fence, and in `docs/` prose too:
  * a tutorial that teaches an unresolvable name is wrong, while prose elsewhere
@@ -42,16 +42,16 @@ interface Rename {
 }
 
 /** The mapping this codemod applies; `vendor/README.md` carries the same table. */
-const RENAMES: readonly Rename[] = [
-  { directory: 'cordis', upstream: 'cordis', scoped: '@deepseek-ai/cordis' },
-  { directory: 'cosmokit', upstream: 'cosmokit', scoped: '@deepseek-ai/cosmokit' },
-  { directory: 'schemastery', upstream: 'schemastery', scoped: '@deepseek-ai/schemastery' },
-  { directory: 'loader', upstream: '@cordisjs/plugin-loader', scoped: '@deepseek-ai/cordis-plugin-loader' },
-  { directory: 'include', upstream: '@cordisjs/plugin-include', scoped: '@deepseek-ai/cordis-plugin-include' },
-  { directory: 'group', upstream: '@cordisjs/plugin-group', scoped: '@deepseek-ai/cordis-plugin-group' },
-  { directory: 'timer', upstream: '@cordisjs/plugin-timer', scoped: '@deepseek-ai/cordis-plugin-timer' },
-  { directory: 'hmr', upstream: '@cordisjs/plugin-hmr', scoped: '@deepseek-ai/cordis-plugin-hmr' },
-  { directory: 'logger-console', upstream: '@cordisjs/plugin-logger-console', scoped: '@deepseek-ai/cordis-plugin-logger-console' },
+export const RENAMES: readonly Rename[] = [
+  { directory: 'cordis', upstream: 'cordis', scoped: '@yharness/cordis' },
+  { directory: 'cosmokit', upstream: 'cosmokit', scoped: '@yharness/cosmokit' },
+  { directory: 'schemastery', upstream: 'schemastery', scoped: '@yharness/schemastery' },
+  { directory: 'loader', upstream: '@cordisjs/plugin-loader', scoped: '@yharness/cordis-plugin-loader' },
+  { directory: 'include', upstream: '@cordisjs/plugin-include', scoped: '@yharness/cordis-plugin-include' },
+  { directory: 'group', upstream: '@cordisjs/plugin-group', scoped: '@yharness/cordis-plugin-group' },
+  { directory: 'timer', upstream: '@cordisjs/plugin-timer', scoped: '@yharness/cordis-plugin-timer' },
+  { directory: 'hmr', upstream: '@cordisjs/plugin-hmr', scoped: '@yharness/cordis-plugin-hmr' },
+  { directory: 'logger-console', upstream: '@cordisjs/plugin-logger-console', scoped: '@yharness/cordis-plugin-logger-console' },
 ]
 
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.tpl', '.json', '.yml', '.yaml', '.md'] as const
@@ -103,9 +103,23 @@ const GENERIC_SKIPS: readonly GenericSkip[] = [
   { file: 'apps/cli/tests/web-agent-presets.e2e.ts', upstream: ['cordis'] },
   { file: 'apps/cli/tests/profiles/web/tests/fixtures/creator-plugin-manager.mjs', upstream: ['cordis'] },
   { file: 'apps/web/tests/agent-preset-authoring.e2e.ts', upstream: ['cordis'] },
+  { file: 'apps/web/tests/agent-preset-selection.e2e.ts', upstream: ['cordis'] },
+  { file: 'apps/web/tests/developer-tools-settings.e2e.ts', upstream: ['cordis'] },
   { file: 'packages/preset/agent-preset-registry/tests/session.spec.ts', upstream: ['cordis'] },
   // The preset-roster loop names the `cordis` preset id, not a package.
   { file: 'apps/cli/tests/windows-shell.spec.ts', upstream: ['cordis'] },
+  // The Web bundle and Agent Preset UI use `cordis` as a preset id; event
+  // topics and patch comments in these files are likewise product data.
+  { file: 'packages/bundle/web-app/cordis.patch.yml', upstream: ['cordis'] },
+  { file: 'packages/client/ui-agent-preset/src/client/CreatePluginMenuItem.tsx', upstream: ['cordis'] },
+  { file: 'packages/client/ui-agent-preset/tests/components.client.spec.tsx', upstream: ['cordis'] },
+  { file: 'packages/client/ui-agent-preset/tests/create-plugin-menu-item.client.spec.tsx', upstream: ['cordis'] },
+  { file: 'packages/client/ui-agent-preset/tests/section-store.client.spec.ts', upstream: ['cordis'] },
+  { file: 'packages/extensions/cordis-host-runner/tests/inspect-registry.spec.ts', upstream: ['cordis'] },
+  { file: 'snapshots/session/cordis-inspect-liveness/client-fixture.mjs', upstream: ['cordis'] },
+  { file: 'snapshots/session/cordis-inspect-timeout/client-fixture.mjs', upstream: ['cordis'] },
+  // The expected mapping itself must retain both sides of every rename.
+  { file: 'scripts/rescope-vendor.spec.ts', upstream: RENAMES.map(rename => rename.upstream) },
   // GROUP_ORDER holds `packages/<group>/` directory names, not package names.
   { file: 'scripts/gen-module-graph.ts', upstream: ['cordis'] },
   { file: 'scripts/gen-doc-graphs.ts', upstream: ['cordis'] },
@@ -161,16 +175,16 @@ interface PostCondition {
 }
 
 const POSTCONDITIONS: readonly PostCondition[] = [
-  { file: 'vendor/cordis/package.json', text: '"name": "@deepseek-ai/cordis"', count: 1 },
-  { file: 'vendor/hmr/package.json', text: '"name": "@deepseek-ai/cordis-plugin-hmr"', count: 1 },
-  { file: 'scripts/cordis-walk.ts', text: '@deepseek-ai\\/cordis', count: 1 },
-  { file: 'scripts/cordis-walk.ts', text: '!== \'@deepseek-ai/cordis\'', count: 1 },
-  { file: 'packages/typert/generator/src/analyzer.ts', text: '!== \'@deepseek-ai/cordis\'', count: 2 },
-  { file: 'scripts/check-workspace-constraints.ts', text: '?.[\'@deepseek-ai/cordis\']', count: 2 },
-  { file: 'packages/boot/app-boot/tsdown.config.ts', text: '[\'@deepseek-ai/cordis-plugin-include\']', count: 1 },
-  { file: 'tsconfig.base.json', text: '"@deepseek-ai/cordis-plugin-loader": ["./vendor/loader/src"]', count: 1 },
+  { file: 'vendor/cordis/package.json', text: '"name": "@yharness/cordis"', count: 1 },
+  { file: 'vendor/hmr/package.json', text: '"name": "@yharness/cordis-plugin-hmr"', count: 1 },
+  { file: 'scripts/cordis-walk.ts', text: '@yharness\\/cordis', count: 1 },
+  { file: 'scripts/cordis-walk.ts', text: '!== \'@yharness/cordis\'', count: 1 },
+  { file: 'packages/typert/generator/src/analyzer.ts', text: '!== \'@yharness/cordis\'', count: 2 },
+  { file: 'scripts/check-workspace-constraints.ts', text: '?.[\'@yharness/cordis\']', count: 2 },
+  { file: 'packages/boot/app-boot/tsdown.config.ts', text: '[\'@yharness/cordis-plugin-include\']', count: 1 },
+  { file: 'tsconfig.base.json', text: '"@yharness/cordis-plugin-loader": ["./vendor/loader/src"]', count: 1 },
   // The vendored README owns this required entry; reject its deletion or duplication.
-  { file: 'vendor/README.md', text: '17. **`@deepseek-ai` rescope**', count: 1 },
+  { file: 'vendor/README.md', text: '17. **`@yharness` rescope**', count: 1 },
   { file: 'pnpm-workspace.yaml', text: 'cordis@4.0.0-rc.7', count: 0 },
   // The preset ids in this table are product data, not package names.
   { file: 'packages/client/ui-agent-preset/tests/locales.client.spec.ts', text: '[\'cordis\', \'presetCordisName\'', count: 1 },
@@ -187,14 +201,14 @@ const EXACT_EDITS: readonly ExactEdit[] = [
     id: 'loader-diff-schemastery-import',
     file: 'vendor/loader/src/config/diff.ts',
     find: "import type Schema from 'schemastery'",
-    replace: "import type Schema from '@deepseek-ai/schemastery'",
+    replace: "import type Schema from '@yharness/schemastery'",
     expect: 1,
   },
   {
     id: 'cordis-walk-merge-head',
     file: 'scripts/cordis-walk.ts',
     find: 'const MERGE_HEAD = /declare module [\'"](?:cordis|\\.\\/context\\.ts)[\'"]/',
-    replace: 'const MERGE_HEAD = /declare module [\'"](?:@deepseek-ai\\/cordis|\\.\\/context\\.ts)[\'"]/',
+    replace: 'const MERGE_HEAD = /declare module [\'"](?:@yharness\\/cordis|\\.\\/context\\.ts)[\'"]/',
     expect: 1,
   },
   {
@@ -207,13 +221,13 @@ const EXACT_EDITS: readonly ExactEdit[] = [
     if (!dev) errors.push(\`\${label}: cordis must also be a devDependency\`)
     if (peer && dev && peer !== dev) {
       errors.push(\`\${label}: cordis peer (\${peer}) and dev (\${dev}) ranges must match\`)`,
-    replace: `    const peer = manifest.peerDependencies?.['@deepseek-ai/cordis']
-    const dev = manifest.devDependencies?.['@deepseek-ai/cordis']
+    replace: `    const peer = manifest.peerDependencies?.['@yharness/cordis']
+    const dev = manifest.devDependencies?.['@yharness/cordis']
 
-    if (!peer) errors.push(\`\${label}: @deepseek-ai/cordis must be a peerDependency\`)
-    if (!dev) errors.push(\`\${label}: @deepseek-ai/cordis must also be a devDependency\`)
+    if (!peer) errors.push(\`\${label}: @yharness/cordis must be a peerDependency\`)
+    if (!dev) errors.push(\`\${label}: @yharness/cordis must also be a devDependency\`)
     if (peer && dev && peer !== dev) {
-      errors.push(\`\${label}: @deepseek-ai/cordis peer (\${peer}) and dev (\${dev}) ranges must match\`)`,
+      errors.push(\`\${label}: @yharness/cordis peer (\${peer}) and dev (\${dev}) ranges must match\`)`,
     expect: 1,
   },
   {
@@ -233,16 +247,16 @@ const EXACT_EDITS: readonly ExactEdit[] = [
     id: 'publication-set-scope-assertion',
     file: 'scripts/publish-npm-baseline.ts',
     find: '      if (!isVendored && !name.startsWith(\'@deepseek-ai/\')) {',
-    replace: `      // Vendored packages are rescoped too (vendor/README.md), so publication
-      // never carries an upstream name that would squat it on the registry.
-      if (!name.startsWith('@deepseek-ai/')) {`,
+    replace: `      // Vendored packages use the same canonical scope as Harness packages, so
+      // publication never carries an upstream name that would squat it.
+      if (!name.startsWith(HARNESS_PACKAGE_PREFIX)) {`,
     expect: 1,
   },
   {
     id: 'vendor-readme-preamble',
     file: 'vendor/README.md',
     find: 'All vendored packages keep their **original npm names** (they are resolved through pnpm workspaces) and are marked `private: true` — they are never published from this repo.',
-    replace: 'All vendored packages use the **`@deepseek-ai` scope** (`cordis` → `@deepseek-ai/cordis`, `@cordisjs/plugin-<x>` → `@deepseek-ai/cordis-plugin-<x>`). The manifest table records upstream versions and source commits; each package manifest carries its Harness release version and publication metadata. References to vendored packages use `workspace:~`, so local builds resolve the workspace packages and published ranges permit patch updates within the same minor version.',
+    replace: 'All vendored packages use the **`@yharness` scope** (`cordis` → `@yharness/cordis`, `@cordisjs/plugin-<x>` → `@yharness/cordis-plugin-<x>`). The manifest table records upstream versions and source commits; each package manifest carries its Harness release version and publication metadata. References to vendored packages use `workspace:~`, so local builds resolve the workspace packages and published ranges permit patch updates within the same minor version.',
     expect: 1,
   },
   {
@@ -257,11 +271,11 @@ const EXACT_EDITS: readonly ExactEdit[] = [
     id: 'root-agents-vendored-name-contract',
     file: 'AGENTS.md',
     find: 'vendored packages keep upstream names and are `private: true`. `cordis` is a peerDependency (+ dev) of every harness package.',
-    replace: 'vendor is [rescoped](docs/rescope.md) and `private: true`. Harness packages declare `@deepseek-ai/cordis` in `peerDependencies`/`devDependencies`.',
+    replace: 'vendor is [rescoped](docs/rescope.md) and `private: true`. Harness packages declare `@yharness/cordis` in `peerDependencies`/`devDependencies`.',
     expect: 1,
   },
   {
-    // The client purity gate reads `@deepseek-ai/` as "another plugin package".
+    // The client purity gate reads `@yharness/` as "another plugin package".
     // The rescope moves the vendored framework and its libraries into that
     // namespace, where the gate would reject the library imports client
     // bundles have always inlined, so it needs their names.
@@ -269,12 +283,12 @@ const EXACT_EDITS: readonly ExactEdit[] = [
     file: 'packages/client/tsdown.client.ts',
     find: '/** Generated descriptor/codec contribution with no shared runtime identity. */',
     replace: `/**
- * Vendored framework libraries: rescoped into @deepseek-ai, so the gate below
+ * Vendored framework libraries: rescoped into @yharness, so the gate below
  * would read them as plugin packages. They carry no cross-plugin runtime
  * identity to share — the framework itself is a requested module-table row
  * (external), while these are ordinary libraries a browser bundle inlines.
  */
-const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
+const VENDORED_LIBRARY = /^@yharness\\/(cosmokit|schemastery)(\\/|$)/
 
 /** Generated descriptor/codec contribution with no shared runtime identity. */`,
     expect: 1,
@@ -305,18 +319,25 @@ const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
     expect: 1,
   },
   {
+    id: 'vendoring-cookbook-name-invariant-zh',
+    file: 'docs/cookbook/adding-a-vendored-package.zh.md',
+    find: '\u4fdd\u7559\u4e0a\u6e38\u7684 `name`/`version`/`exports`/`type`',
+    replace: '\u6539\u5199 `name` \u7684 scope（[\u6620\u5c04](../rescope.zh.md)），\u4fdd\u7559\u4e0a\u6e38\u7684 `exports`/`type`',
+    expect: 1,
+  },
+  {
     // The real package references in files whose other `cordis` strings are preset ids.
     id: 'agent-preset-spec-framework-import',
     file: 'packages/client/ui-agent-preset/tests/apply.client.spec.ts',
     find: "import { Context } from 'cordis'",
-    replace: "import { Context } from '@deepseek-ai/cordis'",
+    replace: "import { Context } from '@yharness/cordis'",
     expect: 1,
   },
   {
     id: 'web-agent-presets-e2e-framework-import',
     file: 'apps/cli/tests/web-agent-presets.e2e.ts',
     find: "import { Context } from 'cordis'",
-    replace: "import { Context } from '@deepseek-ai/cordis'",
+    replace: "import { Context } from '@yharness/cordis'",
     expect: 1,
   },
   {
@@ -354,7 +375,7 @@ const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
     id: 'notices-vendored-section',
     file: 'scripts/gen-third-party-notices.ts',
     find: 'The Cordis framework and its foundation libraries are source-vendored into this repository rather than consumed from npm. All are MIT-licensed',
-    replace: 'The Cordis framework and its foundation libraries are source-vendored into this repository rather than consumed from npm, and republished under the \\`@deepseek-ai\\` scope. All are MIT-licensed',
+    replace: 'The Cordis framework and its foundation libraries are source-vendored into this repository rather than consumed from npm, and republished under the \\`@yharness\\` scope. All are MIT-licensed',
     expect: 1,
   },
   {
@@ -373,7 +394,7 @@ const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
     file: 'scripts/gen-third-party-notices.spec.ts',
     find: '    expect(rows).toContainEqual({ npmName: \'cordis\', upstream: \'https://github.com/cordiverse/cordis\' })',
     replace: `    expect(rows).toContainEqual({
-      npmName: '@deepseek-ai/cordis',
+      npmName: '@yharness/cordis',
       upstreamName: 'cordis',
       upstream: 'https://github.com/cordiverse/cordis',
     })`,
@@ -383,7 +404,7 @@ const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
     id: 'notices-spec-shape-fixture',
     file: 'scripts/gen-third-party-notices.spec.ts',
     find: 'parseVendoredRows(\'| `cordis/` | cordis | 4.0.0 | https://example.com | `abc123` |\\n\')',
-    replace: 'parseVendoredRows(\'| `cordis/` | `@deepseek-ai/cordis` | cordis | 4.0.0 | https://example.com | `abc123` |\\n\')',
+    replace: 'parseVendoredRows(\'| `cordis/` | `@yharness/cordis` | cordis | 4.0.0 | https://example.com | `abc123` |\\n\')',
     expect: 1,
   },
   {
@@ -423,6 +444,13 @@ const VENDORED_LIBRARY = /^@deepseek-ai\\/(cosmokit|schemastery)(\\/|$)/
     expect: 1,
   })),
 ]
+
+// The bilingual cookbook was retired during the English-only documentation
+// migration. Keep its historical edits optional so the rescope gate remains
+// strict for live files without requiring a deleted translation to reappear.
+const OPTIONAL_EXACT_EDIT_FILES = new Set([
+  'docs/cookbook/adding-a-vendored-package.zh.md',
+])
 
 /**
  * Identify files whose recorded content must remain outside the rescope pass.
@@ -569,7 +597,9 @@ function main(): void {
   const all = patterns(reverse)
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
     .split('\0')
-    .filter(file => file !== '' && !isRescopeExcluded(file))
+    // A migration may intentionally remove a locale or asset that was tracked
+    // in the upstream baseline. Deleted paths have no text to rescope.
+    .filter(file => file !== '' && existsSync(resolve(root, file)) && !isRescopeExcluded(file))
 
   const counts = new Map<string, { files: number; lines: number }>()
   const failures: string[] = []
@@ -581,6 +611,11 @@ function main(): void {
   const planned: { edit: ExactEdit; path: string; find: string; replace: string }[] = []
   for (const edit of EXACT_EDITS) {
     const path = resolve(root, edit.file)
+    if (!existsSync(path)) {
+      if (OPTIONAL_EXACT_EDIT_FILES.has(edit.file)) continue
+      failures.push(`exact edit ${edit.id}: required file ${edit.file} is missing`)
+      continue
+    }
     const before = readFileSync(path, 'utf8')
     const find = reverse ? edit.replace : edit.find
     const replace = reverse ? edit.find : edit.replace
@@ -650,7 +685,7 @@ function main(): void {
   } else if (mode === 'check') {
     console.log('rescope-vendor: post-state verified — no residue, every exact edit landed, idempotent.')
   } else if (mode === 'apply') {
-    console.log('rescope-vendor: applied. Run `pnpm install`, `pnpm run gen-third-party-notices`, and re-record the touched bilingual pairs.')
+    console.log('rescope-vendor: applied. Run `pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile`, `pnpm run gen-third-party-notices`, and re-record the touched bilingual pairs.')
   }
 }
 

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-subagent",
+  "name": "@yharness/client-ui-subagent",
   "description": "Subagent conversation catalog, continuation routing UI, and '@' reference source",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/ui-subagent"
   },
   "type": "module",
@@ -28,15 +28,15 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-api-session-controller",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-resources",
-        "@deepseek-ai/dsh-client-ui-chat",
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-primitives",
-        "@deepseek-ai/dsh-client-ui-sidebar-right",
-        "@deepseek-ai/dsh-client-ui-input-trigger",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@yharness/api-session-controller",
+        "@yharness/client-locale",
+        "@yharness/client-resources",
+        "@yharness/client-ui-chat",
+        "@yharness/client-ui-conversation",
+        "@yharness/client-ui-primitives",
+        "@yharness/client-ui-sidebar-right",
+        "@yharness/client-ui-input-trigger",
+        "@yharness/client-ui-workspace"
       ],
       "platform": "web"
     }
@@ -47,31 +47,31 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-client-locale": "workspace:*",
-    "@deepseek-ai/dsh-client-resources": "workspace:*",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-chat": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-conversation": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-input-trigger": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-primitives": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-slots": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-token-meter": "workspace:*",
+    "@yharness/client-locale": "workspace:*",
+    "@yharness/client-resources": "workspace:*",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/client-ui-chat": "workspace:*",
+    "@yharness/client-ui-conversation": "workspace:*",
+    "@yharness/client-ui-input-trigger": "workspace:*",
+    "@yharness/client-ui-primitives": "workspace:*",
+    "@yharness/client-ui-slots": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/token-meter": "workspace:*",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
-    "@deepseek-ai/cordis": "workspace:~",
+    "@yharness/cordis": "workspace:~",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@deepseek-ai/dsh-api-session-controller": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-renderer": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-sidebar-right": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-session": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-workspace": "workspace:*"
+    "@yharness/api-session-controller": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/client-ui-renderer": "workspace:*",
+    "@yharness/client-ui-sidebar-right": "workspace:*",
+    "@yharness/client-ui-session": "workspace:*",
+    "@yharness/client-ui-workspace": "workspace:*"
   },
   "files": [
     "lib/index.js",

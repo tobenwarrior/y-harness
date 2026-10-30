@@ -3,7 +3,7 @@ description: "Lossless JSON validation, detached snapshots, deep freezing, struc
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-util-values
+# @yharness/util-values
 
 ## Summary
 
@@ -27,7 +27,7 @@ Callers can validate lossless JSON, read streamed arguments, detach a JSON snaps
 Use `isJsonValue()` for a predicate and `snapshotJsonValue()` when the caller also needs a detached copy. Both accept only lossless JSON roots: `null`, booleans, finite numbers other than negative zero, strings, dense intrinsic arrays, and plain or null-prototype records with enumerable string keys. Cycles, sparse arrays, symbol or non-enumerable own properties, functions, and class instances are rejected.
 
 ```ts
-import { isJsonValue, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
+import { isJsonValue, snapshotJsonValue, type JsonValue } from '@yharness/util-values'
 
 declare const input: unknown
 

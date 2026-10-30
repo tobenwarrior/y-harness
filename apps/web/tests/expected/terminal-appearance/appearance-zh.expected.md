@@ -1,22 +1,23 @@
-- dialog "设置":
+- dialog "Settings":
   - navigation:
-    - text: 设置
-    - button "通用设置"
-    - button "外观"
-    - button "模型"
-    - button "内置插件"
-    - button "Agent 预设"
-  - button "打开配置文件"
-  - button "关闭"
-  - text: 风格
-  - group "风格":
-    - button "默认"
-    - button "终端" [pressed]
-  - text: 终端风格使用紧凑控件与等宽标签，会话文本保持原有字体 颜色模式
-  - button "浅色"
-  - button "深色" [pressed]
-  - button "跟随系统"
-  - text: 字号大小 仅影响会话内容的字号 15
-  - button "增大字号"
-  - button "减小字号"
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Coding sessions"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - text: Style
+  - group "Style":
+    - button "Default"
+    - button "Terminal" [pressed]
+  - text: Terminal uses compact controls and monospace labels. Conversation text keeps its current font. Color mode
+  - button "Light"
+  - button "Dark" [pressed]
+  - button "System"
+  - text: Font size Only affects conversation content 15
+  - button "Increase font size"
+  - button "Decrease font size"
   - text: px

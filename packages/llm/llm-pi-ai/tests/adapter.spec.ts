@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { Context, Service } from '@deepseek-ai/cordis'
-import { AttachmentId, AttachmentStore, ImageVariantId } from '@deepseek-ai/dsh-attachment'
+import { Context, Service } from '@yharness/cordis'
+import { AttachmentId, AttachmentStore, ImageVariantId } from '@yharness/attachment'
 import type {
   ImageAttachmentLimits,
   ImageAttachmentRef,
@@ -8,11 +8,11 @@ import type {
   RequestImageAttachment,
   SaveImageAttachment,
   StoredImageAttachment,
-} from '@deepseek-ai/dsh-attachment'
-import LlmRuntime, { createToolResultMessage, createUserMessage, CONTEXT_WINDOW_EXCEEDED_CODE, LlmError, ReasoningEffortId, userAgent } from '@deepseek-ai/dsh-llm'
-import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
-import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+} from '@yharness/attachment'
+import LlmRuntime, { createToolResultMessage, createUserMessage, CONTEXT_WINDOW_EXCEEDED_CODE, LlmError, ReasoningEffortId, userAgent } from '@yharness/llm'
+import * as LlmPiAi from '@yharness/llm-pi-ai'
+import { PiAiAdapter } from '@yharness/llm-pi-ai'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { DEFAULT_MAX_REQUEST_IMAGE_BYTES, resolveProfiles } from '../src/config.ts'
 import { memoryAuth } from './auth-double.ts'
@@ -848,7 +848,7 @@ describe('provider profile lifecycle', () => {
   it.each([
     ['bad header name', 'value'],
     ['x-company', 'line\nbreak'],
-    ['x-company', '部署'],
+    ['x-company', '\u{90E8}\u{7F72}'],
   ])('rejects provider header %j when Fetch cannot represent the entry', (name, value) => {
     expect(() => resolveProfiles({ openai: { headers: { [name]: value } } }))
       .toThrow(`provider "openai" header "${name}" is not valid for Fetch`)

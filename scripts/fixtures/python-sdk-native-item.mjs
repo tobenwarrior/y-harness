@@ -89,7 +89,7 @@ const initializationReceipt = {
 }
 
 /**
- * @param {import('@deepseek-ai/cordis').Context} ctx - Scenario-owned runtime.
+ * @param {import('@yharness/cordis').Context} ctx - Scenario-owned runtime.
  * @param {{projectionHistory?: boolean}} config - Add authored import-source projection input and informational initialization receipt for the two-turn compatibility case.
  */
 export function apply(ctx, config = {}) {

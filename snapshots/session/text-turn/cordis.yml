@@ -3,7 +3,7 @@
 # deterministic test composition and raw persistence needed for recording.
 
 - id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  name: '@yharness/llm-deepseek-api-key'
   config:
     thinking: enabled
     reasoningEffort: max
@@ -13,19 +13,50 @@
       - id: deepseek-v4-flash-vision-exp
         inputModalities: [text, image]
 
+# Keep this recorded composition's permission defaults aligned with its committed
+# session log; the shipped base may choose a different fresh-session preset.
+- id: permission
+  name: '@yharness/permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+# The text-turn corpus predates bundled Compound skills and records no catalog
+# message. Keep the skill tool schema while making this composition catalog-free.
+- id: skill-filesystem
+  name: '@yharness/skill-filesystem'
+  config:
+    includeDefaultRoots: false
+
+- id: skill-compound
+  disabled: true
+
+- id: tool-skill
+  name: '@yharness/tool-skill'
+  config:
+    catalogMode: all
+
 - id: sandbox-policy
-  name: '@deepseek-ai/dsh-sandbox-policy'
+  name: '@yharness/sandbox-policy'
   config:
     mode: !!js "process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')"
     workspaceRoot: !!js process.cwd()
 
 - id: approval
-  name: '@deepseek-ai/dsh-user-approval'
+  name: '@yharness/user-approval'
   config:
     policy: !!js "(process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
 
 - id: session-persistence-jsonl
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  name: '@yharness/session-persistence-jsonl'
   config:
     root: !!js dshHomePath('sessions')
     compression: none
@@ -34,7 +65,7 @@
   disabled: true
 
 - id: system-prompt
-  name: '@deepseek-ai/dsh-system-prompt'
+  name: '@yharness/system-prompt'
   config:
     personaPrefix: |
       You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is policy, not a command bug.
@@ -42,12 +73,12 @@
       Verify your work by running the code or tests. Keep answers brief and factual.
 
 - id: agent-instructions
-  name: '@deepseek-ai/dsh-agent-instructions'
+  name: '@yharness/agent-instructions'
   config:
     maxBytes: 65536
 
 - id: tool-subagent
-  name: '@deepseek-ai/dsh-tool-subagent'
+  name: '@yharness/tool-subagent'
   config:
     provider: spawn
     toolName: subagent
@@ -55,7 +86,7 @@
     maxDepth: 1
 
 - id: tool-subagent-fork
-  name: '@deepseek-ai/dsh-tool-subagent'
+  name: '@yharness/tool-subagent'
   config:
     provider: fork
     toolName: subagent_fork
@@ -64,18 +95,18 @@
     maxDepth: 1
 
 - id: fs-sandbox
-  name: '@deepseek-ai/dsh-fs-sandbox'
+  name: '@yharness/fs-sandbox'
   config:
     cwd: !!js process.cwd()
 
 - insert:
     - id: hooks-claude-code
-      name: '@deepseek-ai/dsh-hooks-claude-code'
+      name: '@yharness/hooks-claude-code'
       config:
         configPath: ./hooks.json
 
     - id: hooks-codex
-      name: '@deepseek-ai/dsh-hooks-codex'
+      name: '@yharness/hooks-codex'
       config:
         configPath: ./codex-hooks.json
 

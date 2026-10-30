@@ -1,5 +1,5 @@
 /** Browser-safe skill library inventory, revision and provider vocabulary. */
-import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { Branded } from '@yharness/brand'
 
 /** Stable provider/path identity, independent of a skill's display name. */
 export type SkillLibraryId = Branded<'SkillLibraryId'>

@@ -8,12 +8,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import * as WorkspaceChangesPlugin from '@deepseek-ai/dsh-workspace-changes'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import SessionStore, { SessionId } from '@yharness/session'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import * as WorkspaceChangesPlugin from '@yharness/workspace-changes'
 import { changes, endTurn, git, startTurn, toolCall } from './support.ts'
 
 let root: string | undefined
@@ -31,9 +31,9 @@ describe('real Loader composition', () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-workspace-changes-loader-'))
     const cwd = join(root, 'ws')
     await writeFile(join(root, 'cordis.yml'), [
-      "- name: '@deepseek-ai/dsh-session'",
-      "- name: '@deepseek-ai/dsh-subprocess-local'",
-      "- name: '@deepseek-ai/dsh-workspace-changes'",
+      "- name: '@yharness/session'",
+      "- name: '@yharness/subprocess-local'",
+      "- name: '@yharness/workspace-changes'",
       '',
     ].join('\n'))
     context = new Context()
@@ -41,9 +41,9 @@ describe('real Loader composition', () => {
     await context.plugin(Loader)
     context.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
-      ['@deepseek-ai/dsh-session', SessionStore],
-      ['@deepseek-ai/dsh-subprocess-local', LocalSubprocessRuntime],
-      ['@deepseek-ai/dsh-workspace-changes', WorkspaceChangesPlugin],
+      ['@yharness/session', SessionStore],
+      ['@yharness/subprocess-local', LocalSubprocessRuntime],
+      ['@yharness/workspace-changes', WorkspaceChangesPlugin],
     ])
     context.loader.internal = {
       version: 'v2',

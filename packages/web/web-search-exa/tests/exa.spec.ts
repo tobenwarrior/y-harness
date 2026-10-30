@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import WebRuntime from '@deepseek-ai/dsh-web'
-import { ExaSearchProvider, EXA_PROVIDER_ID } from '@deepseek-ai/dsh-web-search-exa'
-import * as exaPlugin from '@deepseek-ai/dsh-web-search-exa'
+import { Context } from '@yharness/cordis'
+import WebRuntime from '@yharness/web'
+import { ExaSearchProvider, EXA_PROVIDER_ID } from '@yharness/web-search-exa'
+import * as exaPlugin from '@yharness/web-search-exa'
 import { mapExaResponse, mapExaResult } from '../src/provider.ts'
 
 const options = { apiKey: 'exa-key', baseURL: 'https://api.exa.test', searchType: 'auto' as const, highlightsPerResult: 1 }
@@ -98,6 +98,7 @@ describe('ExaSearchProvider request mapping', () => {
     expect(url).toBe('https://api.exa.test/search')
     expect(init).toMatchObject({ method: 'POST', redirect: 'error' })
     expect((init.headers as Record<string, string>)['authorization']).toBe('Bearer exa-key')
+    expect((init.headers as Record<string, string>)['user-agent']).toBe('y-harness/0.0.1 (+https://github.com/tobenwarrior/y-harness)')
     expect(JSON.parse(init.body as string)).toEqual({
       query: 'hello',
       type: 'neural',

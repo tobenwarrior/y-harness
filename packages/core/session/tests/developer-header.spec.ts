@@ -1,10 +1,10 @@
 /** Tool additions bind to one historical request header across Session lifecycle paths. */
 import { describe, expect, it } from 'vitest'
-import { createDeveloperMessage } from '@deepseek-ai/dsh-llm'
-import type { ToolSchema } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { buildForkSeed } from '@deepseek-ai/dsh-session/fork'
+import { createDeveloperMessage } from '@yharness/llm'
+import type { ToolSchema } from '@yharness/llm'
+import { Session, SessionId, SessionLogOffset, SessionSeq } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
+import { buildForkSeed } from '@yharness/session/fork'
 import { foldSurface } from '../src/surface.ts'
 
 const first: ToolSchema = { name: 'search', description: 'First', parameters: { type: 'object' } }

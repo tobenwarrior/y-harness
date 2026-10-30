@@ -12,13 +12,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ObservableSnapshot } from '@yharness/client-store'
+import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@yharness/client-ui-slots'
 import {
   FileTypeIcon, IconNowrapFillRegular, IconPauseOutlineRegular, IconPlayOutlineRegular,
   IconRefreshOutlineRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip, classifyFileType,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import { pathPartsOf } from '@deepseek-ai/dsh-util-workspace-path'
+} from '@yharness/client-ui-primitives'
+import { pathPartsOf } from '@yharness/util-workspace-path'
 import type { TextInjected } from './face.ts'
 import { emptyFailureRecourse, failureLine } from './failure-line.ts'
 import { LoadingIndicator } from './LoadingIndicator.tsx'

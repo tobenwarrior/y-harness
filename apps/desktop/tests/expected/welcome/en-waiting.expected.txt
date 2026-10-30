@@ -1,5 +1,5 @@
-Y harness
-Y harness
+Y Harness
+Y Harness
 Browser didn’t open automatically?
 Copy sign-in link
 Completing sign in… [disabled]

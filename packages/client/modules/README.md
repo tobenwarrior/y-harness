@@ -3,7 +3,7 @@ description: "Client module system for the web GUI: the host composes the boot g
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-modules
+# @yharness/client-modules
 
 ## Summary
 

@@ -1,5 +1,5 @@
 /** Pure view inputs for the desktop onboarding flow. */
-import type { TrackProductEvent } from '@deepseek-ai/dsh-client-product-analytics/client'
+import type { TrackProductEvent } from '@yharness/client-product-analytics/client'
 import type { OnboardingProgress } from '../onboarding-settings.ts'
 import type { AccountSnapshot } from './AccountSection.tsx'
 import type { PlatformPages } from './platform-pages.ts'
@@ -31,7 +31,7 @@ export interface DesktopOnboardingProps {
   update(this: void, change: OnboardingChange): Promise<boolean>
   complete(this: void, reason: 'completed' | 'skipped'): Promise<boolean>
   retry(this: void): Promise<boolean>
-  /** Active interface language selects the matching illustration artwork. */
+  /** Active interface language applied to the onboarding document. */
   locale: string
   t: (key: AccountKey) => string
 }

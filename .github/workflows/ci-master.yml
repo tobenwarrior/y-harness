@@ -133,7 +133,7 @@ jobs:
   serial-linux-selfhosted:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/master'
-      && (github.repository == 'deepseek-harness/deepseek-harness'
+      && (github.repository == 'tobenwarrior/y-harness'
           || vars.DSH_CI_STANDBY_LINUX_ENABLED == 'true')
     name: serial / linux (self-hosted standby)
     runs-on: [self-hosted, linux, x64, vm-backup]
@@ -169,7 +169,7 @@ jobs:
       # The persistent VM image owns Playwright's Linux system packages; this
       # step also proves that browser provisioning remains usable for failover.
       - name: Install Playwright Chromium and WebKit
-        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+        run: pnpm --filter @yharness/web-frontend exec playwright install chromium webkit
 
       - name: Prepare bubblewrap (unrestrict userns)
         run: bash scripts/prepare-ci-bubblewrap.sh
@@ -230,7 +230,7 @@ jobs:
   serial-windows:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/master'
-      && (github.repository == 'deepseek-harness/deepseek-harness'
+      && (github.repository == 'tobenwarrior/y-harness'
           || vars.DSH_CI_STANDBY_WINDOWS_ENABLED == 'true')
     name: serial / windows (self-hosted standby)
     runs-on: [self-hosted, dsh-win-ci, windows]
@@ -287,7 +287,7 @@ jobs:
   larger-runner-benchmark:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'
-      && (github.repository == 'deepseek-harness/deepseek-harness'
+      && (github.repository == 'tobenwarrior/y-harness'
           || vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true')
     # Default measures the repository's own fleet tiers; under the matching
     # platform's blacksmith failover value the tiers Blacksmith offers (up to
@@ -401,7 +401,7 @@ jobs:
   consolidated-runner-benchmark:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'
-      && (github.repository == 'deepseek-harness/deepseek-harness'
+      && (github.repository == 'tobenwarrior/y-harness'
           || vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true')
     # Default measures the repository's own fleet tiers; under the matching
     # platform's blacksmith failover value the tiers Blacksmith offers (up to

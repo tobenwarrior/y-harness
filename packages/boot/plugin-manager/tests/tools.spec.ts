@@ -1,13 +1,13 @@
 /** Agent controls use the same manager methods as the Web and bound inventory reads. */
-import { Context } from '@deepseek-ai/cordis'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import SandboxPolicy, { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
-import { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import SessionProjections from '@deepseek-ai/dsh-session-projection'
-import ApprovalService, { type ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import { Context } from '@yharness/cordis'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import { ToolCallId } from '@yharness/llm'
+import type { Agent } from '@yharness/agent'
+import SandboxPolicy, { setSandboxMode } from '@yharness/sandbox-policy'
+import { Session, SessionId, SESSION_FORMAT_VERSION } from '@yharness/session'
+import SessionProjections from '@yharness/session-projection'
+import ApprovalService, { type ApprovalOutcome } from '@yharness/user-approval'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type PluginManager from '../src/index.ts'
 import * as tool from '../src/tools.ts'
@@ -189,7 +189,7 @@ it('paginates inventories with an explicit continuation and total', async () => 
 
 it('keeps UI translation metadata out of model-facing plugin and bundle lists', async () => {
   const { call, manager } = await fixture()
-  const meta = { title: { en: 'Plugin', zh: '插件' }, error: 'UI-only diagnostic' }
+  const meta = { title: { en: 'Plugin', zh: '\u{63D2}\u{4EF6}' }, error: 'UI-only diagnostic' }
   manager.listPlugins.mockImplementationOnce(async () => [{ entryId: 'include:plugin', enabled: true, meta }])
   expect(JSON.parse(resultText(await call({ action: 'list_plugins' })))).toEqual({
     entries: [{ entryId: 'include:plugin', enabled: true }], total: 1, nextOffset: null,

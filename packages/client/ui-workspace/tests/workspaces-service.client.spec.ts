@@ -1,23 +1,23 @@
 import { setImmediate } from 'node:timers/promises'
-import { Context } from '@deepseek-ai/cordis'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { Context } from '@yharness/cordis'
+import { createSnapshotStore } from '@yharness/client-store'
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type {
   ISessions, SessionListState, SessionReference, SessionSummary,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import { SessionCreateError } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
+} from '@yharness/api-session-controller/client'
+import { SessionCreateError } from '@yharness/api-session-controller/client'
+import type { SubagentAddress } from '@yharness/subagent/client'
 import type {
   IWorkspaces, WorkspaceId, WorkspaceSnapshot, WorkspaceView,
-} from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { ClientRemote, DirectoryListing } from '@deepseek-ai/dsh-api-remotes/client'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
-import { LayoutController } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import type { DraftInitializationOptions, SessionInputResolver } from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/api-workspace-controller/client'
+import type { ClientRemote, DirectoryListing } from '@yharness/api-remotes/client'
+import { RemoteError } from '@yharness/client-test-runtime'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import { SessionId } from '@yharness/session/types'
+import { LayoutController } from '@yharness/client-ui-layout/client'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import type { DraftInitializationOptions, SessionInputResolver } from '@yharness/client-ui-conversation/client'
 import type { RowToast } from '../src/client/contract/slots.ts'
 import { DirectoryBrowseError, UiWorkspaceService } from '../src/client/navigation.ts'
 import { en, zh } from '../src/client/locales.ts'
@@ -758,7 +758,7 @@ describe('UiWorkspaceService', () => {
 
   describe('startSession draft initialization', () => {
     it.each<{ name: string; options: DraftInitializationOptions }>([
-      { name: 'plain text', options: { prompt: '草稿 🧭\nsecond line', clearPreviousDraft: true } },
+      { name: 'plain text', options: { prompt: '\u8349\u7a3f 🧭\nsecond line', clearPreviousDraft: true } },
       { name: 'empty text', options: { prompt: '' } },
       { name: 'clear without prompt', options: { clearPreviousDraft: true } },
       { name: 'reference-like text', options: { prompt: '🧭 @notes.md' } },

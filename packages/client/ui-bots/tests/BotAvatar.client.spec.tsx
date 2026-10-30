@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId } from '@yharness/attachment'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

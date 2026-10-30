@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-product-analytics",
+  "name": "@yharness/client-product-analytics",
   "description": "Desktop product event collection and authenticated Host reporting",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/product-analytics"
   },
   "type": "module",
@@ -39,7 +39,7 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-api-gateway"
+        "@yharness/api-gateway"
       ],
       "platform": "web"
     }
@@ -50,20 +50,20 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-api-gateway": "workspace:*",
-    "@deepseek-ai/dsh-compaction": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-host-product-telemetry-otel": "workspace:*",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/dsh-settings": "workspace:*",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-otel": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/api-gateway": "workspace:*",
+    "@yharness/compaction": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/host-product-telemetry-otel": "workspace:*",
+    "@yharness/deepseek-account": "workspace:*",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/settings": "workspace:*",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/otel": "workspace:*"
   },
   "files": [
     "lib/index.js",
@@ -75,8 +75,8 @@
     "lib/typert.remote-client.d.ts"
   ],
   "dependencies": {
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   }
 }

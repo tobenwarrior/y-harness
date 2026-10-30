@@ -12,8 +12,8 @@ Every way a mod behaves differently through this bridge than under Claude Code, 
 | Hot reload of the hooks module on edit; `claude plugin validate`, `claude plugin test`, types generation from `types/index.d.ts` | None of these commands; a remount re-runs `register` on the same evaluated module, so module-level variables keep their values | Follow-up only on demand; the test kit's `createModTestKit` replaces `claude plugin test` inside Vitest |
 | A hooks module may be TypeScript | A `.ts` hooks module loads only where the launcher transpiles (the source launch does; a built install does not) | DSH ships plain Node |
 | Mods run in-process with `$` as their only access to the host | The hooks module runs in-process with Node's globals, no access rule, and the process's full authority: `$.env` reads and writes the harness environment, `$.http.fetch` reaches any URL, `$.fs` and `$.tool.call` act as the session | No sandbox is applied to mods; mount only mods you would run as a plugin |
-| `import type { … } from 'claude-code'`, `declare module 'claude-code' { interface PluginState }` | The `claude-code` module name resolves only inside this repository's test setup, to the bridge's types; a mod outside it imports `@deepseek-ai/dsh-experimental-claude-code-mods` | The type names are the bridge's own |
-| `settings hooks` in `hooks.json` run beside mod hooks | Not run; mount `@deepseek-ai/dsh-hooks-claude-code` for them | Different bridge |
+| `import type { … } from 'claude-code'`, `declare module 'claude-code' { interface PluginState }` | The `claude-code` module name resolves only inside this repository's test setup, to the bridge's types; a mod outside it imports `@yharness/experimental-claude-code-mods` | The type names are the bridge's own |
+| `settings hooks` in `hooks.json` run beside mod hooks | Not run; mount `@yharness/hooks-claude-code` for them | Different bridge |
 
 ## Events
 
@@ -78,7 +78,7 @@ Every way a mod behaves differently through this bridge than under Claude Code, 
 
 | `claude-code/testing` | This bridge |
 |---|---|
-| `describe`, `test(name, ($, on) => …)`, `expect`, `mock`, `tier` | Inside this repository the same module name provides them over Vitest; `test` infers the mod from the test file's location (`<mod>/tests/*.test.ts` → `<mod>/index.ts`) and `defineModTests` overrides it. Outside, `createModTestKit` and `mock` come from `@deepseek-ai/dsh-experimental-claude-code-mods/testing` |
+| `describe`, `test(name, ($, on) => …)`, `expect`, `mock`, `tier` | Inside this repository the same module name provides them over Vitest; `test` infers the mod from the test file's location (`<mod>/tests/*.test.ts` → `<mod>/index.ts`) and `defineModTests` overrides it. Outside, `createModTestKit` and `mock` come from `@yharness/experimental-claude-code-mods/testing` |
 | `on` stubs the engine's answers; the kit answers `ui.*` itself | Same; `ui.open` answers `{ isPlaced: false }`, `ui.invalidate` and `ui.close` succeed; `session.cwd`, `process.run`, `fs.*`, `store.*`, `env.*` need a stub (`mock.store`, `mock.env`, `mock.clock` answer whole namespaces) |
 | `$.ui.mount({ plugin, surface, component, props })` → `find`, `findAll`, `press`, `unmount` | Same, plus `tree()` and `text()`; every read renders afresh through every loaded mod's hooks; `plugin` and `surface` are accepted for source compatibility |
 | 5 s hook budget in tests | Same (`budgetMs`) |

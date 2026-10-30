@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseDshArgs } from '../src/args.ts'
 
@@ -21,6 +23,28 @@ function exitCode(argv: string[], manageDesktopProfile = false): number {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('parseDshArgs', () => {
+  it('uses yharness as the canonical command and keeps dsh as a package alias', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
+    const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    try {
+      parse(['--help'])
+    } catch {
+      // Commander exits after printing help.
+    } finally {
+      const output = stdout.mock.calls.map(([chunk]) => String(chunk)).join('')
+      expect(output).toContain('Usage: yharness')
+      expect(output).toContain('yharness plugin --profile')
+      expect(output).not.toContain('Usage: dsh')
+      expect(exit).toHaveBeenCalledWith(0)
+      vi.restoreAllMocks()
+    }
+
+    const manifest = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as {
+      bin: Record<string, string>
+    }
+    expect(manifest.bin).toEqual({ yharness: 'lib/bin.js', dsh: 'lib/bin.js' })
+  })
+
   it('routes profile boots and shorthand, handing the rest to the app', () => {
     expect(parse(['--profile', 'tui'])).toEqual({ mode: 'profile', profile: 'tui', patches: [], args: [] })
     expect(parse(['--profile', 'tui', '--patch', 'a.yml', '--patch', 'b.yml']))
@@ -115,8 +139,8 @@ describe('parseDshArgs', () => {
       .toEqual({ mode: 'plugin', profile: 'tui', args: ['add', 'turtle-ui'] })
     expect(parse(['plugin', '--profile', 'tui', 'remove', 'turtle-ui']))
       .toEqual({ mode: 'plugin', profile: 'tui', args: ['remove', 'turtle-ui'] })
-    expect(parse(['plugin', '--profile', 'tui', 'why', '@deepseek-ai/cordis']))
-      .toEqual({ mode: 'plugin', profile: 'tui', args: ['why', '@deepseek-ai/cordis'] })
+    expect(parse(['plugin', '--profile', 'tui', 'why', '@yharness/cordis']))
+      .toEqual({ mode: 'plugin', profile: 'tui', args: ['why', '@yharness/cordis'] })
     // Unknown pnpm flags forward verbatim.
     expect(parse(['plugin', '--profile', 'tui', 'add', '--save-dev', 'x']))
       .toEqual({ mode: 'plugin', profile: 'tui', args: ['add', '--save-dev', 'x'] })

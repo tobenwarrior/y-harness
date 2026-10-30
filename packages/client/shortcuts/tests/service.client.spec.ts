@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { Context } from '@yharness/cordis'
+import { LocaleRuntime } from '@yharness/client-locale/client'
 import ShortcutsService from '../src/client/index.ts'
 import { initialShortcutConfig } from '../src/protocol.ts'
 import type { DesktopKeyboardApi, DesktopShortcutsApi, ShortcutConfigSnapshot, ShortcutCommandId } from '../src/protocol.ts'
@@ -168,7 +168,8 @@ it('persists Web edits and presents normalized bindings through the public servi
   } })
   await vi.waitFor(() => { expect(service.config.getSnapshot().status).toBe('ready') })
   const changed = vi.fn(); service.catalog.subscribe(changed)
-  ctx.locale.setLocale('zh'); expect(changed).toHaveBeenCalled()
+  ctx.locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
+  ctx.locale.setLocale('fr'); expect(changed).toHaveBeenCalled()
   expect((await service.edit({ type: 'set', id: command.id, binding: null }, service.config.getSnapshot().revision)).status).toBe('saved')
   expect(service.catalog.getSnapshot()[0]?.keys).toEqual([])
   await service.recording(true); off()

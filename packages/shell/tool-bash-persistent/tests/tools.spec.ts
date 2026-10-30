@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import TerminalSessionService from '@deepseek-ai/dsh-terminal'
+import { Context } from '@yharness/cordis'
+import { ToolCallId } from '@yharness/llm'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
+import AgentRegistry from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import TerminalSessionService from '@yharness/terminal'
 import type {
   TerminalBackend,
   TerminalBackendSession,
@@ -14,11 +14,11 @@ import type {
   TerminalSessionStatus,
   TerminalSignal,
   TerminalWaitReason,
-} from '@deepseek-ai/dsh-terminal'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import * as ToolBashPersistent from '@deepseek-ai/dsh-tool-bash-persistent'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
+} from '@yharness/terminal'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import * as ToolBashPersistent from '@yharness/tool-bash-persistent'
+import { unsupportedInbox } from '@yharness/agent-loop-testkit'
 
 const contexts: Context[] = []
 let callNumber = 0

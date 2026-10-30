@@ -1,5 +1,5 @@
-import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import type { SessionEvent } from '@yharness/session/types'
+import { PartialArguments } from '@yharness/util-values'
 import { describe, expect, it } from 'vitest'
 import type { StartedToolCall, ToolCallBlock } from '../src/client/contract/snapshot.ts'
 import {

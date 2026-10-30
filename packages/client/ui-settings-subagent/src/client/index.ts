@@ -7,23 +7,23 @@
  */
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: the ctx.configForms Context merge. Cross-plugin collaboration
 // goes through the service, never a value import (client bundle purity gate).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@yharness/client-ui-settings/client'
 // Type-only: the Plugins page's SlotMap merge (the 'plugins.item' entry).
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-plugin-manager/client'
+import type {} from '@yharness/client-ui-renderer/client'
 // Type-only: the ctx.remote Context merge and the forwarded-event key face.
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@yharness/api-remotes/client'
+import type { Context as ClientContext } from '@yharness/cordis'
 import { SubagentCard } from './SubagentCard.tsx'
 import { subagentCardFace } from './subagent-card-controller.ts'
 import { SubagentLimitsCardController } from './subagent-limits-card-controller.ts'
 import {
   SUBAGENT_MODEL_SELECTION_NS, SubagentModelSelectionCardController,
 } from './subagent-model-selection-card-controller.ts'
-import { en, zh, type SubagentSettingsLocaleKey } from './locales.ts'
+import { en, type SubagentSettingsLocaleKey } from './locales.ts'
 
 export type { SubagentCardProps } from './SubagentCard.tsx'
 export type { SubagentCardFace } from './subagent-card-controller.ts'
@@ -33,7 +33,7 @@ export type {
 } from './subagent-model-selection-card-controller.ts'
 export type { SubagentSettingsLocaleKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Subagent settings page copy. */
     'settings.subagent': SubagentSettingsLocaleKey
@@ -58,7 +58,7 @@ export const inject = ['slots', 'locale', 'remote', 'remote.session', 'configFor
  */
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-subagent: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-settings-subagent: dictionaries')
   const limits = new SubagentLimitsCardController(ctx.configForms.get(SUBAGENT_NS))
   ctx.effect(() => () => { limits.dispose() }, 'ui-settings-subagent: limits form subscription')
   const models = new SubagentModelSelectionCardController(

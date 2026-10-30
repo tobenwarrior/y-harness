@@ -1,6 +1,6 @@
 /** Row identities and raw values shared by the two virtual inspector tables. */
 
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { ObservableSnapshot } from '@yharness/client-store'
 
 /** One table position; children immediately follow their parent. */
 export interface InspectorRow {

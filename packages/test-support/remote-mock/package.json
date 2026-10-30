@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-remote-mock",
+  "name": "@yharness/remote-mock",
   "description": "Endpoint-named mock for Typert Remote traffic: unary answers and stream scripts per <namespace>/<method>, live stream control, a log, and the Connection carrier face whole-client specs install",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/test-support/remote-mock"
   },
   "type": "module",
@@ -26,14 +26,14 @@
     "@vitest/spy": "^4.1.8"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/typert-protocol": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-api-settings-controller": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/api-settings-controller": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
     "typescript": "^6.0.3"
   },
   "files": [

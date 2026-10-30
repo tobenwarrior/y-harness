@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="726" height="120" viewBox="0 0 726 120" role="img" aria-labelledby="title">
+  <title id="title">Powered by Y Harness</title>
+  <rect width="726" height="120" fill="#25282d"/>
+  <rect x="452" width="274" height="120" fill="#4d6bfe"/>
+  <path fill="#fff" d="M32 25h20l18 27 18-27h20L80 68v27H60V68L32 25Z"/>
+  <circle cx="70" cy="52" r="7" fill="#4d6bfe"/>
+  <text x="126" y="78" fill="#fff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="52" font-weight="400" letter-spacing="1">powered by</text>
+  <text x="478" y="78" fill="#fff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="40" font-weight="700" letter-spacing=".5">Y Harness</text>
+</svg>

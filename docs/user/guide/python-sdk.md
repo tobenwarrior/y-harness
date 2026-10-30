@@ -1,6 +1,8 @@
 # Get started with the Python SDK
 
-This tutorial installs the published Python SDK, runs the shipped standalone minimal profile, and shows how to customize the same `dsh` profile from your own program.
+This tutorial installs the published Y Harness Python SDK, runs the shipped standalone minimal profile, and shows how to customize the same `dsh` profile from your own program.
+
+The published `deepseek-harness-sdk` and `deepseek-harness-runtime-bin` distribution names, `deepseek_harness` module, `DeepSeekHarness` class, and `dsh` command remain unchanged for compatibility.
 
 ## Prerequisites
 
@@ -20,16 +22,16 @@ This tutorial installs the published Python SDK, runs the shipped standalone min
 ::: code-group
 
 ```sh [Linux/macOS]
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
+git clone https://github.com/tobenwarrior/y-harness.git
+cd y-harness
 python -m venv .venv
 . .venv/bin/activate
 python -m pip install deepseek-harness-sdk
 ```
 
 ```powershell [Windows PowerShell]
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-Set-Location deepseek-harness
+git clone https://github.com/tobenwarrior/y-harness.git
+Set-Location y-harness
 py -3.10 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install deepseek-harness-sdk
@@ -145,7 +147,7 @@ dsh plugin --profile sdk-minimal add file:C:/work/my-plugin-bundle
 
 The first command initializes the shipped standalone profile. The second forwards package management to `pnpm`, then records any installed package that exports a `dsh.bundle` layer. Install `pnpm` only for this management command; launching the installed SDK does not need it. Edit `$DSH_HOME/profiles/sdk-minimal/cordis.patch.yml` for persistent row changes, or pass patch files from Python for per-launch changes.
 
-Another `profile` is valid when it includes `@deepseek-ai/dsh-sdk-app` or another JSON-RPC server row. Missing server rows, unresolved plugins, and invalid patches fail during startup instead of falling back to another composition.
+Another `profile` is valid when it includes `@yharness/sdk-app` or another JSON-RPC server row. Missing server rows, unresolved plugins, and invalid patches fail during startup instead of falling back to another composition.
 
 <a id="opt-in-to-str_replace_editor"></a>
 ### Opt in to `str_replace_editor`
@@ -155,11 +157,11 @@ The bundled runtime includes `str_replace_editor`, but `sdk-minimal` omits it fr
 ```yaml
 - insert:
     - id: fs-local
-      name: '@deepseek-ai/dsh-fs-local'
+      name: '@yharness/fs-local'
       config:
         cwd: !!js process.cwd()
     - id: tool-str-replace-editor
-      name: '@deepseek-ai/dsh-tool-str-replace-editor'
+      name: '@yharness/tool-str-replace-editor'
 ```
 
 Pass `patches=("/absolute/path/to/editor.patch.yml",)` when constructing `DeepSeekHarness(profile="sdk-minimal", ...)`, or put the patch in `$DSH_HOME/profiles/sdk-minimal/cordis.patch.yml` for persistent configuration. On the next runtime launch, model requests include `str_replace_editor` beside the persistent shell. The local filesystem provider uses the runtime working directory for relative paths; like the minimal shell, it does not confine access to that directory. For the standard `sdk` profile, insert only the editor row so it uses the existing filesystem provider and policies.

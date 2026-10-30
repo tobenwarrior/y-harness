@@ -3,7 +3,7 @@ description: "Input trigger pipeline for the Web GUI: / and @ detection under th
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-input-trigger
+# @yharness/client-ui-input-trigger
 
 ## Summary
 

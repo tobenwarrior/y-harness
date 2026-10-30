@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-llm-deepseek-api-key",
+  "name": "@yharness/llm-deepseek-api-key",
   "description": "DeepSeek api-key provider authentication and discovery",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/llm/llm-deepseek-api-key"
   },
   "type": "module",
@@ -29,27 +29,27 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-deepseek": "workspace:*",
-    "@deepseek-ai/dsh-launch-environment": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-deepseek": "workspace:*",
+    "@yharness/launch-environment": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/cordis-plugin-loader": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-deepseek": "workspace:*",
-    "@deepseek-ai/dsh-launch-environment": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-deepseek": "workspace:*",
+    "@yharness/launch-environment": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/cordis-plugin-loader": "workspace:~"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis-plugin-loader": {
+    "@yharness/cordis-plugin-loader": {
       "optional": true
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   }
 }

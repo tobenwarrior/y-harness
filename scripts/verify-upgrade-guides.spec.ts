@@ -35,9 +35,9 @@ const VALID = [
 ].join('\n')
 
 const VALID_ZH = VALID
-  .replace('description: "The `--preset` flag is removed."', 'description: "移除 `--preset` 参数。"')
-  .replace('## Change', '## 变更')
-  .replace('## Migration', '## 迁移')
+  .replace('description: "The `--preset` flag is removed."', 'description: "\u79fb\u9664 `--preset` \u53c2\u6570。"')
+  .replace('## Change', '## \u53d8\u66f4')
+  .replace('## Migration', '## \u8fc1\u79fb')
 
 function fixtureRoot(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), 'dsh-upgrade-guides-'))
@@ -114,7 +114,7 @@ describe('upgrade guide gate', () => {
       'v0.1.7/english-headings/guide.zh.md': VALID,
       'v0.1.7/wrong-kind/guide.zh.md': VALID_ZH.replace('kind: upgrade-guide', 'kind: guide'),
     }))).toEqual([
-      'docs/upgrade-guide/v0.1.7/english-headings/guide.zh.md: headings must be one "#" title followed by "## 变更", "## 迁移"; got "# `--profile` replaces `--preset`", "## Change", "## Migration"',
+      'docs/upgrade-guide/v0.1.7/english-headings/guide.zh.md: headings must be one "#" title followed by "## \u53d8\u66f4", "## \u8fc1\u79fb"; got "# `--profile` replaces `--preset`", "## Change", "## Migration"',
       'docs/upgrade-guide/v0.1.7/wrong-kind/guide.zh.md: kind must be upgrade-guide',
     ])
   })
@@ -124,7 +124,7 @@ describe('upgrade guide gate', () => {
     expect(collectUpgradeGuideViolations(fixtureRoot({
       'v0.1.7/at-limit/guide.md': `${VALID}${'word '.repeat(500 - words)}\n`,
       'v0.1.7/over-limit/guide.md': `${VALID}${'word '.repeat(501 - words)}\n`,
-      'v0.1.7/over-limit/guide.zh.md': `${VALID_ZH}${'词 '.repeat(600)}\n`,
+      'v0.1.7/over-limit/guide.zh.md': `${VALID_ZH}${'\u8bcd '.repeat(600)}\n`,
     }))).toEqual(['docs/upgrade-guide/v0.1.7/over-limit/guide.md: 501 words exceeds the 500-word ceiling'])
   })
 })

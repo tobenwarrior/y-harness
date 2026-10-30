@@ -1,5 +1,5 @@
-import { BrandWordmark, YHarnessLogo } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SidebarBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import { BrandWordmark, YHarnessLogo } from '@yharness/client-ui-primitives'
+import type { SidebarBrandMarkOwnerProps } from '@yharness/client-ui-sidebar/client'
 
 /**
  * Render the Y mark with the presentation requested by a non-header host surface.

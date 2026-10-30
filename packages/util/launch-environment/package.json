@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-launch-environment",
-  "description": "Immutable DeepSeek Harness launch environment that records which layer supplied each value",
+  "name": "@yharness/launch-environment",
+  "description": "Immutable Y Harness launch environment that records which layer supplied each value",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/util/launch-environment"
   },
   "type": "module",
@@ -27,9 +27,9 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

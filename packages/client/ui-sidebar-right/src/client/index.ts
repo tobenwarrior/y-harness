@@ -20,17 +20,17 @@
  * guide registers through those stages unmodified, exactly as a type shipped
  * from another package does — `ui-sidebar-documentpreview` is the live proof.
  */
-import type {} from '@deepseek-ai/dsh-client-shortcuts/client'
+import type {} from '@yharness/client-shortcuts/client'
 import { observeSidebarFocus } from './focus.ts'
 import { registerSidebarShortcuts } from './shortcuts.ts'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-resources/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type { ILayout } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/client-resources/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type { ILayout } from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-conversation/client'
+import type { SessionId } from '@yharness/session/types'
 import type {} from './contract/slots.ts'
 import { GuideBody, type GuideInjected } from './tabs/guide/GuideBody.tsx'
 import { GuideTitle } from './tabs/guide/GuideTitle.tsx'
@@ -42,10 +42,10 @@ import { SidebarSessionViews } from './session-views.ts'
 import { createSidebarRightController, type SidebarRightController } from './service.ts'
 import { SidebarRightTabRegistry } from './tab-registry.ts'
 import { createSidebarRightStore } from './stores.ts'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 import { GUIDE_ID, guideDefinition } from './tabs/guide/definition.ts'
 import { guideTabInfoFactory, tabInfoFactory } from './tab-info.ts'
-import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { TabId } from '@yharness/client-ui-dockkit'
 import { defaultSeed } from './contract/seed.ts'
 
 export type { SidebarRightTarget } from './focus.ts'
@@ -70,7 +70,7 @@ export type {
   SidebarRightTabParams, SidebarRightTabParamsFor, SidebarRightTabParamsMap,
 } from './contract/params.ts'
 // The layout ids and rectangle the navigation face takes, so a caller needs no import from the kit.
-export type { FloatRect, PaneId, TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
+export type { FloatRect, PaneId, TabId, TabRecord } from '@yharness/client-ui-dockkit'
 export type { PinResource, SidebarRightNavigator, TabOccurrence, SidebarRightOccurrenceId } from './tab-domain.ts'
 export type { SidebarRightKey } from './locales.ts'
 export type { OpenContentIntent } from './stores.ts'
@@ -82,7 +82,7 @@ const NS = 'sidebarRight'
 /** Required browser services: the slot registry, the frame's panel actions, copy, and the resource model. */
 export const inject = ['slots', 'layout', 'locale', 'resources', 'sessions', 'uiSession', 'shortcuts']
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Right-Sidebar navigation and presentation face. */
     sidebarRight: SidebarRightController
@@ -159,7 +159,7 @@ export function apply(ctx: ClientContext): void {
     void disposeRegistry()
   }, 'ui-sidebar-right: service faces')
 
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar-right: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar-right: dictionaries')
   ctx.effect(() => registerSidebarShortcuts(ctx.shortcuts, controller, t, () => {
     void ctx.shortcuts.closeWindow().catch((error: unknown) => { console.error('Window close failed', error) })
   }), 'ui-sidebar-right: shortcuts')

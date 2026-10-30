@@ -1,8 +1,8 @@
 /** Validated durable Decision settings and reconstructable auxiliary calls. */
 import { z } from 'zod'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
-import type { ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
+import type { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import { brandString } from '@yharness/brand'
 import type { SkillLibraryId } from './types.ts'
 import type { DecisionConfiguration, DecisionConfigureRequest, DecisionRecord, DecisionRequestId, DecisionRoute } from './decision-types.ts'
 

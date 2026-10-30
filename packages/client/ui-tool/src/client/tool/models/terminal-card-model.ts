@@ -1,8 +1,8 @@
 /** Pure terminal-card derivation from raw Tool call and result fields. @module */
-import type { TerminalBlockLabels, TerminalBlockProps } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
-import { hasSpillNotice } from '@deepseek-ai/dsh-spill-policy/notice'
+import type { TerminalBlockLabels, TerminalBlockProps } from '@yharness/client-ui-primitives'
+import type { TranslateNS } from '@yharness/client-ui-slots'
+import { resolveWorkspacePath } from '@yharness/util-workspace-path'
+import { hasSpillNotice } from '@yharness/spill-policy/notice'
 import type { ToolCallBlock } from './tool-call-model.ts'
 import { parsedToolCall, singleResultText } from './raw-tool-call.ts'
 
@@ -260,7 +260,7 @@ function terminalSendCall(name: string, args: Record<string, unknown>): Terminal
 }
 
 /**
- * Parse the marker literals owned by `@deepseek-ai/dsh-shell/render` without
+ * Parse the marker literals owned by `@yharness/shell/render` without
  * importing that Host-only package into the Client dependency graph.
  * @param text - rendered shell result text.
  * @returns output with a trailing exit-code or signal marker extracted.

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-api-gateway",
+  "name": "@yharness/api-gateway",
   "description": "Typert Remote Host dispatcher and Client API endpoint",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/api/gateway"
   },
   "type": "module",
@@ -36,8 +36,8 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-typert-registry",
-        "@deepseek-ai/dsh-client-connection"
+        "@yharness/typert-registry",
+        "@yharness/client-connection"
       ],
       "platform": "web",
       "immediately": true
@@ -55,26 +55,26 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-deque": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/deque": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "ws": "^8.21.0",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/typert-protocol": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-client-connection": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/client-connection": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-cmdline": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-host-webserver": "workspace:*",
-    "@deepseek-ai/dsh-remote-mock": "workspace:*",
-    "@deepseek-ai/dsh-typert-registry": "workspace:*",
-    "@deepseek-ai/dsh-util-crypto": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/cmdline": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/host-webserver": "workspace:*",
+    "@yharness/remote-mock": "workspace:*",
+    "@yharness/typert-registry": "workspace:*",
+    "@yharness/util-crypto": "workspace:*",
     "@types/ws": "^8.18.1",
-    "@deepseek-ai/cordis": "workspace:~",
+    "@yharness/cordis": "workspace:~",
     "zod": "^4.4.3"
   }
 }

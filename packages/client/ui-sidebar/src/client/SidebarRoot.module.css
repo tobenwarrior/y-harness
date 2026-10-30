@@ -86,6 +86,13 @@
   --dsh-windows-menu-start: 84px;
 }
 
+/* The optional update action occupies the next 28px caption seat after the
+   toggle and New Session controls; move the native menu past it only while
+   that action is mounted. */
+:global(html[data-windows-titlebar]:has([data-yh-part='desktop-update-caption'])) {
+  --dsh-windows-menu-start: 120px;
+}
+
 :global([data-windows-titlebar]) .collapsed .newSession {
   position: fixed;
   top: calc((var(--dsh-windows-titlebar-height) - 28px) / 2);
@@ -294,6 +301,33 @@
   background: transparent;
   cursor: pointer;
   color: var(--yh-alias-label-secondary);
+}
+
+/* The update action shares the toggle's tooltip anchor without becoming a
+   descendant button; Windows fixes both controls into the caption separately. */
+.toggleAnchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+.collapsed .toggleAnchor {
+  width: 36px;
+  height: 36px;
+}
+
+:global([data-windows-titlebar]) .root .toggleAnchor {
+  position: fixed;
+  top: calc((var(--dsh-windows-titlebar-height) - 28px) / 2);
+  left: 12px;
+  z-index: 30;
+  width: 28px;
+  height: 28px;
+  -webkit-app-region: no-drag;
 }
 
 .iconButton:hover {

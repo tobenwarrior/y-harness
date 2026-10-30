@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execa } from 'execa'
 import { describe, expect, it } from 'vitest'
-import { resolveExampleLaunch } from '@deepseek-ai/dsh-loader-smoke'
+import { resolveExampleLaunch } from '@yharness/loader-smoke'
 
 const dshBinScript = fileURLToPath(new URL('../src/bin.ts', import.meta.url))
 const tsconfigPath = fileURLToPath(new URL('../../../tsconfig.json', import.meta.url))
@@ -28,14 +28,14 @@ describe('dsh run with Agent Teams enabled', () => {
         name: 'dsh-profile-headless',
         private: true,
         dependencies: {
-          '@deepseek-ai/dsh-experimental-agent-team-profile': 'workspace:^',
+          '@yharness/experimental-agent-team-profile': 'workspace:^',
         },
         dsh: {
           profile: {
             bundles: [
-              '@deepseek-ai/dsh-base',
-              '@deepseek-ai/dsh-headless',
-              '@deepseek-ai/dsh-experimental-agent-team-profile',
+              '@yharness/base',
+              '@yharness/headless',
+              '@yharness/experimental-agent-team-profile',
             ],
           },
         },
@@ -54,7 +54,7 @@ describe('dsh run with Agent Teams enabled', () => {
       ].join('\n'))
       const launch = resolveExampleLaunch({
         srcBin: dshBinScript,
-        configArgs: ['--profile', 'headless', '请先运行 workflow 检查，再使用 Agent Teams 把调研和实现拆给两个 teammate，等待完成后汇总。'],
+        configArgs: ['--profile', 'headless', '\u{8BF7}\u{5148}\u{8FD0}\u{884C} workflow \u{68C0}\u{67E5}，\u{518D}\u{4F7F}\u{7528} Agent Teams \u{628A}\u{8C03}\u{7814}\u{548C}\u{5B9E}\u{73B0}\u{62C6}\u{7ED9}\u{4E24}\u{4E2A} teammate，\u{7B49}\u{5F85}\u{5B8C}\u{6210}\u{540E}\u{6C47}\u{603B}。'],
         tsconfigPath,
         env: {
           DSH_HOME: home,

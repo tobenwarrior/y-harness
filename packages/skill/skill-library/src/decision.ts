@@ -1,11 +1,11 @@
 /** Bounded response-only advice over a deterministic admitted candidate set. */
 import { randomUUID } from 'node:crypto'
-import type { Context } from '@deepseek-ai/cordis'
-import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type { Context } from '@yharness/cordis'
+import type { GenerateOptions } from '@yharness/llm'
+import type { StreamChunk } from '@yharness/llm'
+import type { DomainGlobal, KvTable } from '@yharness/storage-domain'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { decisionConfigureSchema } from './decision-record.ts'
 import type { DecisionCapabilities, DecisionConfiguration, DecisionConfigureRequest, DecisionModel, DecisionRecord, DecisionRequestId, DecisionRoute, DecisionStatus } from './decision-types.ts'
 import type { SkillLibraryItem, SkillLibraryRetrieveRequest } from './types.ts'
@@ -207,7 +207,7 @@ export class DecisionAdvisory {
     try {
       await this.untilAbort(this.recovery, signal, underlying)
       signal.throwIfAborted()
-      const { BlockAssembler } = await this.untilAbort(import('@deepseek-ai/dsh-llm'), signal, underlying)
+      const { BlockAssembler } = await this.untilAbort(import('@yharness/llm'), signal, underlying)
       signal.throwIfAborted()
       const prepared = await this.untilAbort(llm.prepareCall({ ...route, maxTokens: this.bounds.maxOutputTokens }, signal, 'api'), signal, underlying)
       signal.throwIfAborted()

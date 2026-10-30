@@ -8,14 +8,14 @@
  * proxies the calls themselves to `127.0.0.1`, which is the only host the
  * service accepts.
  *
- * @module @deepseek-ai/dsh-skill-compound
+ * @module @yharness/skill-compound
  */
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 
 /** Same-origin prefix every viewer asset and proxied call is served under. */
 export const MAP_ROUTE_PREFIX = '/api/skill-compound.map'

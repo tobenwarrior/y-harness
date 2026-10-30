@@ -9,12 +9,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GoalActivation, GoalSnapshot } from '@deepseek-ai/dsh-goal/client'
+import type { GoalActivation, GoalSnapshot } from '@yharness/goal/client'
 import {
   IconCheckOutlineRegular, IconCloseOutlineRegular, IconEditOutlineRegular, IconGoalOutlineRegular,
   IconPauseOutlineRegular, IconPlayOutlineRegular, IconTrashOutlineRegular, InlineEditor, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, TranslateNS } from '@yharness/client-ui-slots'
 import type { GoalActionResult, GoalBarActions, GoalBarInjected } from './slots.ts'
 import type { GoalKey } from './locales.ts'
 import css from './GoalBar.module.css'
@@ -176,7 +176,7 @@ export function GoalBar({ goal, activation, onEdit, onPause, onResume, onClear, 
 
 /** Full props of the dock entry: InputZone owner share + injected verbs/activation hook + the locale seat. */
 export type GoalDockProps =
-  import('@deepseek-ai/dsh-client-ui-slots').PropsRuntime<'conversation.input.dock'>
+  import('@yharness/client-ui-slots').PropsRuntime<'conversation.input.dock'>
   & InjectFace<GoalBarInjected>
   & PropsLocale<'goal'>
 

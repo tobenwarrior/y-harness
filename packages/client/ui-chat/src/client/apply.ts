@@ -1,26 +1,26 @@
 /** Register the Chat Conversation target, renderers, stats, and details surface. */
-import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
-import type { Context } from '@deepseek-ai/cordis'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { GroupKey } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-browser/client'
-import type {} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import type {} from '@yharness/client-product-analytics/client'
+import type { Context } from '@yharness/cordis'
+import type { ImageAttachmentRef } from '@yharness/attachment'
+import type {} from '@yharness/api-remotes/client'
+import type { SessionBinding } from '@yharness/api-session-controller/client'
+import type { GroupKey } from '@yharness/client-ui-conversation/client'
+import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/client-ui-sidebar-browser/client'
+import type {} from '@yharness/client-ui-input-trigger/client'
 // The `file` entry of `SidebarRightResourceParamsMap`, which types `{ params: { line } }` below.
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/client'
-import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'
+import type {} from '@yharness/client-ui-sidebar-documentpreview/client'
+import { fileAddressFor } from '@yharness/util-workspace-path'
 // Type-only service and declaration merges used by the apply world.
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-conversation/client'
+import type {} from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-settings/client'
+import type {} from '@yharness/client-ui-workspace/client'
 import type {
   ChatNodeInjected, ChatScrollPosition, ChatViewInjected, QuotaNoticeInjected, QuotaNoticeState, TurnTailOwnerProps,
 } from './contract/slots.ts'
@@ -32,7 +32,7 @@ import { registerChatNodeRenderers } from './chat/register-node-renderers.ts'
 import { ActivityPill, UsagePill } from './chat/StatsPills.tsx'
 import { registerConversationNodes } from './conversation-nodes/register.ts'
 import { QuotaNoticeHost } from './chat/QuotaNoticeHost.tsx'
-import { en, NS, zh } from './locale.ts'
+import { en, NS } from './locale.ts'
 import { TranscriptViewRow, type TranscriptViewRowInjected } from './settings/TranscriptViewRow.tsx'
 import { createChatStore } from './stores.ts'
 import { TranscriptViewPolicy } from './transcript-view.ts'
@@ -114,7 +114,7 @@ export function apply(ctx: Context): void {
     resolve: binding => ({ hooks: { chat: chatSource(binding) } }),
   })
 
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-chat: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-chat: dictionaries')
   const t = ctx.locale.bind(NS)
   const chatStore = createChatStore()
   const chatScrollPositions = new Map<SessionId, ChatScrollPosition>()

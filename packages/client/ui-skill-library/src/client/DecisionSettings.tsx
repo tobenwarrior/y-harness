@@ -1,9 +1,9 @@
 /** Optional metadata advice with explicit unavailable routes and scoped preview. */
 import { useEffect, useState, type ReactNode } from 'react'
-import { Button, Input, Switch, Toast, IconWarningOutlineRegular, IconLoadingOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
-import type { DecisionRoute, DecisionStatus } from '@deepseek-ai/dsh-skill-library/types'
+import { Button, Input, Switch, Toast, IconWarningOutlineRegular, IconLoadingOutlineRegular } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-settings-models/client'
+import type { DecisionRoute, DecisionStatus } from '@yharness/skill-library/types'
 import type { DecisionFace, DecisionState } from './decision-controller.ts'
 import css from './DecisionSettings.module.css'
 

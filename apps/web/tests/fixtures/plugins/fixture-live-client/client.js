@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   id: '@fixture/live-client',
   factory(require) {
     const React = require('react')
-    const { MenuItemButton } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { MenuItemButton } = require('@yharness/client-ui-primitives')
     const style = document.createElement('style')
     style.dataset.plugin = '@fixture/live-client'
     style.textContent = '[data-live-client] { color: rgb(12, 34, 56); position: absolute; bottom: 20px; right: 20px; }'
@@ -15,9 +15,9 @@ window.__ModuleLoader__.load({
         counters.liveMounts = String(Number(counters.liveMounts ?? 0) + 1)
         ctx.effect(() => ctx.locale.register('fixtureLive', {
           zh: {
-            active: '动态插件已启用', configSummary: '示例配置项', configForm: '动态插件配置', configField: '问候语', configSave: '保存',
-            action: '夹具操作', badge: '夹具标签', section: '夹具区块', sectionBody: '来自夹具的区块内容',
-            exportSession: '导出会话', copySessionId: '复制会话 ID',
+            active: '\u{52A8}\u{6001}\u{63D2}\u{4EF6}\u{5DF2}\u{542F}\u{7528}', configSummary: '\u{793A}\u{4F8B}\u{914D}\u{7F6E}\u{9879}', configForm: '\u{52A8}\u{6001}\u{63D2}\u{4EF6}\u{914D}\u{7F6E}', configField: '\u{95EE}\u{5019}\u{8BED}', configSave: '\u{4FDD}\u{5B58}',
+            action: '\u{5939}\u{5177}\u{64CD}\u{4F5C}', badge: '\u{5939}\u{5177}\u{6807}\u{7B7E}', section: '\u{5939}\u{5177}\u{533A}\u{5757}', sectionBody: '\u{6765}\u{81EA}\u{5939}\u{5177}\u{7684}\u{533A}\u{5757}\u{5185}\u{5BB9}',
+            exportSession: '\u{5BFC}\u{51FA}\u{4F1A}\u{8BDD}', copySessionId: '\u{590D}\u{5236}\u{4F1A}\u{8BDD} ID',
           },
           en: {
             active: 'Live plugin enabled', configSummary: 'An example setting', configForm: 'Live plugin configuration', configField: 'Greeting', configSave: 'Save',

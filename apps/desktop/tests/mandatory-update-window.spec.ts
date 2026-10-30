@@ -209,6 +209,6 @@ it('rebinds policy updates and reloads to a replacement Windows main window', ()
 it.each(['darwin', 'win32'] as const)('includes the installation wait notice only on Windows: %s', (platform) => {
   const f = setup(platform)
   expect(f.view().locale.messages.mandatoryReadyDetail).toBe(platform === 'win32'
-    ? '更新期间应用将暂时关闭，完成后会自动打开。\n\n更新可能需要一些时间，请耐心等待，期间请勿重复启动应用。'
-    : '更新期间应用将暂时关闭，完成后会自动打开。')
+    ? 'The app will close temporarily during the update and reopen automatically when it is complete.\n\nThe update may take some time. Please wait and do not launch the app again during installation.'
+    : 'The app will close during the update and reopen automatically when it is complete.')
 })

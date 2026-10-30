@@ -3,7 +3,7 @@ description: "The event-sourced session log and in-memory store for users and ma
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-session
+# @yharness/session
 
 ## Summary
 

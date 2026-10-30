@@ -2,9 +2,9 @@
 /** The switch follows accepted Host state, including refused and delayed saves. */
 import { afterEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { ConfigForm, ConfigFormSnapshot } from '@yharness/client-ui-settings/client'
 import type { ComponentProps } from 'react'
 import { UploadRow, UploadToast } from '../src/client/UploadRow.tsx'
 import { UploadPreference, type UploadSettings } from '../src/client/upload-preference.ts'
@@ -67,7 +67,7 @@ it('disables input until a pending write settles', async () => {
   await waitFor(() => { expect(screen.getByRole('switch').hasAttribute('disabled')).toBe(false) })
 })
 
-it('shows the Chinese label and cannot edit read-only settings', async () => {
+it('shows the legacy-locale label and cannot edit read-only settings', async () => {
   const { props, set } = fixture(false)
   const translated: Record<string, string> = zh
   const { container } = render(<UploadRow {...props} t={key => translated[key] ?? key} />)

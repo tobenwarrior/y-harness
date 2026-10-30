@@ -3,7 +3,7 @@ description: "The image offload executor for deployments composing compaction: w
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-compaction-image-offload
+# @yharness/compaction-image-offload
 
 ## Summary
 
@@ -28,7 +28,7 @@ Mount this plugin in every composition that runs the agent loop with an image-ca
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-compaction-image-offload'
+- name: '@yharness/compaction-image-offload'
 ```
 
 ### What you can observe

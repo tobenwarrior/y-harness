@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
+import { Context } from '@yharness/cordis'
+import Include from '@yharness/cordis-plugin-include'
+import Loader from '@yharness/cordis-plugin-loader'
+import SessionStore, { SessionId } from '@yharness/session'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
+import { remoteMethods } from '@yharness/typert-protocol'
 import MessageFeedbackService from '../src/index.ts'
 import { appendMessageFixture } from './helpers.ts'
 
@@ -27,9 +27,9 @@ async function loadComposition(configPath: string): Promise<Context> {
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
   const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-session', SessionStore],
-    ['@deepseek-ai/dsh-session-persistence-jsonl', JsonlSessionPersistence],
-    ['@deepseek-ai/dsh-message-feedback', MessageFeedbackService],
+    ['@yharness/session', SessionStore],
+    ['@yharness/session-persistence-jsonl', JsonlSessionPersistence],
+    ['@yharness/message-feedback', MessageFeedbackService],
   ])
   ctx.loader.internal = {
     version: 'v2',
@@ -55,12 +55,12 @@ describe('message feedback through a real Loader composition', () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-message-feedback-loader-'))
     const configPath = join(root, 'cordis.yml')
     await writeFile(configPath, [
-      "- name: '@deepseek-ai/dsh-session'",
-      "- name: '@deepseek-ai/dsh-session-persistence-jsonl'",
+      "- name: '@yharness/session'",
+      "- name: '@yharness/session-persistence-jsonl'",
       '  config:',
       `    root: ${JSON.stringify(join(root, 'sessions'))}`,
       '    compression: none',
-      "- name: '@deepseek-ai/dsh-message-feedback'",
+      "- name: '@yharness/message-feedback'",
       '  config:',
       '    maxNoteBytes: 32',
       '',

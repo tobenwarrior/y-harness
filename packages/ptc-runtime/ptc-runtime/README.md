@@ -3,7 +3,7 @@ description: "Abstract PTC execution seam (`ctx.ptcRuntime`) for users and maint
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-ptc-runtime
+# @yharness/ptc-runtime
 
 ## Summary
 

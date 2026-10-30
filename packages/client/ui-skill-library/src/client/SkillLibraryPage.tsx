@@ -6,9 +6,9 @@ import {
   IconFolderOpenOutlineRegular, IconPinOutlineRegular, IconPinFillRegular, IconRefreshOutlineRegular,
   IconSearchOutlineRegular, IconSkillOutlineRegular, Input, Menu, MenuItemButton, Modal,
   IconLoadingOutlineRegular, IconPanelLeftOutlineRegular, SegmentedControl, Switch, Tag, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList } from '@deepseek-ai/dsh-skill-library/types'
+} from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsStore } from '@yharness/client-ui-slots'
+import type { SkillLibraryId, SkillLibraryItem, SkillLibraryList } from '@yharness/skill-library/types'
 import type { SkillLibraryFace, SkillLibraryState } from './controller.ts'
 import type { createNavigationStore, LibraryNavigation } from './navigation-store.ts'
 import { SkillGraph } from './SkillGraph.tsx'

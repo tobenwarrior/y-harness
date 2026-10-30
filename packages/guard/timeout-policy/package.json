@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-call-timeout-policy",
+  "name": "@yharness/tool-call-timeout-policy",
   "description": "Tool-call timeout policy: a tools/execute wrapper that arms a per-tool deadline on exec.signal and returns TOOL_TIMEOUT when it wins",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/guard/timeout-policy"
   },
   "type": "module",
@@ -27,15 +27,15 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/llm": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/llm": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

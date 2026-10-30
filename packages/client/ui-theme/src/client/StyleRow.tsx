@@ -1,10 +1,10 @@
 /** Persisted app-style choices with equivalent decorative application previews. */
 import clsx from 'clsx'
-import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRuntime, PropsStore } from '@yharness/client-ui-slots'
 import type { ThemeStyle } from '../theme-settings.ts'
 import type { ThemeKey } from './locales.ts'
 import type { createStyleRowStore } from './settings-store.ts'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@yharness/client-ui-settings/client'
 import css from './StyleRow.module.css'
 
 /** Writes app style through the theme service. */

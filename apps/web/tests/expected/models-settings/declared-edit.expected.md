@@ -1,65 +1,94 @@
-- dialog "设置":
+- dialog "Settings":
   - navigation:
-    - text: 设置
-    - button "通用设置"
-    - button "模型"
-    - button "内置插件"
-    - button "Agent 预设"
-  - button "打开配置文件"
-  - button "关闭"
-  - heading "模型" [level=2]
-  - paragraph: 填入各提供商的 API 密钥即可使用其模型。
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Coding sessions"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - heading "Models" [level=2]
+  - paragraph: Enter your API keys to use models from the following providers.
+  - text: ChatGPT subscription
+  - button "Edit ChatGPT subscription": Edit
+  - text: Nous Portal
+  - button "Edit Nous Portal": Edit
+  - text: Grok subscription
+  - button "Edit Grok subscription": Edit
   - list:
     - listitem:
       - text: minimax-cn
-      - img "API 密钥已配置"
-      - button "编辑 minimax-cn": 编辑
-      - button "删除 minimax-cn": 删除
+      - img "API key configured"
+      - button "Edit minimax-cn": Edit
+      - button "Delete minimax-cn": Delete
     - listitem:
-      - text: Acme Gateway 自定义
-      - button "编辑 Acme Gateway (acme-gateway)": 编辑
-      - button "删除 Acme Gateway (acme-gateway)": 删除
-      - text: Acme Gateway acme-gateway API 密钥
-      - textbox "API 密钥":
-        - /placeholder: 输入 API 密钥，或留空使用环境认证
+      - text: Acme Gateway Custom
+      - button "Edit Acme Gateway (acme-gateway)": Edit
+      - button "Delete Acme Gateway (acme-gateway)": Delete
+      - text: Acme Gateway acme-gateway API key
+      - textbox "API key":
+        - /placeholder: Enter an API key, or leave blank to use environment authentication
       - group:
-        - text: 自定义设置 显示名称
-        - textbox "显示名称":
+        - text: Customized settings Display name
+        - textbox "Display name":
           - /placeholder: acme-gateway
           - text: Acme Gateway
-        - text: API 地址
-        - textbox "API 地址":
+        - text: Base URL
+        - textbox "Base URL":
           - /placeholder: https://gateway.acme.example/v1
           - text: https://gateway.acme.example/v1
-        - text: API 协议
-        - combobox "API 协议":
+        - text: API protocol
+        - combobox "API protocol":
           - option "OpenAI Chat Completions" [selected]
           - option "OpenAI Responses"
           - option "Anthropic Messages"
-        - region "模型目录":
-          - text: 模型目录 已自定义模型目录
-          - button "恢复默认模型"
-          - button "获取可用模型"
-          - textbox "模型 ID 1":
-            - /placeholder: 模型 ID
+        - region "Models":
+          - text: Models Customized model catalog
+          - button "Restore defaults"
+          - button "Fetch available models"
+          - textbox "Model ID 1":
+            - /placeholder: Model ID
             - text: acme-large
-          - textbox "显示名称 1":
-            - /placeholder: 显示名称
-          - button "模型选项 1" [expanded]
-          - button "删除模型 1"
-          - text: 上下文窗口
-          - textbox "上下文窗口 1":
+          - textbox "Display name 1":
+            - /placeholder: Display name
+          - button "Model options 1" [expanded]
+          - button "Delete model 1"
+          - text: Context window
+          - textbox "Context window 1":
             - /placeholder: 256K
-          - text: 最大输出 token 数
-          - textbox "最大输出 token 数 1":
+          - text: Max output tokens
+          - textbox "Max output tokens 1":
             - /placeholder: 32K
-          - group "输入类型 1":
-            - text: 输入类型
-            - checkbox "文本" [checked]
-            - text: 文本
-            - checkbox "图片" [checked]
-            - text: 图片
-          - button "添加模型"
-      - button "取消"
-      - button "保存"
-  - button "添加模型提供商"
+          - group "Input types 1":
+            - text: Input types
+            - checkbox "Text" [checked]
+            - text: Text
+            - checkbox "Image" [checked]
+            - text: Image
+          - button "Add model"
+      - button "Cancel"
+      - button "Apply"
+  - button "Add model provider"
+  - region "Decision advice":
+    - heading "Decision advice" [level=3]
+    - paragraph: Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.
+    - paragraph: Native Codex routes, including gpt-6-luna, expose native tools and are unavailable for Decision. No new account or credentials are configured.
+    - switch "Enable skill candidate advice"
+    - text: Enable skill candidate advice Decision model
+    - combobox "Decision model":
+      - option "Choose a value" [selected]
+      - option "DeepSeek · deepseek-official · Unavailable" [disabled]
+      - option "MiniMax-M2.7 · minimax-cn"
+      - option "MiniMax-M2.7-highspeed · minimax-cn"
+      - option "MiniMax-M3 · minimax-cn"
+      - option "acme-large · acme-gateway"
+    - paragraph: At most 1 call · input budget 16000 · output 512 tokens · {{duration}} deadline
+    - button "Save Decision settings"
+    - text: Project
+    - combobox "Preview project":
+      - option "Choose a project" [selected]
+    - textbox "Enter a skill candidate query"
+    - button "Preview candidate order" [disabled]
+    - button "Refresh"

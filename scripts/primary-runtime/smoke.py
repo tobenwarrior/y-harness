@@ -47,18 +47,18 @@ def main():
             assert restored.size == (80, 40)
 
         document = Document()
-        document.add_heading("Office 文档", 0)
+        document.add_heading("Office \u6587\u6863", 0)
         document.add_paragraph("Editable text")
         document.add_table(rows=2, cols=2).cell(1, 1).text = "42"
         document.add_picture(str(image), width=DocxInches(1))
         document.save(root / "document.docx")
         reopened_document = Document(root / "document.docx")
         assert reopened_document.tables[0].cell(1, 1).text == "42"
-        assert reopened_document.paragraphs[0].text == "Office 文档"
+        assert reopened_document.paragraphs[0].text == "Office \u6587\u6863"
 
         presentation = Presentation()
         slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-        slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1)).text = "Office 演示"
+        slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1)).text = "Office \u6f14\u793a"
         slide.shapes.add_picture(str(image), Inches(1), Inches(2))
         chart_data = CategoryChartData()
         chart_data.categories = ["A", "B"]
@@ -85,8 +85,8 @@ def main():
             reopened_workbook.close()
         assert pandas.read_excel(root / "workbook.xlsx")["Value"].iloc[0] == 42
         for file, arguments in [
-            ("document.docx", ["--contains", "Office 文档"]),
-            ("presentation.pptx", ["--contains", "Office 演示", "--count", "1"]),
+            ("document.docx", ["--contains", "Office \u6587\u6863"]),
+            ("presentation.pptx", ["--contains", "Office \u6f14\u793a", "--count", "1"]),
             ("workbook.xlsx", ["--contains", "Value", "--count", "1"]),
         ]:
             checked = subprocess.run([sys.executable, "-I", "-B", sys.argv[3], str(root / file), *arguments],

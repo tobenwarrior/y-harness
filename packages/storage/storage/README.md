@@ -3,7 +3,7 @@ description: "Storage hub (ctx.storage) for compositions and maintainers choosin
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-storage
+# @yharness/storage
 
 ## Summary
 
@@ -32,11 +32,11 @@ Mount the hub whenever any package in the composition persists data that is not 
 ### A minimal composition
 
 ```yaml
-- name: '@deepseek-ai/dsh-storage'
-- name: '@deepseek-ai/dsh-storage-json'
+- name: '@yharness/storage'
+- name: '@yharness/storage-json'
   config:
     root: /var/lib/dsh/data
-- name: '@deepseek-ai/dsh-storage-domain'
+- name: '@yharness/storage-domain'
   config:
     backend: json
 ```

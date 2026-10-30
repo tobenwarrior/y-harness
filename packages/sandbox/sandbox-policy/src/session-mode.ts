@@ -18,10 +18,10 @@
  * @module dsh-sandbox-policy/session-mode
  */
 
-import type { Session } from '@deepseek-ai/dsh-session'
-import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
+import type { Session } from '@yharness/session'
+import type { SandboxMode } from '@yharness/sandbox'
 
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /**
      * The session's sandbox mode was switched — log-only (like `approval/*`;

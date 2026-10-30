@@ -5,8 +5,8 @@ import {
   Button, IconEditOutlineRegular, IconLinkOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   Input, Modal, StateDot, Tag, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-primitives'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
@@ -146,9 +146,9 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
     >
       {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
       <div className={css.dialogField} aria-busy={submitting}>
-        <label className={css.dialogLabel} htmlFor="dsh-bots-new-name">{t('newBotName')}</label>
+        <label className={css.dialogLabel} htmlFor="yharness-bots-new-name">{t('newBotName')}</label>
         <Input
-          id="dsh-bots-new-name"
+          id="yharness-bots-new-name"
           data-modal-autofocus
           value={name}
           placeholder={t('newBotNamePlaceholder')}
@@ -184,17 +184,17 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
   if (bot === undefined) {
     if (loading) {
       return (
-        <section className={css.detailEmpty} aria-labelledby="dsh-bots-loading-title">
+        <section className={css.detailEmpty} aria-labelledby="yharness-bots-loading-title">
           <span className={css.emptyMark} aria-hidden="true"><StateDot state="ongoing" size={16} /></span>
-          <h2 id="dsh-bots-loading-title" className={css.emptyTitle}>{t('loadingTitle')}</h2>
+          <h2 id="yharness-bots-loading-title" className={css.emptyTitle}>{t('loadingTitle')}</h2>
           <p className={css.emptyDescription}>{t('loadingDescription')}</p>
         </section>
       )
     }
     return (
-      <section className={css.detailEmpty} aria-labelledby="dsh-bots-empty-title">
+      <section className={css.detailEmpty} aria-labelledby="yharness-bots-empty-title">
         <span className={css.emptyMark} aria-hidden="true"><IconSidebarBotsOutlineRegular size={24} /></span>
-        <h2 id="dsh-bots-empty-title" className={css.emptyTitle}>{t('chooseBotTitle')}</h2>
+        <h2 id="yharness-bots-empty-title" className={css.emptyTitle}>{t('chooseBotTitle')}</h2>
         <p className={css.emptyDescription}>{t('chooseBotDescription')}</p>
       </section>
     )
@@ -303,8 +303,8 @@ export function BotRoster({
                 </div>
               )}
               {!loading && groups.length > 0 && groups.map(([group, rows]) => (
-                <section className={css.group} key={group} aria-labelledby={`dsh-bots-group-${group}`}>
-                  <h2 id={`dsh-bots-group-${group}`} className={css.groupLabel}>{group}</h2>
+                <section className={css.group} key={group} aria-labelledby={`yharness-bots-group-${group}`}>
+                  <h2 id={`yharness-bots-group-${group}`} className={css.groupLabel}>{group}</h2>
                   <div className={css.groupRows}>
                     {rows.map(bot => (
                       <BotRow

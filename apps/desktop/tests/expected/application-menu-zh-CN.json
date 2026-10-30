@@ -1,24 +1,24 @@
 [
   {
-    "label": "检查更新…"
+    "label": "Check for Updates…"
   },
   {
-    "label": "管理 dsh 命令…"
+    "label": "Manage Y Harness CLI…"
   },
   {
     "role": "hide",
-    "label": "隐藏 Y harness"
+    "label": "Hide Y Harness"
   },
   {
     "role": "hideOthers",
-    "label": "隐藏其他"
+    "label": "Hide Others"
   },
   {
     "role": "unhide",
-    "label": "显示全部"
+    "label": "Show All"
   },
   {
     "role": "quit",
-    "label": "退出 Y harness"
+    "label": "Quit Y Harness"
   }
 ]

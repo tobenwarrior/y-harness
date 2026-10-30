@@ -5,16 +5,16 @@
  * that are already showing, so a default set from one converges the other.
  */
 
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import { RemoteError, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { apply, inject } from '@deepseek-ai/dsh-client-ui-agent-preset/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
+import { SessionId } from '@yharness/session'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import { apply, inject } from '@yharness/client-ui-agent-preset/client'
 import { AgentPresetLabel } from '../src/client/AgentPresetLabel.tsx'
 import type { AgentPresetLabelInjected } from '../src/client/AgentPresetLabel.tsx'
 import { AgentPresetSection } from '../src/client/AgentPresetSection.tsx'
@@ -25,11 +25,11 @@ import { AgentPresetSeatController } from '../src/client/seat-store.ts'
 import { CreatePluginMenuItem, type CreatePluginMenuItemInjected } from '../src/client/CreatePluginMenuItem.tsx'
 import { AgentPresetSectionController } from '../src/client/section-store.ts'
 import { apply as hostApply } from '../src/index.ts'
-import type { AgentPresetRow } from '@deepseek-ai/dsh-agent-preset-registry/types'
+import type { AgentPresetRow } from '@yharness/agent-preset-registry/types'
 
-// These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
-// so browser-language detection never runs and a fresh LocaleRuntime opens on
-// FALLBACK_LOCALE (en); each bench stages zh explicitly on the locale instead.
+// These specs exercise the retired locale alias. The lane has no jsdom
+// `window`, so browser-language detection never runs and a fresh LocaleRuntime
+// opens on FALLBACK_LOCALE (en); each bench stages zh explicitly on the locale.
 
 /** The Developer tools half of `ctx.configForms`, which filters preset choices. */
 function developerTools(enabled = true): { configForms: { developerTools: { enabled: ObservableSnapshot<boolean> } } } {
@@ -361,7 +361,7 @@ describe('ui-agent-preset apply', () => {
     expect(section.component).toBe(AgentPresetSection)
     expect(section.options).toMatchObject({ id: 'agent-presets', order: 20 })
     // The nav label is a locale-following thunk; owners resolve it at read time.
-    expect(resolveSlotLabel(section.options.label)).toBe('Agent 预设')
+    expect(resolveSlotLabel(section.options.label)).toBe('Agent presets')
   })
 
   it('registers into a declaration that arrives after apply', async () => {
@@ -1379,7 +1379,7 @@ describe('AgentPresetSeatController reconciliation', () => {
   })
 
   it('keeps the bare cause of a mount failure, not the frame that names the preset again', async () => {
-    const reason = 'failed to import loader entry ctx (@deepseek-ai/dsh-gone): Cannot find package'
+    const reason = 'failed to import loader entry ctx (@yharness/gone): Cannot find package'
     const controller = new AgentPresetSeatController({
       ...developerTools(),
       remote: {

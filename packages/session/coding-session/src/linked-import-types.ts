@@ -1,7 +1,7 @@
 /** Explicit ordinary-Y destination mappings and reversible public native-history imports. */
-import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { Branded } from '@yharness/brand'
+import type { MessageId } from '@yharness/llm/brand'
+import type { SessionId, SessionSeq } from '@yharness/session/types'
 import type { CodingSessionEvent, CodingSessionMirror, CodingSessionMirrorId, CodingSessionSource } from './types.ts'
 
 /** One source-to-destination mapping, independent from the native mirror identity. */
@@ -62,7 +62,7 @@ export interface CodingSessionImportInitialization {
   linkId: CodingSessionLinkId
   systemMessageId: MessageId
 }
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Informational local initializer receipt; no task, dispatch, usage or successful native release is implied. */
     'coding-session/import-initialization': CodingSessionImportInitialization

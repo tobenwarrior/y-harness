@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-mcp-client",
+  "name": "@yharness/mcp-client",
   "description": "MCP client bridge: connects to MCP servers and registers their tools on ctx.tools",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/mcp/mcp-client"
   },
   "type": "module",
@@ -27,44 +27,44 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-attachment": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-mcp-resources": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*"
+    "@yharness/attachment": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/mcp-resources": "workspace:*",
+    "@yharness/system-prompt": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "@modelcontextprotocol/client": "2.0.0",
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/util-values": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-attachment": "workspace:*",
-    "@deepseek-ai/dsh-attachment-local": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
+    "@yharness/attachment": "workspace:*",
+    "@yharness/attachment-local": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/tools": "workspace:*",
     "@modelcontextprotocol/server-everything": "^2026.7.4",
     "@modelcontextprotocol/server-filesystem": "^2026.7.4",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/http-proxy": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0",
     "@modelcontextprotocol/node": "2.0.0",
     "zod": "^4.4.3",
-    "@deepseek-ai/dsh-mcp-resources": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*"
+    "@yharness/mcp-resources": "workspace:*",
+    "@yharness/system-prompt": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-mcp-resources": {
+    "@yharness/mcp-resources": {
       "optional": true
     },
-    "@deepseek-ai/dsh-system-prompt": {
+    "@yharness/system-prompt": {
       "optional": true
     }
   }

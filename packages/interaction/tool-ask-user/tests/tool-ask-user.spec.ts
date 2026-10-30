@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { createToolResultMessage, ToolCallId, type ToolSchema } from '@deepseek-ai/dsh-llm'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import { Session, SessionId, SessionSeq, SESSION_FORMAT_VERSION, type SessionEvent } from '@deepseek-ai/dsh-session'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { Context } from '@yharness/cordis'
+import { createToolResultMessage, ToolCallId, type ToolSchema } from '@yharness/llm'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import { Session, SessionId, SessionSeq, SESSION_FORMAT_VERSION, type SessionEvent } from '@yharness/session'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
 import UserQuestionService, {
   isTimedAskUserQuestionSchema,
   type AskUserQuestionAnswer,
   type AskUserQuestionRequest,
-} from '@deepseek-ai/dsh-user-questions'
+} from '@yharness/user-questions'
 // The fold is the projection's own reader of a recorded result, not a service method.
-import { foldUserQuestions } from '@deepseek-ai/dsh-user-questions/src/projection.ts'
-import * as toolAskUser from '@deepseek-ai/dsh-tool-ask-user'
+import { foldUserQuestions } from '@yharness/user-questions/src/projection.ts'
+import * as toolAskUser from '@yharness/tool-ask-user'
 
 const testToolSignal = new AbortController().signal
 

@@ -1,5 +1,5 @@
 /** Browser-safe learning proposals and host provider types. */
-import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { Branded } from '@yharness/brand'
 import type { SkillLibraryId, SkillLibraryItem } from './types.ts'
 
 /** Immutable task observation identity. */
@@ -82,7 +82,7 @@ export type SkillLearningNativeItem = SkillLearningNativeIdentity & {
   readonly sourceMessageId?: SkillClaudeMessageId | undefined
   readonly resultMessageId?: SkillClaudeMessageId | undefined
 }
-declare module '@deepseek-ai/dsh-session/types' {
+declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Native adapter-owned live sanitized item; never conversation input. */
     'skill/native-item': SkillLearningNativeItem

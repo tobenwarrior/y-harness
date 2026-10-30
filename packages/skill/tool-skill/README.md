@@ -3,7 +3,7 @@ description: "The model-facing skill catalog and loader tool for users and maint
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-tool-skill
+# @yharness/tool-skill
 
 ## Summary
 
@@ -34,9 +34,9 @@ Use it when agents should discover and load skills during a session. Skip it whe
 Load the plugin together with the skill registry and at least one provider. Select relevance mode to limit suggestions while keeping exact-name loading and explicit user invocation reachable.
 
 ```yaml
-- name: '@deepseek-ai/dsh-skill'
-- name: '@deepseek-ai/dsh-skill-filesystem'
-- name: '@deepseek-ai/dsh-tool-skill'
+- name: '@yharness/skill'
+- name: '@yharness/skill-filesystem'
+- name: '@yharness/tool-skill'
   config:
     catalogMode: relevant
 ```
@@ -51,7 +51,7 @@ Load the plugin together with the skill registry and at least one provider. Sele
 
 Relevance mode ranks names, descriptions and `whenToUse` metadata without loading instruction bodies. Current claimed `source.kind: user` text supplies the query; a tool continuation uses the latest visible user task. Injected rules, recall and tool/model output cannot supply the query. The query retains a bounded newest suffix, while exact skill-name references are extracted separately from that task text so an early explicit request remains reachable. Explicit names can exceed ordinary count and metadata budgets, recorded as `explicitOverflow` in the catalog source. Model-supplied `search_skills` queries do not receive that exception.
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-skill) is the exhaustive source for every accepted field.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesstool-skill) is the exhaustive source for every accepted field.
 
 ### What the model gets
 
@@ -109,7 +109,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 - [Skill subsystem reference](../../../docs/subsystems/skills.md) — the registry and provider vocabulary behind the catalog.
 - [skill package](../skill/README.md) — the registry and the shared `renderSkillContent` rendering.
-- [Generated tool catalog](../../../docs/tool-catalog.md#deepseek-aidsh-tool-skill) — the exact `skill` schema the model receives.
+- [Generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-skill) — the exact `skill` schema the model receives.
 - [User-explicit skill invocation Agent Note](../../../.agents/notes/archived/feature/2026-08-08-user-explicit-skill-invocation.md) — the `/name` gesture design.
 
 -----
@@ -121,7 +121,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The template below describes `all` mode. Relevance mode renders task suggestions and uses route-neutral guidance: native runtimes own their own tools and skill catalogs. Ordinary entry lines are bounded by candidate count and metadata bytes; fixed guidance is additional and explicit task names can exceed those bounds. Shortlist changes append retained history, so these limits do not cap the entire conversation. Full instruction bodies are never silently truncated. If model-invocable skills exist and this exact `skill` tool is visible, the agent receives the catalog template below as a durable user-role message before the first request, with one data-dependent entry per sorted skill. Later membership, description, or visibility changes append a complete replacement using the same `<available_skills>` envelope; deleting every skill appends an empty envelope with an explicit instruction not to use older names. The template's closing sentence is the rule against double-loading: the user-explicit gesture boundary (the pre-step listener below) injects the same `renderSkillContent` output (shared from `@deepseek-ai/dsh-skill`) inline, and the catalog tells the model to follow that block instead of re-loading the skill through the tool; the replacement-catalog template carries the same anti-double-loading rule in both arms, including the emptied catalog.
+The template below describes `all` mode. Relevance mode renders task suggestions and uses route-neutral guidance: native runtimes own their own tools and skill catalogs. Ordinary entry lines are bounded by candidate count and metadata bytes; fixed guidance is additional and explicit task names can exceed those bounds. Shortlist changes append retained history, so these limits do not cap the entire conversation. Full instruction bodies are never silently truncated. If model-invocable skills exist and this exact `skill` tool is visible, the agent receives the catalog template below as a durable user-role message before the first request, with one data-dependent entry per sorted skill. Later membership, description, or visibility changes append a complete replacement using the same `<available_skills>` envelope; deleting every skill appends an empty envelope with an explicit instruction not to use older names. The template's closing sentence is the rule against double-loading: the user-explicit gesture boundary (the pre-step listener below) injects the same `renderSkillContent` output (shared from `@yharness/skill`) inline, and the catalog tells the model to follow that block instead of re-loading the skill through the tool; the replacement-catalog template carries the same anti-double-loading rule in both arms, including the emptied catalog.
 
 ##### Skill catalog template
 
@@ -150,7 +150,7 @@ The initial durable catalog is appended after the existing reusable prefix. Dyna
 
 #### What the model sees
 
-The model sees the generated [`skill` schema](../../../docs/tool-catalog.md#deepseek-aidsh-tool-skill).
+The model sees the generated [`skill` schema](../../../docs/tool-catalog.md#yharnesstool-skill).
 
 #### Token effect
 

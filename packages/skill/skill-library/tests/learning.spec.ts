@@ -3,9 +3,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { Context } from '@deepseek-ai/cordis'
-import { FileSystemSkillProvider } from '@deepseek-ai/dsh-skill-filesystem'
+import { brandString } from '@yharness/brand'
+import { Context } from '@yharness/cordis'
+import { FileSystemSkillProvider } from '@yharness/skill-filesystem'
 import { SkillLibrary } from '../src/library.ts'
 import { SkillLearning, type SkillLearningStore } from '../src/learning.ts'
 import { maintenanceGenerator, maintenanceValidator } from '../src/semantic-maintenance.ts'
@@ -284,7 +284,7 @@ describe('evidence-backed skill proposals', () => {
     expect(await readFile(join(f.project, '.dsh/skills/deploy/reference.txt'), 'utf8')).toBe('Keep resource exactly.')
   })
   it('enforces tiny, exact and multibyte body limits before retaining maintenance proposals', async () => {
-    const instruction = '- [检查结果](reference.txt)'; const prefix = '# References\n'
+    const instruction = '- [\u{68C0}\u{67E5}\u{7ED3}\u{679C}](reference.txt)'; const prefix = '# References\n'
     const after = prefix + instruction + '\n'; const before = prefix + instruction + '\n' + instruction
     for (const budget of [1, Buffer.byteLength(after) - 1, Buffer.byteLength(after)]) {
       const f = await fixture(); const item = await f.skill('deploy', before)
@@ -321,7 +321,7 @@ describe('evidence-backed skill proposals', () => {
     const f = await fixture(); const item = await f.skill('deploy',
       '# References\n- [Checklist](reference.txt)\n- [Checklist](reference.txt)'); await f.library.adopt({ id: item.id,
       expectedHash: item.contentHash })
-    const resource = '检查结果'; await writeFile(join(f.project, '.dsh/skills/deploy/reference.txt'), resource)
+    const resource = '\u{68C0}\u{67E5}\u{7ED3}\u{679C}'; await writeFile(join(f.project, '.dsh/skills/deploy/reference.txt'), resource)
     for (const limit of [1, Buffer.byteLength(resource) - 1, Buffer.byteLength(resource)]) {
       const bounded = new SkillLearning({ ...f.options, maxResourceBytes: limit }); bounded.registerGenerator(maintenanceGenerator)
       const pending = bounded.propose({ projectId: 'p', operation: 'compress', targetIds: [item.id],

@@ -14,7 +14,7 @@ function fixture(displayName: unknown): string {
 it('retains existing labels until a public display name is configured', () => {
   expect(readAppDisplayName(fixture(null))).toBeUndefined()
   expect(readAppDisplayName(fixture('  Atlas & Co.  '))).toBe('Atlas & Co.')
-  expect(readAppDisplayName(fixture('星 Atlas'))).toBe('星 Atlas')
+  expect(readAppDisplayName(fixture('\u{661F} Atlas'))).toBe('\u{661F} Atlas')
 })
 
 it.each(['', '  ', 'Atlas\nNext', 'Atlas\u2028Next', 42, {}, undefined])('rejects an unusable display label %j', (value) => {

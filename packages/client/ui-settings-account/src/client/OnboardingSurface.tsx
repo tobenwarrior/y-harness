@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import css from './OnboardingSurface.module.css'
-import { useModalLayer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useModalLayer } from '@yharness/client-ui-primitives'
 
 /**
  * Render a body-portaled onboarding stage and keep the application root inert

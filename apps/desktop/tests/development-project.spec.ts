@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -41,8 +41,8 @@ describe('desktop development project', () => {
     mkdirSync(join(host, 'lib'), { recursive: true })
     mkdirSync(dependency)
     mkdirSync(hoisted)
-    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '1.2.3', dependencies: { unhoisted: 'workspace:^' } }))
-    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-desktop-host', version: '1.2.3' }))
+    writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: '@yharness/cli', version: '1.2.3', dependencies: { unhoisted: 'workspace:^' } }))
+    writeFileSync(join(host, 'package.json'), JSON.stringify({ name: '@yharness/desktop-host', version: '1.2.3' }))
     writeFileSync(join(host, 'lib/index.js'), '')
     writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'unhoisted', version: '1.2.3' }))
     symlinkSync(dependency, join(cli, 'node_modules/unhoisted'), process.platform === 'win32' ? 'junction' : 'dir')
@@ -61,11 +61,9 @@ describe('desktop development project', () => {
     mkdirSync(join(cli, 'lib'), { recursive: true })
     mkdirSync(join(host, 'lib'), { recursive: true })
     mkdirSync(join(dependencies, '@scope'), { recursive: true })
-    mkdirSync(join(dependencies, '@deepseek-ai', 'dsh'), { recursive: true })
-    writeFileSync(join(cli, 'package.json'), '{"name":"@deepseek-ai/dsh","version":"1.2.3"}\n')
-    writeFileSync(join(host, 'package.json'), '{"name":"@deepseek-ai/dsh-desktop-host","version":"1.2.3"}\n')
+    writeFileSync(join(cli, 'package.json'), '{"name":"@yharness/cli","version":"1.2.3"}\n')
+    writeFileSync(join(host, 'package.json'), '{"name":"@yharness/desktop-host","version":"1.2.3"}\n')
     writeFileSync(join(host, 'lib', 'index.js'), '')
-    writeFileSync(join(dependencies, '@deepseek-ai', 'dsh', 'package.json'), '{}\n')
     mkdirSync(join(dependencies, 'plain-dependency'))
     writeFileSync(join(dependencies, 'plain-dependency', 'package.json'), '{}\n')
     mkdirSync(join(dependencies, '@scope', 'dependency'))
@@ -79,8 +77,10 @@ describe('desktop development project', () => {
       release: release(),
       target: 'win-x64',
     })
-    expect(realpathSync(join(project, 'node_modules', '@deepseek-ai', 'dsh'))).toBe(realpathSync(cli))
-    expect(realpathSync(join(project, 'node_modules', '@deepseek-ai', 'dsh-desktop-host'))).toBe(realpathSync(host))
+    expect(realpathSync(join(project, 'node_modules', '@yharness', 'cli'))).toBe(realpathSync(cli))
+    expect(realpathSync(join(project, 'node_modules', '@yharness', 'desktop-host'))).toBe(realpathSync(host))
+    expect(existsSync(join(project, 'node_modules', '@deepseek-ai', 'dsh'))).toBe(false)
+    expect(existsSync(join(project, 'node_modules', '@deepseek-ai', 'dsh-desktop-host'))).toBe(false)
     expect(realpathSync(join(project, 'node_modules', 'plain-dependency')))
       .toBe(realpathSync(join(dependencies, 'plain-dependency')))
     expect(realpathSync(join(project, 'node_modules', '@scope', 'dependency')))
@@ -88,8 +88,8 @@ describe('desktop development project', () => {
     const manifest = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>
     }
-    expect(manifest.dependencies['@deepseek-ai/dsh']).toBe('1.2.3')
-    expect(manifest.dependencies['@deepseek-ai/dsh-desktop-host']).toBe('1.2.3')
+    expect(manifest.dependencies['@yharness/cli']).toBe('1.2.3')
+    expect(manifest.dependencies['@yharness/desktop-host']).toBe('1.2.3')
     const descriptor = JSON.parse(readFileSync(join(project, 'desktop-runtime.json'), 'utf8')) as { platform: string; arch: string }
     expect(descriptor).toMatchObject({ platform: 'win32', arch: 'x64' })
     const manager = new DesktopProjectManager(resolveDesktopPaths(join(root, 'home')), {
@@ -97,7 +97,7 @@ describe('desktop development project', () => {
     })
     await manager.applyRelease()
     await manager.disableAllPlugins()
-    expect(readFileSync(join(cli, 'package.json'), 'utf8')).toBe('{"name":"@deepseek-ai/dsh","version":"1.2.3"}\n')
+    expect(readFileSync(join(cli, 'package.json'), 'utf8')).toBe('{"name":"@yharness/cli","version":"1.2.3"}\n')
     expect(readFileSync(join(host, 'lib', 'index.js'), 'utf8')).toBe('')
 
   })
@@ -110,8 +110,8 @@ describe('desktop development project', () => {
     mkdirSync(join(cli, 'lib'), { recursive: true })
     mkdirSync(join(host, 'lib'), { recursive: true })
     mkdirSync(dependencies, { recursive: true })
-    writeFileSync(join(cli, 'package.json'), '{"name":"@deepseek-ai/dsh","version":"2.0.0"}\n')
-    writeFileSync(join(host, 'package.json'), '{"name":"@deepseek-ai/dsh-desktop-host","version":"1.2.3"}\n')
+    writeFileSync(join(cli, 'package.json'), '{"name":"@yharness/cli","version":"2.0.0"}\n')
+    writeFileSync(join(host, 'package.json'), '{"name":"@yharness/desktop-host","version":"1.2.3"}\n')
     writeFileSync(join(host, 'lib', 'index.js'), '')
     expect(() => prepareDevelopmentProject({
       projectDir: join(root, 'development'),
@@ -120,6 +120,6 @@ describe('desktop development project', () => {
       dependencyDir: dependencies,
       release: release(),
       target: 'mac-x64',
-    })).toThrow(/must be @deepseek-ai\/dsh@1\.2\.3/u)
+    })).toThrow(/must be @yharness\/cli@1\.2\.3/u)
   })
 })

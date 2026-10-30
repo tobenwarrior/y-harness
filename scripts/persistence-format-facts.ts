@@ -23,16 +23,16 @@ function historicalSchema(entry: PersistenceFormatEntry, language: Language): st
   const schema = basename(entry.schemaPath)
   const introduction = language === 'en'
     ? `The [complete machine inventory](${schema}) contains ${entry.inventory.roots.length} roots and ${entry.inventory.types.length} reachable types. Digests include all referenced fields; source names and paths describe the selected historical tree.`
-    : `[完整机器目录](${schema})包含 ${entry.inventory.roots.length} 个根类型和 ${entry.inventory.types.length} 种可达类型。摘要包含所有引用字段；源码名称和路径描述所选的历史源码树。`
+    : `[\u5b8c\u6574\u673a\u5668\u76ee\u5f55](${schema})\u5305\u542b ${entry.inventory.roots.length} \u4e2a\u6839\u7c7b\u578b\u548c ${entry.inventory.types.length} \u79cd\u53ef\u8fbe\u7c7b\u578b。\u6458\u8981\u5305\u542b\u6240\u6709\u5f15\u7528\u5b57\u6bb5；\u6e90\u7801\u540d\u79f0\u548c\u8def\u5f84\u63cf\u8ff0\u6240\u9009\u7684\u5386\u53f2\u6e90\u7801\u6811。`
   return [
     '<a id="schema"></a>',
-    language === 'en' ? '## Complete schemas' : '## 完整 schema',
+    language === 'en' ? '## Complete schemas' : '## \u5b8c\u6574 schema',
     '',
     introduction,
     '',
     renderPersistenceSchemaIndex(entry.inventory, language, [], 3),
     '<details>',
-    language === 'en' ? '<summary>Complete resolved types</summary>' : '<summary>完整解析类型</summary>',
+    language === 'en' ? '<summary>Complete resolved types</summary>' : '<summary>\u5b8c\u6574\u89e3\u6790\u7c7b\u578b</summary>',
     '',
     renderPersistenceSchemaDefinitions(entry.inventory, language, () => undefined, 3),
     '</details>',
@@ -43,12 +43,12 @@ function formatIndex(formats: PersistenceFormats, language: Language): string {
   const path = (target: string): string => posix.relative('docs/persistence-changes/historical-formats',
     language === 'zh' && target.endsWith('.md') ? target.replace(/\.md$/u, '.zh.md') : target)
   return [
-    language === 'en' ? '| Format | Source | Reference | Machine schema | Roots / types |' : '| 格式 | 来源 | 参考文档 | 机器 schema | 根类型 / 类型 |',
+    language === 'en' ? '| Format | Source | Reference | Machine schema | Roots / types |' : '| \u683c\u5f0f | \u6765\u6e90 | \u53c2\u8003\u6587\u6863 | \u673a\u5668 schema | \u6839\u7c7b\u578b / \u7c7b\u578b |',
     '|---|---|---|---|---|',
     ...formats.entries.map((entry) => {
-      const source = entry.source === undefined ? language === 'en' ? 'Current checkout' : '当前工作树'
+      const source = entry.source === undefined ? language === 'en' ? 'Current checkout' : '\u5f53\u524d\u5de5\u4f5c\u6811'
         : 'tag' in entry.source ? `\`${entry.source.tag}\`` : `PR #${entry.source.pullRequest}`
-      const label = entry.version === formats.currentVersion ? language === 'en' ? 'Current catalog' : '当前目录' : `V${entry.version}`
+      const label = entry.version === formats.currentVersion ? language === 'en' ? 'Current catalog' : '\u5f53\u524d\u76ee\u5f55' : `V${entry.version}`
       return `| ${entry.version} | ${source} | [${label}](${path(entry.document)}) | [JSON](${path(entry.schemaPath)}) | ${entry.inventory.roots.length} / ${entry.inventory.types.length} |`
     }),
   ].join('\n')

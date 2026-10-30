@@ -1,31 +1,31 @@
 /** Models section registration: slot declaration injection, the locale-following label thunk, and HMR recovery. */
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import Schema from '@deepseek-ai/schemastery'
-import { Context } from '@deepseek-ai/cordis'
+import type { JsonValue } from '@yharness/util-values'
+import Schema from '@yharness/schemastery'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import { remoteDefaultResponses } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/remote-default-responses.ts'
-import { ok, RemoteMock } from '@deepseek-ai/dsh-remote-mock'
-import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { apply, inject, refreshIfLoaded } from '@deepseek-ai/dsh-client-ui-settings-models/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { SlotRegistry } from '@yharness/client-ui-renderer/client'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { TestRemote } from '@yharness/client-test-runtime'
+import { remoteDefaultResponses } from '@yharness/client-test-runtime/src/assembly/remote-default-responses.ts'
+import { ok, RemoteMock } from '@yharness/remote-mock'
+import { apply as settingsApply, inject as settingsInject } from '@yharness/client-ui-settings/client'
+import { apply, inject, refreshIfLoaded } from '@yharness/client-ui-settings-models/client'
 import {
   WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE, WELCOME_NOTICE_VERSION,
 } from '../src/onboarding-copy.ts'
 import { ModelsSection } from '../src/client/ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from '../src/client/DeepSeekOnboardingDialog.tsx'
 import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
-import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
+import type { IndexInjection } from '@yharness/host-webserver'
 import * as hostPlugin from '../src/index.ts'
 import { ONBOARDING_CONFIG_GLOBAL } from '../src/onboarding-config.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
-// These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
-// so browser-language detection never runs and a fresh LocaleRuntime opens on
-// FALLBACK_LOCALE (en); bench stages zh explicitly on the locale instead.
+// These specs exercise the retired locale alias. The lane has no jsdom
+// `window`, so browser-language detection never runs and a fresh LocaleRuntime
+// opens on FALLBACK_LOCALE (en); each bench stages zh explicitly on the locale.
 
 async function bench(isLoopback = true, mock = RemoteMock.create().load(remoteDefaultResponses), services: object = {}) {
   onTestFinished(() => { mock.assertNoUnmatched() })
@@ -147,10 +147,10 @@ describe('ui-settings-models apply', () => {
     expect(before.slots.spec('settings.models.provider-card')).toMatchObject({ kind: 'keyed', scope: 'root' })
     expect(before.slots.spec('settings.models.footer')).toMatchObject({ kind: 'list', scope: 'root' })
     // The nav label is a locale-following thunk; owners resolve at read time.
-    expect(resolveSlotLabel(entry.options.label)).toBe('模型')
+    expect(resolveSlotLabel(entry.options.label)).toBe('Models')
     const injected = (entry.inject as unknown as () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected)()
-    expect(injected.t('nav')).toBe('模型')
-    expect(injected.t('deleteTitle')).toBe('删除 {provider}？')
+    expect(injected.t('nav')).toBe('Models')
+    expect(injected.t('deleteTitle')).toBe('Delete {provider}?')
     expect(typeof injected.controller.load).toBe('function')
     expect(injected.hooks.snapshot).toBe(injected.controller.store)
     expect(typeof injected.operations.writeSettings).toBe('function')
@@ -196,8 +196,8 @@ describe('ui-settings-models apply', () => {
     const injected = b.slots.entries('settings.section')[0]!.inject as unknown as () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected
     expect(injected().t('deleteTitle')).toBe('Delete {provider}?')
     b.locale.setLocale('zh')
-    expect(resolveSlotLabel(b.slots.entries('settings.section')[0]!.options.label)).toBe('模型')
-    expect(injected().t('deleteTitle')).toBe('删除 {provider}？')
+    expect(resolveSlotLabel(b.slots.entries('settings.section')[0]!.options.label)).toBe('Models')
+    expect(injected().t('deleteTitle')).toBe('Delete {provider}?')
   })
 
   it('locale change while the slot is undeclared stays a no-op', async () => {
@@ -255,7 +255,7 @@ describe('ui-settings-models apply', () => {
     declare(b.slots)
     const fiber = b.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(b.locale.bind('settings.models')('nav')).toBe('模型')
+    expect(b.locale.bind('settings.models')('nav')).toBe('Models')
     await fiber.dispose()
     expect(b.slots.entries('settings.section')).toHaveLength(0)
     expect(b.slots.entries('settings.onboarding')).toHaveLength(0)

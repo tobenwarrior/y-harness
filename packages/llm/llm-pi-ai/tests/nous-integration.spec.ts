@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import type { Credential, CredentialStore, ProviderStreams } from '@earendil-works/pi-ai'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId } from '@yharness/llm'
 
 const streamSimple = vi.hoisted(() => vi.fn((..._args: Parameters<ProviderStreams['streamSimple']>) => { throw new Error('observed SDK boundary') }))
 vi.mock('@earendil-works/pi-ai/api/openai-completions.lazy', () => ({

@@ -1,15 +1,36 @@
 /** Resolve the Host account's Documents directory for first-use Workspace creation. */
 
+import { lstat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { posix, win32 } from 'node:path'
-import { runNativeCommand, type NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
-import { DEFAULT_WORKSPACE_DIRECTORY } from './default-workspace.ts'
+import { runNativeCommand, type NativeCommandRunner } from '@yharness/native-command'
+import { DEFAULT_WORKSPACE_DIRECTORY, DEFAULT_WORKSPACE_PARENT_DIRECTORY } from './default-workspace.ts'
+
+const LEGACY_WORKSPACE_PARENT_DIRECTORY = 'deepseek-harness'
 
 /** Platform observations replaceable in directory-resolution tests. */
 interface DocumentsDirectoryInternals {
   readonly platform?: NodeJS.Platform
   readonly home?: string
   readonly run?: NativeCommandRunner
+  readonly pathExists?: (path: string) => Promise<boolean>
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  const code = error.code
+  return typeof code === 'string' ? code : undefined
+}
+
+async function doesPathExist(path: string): Promise<boolean> {
+  try {
+    await lstat(path)
+    return true
+  } catch (error) {
+    const code = errorCode(error)
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false
+    throw error
+  }
 }
 
 /**
@@ -31,7 +52,7 @@ export function validateDocumentsDirectory(directory: string, platform: NodeJS.P
  * Resolve the first-use directory on the Host without creating files.
  * @param documentsDirectory - explicit deployment override for the system Documents directory.
  * @param signal - caller lifetime and lookup deadline.
- * @param internals - platform facts and native command runner.
+ * @param internals - platform facts, native command runner, and path probe.
  * @returns the absolute candidate path.
  */
 export async function defaultWorkspaceDirectory(
@@ -74,5 +95,11 @@ export async function defaultWorkspaceDirectory(
   }
   directory = validateDocumentsDirectory(directory, platform)
   signal.throwIfAborted()
-  return paths.join(directory, 'deepseek-harness', DEFAULT_WORKSPACE_DIRECTORY)
+  const legacy = paths.join(directory, LEGACY_WORKSPACE_PARENT_DIRECTORY, DEFAULT_WORKSPACE_DIRECTORY)
+  if (await (internals.pathExists ?? doesPathExist)(legacy)) {
+    signal.throwIfAborted()
+    return legacy
+  }
+  signal.throwIfAborted()
+  return paths.join(directory, DEFAULT_WORKSPACE_PARENT_DIRECTORY, DEFAULT_WORKSPACE_DIRECTORY)
 }

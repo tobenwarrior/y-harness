@@ -2,23 +2,18 @@
   - navigation:
     - text: Settings
     - button "General"
+    - button "Appearance"
     - button "Models"
     - button "Built-in plugins"
+    - button "Coding sessions"
     - button "Agent presets"
   - button "Open configuration file"
   - button "Close"
   - text: Permission Choose the default permission mode for new sessions
-  - button "Workspace Write"
+  - button "Approve for me"
   - text: Language
   - button "English"
-  - text: Appearance
-  - button "Light"
-  - button "Dark"
-  - button "System" [pressed]
-  - text: Font size Only affects conversation content 14
-  - button "Increase font size"
-  - button "Decrease font size"
-  - text: px Work details Choose how much detail to show for tool calls
+  - text: Work details Choose how much detail to show for tool calls
   - button "Standard"
   - text: Show coding view Shows trajectory, code diffs, and all Agent presets
   - switch "Show coding view" [checked]

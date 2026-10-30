@@ -14,12 +14,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import * as AppBoot from '@deepseek-ai/dsh-app-boot'
-import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@deepseek-ai/dsh-launch-environment'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import type { WebServer } from '@deepseek-ai/dsh-host-webserver'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import * as AppBoot from '@yharness/app-boot'
+import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@yharness/launch-environment'
+import SystemPrompt from '@yharness/system-prompt'
+import type { WebServer } from '@yharness/host-webserver'
 import { apply, Config, internals } from '../src/index.ts'
 
 vi.mock('node:child_process', async importOriginal => ({
@@ -148,16 +148,16 @@ describe('web-app runtime glue', () => {
       lanAddresses: ['192.168.1.5'],
       trustedHosts: ['192.168.1.5', 'lab.internal'],
     })
-    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567/?token=test-token)')
-    expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
+    expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567/?token=test-token)')
+    expect(log).toHaveBeenCalledWith('yharness web: opening the default browser; pass --no-open to disable')
     expect(openBrowser).toHaveBeenCalledWith('http://127.0.0.1:4567/?token=test-token')
     expect(lifecycle).toEqual([
-      'dsh web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567/?token=test-token)',
-      'dsh web: opening the default browser; pass --no-open to disable',
+      'yharness web: http://127.0.0.1:4567/?token=test-token (LAN: http://192.168.1.5:4567/?token=test-token)',
+      'yharness web: opening the default browser; pass --no-open to disable',
       'open:http://127.0.0.1:4567/?token=test-token',
     ])
     const assembly = await ctx.systemPrompt.assemble()
-    expect(assembly.sections.find(entry => entry.name === 'harness:source')?.text).toContain('DeepSeek Harness implementation checkout')
+    expect(assembly.sections.find(entry => entry.name === 'harness:source')?.text).toContain('Y Harness implementation checkout')
     const section = assembly.sections.find(entry => entry.name === 'app:web-surface')
     expect(section?.text).toContain('http://127.0.0.1:4567')
     // The single update contract: the receiver is always on; no-refresh
@@ -198,8 +198,8 @@ describe('web-app runtime glue', () => {
     await vi.waitFor(() => { expect(openBrowser).toHaveBeenCalled() })
 
     expect(lifecycle).toEqual([
-      'dsh web: https://proxy.example:8443/web/?token=test-token',
-      'dsh web: opening the default browser; pass --no-open to disable',
+      'yharness web: https://proxy.example:8443/web/?token=test-token',
+      'yharness web: opening the default browser; pass --no-open to disable',
       'open:https://proxy.example:8443/web/?token=test-token',
     ])
     const assembly = await ctx.systemPrompt.assemble()
@@ -259,7 +259,7 @@ describe('web-app runtime glue', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: true, trustedHosts: [] }))
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
+    expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token')
     await ctx.fiber.dispose()
   })
 
@@ -289,7 +289,7 @@ describe('web-app runtime glue', () => {
     provideConnection(ctx)
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     apply(ctx, new Config({ openBrowser: false, printUrl: true, surfaceContext: false, publicUrl: null as never, trustedHosts: [] }))
-    await vi.waitFor(() => { expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token') })
+    await vi.waitFor(() => { expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token') })
   })
 
   it.each([
@@ -306,7 +306,7 @@ describe('web-app runtime glue', () => {
     internals.openBrowser = openBrowser
     apply(ctx, new Config({ openBrowser: true, printUrl: true, surfaceContext: false, trustedHosts: [] }))
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
+    expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token')
     expect(openBrowser).not.toHaveBeenCalled()
     await ctx.fiber.dispose()
   })
@@ -330,7 +330,7 @@ describe('web-app runtime glue', () => {
     expect(openBrowser).not.toHaveBeenCalled()
     release!()
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
+    expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token')
     expect(openBrowser).toHaveBeenCalledWith('http://127.0.0.1:4567/?token=test-token')
     await settled.fiber.dispose()
 
@@ -396,7 +396,7 @@ describe('web-app runtime glue', () => {
     await vi.waitFor(() => { expect(audit).toHaveBeenCalledOnce() })
     await Promise.allSettled(audit.mock.results.map(result => result.value as Promise<void>))
     if (announces) {
-      expect(log).toHaveBeenCalledWith('dsh web: http://127.0.0.1:4567/?token=test-token')
+      expect(log).toHaveBeenCalledWith('yharness web: http://127.0.0.1:4567/?token=test-token')
       expect(openBrowser).toHaveBeenCalledWith('http://127.0.0.1:4567/?token=test-token')
     } else {
       expect(log).not.toHaveBeenCalled()
@@ -441,9 +441,9 @@ describe('web-app runtime glue', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
     apply(ctx, new Config({ openBrowser: true, printUrl: false, surfaceContext: false, trustedHosts: [] }))
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(log).toHaveBeenCalledWith('dsh web: opening the default browser; pass --no-open to disable')
+    expect(log).toHaveBeenCalledWith('yharness web: opening the default browser; pass --no-open to disable')
     expect(diagnostic).toHaveBeenCalledWith(
-      `web-app: could not open the default browser because ${reason}; use the dsh web URL printed at startup`,
+      `web-app: could not open the default browser because ${reason}; use the yharness web URL printed at startup`,
     )
     expect(ctx.get('webServer')).toBeDefined()
     await ctx.fiber.dispose()

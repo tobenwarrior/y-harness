@@ -1,48 +1,48 @@
-- heading "插件" [level=1]
-- text: 安装、启用和配置插件
-- button "插件说明"
-- button "刷新"
-- group "添加插件":
-  - button "添加插件"
-  - button "选择添加插件方式"
-- heading "官方" [level=3]
+- heading "Plugins" [level=1]
+- text: Install, enable, and configure plugins
+- button "About plugins"
+- button "Refresh"
+- group "Add plugin":
+  - button "Add plugin"
+  - button "Choose how to add a plugin"
+- heading "Official" [level=3]
 - text: "8"
 - list:
   - listitem:
-    - button "查看 智能体团队": 智能体团队
-    - text: 实验性 启用团队协作、团队工具、成员列表和共享任务看板。
-    - switch "启用 智能体团队"
+    - button "View Agent Teams": Agent Teams
+    - text: Experimental Enable team collaboration, team tools, the member roster, and the shared task board.
+    - switch "Enable Agent Teams"
   - listitem:
-    - button "查看 自动授权审查": 自动授权审查
-    - text: 实验性 提供自动审查权限模式，由模型在每次工具调用前判断是否授权。
-    - switch "启用 自动授权审查"
+    - button "View Auto Authorization Review": Auto Authorization Review
+    - text: Experimental Add an Auto review permission mode that uses the model to assess authorization before each tool call.
+    - switch "Enable Auto Authorization Review"
   - listitem:
-    - button "查看 开发者工具": 开发者工具
-    - text: 实验性 查看调试会话原始数据、聊天消息分组数据，以及调试 NodeJS 后端
-    - switch "启用 开发者工具"
+    - button "View Developer Tools": Developer Tools
+    - text: Experimental Inspect and debug raw session data, grouped chat messages, and the NodeJS backend.
+    - switch "Enable Developer Tools"
   - listitem:
-    - button "查看 语音输入": 语音输入
-    - text: 实验性 在本机使用 SenseVoice 转写录音，首次使用需安装依赖。
-    - switch "启用 语音输入"
+    - button "View Voice input": Voice input
+    - text: Experimental Transcribe recordings locally with SenseVoice; first use requires installing dependencies
+    - switch "Enable Voice input"
   - listitem:
-    - button "查看 终端": 终端
-    - text: 限制每条命令最多能跑多久、最多输出多少内容。
+    - button "View Shell": Shell
+    - text: Limit how long each command may run and how much it may output.
   - listitem:
-    - button "查看 Agent 循环": Agent 循环
-    - text: 控制 Agent 派发工具调用的方式。
+    - button "View Agent loop": Agent loop
+    - text: Control how the Agent dispatches tool calls.
   - listitem:
-    - button "查看 子智能体": 子智能体
-    - text: 设置子智能体的递归层级、数量和模型。
+    - button "View Web search": Web search
+    - text: Set up the DeepSeek search provider.
   - listitem:
-    - button "查看 网页搜索": 网页搜索
-    - text: 设置 DeepSeek 的搜索提供方。
-- heading "已安装" [level=3]
+    - button "View Subagent": Subagent
+    - text: Set Subagent recursion depth, count, and models.
+- heading "Installed" [level=3]
 - text: "2"
 - list:
   - listitem:
-    - button "查看 @fixture/bundle": "@fixture/bundle"
+    - button "View @fixture/bundle": "@fixture/bundle"
     - text: Registry description for the fixture bundle.
-    - switch "启用 @fixture/bundle"
+    - switch "Enable @fixture/bundle"
   - listitem:
-    - button "查看 dsh-web-scaffold-defaults": dsh-web-scaffold-defaults
-    - switch "启用 dsh-web-scaffold-defaults" [checked]
+    - button "View dsh-web-scaffold-defaults": dsh-web-scaffold-defaults
+    - switch "Enable dsh-web-scaffold-defaults" [checked]

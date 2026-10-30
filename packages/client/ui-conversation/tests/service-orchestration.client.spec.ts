@@ -3,19 +3,19 @@
 // TestSessions mints tagged scopes through the production createScope, so the
 // service's scopeOf/binding path runs against production resolution (no local
 // tag probe).
-import type { UserMessage } from '@deepseek-ai/dsh-llm/types'
-import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
-import { Context } from '@deepseek-ai/cordis'
+import type { UserMessage } from '@yharness/llm/types'
+import type { MessageId } from '@yharness/llm/brand'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { makeTranslate, RemoteError, SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate, RemoteError, SlotTestRuntime } from '@yharness/client-test-runtime'
 import type {
   BeginSubmissionInput, PendingSubmissionRetirement,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+} from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import { ComposerBlockRegistry } from '../src/client/input/blocks.ts'
 import { InputHub } from '../src/client/input/hub.ts'
 import { ConversationController } from '../src/client/service.ts'
-import { zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 
 async function bench(maxConcurrentFileUploads = 2) {
   const runtime = await SlotTestRuntime.create()
@@ -40,7 +40,7 @@ async function bench(maxConcurrentFileUploads = 2) {
   await reference.ready
   // config.input is required (the apply shares its hub with the inject
   // factories); the bench passes its own instance explicitly.
-  const hub = new InputHub(runtime.ctx, makeTranslate(zh, {}))
+  const hub = new InputHub(runtime.ctx, makeTranslate(en, {}))
   const fiber = runtime.ctx.plugin(ConversationController, {
     input: hub,
     blocks: new ComposerBlockRegistry(),
@@ -477,7 +477,7 @@ describe('ConversationController', () => {
     // No Client Sessions service at all: a bare context lacks the assembled controller.
     const bare = new Context()
     await bare.plugin(ConversationController, {
-      input: new InputHub(bare, makeTranslate(zh, {})),
+      input: new InputHub(bare, makeTranslate(en, {})),
       blocks: new ComposerBlockRegistry(),
       maxConcurrentFileUploads: 2,
     }).await()
@@ -517,10 +517,10 @@ describe('sendSession submission echo', () => {
         new File([Uint8Array.of(1, 2, 3)], 'a.png', { type: 'image/png' }),
       ])
       const session = b.runtime.sessions.binding('s1')!.session
-      const sending = b.root.sendSession(session, '带图', [attachment!.id], 'queue')
+      const sending = b.root.sendSession(session, '\u{5E26}\u{56FE}', [attachment!.id], 'queue')
       const echo = await b.begun
       expect(echo?.mode).toBe('queue')
-      expect(echo?.text).toBe('带图')
+      expect(echo?.text).toBe('\u{5E26}\u{56FE}')
       expect(echo?.attachments).toHaveLength(1)
       expect(echo?.attachments[0]?.type).toBe('image')
       expect(echo?.attachments[0]?.value).toMatchObject({ previewUrl: 'blob:echo-1', name: 'a.png' })
@@ -529,7 +529,7 @@ describe('sendSession submission echo', () => {
       expect(b.prompt).toHaveBeenCalledWith(
         [
           { type: 'image', mediaType: 'image/png', data: expect.any(String) as string, name: 'a.png' },
-          { type: 'text', text: '带图' },
+          { type: 'text', text: '\u{5E26}\u{56FE}' },
         ],
         'queue',
         undefined,
@@ -616,17 +616,17 @@ describe('sendSession submission echo', () => {
     try {
       await b.runtime.sessions.updateSessionSnapshot('s1', (draft) => { draft.running = true })
       const session = b.runtime.sessions.binding('s1')!.session
-      await expect(b.root.sendSession(session, '立即纠偏', [], 'steer'))
+      await expect(b.root.sendSession(session, '\u{7ACB}\u{5373}\u{7EA0}\u{504F}', [], 'steer'))
         .resolves.toEqual({ kind: 'success' })
       expect(b.beginSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
         mode: 'steer',
-        text: '立即纠偏',
+        text: '\u{7ACB}\u{5373}\u{7EA0}\u{504F}',
       }))
-      await expect(b.root.sendSession(session, '稍后处理', [], 'queue'))
+      await expect(b.root.sendSession(session, '\u{7A0D}\u{540E}\u{5904}\u{7406}', [], 'queue'))
         .resolves.toEqual({ kind: 'success' })
       expect(b.beginSubmission).toHaveBeenLastCalledWith(expect.objectContaining({
         mode: 'queue',
-        text: '稍后处理',
+        text: '\u{7A0D}\u{540E}\u{5904}\u{7406}',
       }))
     } finally {
       b.restore()
@@ -687,7 +687,7 @@ describe('sendSession submission echo', () => {
       await vi.waitFor(() => {
         expect(b.root.fileUploads.getSnapshot()[attachments[1]!.id]?.status).toBe('ready')
       })
-      await expect(b.root.sendSession(session, '失败', attachments.map(attachment => attachment.id), 'queue'))
+      await expect(b.root.sendSession(session, '\u{5931}\u{8D25}', attachments.map(attachment => attachment.id), 'queue'))
         .resolves.toEqual({ kind: 'error' })
       b.retire.onRetire?.({ reason: 'failed' })
       expect(b.root.resolveDraftAttachments(attachments.map(attachment => attachment.id))).toHaveLength(2)
@@ -730,8 +730,8 @@ describe('sendSession submission echo', () => {
     vi.stubGlobal('requestAnimationFrame', undefined)
     try {
       const session = b.runtime.sessions.binding('s1')!.session
-      await expect(b.root.sendSession(session, '纯文本', [], 'queue')).resolves.toEqual({ kind: 'success' })
-      expect(b.prompt).toHaveBeenCalledWith([{ type: 'text', text: '纯文本' }], 'queue', undefined, 'req-echo')
+      await expect(b.root.sendSession(session, '\u{7EAF}\u{6587}\u{672C}', [], 'queue')).resolves.toEqual({ kind: 'success' })
+      expect(b.prompt).toHaveBeenCalledWith([{ type: 'text', text: '\u{7EAF}\u{6587}\u{672C}' }], 'queue', undefined, 'req-echo')
     } finally {
       vi.unstubAllGlobals()
       b.restore()
@@ -744,10 +744,10 @@ describe('sendSession submission echo', () => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     try {
       const session = b.runtime.sessions.binding('s1')!.session
-      const sending = b.root.sendSession(session, '后台标签', [], 'queue')
+      const sending = b.root.sendSession(session, '\u{540E}\u{53F0}\u{6807}\u{7B7E}', [], 'queue')
       expect(b.prompt).not.toHaveBeenCalled()
       await expect(sending).resolves.toEqual({ kind: 'success' })
-      expect(b.prompt).toHaveBeenCalledWith([{ type: 'text', text: '后台标签' }], 'queue', undefined, 'req-echo')
+      expect(b.prompt).toHaveBeenCalledWith([{ type: 'text', text: '\u{540E}\u{53F0}\u{6807}\u{7B7E}' }], 'queue', undefined, 'req-echo')
     } finally {
       vi.unstubAllGlobals()
       b.restore()
@@ -767,9 +767,9 @@ describe('sendSession submission echo', () => {
       },
     })
     const prompt = vi.spyOn(session, 'prompt').mockResolvedValue({ ok: true, value: { accepted: true } })
-    await expect(b.root.sendSession(session, '继续', [], 'queue')).resolves.toEqual({ kind: 'success' })
+    await expect(b.root.sendSession(session, '\u{7EE7}\u{7EED}', [], 'queue')).resolves.toEqual({ kind: 'success' })
     expect(beginSubmission).not.toHaveBeenCalled()
-    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '继续' }], 'queue', undefined)
+    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: '\u{7EE7}\u{7EED}' }], 'queue', undefined)
     await b.runtime.dispose()
   })
 })
@@ -862,7 +862,7 @@ describe('InputHub queue steering (empty-draft accelerated Enter)', () => {
     b.shell.steerQueue()
     await vi.waitFor(() => {
       expect(b.shell.notices.getSnapshot()).toEqual(
-        expect.objectContaining({ level: 'error', text: '插话发送失败，请重试。' }),
+        expect.objectContaining({ level: 'error', text: 'Steering failed. Try again.' }),
       )
     })
     expect(b.updateQueue).toHaveBeenCalledTimes(1)

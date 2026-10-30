@@ -2,7 +2,7 @@
 # provider/tool and replace only the external model adapter.
 - insert:
     - id: llm-replay
-      name: '@deepseek-ai/dsh-llm-replay'
+      name: '@yharness/llm-replay'
       config:
         providers:
           - id: deepseek-official

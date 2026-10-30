@@ -6,14 +6,14 @@
  * argument validation, argv construction, result parsing, inline sampling,
  * and formatting; process concerns (spawn execution, tree termination,
  * environment scrubbing, output capture) stay behind `ctx.subprocess`.
- * @module @deepseek-ai/dsh-tool-fs-search/glob
+ * @module @yharness/tool-fs-search/glob
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { sep } from 'node:path'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai/dsh-tools'
-import type { SpillRef } from '@deepseek-ai/dsh-spill'
+import { defineTool } from '@yharness/tools'
+import type { GenericCallView, SearchResultView, ToolResult } from '@yharness/tools'
+import type { SpillRef } from '@yharness/spill'
 import { runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { globSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'

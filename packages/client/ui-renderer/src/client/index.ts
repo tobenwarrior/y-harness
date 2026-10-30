@@ -6,7 +6,7 @@
 import { createElement, useLayoutEffect, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
-import type { Context, Fiber } from '@deepseek-ai/cordis'
+import type { Context, Fiber } from '@yharness/cordis'
 import { createSlotRenderer } from './scoped-slots.tsx'
 import { buildRenderApp } from './app.tsx'
 import { SlotRegistry } from './registry.ts'
@@ -18,7 +18,7 @@ export type {
   ChainRenderOpts, HostObservable, RenderOpts, SnapshotSelectorHook, SlotRenderer,
   ScopedStandardSourceBinding, SlotRendererHost, SlotScopeAdapter,
   StandardSourceBinding, StoreInstanceLike,
-} from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-slots'
 
 /** Mount and retirement checks exposed to the framework-free boot kernel. */
 export interface UiRendererService {
@@ -37,7 +37,7 @@ export interface UiRendererService {
   mount: (container: HTMLElement) => () => void
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Events {
     /**
      * An ordinary Slot declaration or entry registration set changed. Factory

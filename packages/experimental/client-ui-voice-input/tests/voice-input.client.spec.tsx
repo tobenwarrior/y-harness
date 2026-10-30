@@ -2,12 +2,12 @@
 /** Click capture preserves draft edits and Session ownership without composer banners. */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SpeechPreparationState, SpeechProviderId, Transcript } from '@deepseek-ai/dsh-experimental-speech-to-text/types'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { bindSnapshotSelector, makeTranslate, RemoteError } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
+import type { SessionId } from '@yharness/session/types'
+import type { SpeechPreparationState, SpeechProviderId, Transcript } from '@yharness/experimental-speech-to-text/types'
+import type { RemoteResult } from '@yharness/typert-protocol'
 import { VoiceInput, type VoiceInputProps } from '../src/client/VoiceInput.tsx'
 import { RecordingError, Recording } from '../src/client/audio.ts'
 import type { SpeechReadiness } from '../src/client/readiness.ts'
@@ -17,7 +17,7 @@ import { captureFixture } from './audio-fixture.client.ts'
 beforeEach(() => { vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1)); vi.stubGlobal('cancelAnimationFrame', vi.fn()) })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const id = 'sensevoice-local' as SpeechProviderId
-const transcript: Transcript = { text: '检查 TypeScript 类型', audioSeconds: 2, inferenceSeconds: 0.4 }
+const transcript: Transcript = { text: '\u{68C0}\u{67E5} TypeScript \u{7C7B}\u{578B}', audioSeconds: 2, inferenceSeconds: 0.4 }
 function fixture(recording?: Recording) {
   const capture = Object.assign(new Recording(() => {}), { start: vi.fn<Recording['start']>(async () => {}), stop: vi.fn(async () => new Uint8Array(48)),
     amplitude: () => 0, dispose: vi.fn(async () => {}) })
@@ -46,7 +46,7 @@ function stop(): void { fireEvent.click(screen.getByRole('button', { name: zh.st
 it('clicks to record, shows measured audio, and stops to insert without sending or a popup', async () => {
   const b = fixture()
   fireEvent.mouseEnter(screen.getByRole('button', { name: zh.start }).parentElement!)
-  expect(screen.getByRole('tooltip').textContent).toBe('听写')
+  expect(screen.getByRole('tooltip').textContent).toBe('Dictate')
   fireEvent.mouseDown(screen.getByRole('button', { name: zh.start }))
   await start()
   expect(b.props.onActiveChange).toHaveBeenLastCalledWith(true)
@@ -133,7 +133,7 @@ it('keeps empty-speech and service errors inside the toolbar with retry and dism
   await screen.findByRole('button', { name: zh.stop })
   b.transcribe.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'offline', {}) })
   stop()
-  await screen.findByText('语音识别失败：offline')
+  await screen.findByText('Speech recognition failed: offline')
   fireEvent.click(screen.getByRole('button', { name: zh.cancel }))
   expect(screen.getByRole('button', { name: zh.start })).toBeTruthy()
 })
@@ -141,14 +141,14 @@ it('keeps empty-speech and service errors inside the toolbar with retry and dism
 it.each([new RecordingError('permission'), new Error('device lost'), 'device lost'])('handles capture failure locally (%s)', async (failure) => {
   const b = fixture(); b.capture.start.mockRejectedValueOnce(failure)
   fireEvent.click(screen.getByRole('button', { name: zh.start }))
-  await screen.findByText(failure instanceof RecordingError ? zh.permission : '语音识别失败：device lost')
+  await screen.findByText(failure instanceof RecordingError ? zh.permission : 'Speech recognition failed: device lost')
   expect(b.inputActions.notify).not.toHaveBeenCalled()
 })
 
 it.each([new RecordingError('empty'), new Error('decode failed'), 'decode failed'])('handles conversion failure locally (%s)', async (failure) => {
   const b = fixture(); b.capture.stop.mockRejectedValueOnce(failure)
   await start(); stop()
-  await screen.findByText(failure instanceof RecordingError ? zh.empty : '语音识别失败：decode failed')
+  await screen.findByText(failure instanceof RecordingError ? zh.empty : 'Speech recognition failed: decode failed')
   expect(b.capture.dispose).toHaveBeenCalledOnce()
   expect(b.inputActions.insertText).not.toHaveBeenCalled()
 })

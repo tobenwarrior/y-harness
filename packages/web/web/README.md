@@ -3,7 +3,7 @@ description: "The web access service (ctx.web): how deployments and plugin autho
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-web
+# @yharness/web
 
 ## Summary
 
@@ -34,9 +34,9 @@ Choose the service when a plugin or tool must search or fetch without hard-codin
 Load the service and let a single mounted backend auto-select, or pin a provider id with `searchProvider`/`fetchProvider`. The environment variables `$DSH_WEB_SEARCH_PROVIDER` and `$DSH_WEB_FETCH_PROVIDER` feed the same fields and are not a separate priority chain.
 
 ```yaml
-- name: '@deepseek-ai/dsh-web'
-- name: '@deepseek-ai/dsh-web-search-exa'
-- name: '@deepseek-ai/dsh-web-fetch-http'
+- name: '@yharness/web'
+- name: '@yharness/web-search-exa'
+- name: '@yharness/web-fetch-http'
 ```
 
 | Field | Default | Meaning |
@@ -44,7 +44,7 @@ Load the service and let a single mounted backend auto-select, or pin a provider
 | `searchProvider` | (unset) | Pinned search provider id; unset auto-selects when exactly one is usable |
 | `fetchProvider` | (unset) | Pinned fetch provider id; unset auto-selects when exactly one is usable |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-web) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessweb) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Searching and fetching
 
@@ -52,7 +52,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ```text
 // Search the web; sources[] is capped to maxResults:
-const result = await ctx.web.search({ query: 'deepseek harness', maxResults: 8 })
+const result = await ctx.web.search({ query: 'Y Harness', maxResults: 8 })
 
 // Fetch one URL; a non-2xx response is a result, not an error:
 const page = await ctx.web.fetch({ url: 'https://example.com' })
@@ -125,7 +125,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Web package map](../README.md) — the six-package family and each role.
 - [dsh-tool-web](../tool-web/README.md) — the model-facing `web_search` and `web_fetch` tools over this service.
 - [dsh-web-fetch-http](../web-fetch-http/README.md) — the shipped anonymous HTTP(S) fetch backend.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-web) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnessweb) — every accepted config field and its source declaration.
 - [Web capability seam decision](../../../.agents/notes/implemented/architecture/2026-06-24-web-capability-seam.md) — why search and fetch share one provider-selection service.
 
 -----

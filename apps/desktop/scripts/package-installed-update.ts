@@ -13,11 +13,11 @@ async function main(): Promise<void> {
       if (!stdin.isTTY || !stdout.isTTY) return false
       const terminal = createInterface({ input: stdin, output: stdout })
       try {
-        console.log('仅在管理员已审核并恢复签名保护后继续。确认已注销令牌、剩余 5/5、PIN 正确且无其他签名任务。')
-        console.log('本次打包会有多次签名；不重试失败操作，驱动内部认证次数无法保证。出现密码弹窗请取消，不要补输。')
-        console.log('PIN 只从 .env.windows 读取；签名接口要求它短暂出现在 SignTool 参数中。不会安装或上传。')
+        console.log('Continue only after an administrator has reviewed the package and restored signing protection. Confirm that the token is logged out, 5/5 attempts remain, the PIN is correct, and no other signing job is active.')
+        console.log('This package requires several signing operations. Do not retry failures because the driver cannot guarantee its internal authentication count. Cancel any password prompt instead of entering another password.')
+        console.log('The PIN is read only from .env.windows and is briefly passed to SignTool as required by the signing service. Nothing will be installed or uploaded.')
         const expected = `PACKAGE ${selectedVersion} ${id}`
-        return (await terminal.question(`仅授权这个版本，请输入 ${expected}：`)) === expected
+        return (await terminal.question(`Authorize only this version by entering ${expected}: `)) === expected
       } finally { terminal.close() }
     } })
   console.log(JSON.stringify(result, null, 2))

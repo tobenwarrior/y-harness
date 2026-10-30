@@ -1,16 +1,17 @@
 /**
  * Schema-dump entry: inspect the composed profile without applying its plugins.
  * Imports and lazy schema builders execute trusted module code.
- * @module @deepseek-ai/dsh/dump-config-schema
+ * @module @yharness/cli/dump-config-schema
  */
 
 /* v8 ignore file -- built-bin acceptance drives schema collection and output. */
 
-import { generateConfigSchema, type ConfigSchemaDump } from '@deepseek-ai/dsh-app-boot'
+import { generateConfigSchema, type ConfigSchemaDump } from '@yharness/app-boot'
 import { collectConfigDumpLayers } from './dump-config.ts'
+import { CLI_NAME } from './cli-name.ts'
 import { INSTALL_ANCHOR, prepareProfile } from './profile-boot.ts'
 
-const NAME = 'dsh'
+const NAME = CLI_NAME
 
 /**
  * Print one JSON Schema document; incomplete collection or projection sets exitCode to 1.

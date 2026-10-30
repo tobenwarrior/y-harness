@@ -761,16 +761,16 @@ function machineBlock(change: PersistenceChangeRecord): string {
 }
 
 function scaffold(change: PersistenceChangeRecord, chinese: boolean, prose?: PersistenceChangeProse): string {
-  const summary = chinese ? '概述' : 'Summary'
-  const compatibility = chinese ? '兼容性' : 'Compatibility'
-  const verification = chinese ? '验证' : 'Verification'
-  return ['---', `description: ${JSON.stringify(chinese ? '记录持久化类型更改及其兼容性确认。' : 'Records a persistence type transition and its compatibility acknowledgement.')}`, 'kind: persistence-change', '---', '',
-    `# ${change.id}`, '', chinese ? `[English](${change.id}.md) | 中文` : `English | [中文](${change.id}.zh.md)`, '',
-    `## ${summary}`, '', prose?.summary ?? EXPLANATION_PLACEHOLDER, '', '## ' + (chinese ? '目录' : 'Table of Contents'), '',
-    `- [${chinese ? '声明' : 'Declaration'}](#declaration)`, `- [${compatibility}](#compatibility)`, `- [${verification}](#verification)`, `- [${chinese ? '开发备注' : 'Dev Note'}](#dev-note)`, '',
-    '<a id="declaration"></a>', `## ${chinese ? '声明' : 'Declaration'}`, '', machineBlock(change), '',
+  const summary = chinese ? '\u6982\u8ff0' : 'Summary'
+  const compatibility = chinese ? '\u517c\u5bb9\u6027' : 'Compatibility'
+  const verification = chinese ? '\u9a8c\u8bc1' : 'Verification'
+  return ['---', `description: ${JSON.stringify(chinese ? '\u8bb0\u5f55\u6301\u4e45\u5316\u7c7b\u578b\u66f4\u6539\u53ca\u5176\u517c\u5bb9\u6027\u786e\u8ba4。' : 'Records a persistence type transition and its compatibility acknowledgement.')}`, 'kind: persistence-change', '---', '',
+    `# ${change.id}`, '', chinese ? `[English](${change.id}.md) | \u4e2d\u6587` : `English | [\u4e2d\u6587](${change.id}.zh.md)`, '',
+    `## ${summary}`, '', prose?.summary ?? EXPLANATION_PLACEHOLDER, '', '## ' + (chinese ? '\u76ee\u5f55' : 'Table of Contents'), '',
+    `- [${chinese ? '\u58f0\u660e' : 'Declaration'}](#declaration)`, `- [${compatibility}](#compatibility)`, `- [${verification}](#verification)`, `- [${chinese ? '\u5f00\u53d1\u5907\u6ce8' : 'Dev Note'}](#dev-note)`, '',
+    '<a id="declaration"></a>', `## ${chinese ? '\u58f0\u660e' : 'Declaration'}`, '', machineBlock(change), '',
     '<a id="compatibility"></a>', `## ${compatibility}`, '', prose?.compatibility ?? EXPLANATION_PLACEHOLDER, '',
-    '<a id="verification"></a>', `## ${verification}`, '', prose?.verification ?? EVIDENCE_PLACEHOLDER, '', '<a id="dev-note"></a>', `## ${chinese ? '开发备注' : 'Dev Note'}`, '', chinese ? '无。' : 'None.', ''].join('\n')
+    '<a id="verification"></a>', `## ${verification}`, '', prose?.verification ?? EVIDENCE_PLACEHOLDER, '', '<a id="dev-note"></a>', `## ${chinese ? '\u5f00\u53d1\u5907\u6ce8' : 'Dev Note'}`, '', chinese ? '\u65e0。' : 'None.', ''].join('\n')
 }
 
 /** Parse explicit authored prose without supplying compatibility or validation claims.
@@ -796,7 +796,7 @@ export function parsePersistenceProse(value: unknown): PersistenceChangeProsePai
 function updateDocument(source: string, change: PersistenceChangeRecord, chinese: boolean, prose?: PersistenceChangeProse): string {
   source = source.replace(/^```yaml persistence-change[^\S\n]*\n[\s\S]*?^```[^\S\n]*$/mu, machineBlock(change))
   if (prose === undefined) return source
-  const headings = chinese ? ['概述', '兼容性', '验证'] : ['Summary', 'Compatibility', 'Verification']
+  const headings = chinese ? ['\u6982\u8ff0', '\u517c\u5bb9\u6027', '\u9a8c\u8bc1'] : ['Summary', 'Compatibility', 'Verification']
   for (const [index, text] of [prose.summary, prose.compatibility, prose.verification].entries()) {
     const lines = source.split('\n')
     const heading = `## ${headings[index]}`

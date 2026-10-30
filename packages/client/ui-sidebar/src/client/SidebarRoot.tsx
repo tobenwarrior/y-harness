@@ -21,9 +21,9 @@ import clsx from 'clsx'
 import {
   IconSidebarBotsOutlineRegular, IconSidebarCodeOutlineRegular, IconSidebarCollapseOutlineRegular,
   IconSidebarNewSessionOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+} from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@yharness/client-ui-slots'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import type {
   SidebarPanelMetadata, SidebarRootComponentProps, SidebarRootInjected, SidebarSectionOwnerProps,
 } from './contract/slots.ts'
@@ -211,17 +211,19 @@ export function SidebarRoot({
   const darwinDesktop = isDarwinDesktop()
   const toggle = (
     <Tooltip label={toggleLabel} shortcutKeys={shortcut?.keys} delayMs={500} side={captionTooltipSide}>
-      <button
-        type="button"
-        className={clsx(css.iconButton, css.toggle)}
-        aria-label={toggleLabel}
-        aria-keyshortcuts={shortcut?.aria}
-        onClick={() => { toggleSidebar() }}
-      >
-        {/* Rail icons render at 18 (figma rail spec); expanded keeps the glyph-native sizes. */}
-        <IconSidebarCollapseOutlineRegular size={wide || windowsTitlebar ? 16 : 18} />
-        {!wide && renderSlot('sidebar.toggle.badge', {})}
-      </button>
+      <span className={css.toggleAnchor}>
+        <button
+          type="button"
+          className={clsx(css.iconButton, css.toggle)}
+          aria-label={toggleLabel}
+          aria-keyshortcuts={shortcut?.aria}
+          onClick={() => { toggleSidebar() }}
+        >
+          {/* Rail icons render at 18 (figma rail spec); expanded keeps the glyph-native sizes. */}
+          <IconSidebarCollapseOutlineRegular size={wide || windowsTitlebar ? 16 : 18} />
+        </button>
+        {!wide && !windowsTitlebar && renderSlot('sidebar.toggle.badge', {})}
+      </span>
     </Tooltip>
   )
 
@@ -304,6 +306,8 @@ export function SidebarRoot({
           </span>}
         </button>
       </Tooltip>}
+
+      {!wide && windowsTitlebar && renderSlot('sidebar.toggle.badge', {})}
 
       {!botMode && panels.filter(({ id }) => id !== BOT_PANEL_ID).length > 0 && (
         <nav className={css.panelList} data-yh-part="sidebar-nav" aria-label={t('panels.label')}>

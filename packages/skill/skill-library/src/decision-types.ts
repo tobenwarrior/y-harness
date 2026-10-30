@@ -1,7 +1,7 @@
 /** Separate optional response-only metadata advice; no source or execution authority. */
-import type { LlmCallConfig, LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm'
+import type { LlmCallConfig, LlmResolvedModelInfo } from '@yharness/llm'
 import type { SkillLibraryId } from './types.ts'
-import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { Branded } from '@yharness/brand'
 
 /** Exact registered route; defaults from the conversation are never inherited. */
 export type DecisionRoute = Readonly<Pick<LlmCallConfig, 'provider' | 'model' | 'reasoningEffort' | 'serviceTier'>>

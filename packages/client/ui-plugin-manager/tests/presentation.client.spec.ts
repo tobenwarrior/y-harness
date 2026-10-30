@@ -1,4 +1,4 @@
-/** First-party package descriptions use the public product name only when displayed. */
+/** Package descriptions retain the text published by their owner. */
 import { globSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -7,24 +7,23 @@ import { packageText, rowText } from '../src/client/presentation.ts'
 
 afterEach(() => { vi.unstubAllEnvs() })
 
-const resolveText: Parameters<typeof packageText>[1] = text => typeof text === 'string' ? text : text.zh ?? text.en
+const resolveText: Parameters<typeof packageText>[1] = text => typeof text === 'string' ? text : text.alt ?? text.en
 
-describe('first-party description display', () => {
-  it.each([undefined, 'Y Harness', 'Atlas', '星图 $& $`'])('projects %s after locale resolution without changing metadata or titles', (displayName) => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
-    const name = '@deepseek-ai/dsh-agent'
-    const raw = 'DeepSeek-backed tools for DeepSeek Harness; DeepSeek Account; MIT copyright DeepSeek'
+describe('package description display', () => {
+  it('retains current first-party product copy after locale resolution without changing metadata or titles', () => {
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
+    const name = '@yharness/agent'
+    const raw = 'Y Harness-backed tools for Y Harness; DeepSeek Account; MIT copyright DeepSeek'
     const meta = {
-      title: 'DeepSeek Harness technical title',
-      description: { en: 'Unused English description', zh: raw },
+      title: 'Y Harness technical title',
+      description: { en: 'Unused English description', alt: raw },
     }
-    const expected = `DeepSeek-backed tools for ${displayName ?? 'DeepSeek Harness'}; DeepSeek Account; MIT copyright DeepSeek`
-    expect(packageText({ name, meta }, resolveText)).toEqual({ title: meta.title, description: expected, beta: false })
-    expect(rowText({ moduleName: `${name}/entry`, meta }, resolveText)).toEqual({ title: meta.title, description: expected })
-    expect(meta.description.zh).toBe(raw)
+    expect(packageText({ name, meta }, resolveText)).toEqual({ title: meta.title, description: raw, beta: false })
+    expect(rowText({ moduleName: `${name}/entry`, meta }, resolveText)).toEqual({ title: meta.title, description: raw })
+    expect(meta.description.alt).toBe(raw)
   })
 
-  it.each(['@acme/dsh-agent', '@deepseek-ai/cordis', '@deepseek-ai/cordis-plugin-hmr', 'dsh-agent'])('preserves upstream and third-party description %s', (name) => {
+  it.each(['@acme/dsh-agent', '@yharness/cordis', '@yharness/cordis-plugin-hmr', '@yharness/agent', 'dsh-agent'])('preserves upstream, provider and legal description %s', (name) => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
     const description = 'Upstream DeepSeek Harness credit; Y Harness; MIT licence'
     const meta = { description }
@@ -33,11 +32,10 @@ describe('first-party description display', () => {
   })
 
   it('keeps unselected locale text and technical title fallbacks', () => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
-    const name = '@deepseek-ai/dsh-agent'
+    const name = '@yharness/agent'
     for (const description of [
       'Y Harness extension; DeepSeek provider; MIT licence',
-      { en: 'DeepSeek Harness tools', zh: '当前语言的工具说明' },
+      { en: 'Y Harness tools', alt: 'Alternate-language tool description' },
     ]) {
       const resolved = resolveText(description)
       expect(packageText({ name, meta: { description } }, resolveText)).toEqual({ title: name, description: resolved, beta: false })
@@ -45,22 +43,22 @@ describe('first-party description display', () => {
     }
     expect(packageText({ name }, resolveText)).toEqual({ title: name, description: undefined, beta: false })
     expect(rowText({ moduleName: name, meta: { description: { en: '' } } }, resolveText)).toEqual({ title: name, description: undefined })
-    expect(packageText({ name, meta: { description: { en: 'DeepSeek Harness fallback' } } }, resolveText).description).toBe('Atlas fallback')
+    expect(packageText({ name, meta: { description: { en: 'Y Harness fallback' } } }, resolveText).description).toBe('Y Harness fallback')
+    expect(packageText({ name: '@yharness/experimental-inspector' }, resolveText).beta).toBe(true)
     expect(packageText({ name: '@deepseek-ai/dsh-experimental-inspector' }, resolveText).beta).toBe(true)
+    expect(packageText({ name: '@acme/dsh-experimental-inspector' }, resolveText).beta).toBe(false)
   })
 
-  it('projects current first-party manifest descriptions without rewriting published metadata', () => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas')
+  it('keeps current first-party manifest descriptions unchanged', () => {
     const root = fileURLToPath(new URL('../../../..', import.meta.url))
     const selected = globSync('packages/*/*/package.json', { cwd: root })
       .map(path => JSON.parse(readFileSync(join(root, path), 'utf8')) as { name: string; description?: string })
-      .filter(meta => meta.name.startsWith('@deepseek-ai/dsh-') && meta.description?.includes('DeepSeek Harness'))
+      .filter(meta => meta.name.startsWith('@yharness/') && meta.description?.includes('Y Harness'))
     expect(selected.length).toBeGreaterThan(0)
     for (const meta of selected) {
       const raw = meta.description!
-      const expected = raw.replaceAll('DeepSeek Harness', 'Atlas')
-      expect(packageText({ name: meta.name, meta: { description: raw } }, resolveText).description, meta.name).toBe(expected)
-      expect(rowText({ moduleName: meta.name, meta: { description: raw } }, resolveText).description, meta.name).toBe(expected)
+      expect(packageText({ name: meta.name, meta: { description: raw } }, resolveText).description, meta.name).toBe(raw)
+      expect(rowText({ moduleName: meta.name, meta: { description: raw } }, resolveText).description, meta.name).toBe(raw)
       expect(meta.description).toBe(raw)
     }
   })

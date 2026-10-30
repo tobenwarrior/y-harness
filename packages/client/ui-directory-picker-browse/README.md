@@ -3,7 +3,7 @@ description: "In-app directory-browsing surface: the Miller-column Select Worksp
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-directory-picker-browse
+# @yharness/client-ui-directory-picker-browse
 
 ## Summary
 

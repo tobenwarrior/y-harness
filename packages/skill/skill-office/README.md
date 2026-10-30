@@ -3,7 +3,7 @@ description: "Bundled Word, PowerPoint, and Excel instructions for deployments p
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-skill-office
+# @yharness/skill-office
 
 ## Summary
 
@@ -28,7 +28,7 @@ Mount this provider beside the skill registry and `dsh-tool-skill` to expose `of
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-skill-office'
+- name: '@yharness/skill-office'
 ```
 
 | Field | Default | Meaning |

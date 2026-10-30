@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
+import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
 import { TranscriptViewRow, type TranscriptViewRowProps } from '../src/client/settings/TranscriptViewRow.tsx'
 import { PerformanceUsageRow } from '../src/client/settings/PerformanceUsageRow.tsx'
 import type { LinkOpening, PerformanceUsageMode, TranscriptViewMode } from '../src/chat-settings.ts'
@@ -78,20 +78,20 @@ describe('TranscriptViewRow', () => {
     expect(screen.queryByRole('menuitem', { name: 'Compact' })).toBeNull()
   })
 
-  it('shows all four work-detail values in Chinese', () => {
+  it('shows all four work-detail values through the legacy locale alias', () => {
     const b = mount('compact', zh)
-    expect(screen.getByText('工作步骤展示')).toBeDefined()
-    expect(screen.getByText('选择希望看到多少工具调用细节')).toBeDefined()
-    fireEvent.click(screen.getByRole('button', { name: '简洁' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '标准' }))
+    expect(screen.getByText('Work details')).toBeDefined()
+    expect(screen.getByText('Choose how much detail to show for tool calls')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Compact' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Standard' }))
     expect(b.setTranscriptView).toHaveBeenLastCalledWith('standard')
-    fireEvent.click(screen.getByRole('button', { name: '标准' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '详细' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Standard' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Detailed' }))
     expect(b.setTranscriptView).toHaveBeenLastCalledWith('detailed')
-    fireEvent.click(screen.getByRole('button', { name: '详细' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '完全展开' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Detailed' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Verbose' }))
     expect(b.setTranscriptView).toHaveBeenLastCalledWith('verbose')
-    expect(screen.getByRole('button', { name: '完全展开' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Verbose' })).toBeDefined()
   })
 
   it('returns focus before publishing a mode change without refocusing after the menu closes', async () => {
@@ -141,7 +141,7 @@ describe('LinkOpeningRow', () => {
 
   it.each([
     [en, 'Open chat links in', 'Choose where to open web links', 'In-App Sidebar', 'Default Browser'],
-    [zh, '网页链接默认打开方式', '对话中网页链接的打开位置', '应用内侧边栏', '默认浏览器'],
+    [zh, 'Open chat links in', 'Choose where to open web links', 'In-App Sidebar', 'Default Browser'],
   ] as const)('selects either destination using localized labels (%s)', (dictionary, title, description, sidebar, newTab) => {
     const b = mount('compact', dictionary)
     const source = createSnapshotStore<LinkOpening>('sidebar')

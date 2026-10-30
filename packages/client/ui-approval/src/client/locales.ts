@@ -1,22 +1,18 @@
 /** `approval` namespace dictionaries. */
 
-/** Simplified Chinese dictionary and key-set source of truth. */
-export const zh = {
-  waiting: '等待审批',
-  'detail.aria': '审批详情',
-  escalation: '工具 {toolName} 请求越权执行',
-  reject: '拒绝',
-  allowOnce: '允许一次',
-} satisfies Record<string, string>
+/** English dictionary for this namespace. */
 
 /** Approval dictionary key union. */
-export type ApprovalKey = keyof typeof zh
+export type ApprovalKey = keyof typeof en
 
-/** English dictionary, checked against the Chinese key set. */
+/** English dictionary for this namespace. */
 export const en = {
   waiting: 'Waiting for approval',
   'detail.aria': 'Approval details',
   escalation: 'Tool {toolName} requests privileged execution',
   reject: 'Reject',
   allowOnce: 'Allow once',
-} satisfies Record<ApprovalKey, string>
+} satisfies Record<string, string>
+
+/** Compatibility export for the retired locale name. */
+export const zh = en

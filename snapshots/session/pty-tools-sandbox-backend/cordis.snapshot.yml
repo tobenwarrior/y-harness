@@ -13,7 +13,7 @@
       config:
         maxResultBytes: 64
     - id: llm-replay
-      name: '@deepseek-ai/dsh-llm-replay'
+      name: '@yharness/llm-replay'
       config:
         providers:
           - id: deepseek-official

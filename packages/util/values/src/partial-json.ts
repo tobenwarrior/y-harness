@@ -5,7 +5,7 @@
  * and reports changed answers when the owner refreshes for publication.
  * Used for model tool-call arguments: a row reads the fields it
  * cares about at whatever granularity it displays, at every stage of the call.
- * @module @deepseek-ai/dsh-util-values/src/partial-json
+ * @module @yharness/util-values/src/partial-json
  */
 import { assertNever, type JsonValue } from './index.ts'
 

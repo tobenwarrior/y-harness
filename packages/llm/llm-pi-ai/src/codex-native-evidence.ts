@@ -1,7 +1,7 @@
 /** Sanitized native items and allowlisted procedure facts; no raw bodies or inferred verification. */
 import { isAbsolute, relative, resolve } from 'node:path'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId } from '@deepseek-ai/dsh-skill-library/types'
+import { brandString } from '@yharness/brand'
+import type { SkillLearningNativeItem, SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId } from '@yharness/skill-library/types'
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}

@@ -131,8 +131,10 @@ describe('replaced external packages', () => {
 
   it('lists the packages the loader serves from the bundle', () => {
     expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('chokidar')
-    expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@deepseek-ai/node-addon-system')
-    expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@deepseek-ai/node-addon-system/landlock-run')
+    expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@yharness/node-addon-system')
+    expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@yharness/node-addon-system/landlock-run')
+    expect(REPLACED_EXTERNAL_PACKAGES).toContain('@yharness/node-addon-system/flock')
+    expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@deepseek-ai/node-addon-system/flock')
     expect(REPLACED_EXTERNAL_PACKAGES).toContain('ws')
   })
 

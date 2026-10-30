@@ -192,7 +192,7 @@ describe('rewriteMarkdown', () => {
       repositoryRef: 'abc123',
     })).toBe(
       '[B](./reference/b.md#part) '
-      + '[source](https://github.com/deepseek-ai/deepseek-harness/blob/abc123/packages/tool.ts#L2) '
+      + '[source](https://github.com/tobenwarrior/y-harness/blob/abc123/packages/tool.ts#L2) '
       + '[web](https://example.com)\n',
     )
   })
@@ -218,7 +218,7 @@ describe('rewriteMarkdown', () => {
       pages,
       repoRoot: root,
       repositoryRef: 'abc123',
-    })).toBe('![logo](https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/abc123/packages/logo.svg)\n')
+    })).toBe('![logo](https://raw.githubusercontent.com/tobenwarrior/y-harness/abc123/packages/logo.svg)\n')
   })
 
   it('hands an image to the placer and uses the URL it returns', () => {
@@ -297,7 +297,7 @@ describe('rewriteMarkdown', () => {
       repositoryRef: 'abc123',
     })).toBe(
       '[title](./reference/b.md "b.md") '
-      + '[escaped](https://github.com/deepseek-ai/deepseek-harness/blob/abc123/docs/x(y).md)\n',
+      + '[escaped](https://github.com/tobenwarrior/y-harness/blob/abc123/docs/x(y).md)\n',
     )
   })
 
@@ -328,14 +328,14 @@ describe('rewriteMarkdown', () => {
       repoRoot: root,
       repositoryRef: 'abc123',
     })).toBe('[English](../en/guide/a.md) [B](../reference-root/b.md)\n')
-    expect(rewriteMarkdown('[中文](a.zh.md) [B](b.md)\n', {
+    expect(rewriteMarkdown('[\u4e2d\u6587](a.zh.md) [B](b.md)\n', {
       locale: 'en',
       sourcePath: 'docs/a.md',
       route: 'en/guide/a.md',
       pages: paired,
       repoRoot: root,
       repositoryRef: 'abc123',
-    })).toBe('[中文](../../guide/a.md) [B](../reference/b.md)\n')
+    })).toBe('[\u4e2d\u6587](../../guide/a.md) [B](../reference/b.md)\n')
   })
 
   it('fails loud when a relative target is missing', () => {
@@ -391,16 +391,16 @@ describe('sidebar ordering', () => {
   })
 
   it('refuses a section with no declared placement', () => {
-    expect(() => sectionSpec('root', '数据结构'))
-      .toThrow('Sidebar section "数据结构" has no placement in the root locale.')
+    expect(() => sectionSpec('root', '\u6570\u636e\u7ed3\u6784'))
+      .toThrow('Sidebar section "\u6570\u636e\u7ed3\u6784" has no placement in the root locale.')
   })
 
   it('declares placements per locale rather than in one shared list', () => {
     // The root locale renders English labels now, so both key lists rank `SDK` after the guide.
     expect(sectionSpec('root', 'SDK').index).toBeGreaterThan(sectionSpec('root', 'Guide').index)
     expect(sectionSpec('en', 'SDK').index).toBeGreaterThan(sectionSpec('en', 'Guide').index)
-    expect(() => sectionSpec('en', '入门')).toThrow()
-    expect(() => sectionSpec('root', '入门')).toThrow()
+    expect(() => sectionSpec('en', '\u5165\u95e8')).toThrow()
+    expect(() => sectionSpec('root', '\u5165\u95e8')).toThrow()
   })
 
   it('lands every navigation item on a page the manifest publishes', () => {
@@ -477,7 +477,7 @@ describe('projectedPageContent', () => {
 
   it('omits the source-only body from locale home pages', () => {
     expect(projectedPageContent(
-      '---\nlayout: false\nhead:\n  - - meta\n    - http-equiv: refresh\n      content: 0; url=./guide/quickstart\n---\n\n# Harness\n\n[English](index.md) | 中文\n',
+      '---\nlayout: false\nhead:\n  - - meta\n    - http-equiv: refresh\n      content: 0; url=./guide/quickstart\n---\n\n# Harness\n\n[English](index.md) | \u4e2d\u6587\n',
       page(null),
     )).toBe('---\nlayout: false\nhead:\n  - - meta\n    - http-equiv: refresh\n      content: 0; url=./guide/quickstart\n---\n')
   })
@@ -488,21 +488,21 @@ describe('projectedPageContent', () => {
   })
 
   it('drops the language switcher the navigation bar already offers', () => {
-    expect(projectedPageContent('# Guide\n\nEnglish | [中文](./en/guide)\n\nBody.\n', page('zh-guide')))
+    expect(projectedPageContent('# Guide\n\nEnglish | [\u4e2d\u6587](./en/guide)\n\nBody.\n', page('zh-guide')))
       .toBe('# Guide\n\nBody.\n')
-    expect(projectedPageContent('# 指南\n\n[English](./en/guide) | 中文\n\n正文。\n', page('zh-guide')))
-      .toBe('# 指南\n\n正文。\n')
+    expect(projectedPageContent('# \u6307\u5357\n\n[English](./en/guide) | \u4e2d\u6587\n\n\u6b63\u6587。\n', page('zh-guide')))
+      .toBe('# \u6307\u5357\n\n\u6b63\u6587。\n')
   })
 
   it('drops the repository badge every page links from its footer', () => {
-    const badge = '[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)'
+    const badge = '[![](https://img.shields.io/badge/powered_by-Y_Harness-4D6BFE?style=flat-square)](https://github.com/tobenwarrior/y-harness)'
     expect(projectedPageContent(`# Guide\n\nBody.\n\n${badge}\n`, page('zh-guide')))
       .toBe('# Guide\n\nBody.\n')
   })
 
   it('keeps a switcher-shaped line that is not the page header', () => {
     // A tutorial showing the convention must still render the example.
-    const sample = '# Guide\n\nA\n\nB\n\nC\n\nD\n\nE\n\nEnglish | [中文](./x)\n'
+    const sample = '# Guide\n\nA\n\nB\n\nC\n\nD\n\nE\n\nEnglish | [\u4e2d\u6587](./x)\n'
     expect(projectedPageContent(sample, page('zh-guide'))).toBe(sample)
   })
 
@@ -515,14 +515,14 @@ describe('projectedPageContent', () => {
 describe('rawMarkdownPageContent', () => {
   it('keeps the home body the rendered site omits and drops the VitePress frontmatter', () => {
     expect(rawMarkdownPageContent(
-      '---\nlayout: false\nhead:\n  - - meta\n    - http-equiv: refresh\n      content: 0; url=./guide/quickstart\n---\n\n# Harness\n\nEnglish | [中文](./index.md)\n\nBody.\n',
+      '---\nlayout: false\nhead:\n  - - meta\n    - http-equiv: refresh\n      content: 0; url=./guide/quickstart\n---\n\n# Harness\n\nEnglish | [\u4e2d\u6587](./index.md)\n\nBody.\n',
       'docs/user/index.zh.md',
     )).toBe('# Harness\n\nBody.\n')
   })
 
   it('drops the language switcher and repository badge like the rendered site', () => {
-    const badge = '[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)'
-    expect(rawMarkdownPageContent(`# Guide\n\nEnglish | [中文](./x)\n\nBody.\n\n${badge}\n`, 'docs/guide.md'))
+    const badge = '[![](https://img.shields.io/badge/powered_by-Y_Harness-4D6BFE?style=flat-square)](https://github.com/tobenwarrior/y-harness)'
+    expect(rawMarkdownPageContent(`# Guide\n\nEnglish | [\u4e2d\u6587](./x)\n\nBody.\n\n${badge}\n`, 'docs/guide.md'))
       .toBe('# Guide\n\nBody.\n')
   })
 
@@ -589,7 +589,7 @@ describe('emitRawMarkdownPages', () => {
 
   it('identifies UTF-8 to document readers while fetch decoding preserves the Markdown body', async () => {
     const { root, pages } = fixture()
-    const markdown = '# 中文 → Markdown\n'
+    const markdown = '# \u4e2d\u6587 → Markdown\n'
     writeFileSync(join(root, 'docs/a.md'), markdown)
     const out = mirrorDir()
     emitRawMarkdownPages(out, { pages, repoRoot: root, repositoryRef: 'abc123' })
@@ -651,7 +651,7 @@ describe('raw Markdown projection of the published manifest', () => {
     for (const route of ['index.md']) {
       const home = new TextDecoder().decode(readFileSync(join(mirror, route)))
       expect(home.startsWith('---'), route).toBe(false)
-      expect(home, route).toContain('# DeepSeek Harness')
+      expect(home, route).toContain('# Y Harness')
     }
   })
 
@@ -688,7 +688,7 @@ function relativeTargets(markdown: string): string[] {
 }
 
 describe('llmsTxt', () => {
-  const site = { base: '/x/', title: 'DeepSeek Harness', description: '插件化 SDK' }
+  const site = { base: '/x/', title: 'Y Harness', description: 'Plugin-based SDK' }
 
   it('lists every sidebar page as a base-prefixed raw-Markdown link', () => {
     const text = llmsTxt(site)
@@ -700,14 +700,14 @@ describe('llmsTxt', () => {
 
   it('groups the two locale trees under their own headings', () => {
     const text = llmsTxt(site)
-    expect(text.indexOf('## 简体中文')).toBeGreaterThan(-1)
-    expect(text.indexOf('## English')).toBeGreaterThan(text.indexOf('## 简体中文'))
+    expect(text.indexOf('## \u7b80\u4f53\u4e2d\u6587')).toBeGreaterThan(-1)
+    expect(text.indexOf('## English')).toBeGreaterThan(text.indexOf('## \u7b80\u4f53\u4e2d\u6587'))
   })
 
   it('carries the site identity and the raw-Markdown convention', () => {
     const text = llmsTxt(site)
-    expect(text.startsWith('# DeepSeek Harness\n')).toBe(true)
-    expect(text).toContain('> 插件化 SDK')
+    expect(text.startsWith('# Y Harness\n')).toBe(true)
+    expect(text).toContain('> Plugin-based SDK')
     expect(text).toMatch(/`\.md`/)
   })
 })

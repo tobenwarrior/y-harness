@@ -5,12 +5,12 @@
  * Under the `ask` approval policy a reviewer denial asks the user; under
  * `never` it is final.
  *
- * @module @deepseek-ai/dsh-experimental-auto-review
+ * @module @yharness/experimental-auto-review
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent-instructions'
+import type { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type {} from '@yharness/agent-instructions'
 import {
   BlockAssembler,
   type ContentBlock,
@@ -19,17 +19,17 @@ import {
   type StreamChunk,
   type ToolCallId,
   type ToolSchema,
-} from '@deepseek-ai/dsh-llm'
-import { deepFreeze } from '@deepseek-ai/dsh-util-values'
-import { AUTO_PRESET } from '@deepseek-ai/dsh-permission-presets'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-subagent'
-import type {} from '@deepseek-ai/dsh-user-approval'
+} from '@yharness/llm'
+import { deepFreeze } from '@yharness/util-values'
+import { AUTO_PRESET } from '@yharness/permission-presets'
+import type { SessionEvent } from '@yharness/session'
+import type {} from '@yharness/subagent'
+import type {} from '@yharness/user-approval'
 import {
   RUN_CODE_NAME,
   type PreToolDecision,
   type ToolExecution,
-} from '@deepseek-ai/dsh-tools'
+} from '@yharness/tools'
 
 /** Structured error name persisted for every final reviewer denial. */
 const AUTO_REVIEW_DENIED_ERROR_NAME = 'AutoReviewDeniedError'
@@ -660,8 +660,8 @@ function askUser(exec: ToolExecution, reason?: string): PreToolDecision {
     kind: 'ask',
     reason: reason === undefined ? denial : `${denial}: ${reason}`,
     displayReason: reason === undefined
-      ? { en: 'Auto review denied this call.', zh: 'Auto review 拒绝了此调用。' }
-      : { en: `Auto review denied this call: ${reason}`, zh: `Auto review 拒绝了此调用：${reason}` },
+      ? { en: 'Auto review denied this call.', zh: 'Auto review denied this call.' }
+      : { en: `Auto review denied this call: ${reason}`, zh: `Auto review denied this call: ${reason}` },
   }
 }
 

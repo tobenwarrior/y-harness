@@ -1,15 +1,15 @@
 /** Builtin HTML metadata and keyed body registration; assembly belongs to the package entry. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import type {} from '../index.ts'
 import type { DocumentPreviewDefinition } from '../document/registry.ts'
 import { hostFileOf } from '../rpc.ts'
 import { HtmlBody } from './HtmlBody.tsx'
 import type { HtmlBodyInjected } from './HtmlBody.tsx'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { en, zh } from './locales.ts'
+import type {} from '@yharness/client-ui-settings/client'
+import { en } from './locales.ts'
 
 /** HTML implementation identity, shared by metadata and the keyed slot. */
-export const HTML_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/html'
+export const HTML_BODY_ID = '@yharness/client-ui-sidebar-documentpreview/html'
 
 /**
  * Describe the builtin HTML renderer's file types and loading mode.
@@ -26,7 +26,7 @@ export function htmlBodyDefinition(title: () => string): DocumentPreviewDefiniti
  */
 export function apply(ctx: Context): void {
   const t = ctx.locale.bind('documentHtml')
-  ctx.effect(() => ctx.locale.register('documentHtml', { zh, en }))
+  ctx.effect(() => ctx.locale.register('documentHtml', { en }))
   ctx.effect(() => ctx.documentPreviews.register(htmlBodyDefinition(() => t('title'))))
   ctx.effect(() => ctx.slots.inject('sidebar.right.tab.document', () => ctx.slots.register(
     {

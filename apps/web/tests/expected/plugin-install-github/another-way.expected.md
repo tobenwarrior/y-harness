@@ -1,14 +1,14 @@
-- dialog "添加插件":
-  - heading "添加插件" [level=2]
-  - button "关闭"
-  - textbox "插件包名":
-    - /placeholder: 例如 dsh-plugin-whale-pet
-  - button "收起引导" [expanded]
-  - button "安装源 中国大陆镜像源"
+- dialog "Add plugin":
+  - heading "Add plugin" [level=2]
+  - button "Close"
+  - textbox "Plugin package name":
+    - /placeholder: for example yharness-plugin-whale-pet
+  - button "Hide the guide" [expanded]
+  - button "Registry Mainland China mirror"
   - list:
     - listitem:
-      - text: 填入插件 npm 包名 插件包名即 npm 包名（如 dsh-xxx 或 @作者/插件名），社区插件的 README 安装命令中 dsh plugin add 或 pnpm add 之后的部分。 示例：
-      - code: dsh-plugin-whale-pet
-      - button "填入示例 dsh-plugin-whale-pet": 填入示例
-  - note: 请确认插件来源可信。插件在本机以你的权限运行，来源不明的插件可能损坏 Y Harness，或读取和泄露你的数据。 插件安装后，暂不支持自动更新。若需升级，请先卸载再安装新版，后续版本会持续改善升级体验。
-  - button "安装" [disabled]
+      - text: "Enter the plugin's npm package name The plugin package name is the npm package name (like yharness-xxx or @author/plugin): the part after yharness plugin add or pnpm add in a community plugin's README install command. Example:"
+      - code: yharness-plugin-whale-pet
+      - button "Use the example yharness-plugin-whale-pet": Use example
+  - note: "Install only plugins you trust: they run with your permissions and can damage Y Harness or leak your data. Installed plugins do not update automatically yet. To upgrade a plugin, uninstall it and install the new version. Later releases will keep improving the upgrade experience."
+  - button "Install" [disabled]

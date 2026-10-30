@@ -3,7 +3,7 @@ import { labelButton, type MediaViewer, viewerButton } from './media-viewer.ts'
 
 const messages = {
   en: { open: 'View diagram fullscreen', title: 'Diagram viewer' },
-  zh: { open: '全屏查看图表', title: '图表查看器' },
+  zh: { open: 'View diagram fullscreen', title: 'Diagram viewer' },
 }
 
 /** Theme-owned resources; source SVG replacement automatically closes the current view. */

@@ -1,4 +1,5 @@
 // The Host's native-onboarding setting must reach the assembled browser before its dialogs register.
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +13,8 @@ import { openSettings, ZH_BROWSER_LOCALE, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/onboarding-native', import.meta.url))
 const SIGNED_OUT_MENU_EXPECTED = join(SNAPSHOT_DIR, 'signed-out-menu.expected.md')
+const MODELS_EXPECTED = join(SNAPSHOT_DIR, 'models.expected.md')
+const DESKTOP_MODELS_EXPECTED = join(SNAPSHOT_DIR, 'models-desktop.expected.md')
 const MODE = webSnapshotMode()
 
 describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credential onboarding (desktop marker: %s)', (desktop) => {
@@ -44,10 +47,10 @@ describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credenti
     const credentialPath = join(scaffold.harnessHome, '.credentials.yaml')
     const credentials = await readFile(credentialPath, 'utf8')
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-    const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.zh.title })
+    const welcome = page.getByRole('dialog', { name: WELCOME_NOTICE_COPY.en.title })
     if (!desktop) {
       await welcome.waitFor()
-      await welcome.getByRole('button', { name: WELCOME_NOTICE_COPY.zh.continueLabel }).click()
+      await welcome.getByRole('button', { name: WELCOME_NOTICE_COPY.en.continueLabel }).click()
       await welcome.waitFor({ state: 'detached' })
     }
 
@@ -57,23 +60,23 @@ describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credenti
         await page.reload({ waitUntil: 'load' })
         acknowledgeReloadConnectionLoss(tripwire, warningsBefore)
       }
-      const accountMenu = page.getByRole('button', { name: '账号菜单', exact: true })
+      const accountMenu = page.getByRole('button', { name: 'Account menu', exact: true })
       if (desktop) {
         await accountMenu.waitFor()
-        expect(await accountMenu.textContent()).toBe('更多')
+        expect(await accountMenu.textContent()).toBe('More')
         const triggerBox = (await accountMenu.boundingBox())!
         expect(Math.abs(triggerBox.height - 32)).toBeLessThan(1)
         await accountMenu.click()
         const menu = page.getByRole('menu')
         await menu.waitFor()
-        expect(await menu.getByRole('menuitem').count()).toBe(3)
-        // Shortcut hints vary by host platform; accessible names identify the three actions.
-        for (const name of ['设置', '意见反馈', '登录']) {
+        expect(await menu.getByRole('menuitem').count()).toBe(2)
+        // Shortcut hints vary by host platform; accessible names identify the two actions.
+        for (const name of ['Settings', 'Sign in']) {
           expect(await menu.getByRole('menuitem', { name, exact: true }).count()).toBe(1)
         }
         const menuBox = (await menu.boundingBox())!
         expect(Math.abs(menuBox.width - 124)).toBeLessThan(1)
-        expect(Math.abs(menuBox.height - 128)).toBeLessThan(1)
+        expect(Math.abs(menuBox.height - 88)).toBeLessThan(1)
         expect(Math.abs(triggerBox.y - (menuBox.y + menuBox.height) - 4)).toBeLessThan(1)
         for (const row of await menu.getByRole('menuitem').all()) {
           const rowBox = (await row.boundingBox())!
@@ -88,23 +91,25 @@ describe.skipIf(MODE === 'record').each([false, true])('web e2e: native credenti
         await page.keyboard.press('Escape')
         await menu.waitFor({ state: 'detached' })
       } else {
-        await page.getByRole('button', { name: '设置', exact: true }).waitFor()
+        await page.getByRole('button', { name: 'Settings', exact: true }).waitFor()
         expect(await accountMenu.count()).toBe(0)
-        expect(await page.getByRole('dialog', { name: '开始你的创作' }).count()).toBe(0)
+        expect(await page.getByRole('dialog', { name: 'Start creating' }).count()).toBe(0)
       }
-      await openSettings(page, 'zh')
-      const settings = page.getByRole('dialog', { name: '设置', exact: true })
-      await settings.getByRole('button', { name: '模型', exact: true }).click()
-      await settings.getByLabel('API 密钥', { exact: true }).waitFor()
-      expect(await page.getByRole('dialog', { name: '添加一个 API Key 开始使用' }).count()).toBe(0)
+      await openSettings(page, 'en')
+      const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
+      await settings.getByRole('button', { name: 'Models', exact: true }).click()
+      await settings.getByLabel('API key', { exact: true }).waitFor()
+      expect(await page.getByRole('dialog', { name: 'Add an API key to get started' }).count()).toBe(0)
       expect(await welcome.count()).toBe(0)
       expect(await readFile(credentialPath, 'utf8')).toBe(credentials)
       const aria = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
-      await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'models.expected.md'), aria, MODE)
+      await compareOrRefreshGolden(desktop ? DESKTOP_MODELS_EXPECTED : MODELS_EXPECTED, aria, MODE)
       await page.keyboard.press('Escape')
     }
     expect(tripwire.warnings).toEqual([])
     expect(tripwire.pageErrors).toEqual([])
-    await assertFixtureInventory(SNAPSHOT_DIR, ['models.expected.md', 'signed-out-menu.expected.md'])
+    await assertFixtureInventory(SNAPSHOT_DIR, desktop || existsSync(DESKTOP_MODELS_EXPECTED)
+      ? ['models.expected.md', 'models-desktop.expected.md', 'signed-out-menu.expected.md']
+      : ['models.expected.md', 'signed-out-menu.expected.md'])
   })
 })

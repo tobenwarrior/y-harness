@@ -1,6 +1,6 @@
 /** Private worker readiness and response parsing stop on invalid process/wire output. */
 import { PassThrough } from 'node:stream'
-import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessHandle } from '@yharness/subprocess'
 import { expect, it } from 'vitest'
 import { SpeechInputError } from '../src/input.ts'
 import { readReady, readTranscript } from '../src/recognizer.ts'
@@ -54,7 +54,7 @@ it('rejects process exit, spawn failure, cancellation and unavailable output', a
 })
 
 it('validates complete worker transcripts and bounded failures', async () => {
-  const value = { text: '测试', audioSeconds: 1, inferenceSeconds: 0.1 }
+  const value = { text: '\u{6D4B}\u{8BD5}', audioSeconds: 1, inferenceSeconds: 0.1 }
   expect(await readTranscript(Response.json(value), 100)).toEqual(value)
   await expect(readTranscript(new Response(null), 100)).rejects.toThrow('no response')
   await expect(readTranscript(Response.json(value), 1)).rejects.toThrow('byte limit')

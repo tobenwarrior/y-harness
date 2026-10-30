@@ -1,4 +1,4 @@
-import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
+import type { AccountView } from '@yharness/deepseek-account/types'
 import { WINDOWS_TITLEBAR_HEIGHT } from '../src/windows-layout.ts'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { IpcMainInvokeEvent } from 'electron'
@@ -529,10 +529,10 @@ describe('desktop main startup', () => {
     harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 })
     ;(about!.click as () => void)()
     await vi.advanceTimersByTimeAsync(0)
-    const zh = locale === 'zh-CN'
+    const legacyLocale = locale === 'zh-CN'
     expect(harness.dialog.showMessageBox).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'info', title: zh ? '关于 Y harness' : 'About Y harness', message: 'Y harness',
-      detail: zh ? '版本 V1.0.0' : 'Version V1.0.0', buttons: [zh ? '确定' : 'OK'], cancelId: 0,
+      type: 'info', title: legacyLocale ? 'About Y Harness' : 'About Y Harness', message: 'Y Harness',
+      detail: legacyLocale ? 'Version V1.0.0' : 'Version V1.0.0', buttons: ['OK'], cancelId: 0,
     }))
     // A dialog that cannot open is logged, not surfaced as an unhandled rejection.
     harness.dialog.showMessageBox.mockRejectedValueOnce(new Error('overlay unavailable'))
@@ -824,7 +824,7 @@ describe('desktop main startup', () => {
     listener(event, 'zh-CN', 'rgb(249, 250, 251)', '#0f1115')
     expect(window.setTitleBarOverlay).toHaveBeenCalledWith({ color: 'rgb(249, 250, 251)', symbolColor: '#0f1115' })
     window.webContents.emit('context-menu', {}, { isEditable: false, selectionText: 'text', editFlags: { canCopy: true } })
-    expect(harness.menu.buildFromTemplate).toHaveBeenLastCalledWith([{ role: 'copy', enabled: true, label: '复制', accelerator: '' }])
+    expect(harness.menu.buildFromTemplate).toHaveBeenLastCalledWith([{ role: 'copy', enabled: true, label: 'Copy', accelerator: '' }])
     listener(event, 'en', '#1b1b1c', '#f9fafb')
     window.webContents.emit('context-menu', {}, { isEditable: false, selectionText: 'text', editFlags: { canCopy: true } })
     expect(harness.menu.buildFromTemplate).toHaveBeenLastCalledWith([{ role: 'copy', enabled: true, label: 'Copy', accelerator: '' }])
@@ -855,7 +855,7 @@ describe('desktop main startup', () => {
     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
     const application = handler(event, 'application', 48, 34)
     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
-      '关于 Y harness', 'separator', '检查更新…', '管理 dsh 命令…', 'separator', '退出',
+      'About Y Harness', 'separator', 'Check for Updates…', 'Manage Y Harness CLI…', 'separator', 'Exit',
     ])
     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
@@ -863,7 +863,7 @@ describe('desktop main startup', () => {
     await application
     const edit = handler(event, 'edit', 104, 34)
     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
-      '撤销', '重做', 'separator', '剪切', '复制', '粘贴', '删除', 'separator', '全选',
+      'Undo', 'Redo', 'separator', 'Cut', 'Copy', 'Paste', 'Delete', 'separator', 'Select All',
     ])
     const commands = harness.menu.buildFromTemplate.mock.lastCall![0].filter(item => item.type !== 'separator')
     for (const [index, keyCode] of ['Z', 'Y', 'X', 'C', 'V', 'Delete', 'A'].entries()) {
@@ -902,7 +902,7 @@ describe('desktop main startup', () => {
     vi.spyOn(harness.app, 'getLocale').mockReturnValue(locale)
     vi.spyOn(harness.app, 'getPreferredSystemLanguages').mockReturnValue([locale])
     const originalName = harness.app.name
-    harness.app.name = '@deepseek-ai/dsh-desktop'
+    harness.app.name = '@yharness/desktop'
     try {
       await import('../src/main.ts')
       await harness.preparing.promise
@@ -912,7 +912,7 @@ describe('desktop main startup', () => {
         || item.label === en.cliCommandMenu || item.label === zh.cliCommandMenu)
       await expect(JSON.stringify(commands, null, 2) + '\n')
         .toMatchFileSnapshot(`./expected/application-menu-${locale}.json`)
-      expect(harness.app.name).toBe('@deepseek-ai/dsh-desktop')
+      expect(harness.app.name).toBe('@yharness/desktop')
     } finally { harness.app.name = originalName }
   })
 
@@ -1222,10 +1222,10 @@ describe('desktop main startup', () => {
     expect(window.focus).toHaveBeenCalled()
     harness.app.emit('second-instance')
     expect(window.show).toHaveBeenCalledTimes(2)
-    // Locale changes relabel the tray together with the application menu.
+    // Legacy locale changes resolve to the same English shell and do not relabel the tray.
     const relabels = harness.trays[0]!.setContextMenu.mock.calls.length
     harness.ipcOn.mock.calls.find(call => call[0] === DESKTOP_IPC.localeChanged)![1]({ sender: window.webContents, senderFrame: window.webContents.mainFrame }, 'zh')
-    expect(harness.trays[0]!.setContextMenu.mock.calls.length).toBe(relabels + 1)
+    expect(harness.trays[0]!.setContextMenu.mock.calls.length).toBe(relabels)
   })
 
   it('keeps the workspace visible while acknowledgement is pending and ignores a destroyed window', async () => {

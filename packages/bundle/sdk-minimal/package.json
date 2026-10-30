@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-sdk-minimal",
+  "name": "@yharness/sdk-minimal",
   "description": "The standalone minimal SDK profile bundle: JSON-RPC, one DeepSeek adapter, persistent shell, and JSONL sessions",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/bundle/sdk-minimal"
   },
   "type": "module",
@@ -34,37 +34,37 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/cordis-plugin-timer": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop": "workspace:*",
-    "@deepseek-ai/dsh-deepseek-llm-api-extensions": "workspace:*",
-    "@deepseek-ai/dsh-jobs-local": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-deepseek-api-key": "workspace:*",
-    "@deepseek-ai/dsh-llm-retry": "workspace:*",
-    "@deepseek-ai/dsh-mcp-resources": "workspace:*",
-    "@deepseek-ai/dsh-plugin-package-inventory-deepseek": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-local": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-sdk-app": "workspace:*",
-    "@deepseek-ai/dsh-sdk-jsonrpc-server": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-log-deepseek": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-session-title": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-terminal": "workspace:*",
-    "@deepseek-ai/dsh-terminal-bash": "workspace:*",
-    "@deepseek-ai/dsh-tool-bash-persistent": "workspace:*",
-    "@deepseek-ai/dsh-tool-pwsh-persistent": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*"
+    "@yharness/cordis-plugin-timer": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/deepseek-llm-api-extensions": "workspace:*",
+    "@yharness/jobs-local": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-deepseek-api-key": "workspace:*",
+    "@yharness/llm-retry": "workspace:*",
+    "@yharness/mcp-resources": "workspace:*",
+    "@yharness/plugin-package-inventory-deepseek": "workspace:*",
+    "@yharness/sandbox-local": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/sdk-app": "workspace:*",
+    "@yharness/sdk-jsonrpc-server": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-log-deepseek": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/session-title": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/terminal": "workspace:*",
+    "@yharness/terminal-bash": "workspace:*",
+    "@yharness/tool-bash-persistent": "workspace:*",
+    "@yharness/tool-pwsh-persistent": "workspace:*",
+    "@yharness/tools": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   }
 }

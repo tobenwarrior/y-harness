@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-skill-library",
+  "name": "@yharness/skill-library",
   "description": "Project skill inventory and reversible managed maintenance",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/skill/skill-library"
   },
   "type": "module",
@@ -48,55 +48,55 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/dsh-skill-filesystem": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-workspace": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-preset-registry": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/home-paths": "workspace:*",
+    "@yharness/skill": "workspace:*",
+    "@yharness/skill-filesystem": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/workspace": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/util-values": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/dsh-skill-filesystem": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-workspace": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-preset-registry": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/home-paths": "workspace:*",
+    "@yharness/skill": "workspace:*",
+    "@yharness/skill-filesystem": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/workspace": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/util-values": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-agent": {
+    "@yharness/agent": {
       "optional": true
     },
-    "@deepseek-ai/dsh-agent-preset-registry": {
+    "@yharness/agent-preset-registry": {
       "optional": true
     },
-    "@deepseek-ai/dsh-tools": {
+    "@yharness/tools": {
       "optional": true
     },
-    "@deepseek-ai/dsh-llm": {
+    "@yharness/llm": {
       "optional": true
     },
-    "@deepseek-ai/dsh-session": {
+    "@yharness/session": {
       "optional": true
     }
   }

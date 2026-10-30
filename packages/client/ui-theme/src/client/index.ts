@@ -7,15 +7,15 @@
  * document. The plugin also owns the Appearance section with independent
  * style, color mode, and font size controls.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type { BoundActions } from '@yharness/client-ui-slots'
 // Type-only: the ctx.configForms Context merge. Cross-plugin collaboration
 // goes through the service, never a value import (client bundle purity gate).
-import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { ConfigForm } from '@yharness/client-ui-settings/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@yharness/client-ui-renderer/client'
 import type { AppearanceRowInjected } from './AppearanceRow.tsx'
 import { AppearanceRow } from './AppearanceRow.tsx'
 import type { FontSizeRowInjected } from './FontSizeRow.tsx'
@@ -24,7 +24,7 @@ import { AppearanceSection } from './AppearanceSection.tsx'
 import { StyleRow, type StyleRowInjected } from './StyleRow.tsx'
 import { createAppearanceRowStore, createFontSizeRowStore, createStyleRowStore } from './settings-store.ts'
 import { installThemeStyles } from './styles.ts'
-import { en, zh, type ThemeKey } from './locales.ts'
+import { en, type ThemeKey } from './locales.ts'
 import {
   DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, DEFAULT_STYLE, FONT_SIZE_FIELD, FONT_SIZE_MAX, FONT_SIZE_MIN,
   isThemePreference, isThemeStyle, THEME_PREFERENCE_FIELD, THEME_SETTINGS_NAMESPACE, THEME_STYLE_FIELD,
@@ -42,7 +42,7 @@ export type { ThemePreference, ThemeSettings, ThemeStyle } from '../theme-settin
 /** Namespace owning this feature's settings-row copy. */
 export const SETTINGS_NS = 'settings.theme'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** The Appearance settings row's copy. */
     'settings.theme': ThemeKey
@@ -114,7 +114,7 @@ export interface ThemeTokenInspection {
   cssVariable?: string
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     theme: ThemeRuntime
   }
@@ -481,7 +481,7 @@ export function apply(ctx: ClientContext): void {
   const theme = new ThemeRuntime(ctx, host)
   ctx.provide('theme', theme)
 
-  ctx.effect(() => ctx.locale.register(SETTINGS_NS, { zh, en }), 'ui-theme: settings row dictionaries')
+  ctx.effect(() => ctx.locale.register(SETTINGS_NS, { en }), 'ui-theme: settings row dictionaries')
 
   const t = ctx.locale.bind(SETTINGS_NS)
   ctx.slots.inject('settings.section', () => ctx.slots.register({

@@ -5,6 +5,7 @@
     - button "Appearance"
     - button "Models"
     - button "Built-in plugins"
+    - button "Coding sessions"
     - button "Agent presets"
   - button "Open configuration file"
   - button "Close"

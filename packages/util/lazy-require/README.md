@@ -3,7 +3,7 @@ description: "Caller-relative lazy loading for CommonJS-compatible Host dependen
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-lazy-require
+# @yharness/lazy-require
 
 ## Summary
 
@@ -26,7 +26,7 @@ kind: "package-library"
 Pass the dependency's literal specifier and the caller's `import.meta.url`:
 
 ```ts
-import { createLazyRequire } from '@deepseek-ai/dsh-lazy-require'
+import { createLazyRequire } from '@yharness/lazy-require'
 
 interface NativeModule { open(): void }
 const requireNative = createLazyRequire<NativeModule>('native-package', import.meta.url)

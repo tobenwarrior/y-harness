@@ -3,7 +3,7 @@ description: "The agent-plane presentation selector for users and maintainers ch
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-agent-tool-presentation
+# @yharness/agent-tool-presentation
 
 ## Summary
 
@@ -28,7 +28,7 @@ Add this row to an agent preset to fix how every agent joined to that preset see
 ### Add the row to a preset
 
 ```yaml
-- name: '@deepseek-ai/dsh-agent-tool-presentation'
+- name: '@yharness/agent-tool-presentation'
   config:
     mode: ptc
 ```
@@ -37,7 +37,7 @@ Add this row to an agent preset to fix how every agent joined to that preset see
 |---|---|---|
 | `mode` | required | `native` — every schema; `ptc` — `run_code` plus generated SDK; `both` — both forms |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-agent-tool-presentation) is the exhaustive source for every accepted field. `mode` is required rather than defaulted because a preset without this row inherits the deployment default.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessagent-tool-presentation) is the exhaustive source for every accepted field. `mode` is required rather than defaulted because a preset without this row inherits the deployment default.
 
 ### What PTC mode requires
 

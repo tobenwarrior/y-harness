@@ -1,20 +1,20 @@
 /** Shortcut reference plugin; commands and entry points share one declared store. */
-import type { Context } from '@deepseek-ai/cordis'
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
-import { closeTopModal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { Context } from '@yharness/cordis'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
+import { closeTopModal } from '@yharness/client-ui-primitives'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-settings/client'
 import { createShortcutsStore } from './store.ts'
 import { ShortcutReference, ShortcutsRow } from './Reference.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 import { fixedCommands } from './fixed.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Shortcut reference and settings entry copy. */
-    shortcuts: keyof typeof zh
+    shortcuts: keyof typeof en
   }
 }
 
@@ -26,7 +26,7 @@ export const inject = ['shortcuts', 'locale', 'slots']
  * @param ctx - plugin-owned client context.
  */
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register('shortcuts', { zh, en }), 'shortcuts: dictionaries')
+  ctx.effect(() => ctx.locale.register('shortcuts', { en }), 'shortcuts: dictionaries')
   const t = ctx.locale.bind('shortcuts')
   const handle = createShortcutsStore()
   const instance = handle.create()

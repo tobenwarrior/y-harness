@@ -8,7 +8,7 @@
  * another package relies on each one. So each is asserted, not assumed.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { SidebarRightTabRegistry } from '../src/client/tab-registry.ts'
 import type { SidebarRightTabDefinition } from '../src/client/tab-registry.ts'
 import { defaultSeed } from '../src/client/contract/seed.ts'
@@ -183,8 +183,8 @@ describe('SidebarRightTabRegistry — claiming', () => {
   it('reads the title fresh, so a language change needs no re-registration', () => {
     const registry = new SidebarRightTabRegistry(new Context())
     let language = 'zh'
-    registry.register({ id: 'shipped/guide', kind: 'guide', title: () => language === 'zh' ? '开始' : 'Start' })
-    expect(registry.get('guide')?.title('sidebar://guide')).toBe('开始')
+    registry.register({ id: 'shipped/guide', kind: 'guide', title: () => language === 'zh' ? '\u5f00\u59cb' : 'Start' })
+    expect(registry.get('guide')?.title('sidebar://guide')).toBe('\u5f00\u59cb')
     language = 'en'
     expect(registry.get('guide')?.title('sidebar://guide')).toBe('Start')
   })

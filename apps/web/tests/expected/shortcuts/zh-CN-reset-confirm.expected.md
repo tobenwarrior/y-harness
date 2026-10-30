@@ -1,6 +1,6 @@
-- dialog "恢复全部默认快捷键？":
-  - heading "恢复全部默认快捷键？" [level=2]
-  - button "关闭确认"
-  - paragraph: 将恢复当前平台的默认快捷键。你修改或移除的快捷键都会恢复，其他平台不受影响。
-  - button "取消"
-  - button "恢复默认"
+- dialog "Restore all default shortcuts?":
+  - heading "Restore all default shortcuts?" [level=2]
+  - button "Close confirmation"
+  - paragraph: Restore the default shortcuts for this platform. All modified or removed shortcuts will be restored. Other platforms are unaffected.
+  - button "Cancel"
+  - button "Restore default"

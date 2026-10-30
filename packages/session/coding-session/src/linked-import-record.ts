@@ -1,9 +1,9 @@
 /** Versioned import receipts and exact prepared Session events, independent from native history storage. */
 import { z } from 'zod'
-import { brandNumber, brandString } from '@deepseek-ai/dsh-brand'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
-import { MessageId } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import { brandNumber, brandString } from '@yharness/brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
+import { MessageId } from '@yharness/llm'
+import type { SessionEvent, SessionId, SessionSeq } from '@yharness/session'
 import { codingSessionDigest } from './digest.ts'
 import { codingSessionMirrorSchema } from './record.ts'
 import type { CodingSessionEventId, CodingSessionMirrorId, CodingSessionNativeId, CodingSessionProfileId } from './types.ts'

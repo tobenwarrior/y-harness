@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import type { BotAvatar as SharedBotAvatar } from '@deepseek-ai/dsh-bots/client'
+import type { BotAvatar as SharedBotAvatar } from '@yharness/bots/client'
 import css from './BotAvatar.module.css'
 import type { BotAccent, BotIdentity } from './types.ts'
 

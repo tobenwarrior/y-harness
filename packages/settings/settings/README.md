@@ -3,7 +3,7 @@ description: "Inspect and edit live plugin configuration through Config-derived 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-settings
+# @yharness/settings
 
 ## Summary
 
@@ -25,7 +25,7 @@ Mount this plugin with Loader and [config-editor](../../boot/config-editor/READM
 
 ```yaml
 - id: settings
-  name: '@deepseek-ai/dsh-settings'
+  name: '@yharness/settings'
 ```
 
 This plugin has no configuration fields. Forms expose only volatile fields from active, uniquely addressed profile entries. Ordinary configuration remains editable through Cordis configuration files.

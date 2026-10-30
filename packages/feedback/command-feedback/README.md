@@ -3,7 +3,7 @@ description: "Session feedback: the `/feedback` command, the `sessionFeedback` H
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-command-feedback
+# @yharness/command-feedback
 
 ## Summary
 
@@ -59,11 +59,11 @@ Feedback does not have to come from the slash command or the dialog: any UI, hoo
 
 ```yaml
 - id: session
-  name: '@deepseek-ai/dsh-session'
+  name: '@yharness/session'
 - id: commands
-  name: '@deepseek-ai/dsh-commands'
+  name: '@yharness/commands'
 - id: command-feedback
-  name: '@deepseek-ai/dsh-command-feedback'
+  name: '@yharness/command-feedback'
 ```
 
 The Web client ships the command. Headless mode, ACP automation, and JSON-RPC provide no slash commands, so `/feedback` is unavailable there.

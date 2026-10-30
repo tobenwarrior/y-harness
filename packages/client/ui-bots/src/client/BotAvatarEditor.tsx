@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
   Button, IconSparkleRegular, IconTrashOutlineRegular, Modal, SegmentedTabs, StateDot,
-} from '@deepseek-ai/dsh-client-ui-primitives'
-import type { BotAvatar as SharedBotAvatar } from '@deepseek-ai/dsh-bots/client'
+} from '@yharness/client-ui-primitives'
+import type { BotAvatar as SharedBotAvatar } from '@yharness/bots/client'
 import type {
   AvatarGenerationStatus,
   AvatarGenerationValue,
-} from '@deepseek-ai/dsh-avatar-generation/types'
+} from '@yharness/avatar-generation/types'
 import { BotAppearancePicker, botIdentityLabelKey } from './BotAppearancePicker.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
@@ -210,15 +210,15 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
     && generated === null
   const editorTabs = appearanceEditingAvailable && generationAvailable
     ? [
-      { value: 'character' as const, label: t('avatarCharacterTab'), id: 'dsh-bots-avatar-character-tab', panelId: 'dsh-bots-avatar-character-panel' },
-      { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'dsh-bots-avatar-generate-tab', panelId: 'dsh-bots-avatar-generate-panel' },
+      { value: 'character' as const, label: t('avatarCharacterTab'), id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel' },
+      { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'yharness-bots-avatar-generate-tab', panelId: 'yharness-bots-avatar-generate-panel' },
     ] as const
     : appearanceEditingAvailable
       ? [
-        { value: 'character' as const, label: t('avatarCharacterTab'), id: 'dsh-bots-avatar-character-tab', panelId: 'dsh-bots-avatar-character-panel' },
+        { value: 'character' as const, label: t('avatarCharacterTab'), id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel' },
       ] as const
       : [
-        { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'dsh-bots-avatar-generate-tab', panelId: 'dsh-bots-avatar-generate-panel' },
+        { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'yharness-bots-avatar-generate-tab', panelId: 'yharness-bots-avatar-generate-panel' },
       ] as const
   const activeTab: AvatarEditorTab = appearanceEditingAvailable
     ? tab === 'generate' && generationAvailable ? 'generate' : 'character'
@@ -275,9 +275,9 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
         className={css.avatarEditorTabs}
       />
       <div
-        id="dsh-bots-avatar-character-panel"
+        id="yharness-bots-avatar-character-panel"
         role="tabpanel"
-        aria-labelledby="dsh-bots-avatar-character-tab"
+        aria-labelledby="yharness-bots-avatar-character-tab"
         hidden={activeTab !== 'character'}
         tabIndex={0}
       >
@@ -319,9 +319,9 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
         </div>
       </div>
       <div
-        id="dsh-bots-avatar-generate-panel"
+        id="yharness-bots-avatar-generate-panel"
         role="tabpanel"
-        aria-labelledby="dsh-bots-avatar-generate-tab"
+        aria-labelledby="yharness-bots-avatar-generate-tab"
         hidden={activeTab !== 'generate'}
         tabIndex={0}
       >
@@ -348,9 +348,9 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
             )}
           </div>
           <div className={css.avatarEditorForm}>
-            <label className={css.avatarEditorLabel} htmlFor="dsh-bots-avatar-description">{t('avatarPromptLabel')}</label>
+            <label className={css.avatarEditorLabel} htmlFor="yharness-bots-avatar-description">{t('avatarPromptLabel')}</label>
             <textarea
-              id="dsh-bots-avatar-description"
+              id="yharness-bots-avatar-description"
               className={css.avatarPrompt}
               value={description}
               maxLength={DESCRIPTION_LIMIT}

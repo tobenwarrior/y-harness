@@ -1,17 +1,17 @@
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import LlmRuntime, { createUserMessage, ToolCallId, isAgentLoopRequest, LlmAdapter  } from '@deepseek-ai/dsh-llm'
-import type { FinishReason, GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import { SessionTitleProviderId } from '@deepseek-ai/dsh-session-title'
-import type { SessionTitleProviderRequest } from '@deepseek-ai/dsh-session-title'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import LlmRuntime, { createUserMessage, ToolCallId, isAgentLoopRequest, LlmAdapter  } from '@yharness/llm'
+import type { FinishReason, GenerateOptions, StreamChunk } from '@yharness/llm'
+import SessionStore, { SessionId } from '@yharness/session'
+import { SessionTitleProviderId } from '@yharness/session-title'
+import type { SessionTitleProviderRequest } from '@yharness/session-title'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import {
   generateSessionTitleWithLlm,
   resolveSessionTitleLlmConfig,
   SESSION_TITLE_TIMEOUT_CODE,
-} from '@deepseek-ai/dsh-session-title-llm'
-import type { SessionTitleLlmConfig } from '@deepseek-ai/dsh-session-title-llm'
+} from '@yharness/session-title-llm'
+import type { SessionTitleLlmConfig } from '@yharness/session-title-llm'
 
 class RecordingAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
@@ -61,7 +61,7 @@ class DelayedSuccessAdapter extends LlmAdapter {
 
 const SCRIPT: StreamChunk[] = [
   { type: 'block-start', index: 0, blockType: 'text' },
-  { type: 'text-delta', index: 0, text: '  五个字标题  ' },
+  { type: 'text-delta', index: 0, text: '  \u{4E94}\u{4E2A}\u{5B57}\u{6807}\u{9898}  ' },
   { type: 'finish', reason: { kind: 'stop' } },
 ]
 
@@ -86,7 +86,7 @@ function request(ctx: Context, signal = new AbortController().signal): SessionTi
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   const second = session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: '第二个问题' }],
+    content: [{ type: 'text', text: '\u{7B2C}\u{4E8C}\u{4E2A}\u{95EE}\u{9898}' }],
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -94,7 +94,7 @@ function request(ctx: Context, signal = new AbortController().signal): SessionTi
     session,
     messages: [
       { seq: first.seq, text: 'first prompt' },
-      { seq: second.seq, text: '第二个问题' },
+      { seq: second.seq, text: '\u{7B2C}\u{4E8C}\u{4E2A}\u{95EE}\u{9898}' },
     ],
     route: { provider: 'current-route', model: 'current-model' },
     signal,
@@ -140,7 +140,7 @@ describe('generateSessionTitleWithLlm', () => {
     )
 
     expect(result).toEqual({
-      title: '五个字标题',
+      title: '\u{4E94}\u{4E2A}\u{5B57}\u{6807}\u{9898}',
       messageSeqs: providerRequest.messages.map(message => message.seq),
       model: { provider: 'current-route', model: 'current-model' },
     })
@@ -161,7 +161,7 @@ describe('generateSessionTitleWithLlm', () => {
     expect(options.system).toContain('10 CJK characters')
     const prompt = options.messages[0]?.content[0]
     expect(prompt?.type === 'text' && prompt.text).toContain('first prompt')
-    expect(prompt?.type === 'text' && prompt.text).toContain('第二个问题')
+    expect(prompt?.type === 'text' && prompt.text).toContain('\u{7B2C}\u{4E8C}\u{4E2A}\u{95EE}\u{9898}')
     expect(providerRequest.session.snapshotEvents().findLast(event => event.type === 'session/title-llm-request')?.data)
       .toEqual({
         titleProvider: TITLE_PROVIDER,

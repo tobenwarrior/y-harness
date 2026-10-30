@@ -1,4 +1,4 @@
-/** Browser-safe Bot vocabulary. @module @deepseek-ai/dsh-bots/client */
+/** Browser-safe Bot vocabulary. @module @yharness/bots/client */
 
 export type * from '../types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from '../types.ts'

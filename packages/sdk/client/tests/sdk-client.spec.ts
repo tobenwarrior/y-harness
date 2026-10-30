@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId } from '@yharness/llm'
 import {
   DeepSeekHarness,
   HarnessClient,
@@ -334,7 +334,7 @@ describe('DeepSeekHarness', () => {
       const failure = await harness.start().catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(AggregateError)
       expect((failure as AggregateError).errors).toEqual([initializeError, cleanupError])
-      expect((failure as Error).message).toBe('DeepSeek Harness initialization and cleanup failed')
+      expect((failure as Error).message).toBe('Y Harness initialization and cleanup failed')
       expect(harness.client).toBe(failedClient)
     } finally {
       start.mockRestore()

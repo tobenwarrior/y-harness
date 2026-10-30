@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { descriptorOf } from '@deepseek-ai/dsh-storage-domain'
-import { JsonStorageBackend } from '@deepseek-ai/dsh-storage-json'
+import { descriptorOf } from '@yharness/storage-domain'
+import { JsonStorageBackend } from '@yharness/storage-json'
 import { codingSessionHandoffDomain } from '../src/handoff-record.ts'
 
 const predecessorMarker = { id: 'native-mirror', ownerToken: 'native-owner',

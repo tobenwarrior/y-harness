@@ -1,11 +1,11 @@
 /** Chat table order follows root references and group membership, independently of row data. */
 
-import type { ChatSnapshot, ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { ConversationBinding, ConversationGroupedView, GroupKey, GroupSnapshot, NodeReference, RenderEntry } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { ChatSnapshot, ChatConversationViewNode } from '@yharness/client-ui-chat/client'
+import type { ConversationBinding, ConversationGroupedView, GroupKey, GroupSnapshot, NodeReference, RenderEntry } from '@yharness/client-ui-conversation/client'
+import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
 import { InspectorRecordSource, type InspectorRecord, type InspectorRow } from '../table-model.ts'
 import { inspectorPreview } from '../format.ts'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionId } from '@yharness/session/types'
 import type { InspectorChatTarget, InspectorObjects, InspectorObjectReference } from '../objects.ts'
 import { ChatObjectIndex } from './objects.ts'
 import { matchChatNodeRow, type InspectorPickTarget } from './pick-match.ts'

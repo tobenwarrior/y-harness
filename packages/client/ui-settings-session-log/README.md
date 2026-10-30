@@ -3,7 +3,7 @@ description: "Control Session-log upload with DeepSeek API requests from General
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-settings-session-log
+# @yharness/client-ui-settings-session-log
 
 ## Summary
 

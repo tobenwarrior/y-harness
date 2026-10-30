@@ -2,7 +2,7 @@
 /** User-visible xAI subscription device connection and Grok model publication. */
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { SettingsNamespaceView, XaiConnectionView, XaiModelView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SettingsNamespaceView, XaiConnectionView, XaiModelView } from '@yharness/api-remotes/client'
 import { XaiCard } from '../src/client/XaiCard.tsx'
 import type { ModelsOperations } from '../src/client/operations.ts'
 import { en } from '../src/client/locales.ts'

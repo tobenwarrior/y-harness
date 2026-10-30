@@ -3,10 +3,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { clearedProxyEnv } from '@deepseek-ai/dsh-http-proxy'
-import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
-import { DeepSeekHarness, type HarnessNotification, type RunResult } from '@deepseek-ai/dsh-sdk-client'
-import { SESSION_FORMAT_VERSION, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { clearedProxyEnv } from '@yharness/http-proxy'
+import { startMockLlmServer } from '@yharness/llm-mock-server'
+import { DeepSeekHarness, type HarnessNotification, type RunResult } from '@yharness/sdk-client'
+import { SESSION_FORMAT_VERSION, type SessionEvent } from '@yharness/session'
 import {
   assertPersistedSessionVersion,
   latestPersistedSessionPaths,
@@ -17,8 +17,8 @@ import {
   scrubModelRequestBulk,
   writerSnapshotName,
   type NormalizeContext,
-} from '@deepseek-ai/dsh-session-snapshot'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+} from '@yharness/session-snapshot'
+import { scrubbedParentEnv } from '@yharness/subprocess'
 import { describe, expect, it } from 'vitest'
 
 const dshBin = fileURLToPath(new URL('../lib/bin.js', import.meta.url))

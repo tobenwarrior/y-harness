@@ -1,7 +1,7 @@
 /** Display-only release marking; the catalog and selected route remain unchanged. */
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-model-selection/client'
-import { Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-model-selection/client'
+import { Tag } from '@yharness/client-ui-primitives'
 import css from './DeepSeekModelLabel.module.css'
 
 const MODEL_NAME = 'DeepSeek-V4.1-Flash'

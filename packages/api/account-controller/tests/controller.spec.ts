@@ -1,7 +1,7 @@
 /** Account Remote delegation preserves provider results, failures, and stream lifetime. */
-import { Context } from '@deepseek-ai/cordis'
-import type { DeepSeekAccount } from '@deepseek-ai/dsh-deepseek-account'
-import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountUserId } from '@deepseek-ai/dsh-deepseek-account/types'
+import { Context } from '@yharness/cordis'
+import type { DeepSeekAccount } from '@yharness/deepseek-account'
+import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountUserId } from '@yharness/deepseek-account/types'
 import type { AccountView, SignInAttemptId } from '../src/types.ts'
 import { afterEach, expect, it, vi } from 'vitest'
 import AccountController from '../src/index.ts'
@@ -52,7 +52,7 @@ it('delegates bonus reads and acknowledgements without altering their values', a
   const accountId = 'account' as AccountUserId
   const orderId = 'order' as AccountBonusOrderId
   const batch: AccountBonusBatch = { accountId, bonuses: [{ orderId, campaign: 'dsh_login_bonus', amount: '5.00',
-    currency: 'CNY', grantedAt: '2026-09-21T12:00:00Z', expiresAt: '2026-10-21T12:00:00Z', message: '已赠送您 5.00 元 DSH 体验赠金。' }] }
+    currency: 'CNY', grantedAt: '2026-09-21T12:00:00Z', expiresAt: '2026-10-21T12:00:00Z', message: '\u{5DF2}\u{8D60}\u{9001}\u{60A8} 5.00 \u{5143} DSH \u{4F53}\u{9A8C}\u{8D60}\u{91D1}。' }] }
   provider.getUnnotifiedBonuses.mockResolvedValueOnce(batch)
   expect(await controller.getUnnotifiedBonuses(client)).toBe(batch)
   expect(provider.getUnnotifiedBonuses).toHaveBeenCalledExactlyOnceWith(client)

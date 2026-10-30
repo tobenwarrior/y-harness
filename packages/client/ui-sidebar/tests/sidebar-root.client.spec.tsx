@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import type { ShortcutCatalogEntry, ShortcutCommandId } from '@yharness/client-shortcuts/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { Tooltip } from '@yharness/client-ui-primitives'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import type {
   SidebarFooterActionOwnerProps, SidebarRootComponentProps, SidebarSectionOwnerProps,
   SidebarSettingsOwnerProps,
 } from '../src/client/contract/slots.ts'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { HeaderLeadingControls, type HeaderLeadingControlsProps } from '../src/client/HeaderLeadingControls.tsx'
 import { SidebarRoot } from '../src/client/SidebarRoot.tsx'
 import { en } from '../src/client/locales.ts'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined, reload: () => {} })) as GlobalStandardProps['useResource']
@@ -25,6 +25,7 @@ const t: SidebarRootComponentProps['t'] = makeTranslate({ ...commonEn, ...en })
 afterEach(() => {
   cleanup()
   delete document.documentElement.dataset.platform
+  document.documentElement.removeAttribute('data-windows-titlebar')
   vi.unstubAllEnvs()
   vi.useRealTimers()
 })
@@ -36,13 +37,14 @@ type AttentionSnapshot = Parameters<Parameters<SidebarRootComponentProps['useSes
 const noAttention: AttentionSnapshot = new Map()
 const useSessionStatus: SidebarRootComponentProps['useSessionStatus'] = selector => selector(noAttention)
 
-function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = false, botMode = false, codePanel = null }: {
+function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = false, botMode = false, codePanel = null, badge }: {
   collapsed?: boolean
   width?: number
   shortcuts?: readonly ShortcutCatalogEntry[]
   bots?: boolean
   botMode?: boolean
   codePanel?: MainPanelId | null
+  badge?: ReactNode
 } = {}) {
   const startSession = vi.fn()
   const toggleSidebar = vi.fn()
@@ -68,7 +70,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = fal
       ) => {
         if (key === 'sidebar.brand.mark') return brandMark
         if (key === 'sidebar.brand.name') return brandName
-        if (key === 'sidebar.toggle.badge') return null
+        if (key === 'sidebar.toggle.badge') return badge ?? null
         if (key === 'sidebar.settings') {
           settingsOwner = owner
           return <div data-testid="settings-seat" data-wide={owner.wide} />
@@ -197,7 +199,7 @@ describe('SidebarRoot shell', () => {
   })
 
   it.each([undefined, '1.2.3'])('shows the configured display name with version %s', (version) => {
-    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas $& <Co> 星')
+    vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', 'Atlas $& <Co> Å')
     vi.stubEnv('DSH_CLIENT_VERSION', version)
     const { container } = render(<SidebarRoot
       collapsed={false} width={300}
@@ -209,7 +211,7 @@ describe('SidebarRoot shell', () => {
         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
     />)
 
-    const title = screen.getByText('Atlas $& <Co> 星')
+    const title = screen.getByText('Atlas $& <Co> Å')
     expect(title.closest('button')?.querySelector('svg')).toBeNull()
     expect(screen.queryByText('Y Harness Local Build')).toBeNull()
     expect(container.querySelector('svg')).not.toBeNull()
@@ -308,6 +310,25 @@ describe('SidebarRoot shell', () => {
     expect(screen.getByRole('tooltip').textContent).toBe('Open sidebar')
     fireEvent.mouseLeave(toggle)
     expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('keeps a Windows caption update action outside the sidebar toggle', () => {
+    document.documentElement.setAttribute('data-windows-titlebar', '')
+    const openUpdate = vi.fn()
+    const badge = <button type="button" aria-label="Update" onClick={openUpdate} data-testid="update-action" />
+    const shell = mountShell({ collapsed: true, width: 0, badge })
+    const opener = screen.getByRole('button', { name: 'Open sidebar' })
+    const update = screen.getByRole('button', { name: 'Update' })
+
+    expect(opener.parentElement?.className).toContain('toggleAnchor')
+    expect(screen.getAllByRole('button').map(button => button.getAttribute('aria-label')))
+      .toEqual(['Open sidebar', 'New session', 'Update'])
+    expect(opener.contains(update)).toBe(false)
+    fireEvent.click(update)
+    expect(openUpdate).toHaveBeenCalledOnce()
+    expect(shell.toggleSidebar).not.toHaveBeenCalled()
+    fireEvent.click(opener)
+    expect(shell.toggleSidebar).toHaveBeenCalledOnce()
   })
 })
 

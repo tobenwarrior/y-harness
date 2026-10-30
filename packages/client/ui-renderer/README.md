@@ -3,7 +3,7 @@ description: "Browser UI renderer: React bindings for ordinary Slots and reusabl
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-renderer
+# @yharness/client-ui-renderer
 
 ## Summary
 

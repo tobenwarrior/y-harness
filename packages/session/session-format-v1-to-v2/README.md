@@ -3,7 +3,7 @@ description: "Frozen released-v1 Session reader and cardinality-changing migrati
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-session-format-v1-to-v2
+# @yharness/session-format-v1-to-v2
 
 ## Summary
 

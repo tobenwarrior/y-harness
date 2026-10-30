@@ -8,15 +8,15 @@
  * (and the reverse), the one-shared-state contract of the dual entry.
  * Scope disposal drops the directory (HMR safety).
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { createScope } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { RemoteError, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ModelSelection, ModelSelectionProjection } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { CommandContribution, PopupSelectSpec, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
+import { createScope } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
+import type { ModelSelection, ModelSelectionProjection } from '@yharness/api-session-controller/types'
+import type { CommandContribution, PopupSelectSpec, SelectOption } from '@yharness/client-ui-commands/client'
 import type { ModelSelectInjected } from '../src/client/slots.ts'
 import { apply, inject } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
@@ -238,7 +238,7 @@ describe('ui-model-selection dual entry', () => {
     expect(options[0]?.active).toBe(true)
     expect(options[1]?.active).toBeUndefined()
     expect(b.popup().searchLabels?.()).toEqual(locale === 'zh'
-      ? { placeholder: '搜索模型…', empty: '没有可用的模型。', noResults: '没有匹配的模型。' }
+      ? { placeholder: 'Search models…', empty: 'No models available.', noResults: 'No matching models.' }
       : { placeholder: 'Search models…', empty: 'No models available.', noResults: 'No matching models.' })
   })
 
@@ -305,7 +305,7 @@ describe('ui-model-selection dual entry', () => {
       b.remote.emit('llm/adapters-updated', [])
       b.mint('s1')
       const options = await b.popup().options(projection('s1'), new AbortController().signal)
-      expect(options[0]?.group?.label).toBe(locale === 'zh' ? 'DeepSeek 账号' : 'DeepSeek Account')
+      expect(options[0]?.group?.label).toBe(locale === 'zh' ? 'DeepSeek Account' : 'DeepSeek Account')
     } finally {
       await b.ctx.fiber.dispose()
     }

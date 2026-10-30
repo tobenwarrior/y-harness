@@ -1,4 +1,4 @@
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotAccent, BotIdentity } from './types.ts'

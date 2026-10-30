@@ -3,7 +3,7 @@ description: "Canonical Session-log ratings, categories, and notes for finalized
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-message-feedback
+# @yharness/message-feedback
 
 ## Summary
 

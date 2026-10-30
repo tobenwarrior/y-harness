@@ -3,12 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { SubprocessExecutableNotFoundError, type SubprocessRuntime, type SubprocessTerminalEnvironment, type SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type { SessionEvent, SessionId } from '@yharness/session'
+import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
+import { SubprocessExecutableNotFoundError, type SubprocessRuntime, type SubprocessTerminalEnvironment, type SubprocessTerminalHandle } from '@yharness/subprocess'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalController, type Config } from '../src/index.ts'
 import { resolveShell } from '../src/shells.ts'
@@ -252,9 +252,9 @@ describe('TerminalController', () => {
     const stream = controller.follow(agent, id, attachmentId, signal())[Symbol.asyncIterator]()
     await stream.next()
     try {
-      await controller.write(agent, id, attachmentId, '终端')
-      expect(handle.write).toHaveBeenCalledWith('终端')
-      await expect(controller.write(agent, id, attachmentId, '终端!')).rejects.toThrow('input exceeds')
+      await controller.write(agent, id, attachmentId, '\u{7EC8}\u{7AEF}')
+      expect(handle.write).toHaveBeenCalledWith('\u{7EC8}\u{7AEF}')
+      await expect(controller.write(agent, id, attachmentId, '\u{7EC8}\u{7AEF}!')).rejects.toThrow('input exceeds')
       await controller.resize(agent, id, attachmentId, 200, 100)
       expect(handle.resize).toHaveBeenCalledWith(200, 100)
       controller.rename(agent, id, '  server logs  ')

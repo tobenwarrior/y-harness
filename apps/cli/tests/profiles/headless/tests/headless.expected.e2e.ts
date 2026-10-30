@@ -11,12 +11,12 @@ import {
   normalizeStdout,
   scrubModelRequestBulk,
   type NormalizeContext,
-} from '@deepseek-ai/dsh-session-snapshot'
-import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
+} from '@yharness/session-snapshot'
+import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@yharness/loader-smoke'
 import {
   decompressZstdFrame,
   scanZstdFrames,
-} from '@deepseek-ai/dsh-session-persistence-jsonl/src/zstd.ts'
+} from '@yharness/session-persistence-jsonl/src/zstd.ts'
 import { describe, expect, it } from 'vitest'
 
 const goldensDir = fileURLToPath(new URL('./expected/', import.meta.url))
@@ -739,7 +739,7 @@ describe('headless stream-json snapshots', () => {
       configPath: teamConfigPath,
       binArgs: [
         teamConfigPath,
-        '请先运行 workflow 检查，再使用 Agent Teams 把调研和实现拆给两个 teammate，等待完成后汇总。',
+        '\u{8BF7}\u{5148}\u{8FD0}\u{884C} workflow \u{68C0}\u{67E5}，\u{518D}\u{4F7F}\u{7528} Agent Teams \u{628A}\u{8C03}\u{7814}\u{548C}\u{5B9E}\u{73B0}\u{62C6}\u{7ED9}\u{4E24}\u{4E2A} teammate，\u{7B49}\u{5F85}\u{5B8C}\u{6210}\u{540E}\u{6C47}\u{603B}。',
       ],
       tsconfigPath,
       processTimeoutMs: 60_000,

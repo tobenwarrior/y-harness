@@ -1,7 +1,7 @@
 {
-  "message": "新版本 0.1.7-alpha.2 已准备就绪",
-  "detail": "更新期间应用将暂时关闭，完成后会自动打开。",
+  "message": "Version 0.1.7-alpha.2 is ready to install",
+  "detail": "The app will close during the update and reopen automatically when it is complete.",
   "buttons": [
-    "安装并重启"
+    "Install and Restart"
   ]
 }

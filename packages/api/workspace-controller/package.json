@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-api-workspace-controller",
+  "name": "@yharness/api-workspace-controller",
   "description": "Workspace Remote commands and reconnect-safe state transport",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/api/workspace-controller"
   },
   "type": "module",
@@ -44,11 +44,11 @@
   "dsh": {
     "client": {
       "external": [
-        "@deepseek-ai/dsh-api-gateway/client"
+        "@yharness/api-gateway/client"
       ],
       "inject": [
-        "@deepseek-ai/dsh-api-gateway",
-        "@deepseek-ai/dsh-client-connection"
+        "@yharness/api-gateway",
+        "@yharness/client-connection"
       ],
       "platform": "web"
     }
@@ -69,32 +69,32 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-deque": "workspace:*",
-    "@deepseek-ai/dsh-native-command": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/deque": "workspace:*",
+    "@yharness/native-command": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-api-gateway": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-host-directory-picker": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-workspace": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/api-gateway": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/host-directory-picker": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/workspace": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-api-gateway": "workspace:*",
-    "@deepseek-ai/dsh-client-connection": "workspace:*",
-    "@deepseek-ai/dsh-client-store": "workspace:*",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-host-directory-picker": "workspace:*",
-    "@deepseek-ai/dsh-remote-mock": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-workspace": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/api-gateway": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
+    "@yharness/client-store": "workspace:*",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/host-directory-picker": "workspace:*",
+    "@yharness/remote-mock": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/workspace": "workspace:*"
   }
 }

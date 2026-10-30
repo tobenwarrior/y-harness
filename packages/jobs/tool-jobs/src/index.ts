@@ -5,23 +5,23 @@
  * collected to the owning agent: injected into a busy owner's next step, or
  * opening a turn on an idle one under the default `wakeup` delivery, unbounded
  * unless `maxConsecutiveWakes` caps it per owner.
- * @module @deepseek-ai/dsh-tool-jobs
+ * @module @yharness/tool-jobs
  */
 
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { boundContextSummary, createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import { TextRetainer } from '@deepseek-ai/dsh-output-retention'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
-import { JobId } from '@deepseek-ai/dsh-jobs'
-import type { JobView, JobRead } from '@deepseek-ai/dsh-jobs'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type {} from '@deepseek-ai/dsh-agent'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { boundContextSummary, createUserMessage, type ContentBlock } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import { TextRetainer } from '@yharness/output-retention'
+import { defineTool } from '@yharness/tools'
+import type { GenericCallView, ToolDefinition, ToolExecution } from '@yharness/tools'
+import { JobId } from '@yharness/jobs'
+import type { JobView, JobRead } from '@yharness/jobs'
+import type { Agent } from '@yharness/agent'
+import type {} from '@yharness/agent'
 import { publicJob, renderModelDelta, statusLine } from './render.ts'
 import type { PublicJobSnapshot } from './render.ts'
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'tool-jobs': { kind: 'tool-jobs' } & ContextFormed
   }

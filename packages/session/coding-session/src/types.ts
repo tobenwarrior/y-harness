@@ -1,7 +1,7 @@
 /** Read-only native coding-session vocabulary; imported history grants no model or tool authority. */
-import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SkillLearningNativeItem } from '@deepseek-ai/dsh-skill-library/types'
+import type { Branded } from '@yharness/brand'
+import type { SessionId } from '@yharness/session/types'
+import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 import type { CodingSessionImportDestinationSummary, CodingSessionLinkSummary } from './linked-import-types.ts'
 
 export type * from './linked-import-types.ts'

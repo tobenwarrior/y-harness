@@ -1,24 +1,24 @@
 // @vitest-environment jsdom
 /** Terminal views, copy, and tab retention follow the plugin lifetime. */
 import { createElement } from 'react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { cleanup, render, waitFor } from '@testing-library/react'
-import { Context } from '@deepseek-ai/cordis'
-import type { ShortcutCommand } from '@deepseek-ai/dsh-client-shortcuts/client'
+import { Context } from '@yharness/cordis'
+import type { ShortcutCommand } from '@yharness/client-shortcuts/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WebTerminalId, WebTerminalInfo } from '@deepseek-ai/dsh-api-terminal-controller/types'
-import { SidebarRightTabRegistry } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/tab-registry.ts'
-import type { SidebarRightCloseHandler } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { SidebarRightOpenTab } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type { SessionId } from '@yharness/session/types'
+import type { WebTerminalId, WebTerminalInfo } from '@yharness/api-terminal-controller/types'
+import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
+import type { SidebarRightCloseHandler } from '@yharness/client-ui-sidebar-right/client'
+import type { SidebarRightOpenTab } from '@yharness/client-ui-sidebar-right/client'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 import { TerminalGuide, type TerminalGuideInjected } from '../src/client/TerminalGuide.tsx'
 import { LazyTerminalBody } from '../src/client/LazyTerminalBody.tsx'
 import { TerminalTitle } from '../src/client/TerminalTitle.tsx'
 import type { TerminalBodyInjected } from '../src/client/face.ts'
-import { en, zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 
 vi.mock('@xterm/xterm', () => ({ Terminal: vi.fn() }))
 const SHORTCUT_CATALOG: readonly never[] = []
@@ -97,7 +97,7 @@ it('registers terminal views without recovery or cleanup slots, then releases co
     expect(renderToStaticMarkup(createElement(Icon, { size: 22 }))).toContain('width="22"')
     expect(renderToStaticMarkup(createElement(Icon))).toContain('width="36"')
     expect(definition.multiple).toBe(true)
-    expect(h.dictionaries.get('sidebarTerminal')).toEqual({ en, zh })
+    expect(h.dictionaries.get('sidebarTerminal')).toEqual({ en })
     expect(h.entries.map(entry => [entry.name, entry.component, entry.locale])).toEqual([
       ['sidebar.right.tab.guide.entry', TerminalGuide, 'sidebarTerminal'],
       ['sidebar.right.pane.tab', LazyTerminalBody, 'sidebarTerminal'],

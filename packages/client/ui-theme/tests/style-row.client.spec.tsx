@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
 import { StyleRow, type StyleRowComponentProps } from '../src/client/StyleRow.tsx'
 import { createStyleRowStore } from '../src/client/settings-store.ts'
 import { en, zh } from '../src/client/locales.ts'
@@ -57,13 +57,13 @@ describe('StyleRow', () => {
     expect(setStyle).toHaveBeenLastCalledWith('default')
   })
 
-  it('keeps both previews out of each choice name and translates the controls', () => {
+  it('keeps both previews out of each choice name and uses the compatibility locale alias', () => {
     mount('default', zh)
-    expect(screen.getByRole('group', { name: '风格' })).toBeTruthy()
-    expect(choice('默认').getAttribute('aria-pressed')).toBe('true')
-    expect(choice('终端').getAttribute('aria-pressed')).toBe('false')
-    expect(screen.getAllByText('工作区')).toHaveLength(2)
-    for (const preview of screen.getAllByText('工作区')) {
+    expect(screen.getByRole('group', { name: 'Style' })).toBeTruthy()
+    expect(choice('Default').getAttribute('aria-pressed')).toBe('true')
+    expect(choice('Terminal').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getAllByText('Workspace')).toHaveLength(2)
+    for (const preview of screen.getAllByText('Workspace')) {
       expect(preview.closest('[aria-hidden="true"]')).toBeTruthy()
     }
   })

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-plugin-manager",
+  "name": "@yharness/plugin-manager",
   "description": "Current-profile plugin and bundle management shared by dsh CLI, Web and agent tools",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/boot/plugin-manager"
   },
   "type": "module",
@@ -56,53 +56,53 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-app-boot": "workspace:*",
-    "@deepseek-ai/dsh-atomic-write": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/app-boot": "workspace:*",
+    "@yharness/atomic-write": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "execa": "^10.0.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3",
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/util-values": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-host-plugin-inventory": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-hmr": "workspace:*",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-user-approval": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/host-plugin-inventory": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/hmr": "workspace:*",
+    "@yharness/brand": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/user-approval": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-hmr": {
+    "@yharness/hmr": {
       "optional": true
     },
-    "@deepseek-ai/dsh-user-approval": {
+    "@yharness/user-approval": {
       "optional": true
     }
   },
   "devDependencies": {
     "chokidar": "^4.0.3",
-    "@deepseek-ai/dsh-package-manifest": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-host-plugin-inventory": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-system-prompt": "workspace:*",
-    "@deepseek-ai/dsh-hmr": "workspace:*",
-    "@deepseek-ai/cordis-plugin-timer": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-user-approval": "workspace:*"
+    "@yharness/package-manifest": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/host-plugin-inventory": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/system-prompt": "workspace:*",
+    "@yharness/hmr": "workspace:*",
+    "@yharness/cordis-plugin-timer": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/agent": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/user-approval": "workspace:*"
   }
 }

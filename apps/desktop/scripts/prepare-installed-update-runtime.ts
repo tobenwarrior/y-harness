@@ -14,6 +14,21 @@ interface PackageMetadata {
   optionalDependencies?: Record<string, string>
 }
 
+/** Rescoped vendored packages retain their source version during release qualification. */
+const VENDORED_PACKAGES = new Set([
+  '@yharness/cordis',
+  '@yharness/cosmokit',
+  '@yharness/schemastery',
+])
+
+/** Vendored Cordis and independently versioned native packages share the Y Harness namespace but are not release-owned packages. */
+function isReleaseOwnedPackage(name: string): boolean {
+  return name.startsWith('@yharness/')
+    && !VENDORED_PACKAGES.has(name)
+    && !name.startsWith('@yharness/cordis-plugin-')
+    && !/^@yharness\/node-addon-system(?:-|$)/.test(name)
+}
+
 /**
  * Clone one verified source tree into two synthetic release versions, retaining source bytes unchanged.
  * @param manifest The existing test run manifest; both version directories must be absent.
@@ -33,7 +48,7 @@ export async function prepareInstalledUpdateRuntime(manifest: string, sourceRoot
     await writeFile(join(receipt, 'source.json'), `${JSON.stringify({ sourceHash, version: run.source.version })}\n`,
       { flag: 'wx', mode: 0o600, flush: true })
     const releaseNames = new Set(source.sharedPackages.filter(entry => entry.version === run.source.version
-      && (entry.name === '@deepseek-ai/dsh' || entry.name.startsWith('@deepseek-ai/dsh-'))).map(entry => entry.name))
+      && isReleaseOwnedPackage(entry.name)).map(entry => entry.name))
     for (const version of run.versions) {
       const directory = join(run.root, version)
       await mkdir(directory)

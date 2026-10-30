@@ -1,0 +1,251 @@
+name: Y Harness Desktop Release Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_ENVIRONMENT: production
+
+jobs:
+  mac-arm64:
+    name: macOS arm64 (signed)
+    runs-on: [self-hosted, macos, arm64, yharness-signing]
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Verify commit belongs to master
+        run: |
+          set -eu
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Configure macOS signing environment
+        env:
+          CERTIFICATE_B64: ${{ secrets.YH_MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.YH_MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.YH_MACOS_SIGNING_IDENTITY }}
+          TEAM_ID: ${{ secrets.YH_MACOS_TEAM_ID }}
+          API_KEY_B64: ${{ secrets.YH_MACOS_API_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.YH_MACOS_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.YH_MACOS_API_ISSUER }}
+        run: |
+          set -eu
+          for value in "$CERTIFICATE_B64" "$CERTIFICATE_PASSWORD" "$SIGNING_IDENTITY" "$TEAM_ID" "$API_KEY_B64" "$API_KEY_ID" "$API_ISSUER"; do
+            test -n "$value" || { echo 'Required macOS release signing secret is missing' >&2; exit 1; }
+          done
+          certificate="$RUNNER_TEMP/yharness-signing.p12"
+          api_key="$RUNNER_TEMP/yharness-api-key.p8"
+          printf '%s' "$CERTIFICATE_B64" | base64 -D > "$certificate"
+          printf '%s' "$API_KEY_B64" | base64 -D > "$api_key"
+          export DSH_DESKTOP_APP_ID='com.deepseek.harness'
+          export DSH_DESKTOP_AUTO_UPDATE_ENV="$RELEASE_ENVIRONMENT"
+          export DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN='https://github.com'
+          export DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{}'
+          export DSH_DESKTOP_MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+          export DSH_DESKTOP_MACOS_TEAM_ID="$TEAM_ID"
+          export CSC_LINK="$certificate"
+          export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
+          export APPLE_API_KEY="$api_key"
+          export APPLE_API_KEY_ID="$API_KEY_ID"
+          export APPLE_API_ISSUER="$API_ISSUER"
+          rm -f apps/desktop/.env.macos
+          node apps/desktop/scripts/desktop-dotenv.mjs --output apps/desktop/.env.macos \
+            DSH_DESKTOP_APP_ID DSH_DESKTOP_AUTO_UPDATE_ENV DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN \
+            DSH_DESKTOP_MANDATORY_UPDATE_CONFIG DSH_DESKTOP_MACOS_SIGNING_IDENTITY DSH_DESKTOP_MACOS_TEAM_ID \
+            CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+      - name: Package signed target
+        run: pnpm --filter @yharness/desktop run package:mac:arm64
+      - name: Stage target artifact
+        run: |
+          set -eu
+          target="$RUNNER_TEMP/yharness-release/mac-arm64"
+          mkdir -p "$target"
+          cp -R apps/desktop/.desktop-build/targets/mac-arm64/artifacts/. "$target/"
+      - name: Upload signed target
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-mac-arm64
+          path: ${{ runner.temp }}/yharness-release
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/yharness-signing.p12" "$RUNNER_TEMP/yharness-api-key.p8" apps/desktop/.env.macos; rm -rf "$RUNNER_TEMP/yharness-release"
+
+  mac-x64:
+    name: macOS x64 (signed)
+    runs-on: [self-hosted, macos, x64, yharness-signing]
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Verify commit belongs to master
+        run: |
+          set -eu
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Configure macOS signing environment
+        env:
+          CERTIFICATE_B64: ${{ secrets.YH_MACOS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.YH_MACOS_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.YH_MACOS_SIGNING_IDENTITY }}
+          TEAM_ID: ${{ secrets.YH_MACOS_TEAM_ID }}
+          API_KEY_B64: ${{ secrets.YH_MACOS_API_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.YH_MACOS_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.YH_MACOS_API_ISSUER }}
+        run: |
+          set -eu
+          for value in "$CERTIFICATE_B64" "$CERTIFICATE_PASSWORD" "$SIGNING_IDENTITY" "$TEAM_ID" "$API_KEY_B64" "$API_KEY_ID" "$API_ISSUER"; do
+            test -n "$value" || { echo 'Required macOS release signing secret is missing' >&2; exit 1; }
+          done
+          certificate="$RUNNER_TEMP/yharness-signing.p12"
+          api_key="$RUNNER_TEMP/yharness-api-key.p8"
+          printf '%s' "$CERTIFICATE_B64" | base64 -D > "$certificate"
+          printf '%s' "$API_KEY_B64" | base64 -D > "$api_key"
+          export DSH_DESKTOP_APP_ID='com.deepseek.harness'
+          export DSH_DESKTOP_AUTO_UPDATE_ENV="$RELEASE_ENVIRONMENT"
+          export DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN='https://github.com'
+          export DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{}'
+          export DSH_DESKTOP_MACOS_SIGNING_IDENTITY="$SIGNING_IDENTITY"
+          export DSH_DESKTOP_MACOS_TEAM_ID="$TEAM_ID"
+          export CSC_LINK="$certificate"
+          export CSC_KEY_PASSWORD="$CERTIFICATE_PASSWORD"
+          export APPLE_API_KEY="$api_key"
+          export APPLE_API_KEY_ID="$API_KEY_ID"
+          export APPLE_API_ISSUER="$API_ISSUER"
+          rm -f apps/desktop/.env.macos
+          node apps/desktop/scripts/desktop-dotenv.mjs --output apps/desktop/.env.macos \
+            DSH_DESKTOP_APP_ID DSH_DESKTOP_AUTO_UPDATE_ENV DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN \
+            DSH_DESKTOP_MANDATORY_UPDATE_CONFIG DSH_DESKTOP_MACOS_SIGNING_IDENTITY DSH_DESKTOP_MACOS_TEAM_ID \
+            CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+      - name: Package signed target
+        run: pnpm --filter @yharness/desktop run package:mac:x64
+      - name: Stage target artifact
+        run: |
+          set -eu
+          target="$RUNNER_TEMP/yharness-release/mac-x64"
+          mkdir -p "$target"
+          cp -R apps/desktop/.desktop-build/targets/mac-x64/artifacts/. "$target/"
+      - name: Upload signed target
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-mac-x64
+          path: ${{ runner.temp }}/yharness-release
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/yharness-signing.p12" "$RUNNER_TEMP/yharness-api-key.p8" apps/desktop/.env.macos; rm -rf "$RUNNER_TEMP/yharness-release"
+
+  win-x64:
+    name: Windows x64 (EV signed)
+    runs-on: [self-hosted, windows, x64, yharness-signing]
+    environment: desktop-release
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Verify commit belongs to master
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/master
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version"
+            if ($env:GITHUB_REF_NAME -ne "v$version") { throw 'Release tag does not match package version' }
+          }
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Configure Windows signing environment
+        env:
+          CERTIFICATE_B64: ${{ secrets.YH_WINDOWS_CERTIFICATE_BASE64 }}
+          SIGNTOOL: ${{ vars.YH_WINDOWS_SIGNTOOL_PATH }}
+          KEY_CONTAINER: ${{ secrets.YH_WINDOWS_KEY_CONTAINER }}
+          TOKEN_PIN: ${{ secrets.YH_WINDOWS_TOKEN_PIN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($value in @($env:CERTIFICATE_B64, $env:SIGNTOOL, $env:KEY_CONTAINER, $env:TOKEN_PIN)) {
+            if ([string]::IsNullOrWhiteSpace($value)) { throw 'Required Windows release signing setting is missing' }
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP 'yharness-signing.cer'
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:CERTIFICATE_B64))
+          $env:DSH_DESKTOP_APP_ID = 'com.deepseek.harness'
+          $env:DSH_DESKTOP_AUTO_UPDATE_ENV = $env:RELEASE_ENVIRONMENT
+          $env:DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN = 'https://github.com'
+          $env:DSH_DESKTOP_MANDATORY_UPDATE_CONFIG = '{}'
+          $env:DSH_DESKTOP_WINDOWS_CER_FILE = $certificate
+          $env:DSH_DESKTOP_WINDOWS_SIGNTOOL = $env:SIGNTOOL
+          $env:DSH_DESKTOP_WINDOWS_KEY_CONTAINER = $env:KEY_CONTAINER
+          $env:DSH_DESKTOP_WINDOWS_TOKEN_PIN = $env:TOKEN_PIN
+          Remove-Item -Force -ErrorAction SilentlyContinue apps/desktop/.env.windows
+          node apps/desktop/scripts/desktop-dotenv.mjs --output apps/desktop/.env.windows `
+            DSH_DESKTOP_APP_ID DSH_DESKTOP_AUTO_UPDATE_ENV DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN `
+            DSH_DESKTOP_MANDATORY_UPDATE_CONFIG DSH_DESKTOP_WINDOWS_CER_FILE DSH_DESKTOP_WINDOWS_SIGNTOOL `
+            DSH_DESKTOP_WINDOWS_KEY_CONTAINER DSH_DESKTOP_WINDOWS_TOKEN_PIN
+          if ($LASTEXITCODE -ne 0) { throw 'desktop dotenv serialization failed' }
+      - name: Package signed target
+        run: pnpm --filter @yharness/desktop run package:win:x64
+      - name: Stage target artifact
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP 'yharness-release\win-x64'
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Copy-Item 'apps/desktop/.desktop-build/targets/win-x64/artifacts/*' $target -Recurse -Force
+      - name: Upload signed target
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-win-x64
+          path: ${{ runner.temp }}/yharness-release
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove signing material
+        if: always()
+        run: Remove-Item -Force -Recurse -ErrorAction SilentlyContinue "$env:RUNNER_TEMP/yharness-signing.cer", "$env:RUNNER_TEMP/yharness-release", apps/desktop/.env.windows

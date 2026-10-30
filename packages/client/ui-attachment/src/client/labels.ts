@@ -1,8 +1,8 @@
-import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { TranslateNS } from '@yharness/client-ui-slots'
 import type { AttachmentRailLabels } from '../AttachmentRail.tsx'
 import type { DropOverlayLabels } from '../DropOverlay.tsx'
 import type { FileCardLabels } from '../FileCard.tsx'
-import type { ImageLightboxLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ImageLightboxLabels } from '@yharness/client-ui-primitives'
 import type { MessageImageLabels } from '../MessageImage.tsx'
 
 /**

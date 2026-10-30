@@ -1,53 +1,11 @@
 /** Shell chrome and General-nav dictionaries; feature rows own their copy. */
 
-/** Simplified Chinese dictionary (the key-set source of truth). */
-export const zh = {
-  'trigger': '设置',
-  'shortcut.open': '打开设置',
-  'desktop.update.available': '新版本',
-  'desktop.update.availableTooltip': '有可用更新',
-  'desktop.update.checking': '正在检查更新…',
-  'desktop.update.progress': '{percent}%',
-  'desktop.update.verifying': '正在校验更新文件…',
-  'desktop.update.installing': '正在准备重启…',
-  'desktop.update.ready': '安装并重启',
-  'desktop.update.retry': '重试更新',
-  'desktop.update.title': '软件更新',
-  'desktop.update.check': '检查更新',
-  'desktop.update.current': '已是最新版本',
-  'desktop.update.managed': '更新由启动器自动管理',
-  'desktop.update.unavailable': '当前构建没有更新源，无法检查更新',
-  'desktop.update.versionDetail': '{label}：{version}',
-  'desktop.update.downloadDetail': '正在下载更新：{percent}%\n目标版本：{version}',
-  'desktop.update.checkFailed': '检查更新失败，请稍后重试。',
-  'desktop.update.downloadFailed': '下载更新失败，请重试。',
-  'desktop.update.installFailed': '安装更新失败，请稍后重试。',
-  'desktop.update.checkNetworkFailed': '检查更新失败，请检查网络连接后重试。',
-  'desktop.update.downloadNetworkFailed': '下载更新失败，请检查网络连接后重试。',
-  'desktop.update.installNetworkFailed': '安装更新失败，请检查网络连接后重试。',
-  'desktop.update.stopFailed': '未能安全停止任务，更新尚未安装，请稍后重试。',
-  'desktop.update.tasksChanged': '有新任务开始运行，请重新确认是否停止任务并更新。',
-  'desktop.update.tasksUnavailable': '无法确认任务状态，请在工作区就绪后重试更新。',
-  'title': '设置',
-  'close': '关闭',
-  'openDocument': '打开配置文件',
-  'openDocument.error': '无法打开配置文件',
-  'general.nav': '通用设置',
-  'general.currentVersion': '当前版本：{version}',
-  'developerTools.title': '显示代码工作视图',
-  'developerTools.error': '保存失败，请重试',
-  'developerTools.description': '开启后，显示轨迹、本轮代码差异，可选择完整的 Agent 预设切换',
-  'connection.error': '连接异常，刷新重试',
-  'connection.connecting': '重新连接中',
-  'connection.connected': '连接成功',
-  'connection.reconnect': '连接异常，点击立即重连',
-  'connection.restart': '连接中断，正在重试，点击立即重连',
-} satisfies Record<string, string>
+/** English dictionary for this namespace. */
 
 /** The settings namespace key union. */
-export type SettingsKey = keyof typeof zh
+export type SettingsKey = keyof typeof en
 
-/** English dictionary, checked complete against the zh key set. */
+/** English dictionary for this namespace. */
 export const en = {
   'trigger': 'Settings',
   'shortcut.open': 'Open settings',
@@ -89,4 +47,7 @@ export const en = {
   'connection.connected': 'Connected',
   'connection.reconnect': 'Disconnected, reconnect now',
   'connection.restart': 'Reconnecting, reconnect now',
-} satisfies Record<SettingsKey, string>
+} satisfies Record<string, string>
+
+/** Compatibility export for the retired locale name. */
+export const zh = en

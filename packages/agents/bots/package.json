@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-bots",
-  "description": "Durable user-owned bot roster with one persistent Session per bot",
+  "name": "@yharness/bots",
+  "description": "Y Harness durable user-owned Bot roster with one persistent Session per Bot",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/agents/bots"
   },
   "type": "module",
@@ -49,28 +49,28 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-attachment": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-api-session-controller": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/attachment": "workspace:*",
+    "@yharness/agent": "workspace:*",
+    "@yharness/api-session-controller": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-attachment": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-api-session-controller": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-storage": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/attachment": "workspace:*",
+    "@yharness/agent": "workspace:*",
+    "@yharness/api-session-controller": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/storage": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*",
+    "@yharness/cordis-plugin-loader": "workspace:~"
   }
 }

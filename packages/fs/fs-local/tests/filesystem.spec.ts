@@ -12,10 +12,10 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, utimes, 
 import { tmpdir } from 'node:os'
 import { join, parse, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
-import { FsVersion } from '@deepseek-ai/dsh-fs'
-import type { FsTarget } from '@deepseek-ai/dsh-fs'
+import { Context } from '@yharness/cordis'
+import { LocalFileSystem } from '@yharness/fs-local'
+import { FsVersion } from '@yharness/fs'
+import type { FsTarget } from '@yharness/fs'
 
 let dir: string
 let ctx: Context
@@ -597,10 +597,10 @@ describe('writeText', () => {
     await remountWithDiffLimit(8)
     await writeFile(join(dir, 'cjk.txt'), 'tiny')
     const target = await fs.resolve('cjk.txt')
-    const outcome = await fs.writeText(target, '你好吗')
+    const outcome = await fs.writeText(target, '\u{4F60}\u{597D}\u{5417}')
     expect(outcome.operation).toBe('update')
     expect(outcome.before).toBeNull()
-    expect(outcome.after).toBe('你好吗')
+    expect(outcome.after).toBe('\u{4F60}\u{597D}\u{5417}')
   })
 
   it('an overwrite with BOTH sides below the whole-file bound keeps its contextual before basis', async () => {

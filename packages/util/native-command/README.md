@@ -3,7 +3,7 @@ description: "Host-native command and path-opening utilities with shell-free exe
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-native-command
+# @yharness/native-command
 
 ## Summary
 
@@ -28,7 +28,7 @@ Use this runner when a host-side integration must execute one native command and
 ### Running a command
 
 ```ts
-import { runNativeCommand } from '@deepseek-ai/dsh-native-command'
+import { runNativeCommand } from '@yharness/native-command'
 
 declare const script: string
 declare const signal: AbortSignal

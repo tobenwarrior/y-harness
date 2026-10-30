@@ -5,7 +5,7 @@
  * installs the palette selector and font size that the client presenters adopt.
  */
 
-import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
+import type { IndexInjection } from '@yharness/host-webserver'
 import { DEFAULT_FONT_SIZE, DEFAULT_PREFERENCE, DEFAULT_STYLE, type ThemePreference, type ThemeStyle } from './theme-settings.ts'
 
 const LIGHT_BACKGROUND = '#fff'

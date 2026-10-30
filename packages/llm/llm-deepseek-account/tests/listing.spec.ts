@@ -2,8 +2,8 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { APP_IDENTITY } from '@deepseek-ai/dsh-llm'
-import { deadline } from '@deepseek-ai/dsh-timeout'
+import { APP_IDENTITY } from '@yharness/llm'
+import { deadline } from '@yharness/timeout'
 import { LISTING_TIMEOUT, parseModelListing, requestModelListing } from '../src/listing.ts'
 import type { ListedCapabilities } from '../src/listing.ts'
 
@@ -72,13 +72,25 @@ describe('parseModelListing', () => {
     expect(only({ ...MESSAGES, ...requirements === undefined ? {} : { client_requirements: requirements } })?.requirement).toEqual(expected)
   })
 
+  it('accepts the legacy product key when the canonical key is absent', () => {
+    expect(only({ ...MESSAGES, client_requirements: { 'deepseek-harness': { min_version: '0.2.0-alpha.1' } } })?.requirement)
+      .toEqual({ kind: 'min-version', version: '0.2.0-alpha.1' })
+  })
+
+  it('gives the canonical product key precedence over the legacy key', () => {
+    expect(only({ ...MESSAGES, client_requirements: {
+      'deepseek-harness': { min_version: '0.1.0' },
+      [APP_IDENTITY.product]: { min_version: '0.2.0-alpha.1' },
+    } })?.requirement).toEqual({ kind: 'min-version', version: '0.2.0-alpha.1' })
+  })
+
   it.each([
     [{}, 'declares no api_capabilities.anthropic_messages'],
     [{ api_capabilities: { anthropic_messages: 'yes' } }, 'declares no api_capabilities.anthropic_messages'],
     [{ ...MESSAGES, output_modalities: ['image'] }, 'declares no text output'],
     [{ ...MESSAGES, output_modalities: 'text' }, 'declares no text output'],
-    [{ ...MESSAGES, input_modalities: ['audio'] }, 'declares no input modality DeepSeek Harness supports'],
-    [{ ...MESSAGES, input_modalities: 'text' }, 'declares no input modality DeepSeek Harness supports'],
+    [{ ...MESSAGES, input_modalities: ['audio'] }, 'declares no input modality Y Harness supports'],
+    [{ ...MESSAGES, input_modalities: 'text' }, 'declares no input modality Y Harness supports'],
     [{ ...MESSAGES, context_window: 0 }, 'declares an invalid context_window or max_output_tokens'],
     [{ ...MESSAGES, max_output_tokens: 1.5 }, 'declares an invalid context_window or max_output_tokens'],
   ])('marks %j unusable', (row, reason) => {

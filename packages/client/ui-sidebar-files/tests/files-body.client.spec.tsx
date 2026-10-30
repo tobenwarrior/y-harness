@@ -2,9 +2,9 @@
 /** File-tree presentation over controlled directory watches and deferred listings. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent } from '@testing-library/react'
-import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'
+import { makeTranslate, RemoteError } from '@yharness/client-test-runtime'
+import type { RemoteFailure } from '@yharness/api-remotes/client'
+import { fileAddressFor } from '@yharness/util-workspace-path'
 import { failureLine, orderEntries } from '../src/client/FilesBody.tsx'
 import type { DirLevel } from '../src/client/store.ts'
 import { zh } from '../src/client/locales.ts'
@@ -324,6 +324,6 @@ describe('failureLine', () => {
 
   it('carries an unclassified failure\'s own message', () => {
     const failure = { code: 'remote/transport', message: 'socket closed' } as unknown as RemoteFailure
-    expect(failureLine(t, failure)).toBe('读取失败：socket closed')
+    expect(failureLine(t, failure)).toBe('Read failed: socket closed')
   })
 })

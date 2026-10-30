@@ -4,19 +4,19 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, open, rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { execa } from 'execa'
-import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
-import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import type { EntryOptions } from '@yharness/cordis-plugin-loader'
+import { withFileLock, writeFileAtomic } from '@yharness/atomic-write'
 import {
-  DEFAULT_PROFILE_BUNDLES, bundlePatchPaths, initProfile, PROFILE_TEMPLATES, readProfileManifest,
+  DEFAULT_PROFILE_BUNDLES, bundlePackageNameCandidates, bundlePatchPaths, initProfile, PROFILE_TEMPLATES, readProfileManifest,
   resolveBundleDir, resolveProfileDir, loadOverlayPatches, composeEntries, readProfileVersionExemptions,
-  evaluatePluginCompatibility, pluginCompatibilityWarning, type ProfileManifest,
-} from '@deepseek-ai/dsh-app-boot'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
+  evaluatePluginCompatibility, pluginCompatibilityWarning, installedProfilePackageDir, type ProfileManifest,
+} from '@yharness/app-boot'
+import { scrubbedParentEnv } from '@yharness/subprocess'
 import { parseInstallSpec } from './install-spec.ts'
 import { awaitTreeGone, leadsOwnGroup, treeAlive, type RunTree } from './run-tree.ts'
 import { incompatiblePlugin } from './failure.ts'
 import type { IncompatiblePlugin, PackageResult, Registry } from './types.ts'
-export { setProfileVersionExemption, readProfileVersionExemptions } from '@deepseek-ai/dsh-app-boot'
+export { setProfileVersionExemption, readProfileVersionExemptions } from '@yharness/app-boot'
 
 /** Profile and invocation locations supplied by the launcher. */
 export interface PackageOperationContext {
@@ -92,18 +92,18 @@ async function reconcile(before: ProfileManifest, dir: string, anchor: string, o
   const beforeDeps = new Set(Object.keys(before.dependencies ?? {}))
   const previous = after.dsh?.profile?.bundles ?? []
   const bundles = previous.filter((name) => {
-    if (!beforeDeps.has(name) && !dependencies.includes(name)) return true
-    return dependencies.includes(name) && bundleManifest(name, dir, anchor) !== undefined
+    if (!hasPackageName(beforeDeps, name) && !dependencies.some(dependency => samePackageName(dependency, name))) return true
+    return dependencies.some(dependency => samePackageName(dependency, name)) && bundleManifest(name, dir, anchor) !== undefined
   })
   for (const name of dependencies) {
-    if (beforeDeps.has(name)) continue
+    if (hasPackageName(beforeDeps, name)) continue
     const metadata = bundleManifest(name, dir, anchor)
     if (metadata?.dsh?.bundle === undefined) {
       options.onOutput?.(`dsh: warning: ${name} declares no dsh.bundle — installed as a plain dependency, not a profile layer\n`, 'stderr')
       continue
     }
     for (const file of bundlePatchPaths(resolveBundleDir('dsh', name, anchor, dir), metadata.dsh.bundle)) loadOverlayPatches('dsh', file)
-    if (!bundles.includes(name)) {
+    if (!bundles.some(bundle => samePackageName(bundle, name))) {
       bundles.push(name)
     }
   }
@@ -245,6 +245,14 @@ function directDependencies(manifest: ProfileManifest): Record<string, string> {
   return { ...extra.devDependencies, ...manifest.dependencies, ...extra.optionalDependencies }
 }
 
+function samePackageName(left: string, right: string): boolean {
+  return bundlePackageNameCandidates(left).includes(right)
+}
+
+function hasPackageName(names: ReadonlySet<string>, name: string): boolean {
+  return [...names].some(candidate => samePackageName(candidate, name))
+}
+
 /** Inspect only plugin rows contributed by the changed bundle, not its dependency closure. */
 function bundleComponentManifests(manifest: ProfileManifest, dir: string, anchor: string): ProfileManifest[] {
   const bundle = manifest.dsh?.bundle
@@ -302,7 +310,10 @@ export async function runProfilePnpm(
   const before = readProfileManifest('dsh', dir)
   const savedFiles = ['package.json', 'pnpm-lock.yaml'].map(name => ({ path: join(dir, name), text: optionalFile(join(dir, name)) }))
   const beforeDependencies = directDependencies(before)
-  const installedBefore = new Map(Object.keys(beforeDependencies).map(name => [name, optionalFile(join(dir, 'node_modules', name, 'package.json'))]))
+  const installedBefore = new Map(Object.keys(beforeDependencies).map(name => {
+    const packageDir = installedProfilePackageDir(dir, name)
+    return [name, packageDir === undefined ? undefined : optionalFile(join(packageDir, 'package.json'))]
+  }))
   let output = Buffer.alloc(0)
   let truncated = false
   const append = (bytes: Buffer): void => {
@@ -466,11 +477,13 @@ export async function runProfilePnpm(
       const after = readProfileManifest('dsh', dir)
       const warnings: string[] = []
       for (const [name, spec] of Object.entries(directDependencies(after))) {
-        const packageDir = join(dir, 'node_modules', name)
+        const packageDir = installedProfilePackageDir(dir, name)
+        if (packageDir === undefined) continue
         const installed = optionalFile(join(packageDir, 'package.json'))
         if (installed === undefined) continue
         // A dependency this run did not touch never blocks an unrelated operation; profile startup denies it.
-        const untouched = beforeDependencies[name] === spec && installedBefore.get(name) === installed
+        const beforeName = Object.keys(beforeDependencies).find(candidate => samePackageName(candidate, name))
+        const untouched = beforeName !== undefined && beforeDependencies[beforeName] === spec && installedBefore.get(beforeName) === installed
         const found: string[] = []
         const issues: IncompatiblePlugin[] = []
         try {

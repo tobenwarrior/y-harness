@@ -1,9 +1,9 @@
 ---
-description: "The stdio JSON-RPC serving plugin for deployments that let out-of-process SDK clients open sessions and drive agents in a DeepSeek Harness runtime."
+description: "The stdio JSON-RPC serving plugin for deployments that let out-of-process SDK clients open sessions and drive agents in a Y Harness runtime."
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-sdk-jsonrpc-server
+# @yharness/sdk-jsonrpc-server
 
 ## Summary
 
@@ -35,7 +35,7 @@ The plugin creates one agent per `sessionId` on first use. A registered model ad
 |---|---|---|
 | `maxTokensAsSuccess` | `false` | Report max-token turn/subagent termination as a successful SDK result |
 
-The profile composition owns each root agent's tools. `input`, `output`, and `exit` are runtime-only transport hooks for tests; production uses process stdio and `process.exit`. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-sdk-jsonrpc-server) is the exhaustive source for every accepted field.
+The profile composition owns each root agent's tools. `input`, `output`, and `exit` are runtime-only transport hooks for tests; production uses process stdio and `process.exit`. The generated [configuration catalog](../../../docs/config-catalog.md#yharnesssdk-jsonrpc-server) is the exhaustive source for every accepted field.
 
 ### stdout is the protocol
 

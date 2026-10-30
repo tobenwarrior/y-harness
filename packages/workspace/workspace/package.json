@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-workspace",
-  "description": "Workspace entity registry (ctx.workspaceRegistry): durable workspace records with validated session attachment over the domain data form for the DeepSeek Harness",
+  "name": "@yharness/workspace",
+  "description": "Workspace entity registry (ctx.workspaceRegistry): durable workspace records with validated session attachment over the domain data form for the Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/workspace/workspace"
   },
   "type": "module",
@@ -32,23 +32,23 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence": "workspace:*",
-    "@deepseek-ai/dsh-storage": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
+    "@yharness/storage": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
+    "@yharness/brand": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence": "workspace:*",
-    "@deepseek-ai/dsh-storage": "workspace:*",
-    "@deepseek-ai/dsh-storage-domain": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
+    "@yharness/storage": "workspace:*",
+    "@yharness/storage-domain": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   }
 }

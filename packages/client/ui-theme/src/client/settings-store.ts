@@ -3,7 +3,7 @@
  * snapshot. The plugin's apply-world change listener is the only writer; the
  * row components read via props.useStore.
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
+import { defineStore, type EngineStoreHandle } from '@yharness/client-store'
 import { DEFAULT_FONT_SIZE, DEFAULT_STYLE, type ThemePreference, type ThemeStyle } from '../theme-settings.ts'
 
 /** Store state mirrored from the selected appearance style. */

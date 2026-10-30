@@ -25,7 +25,7 @@ async function openFixtureSession(): Promise<void> {
       expect(group.getAttribute('aria-expanded')).toBe('true')
     })
   }
-  const session = await within(tree).findByText('Fixture 历史会话')
+  const session = await within(tree).findByText('Fixture \u{5386}\u{53F2}\u{4F1A}\u{8BDD}')
   fireEvent.click(session)
   await waitFor(() => {
     expect(document.querySelectorAll('[data-align] img').length).toBeGreaterThan(0)

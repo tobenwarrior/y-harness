@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-session-log-deepseek",
+  "name": "@yharness/session-log-deepseek",
   "description": "Incremental lossless session-log request extension for the official DeepSeek LLM API",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/session/session-log-deepseek"
   },
   "type": "module",
@@ -32,27 +32,27 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-util-values": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/brand": "workspace:*",
+    "@yharness/util-values": "workspace:*",
+    "@yharness/schemastery": "workspace:~"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-deepseek-llm-api-extensions": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/deepseek-llm-api-extensions": "workspace:*",
+    "@yharness/session": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-command-feedback": "workspace:*",
-    "@deepseek-ai/dsh-deepseek-llm-api-extensions": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-llm-deepseek": "workspace:*",
-    "@deepseek-ai/dsh-llm-deepseek-api-key": "workspace:*",
-    "@deepseek-ai/dsh-llm-mock-server": "workspace:*",
-    "@deepseek-ai/dsh-message-feedback": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/command-feedback": "workspace:*",
+    "@yharness/deepseek-llm-api-extensions": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/llm-deepseek": "workspace:*",
+    "@yharness/llm-deepseek-api-key": "workspace:*",
+    "@yharness/llm-mock-server": "workspace:*",
+    "@yharness/message-feedback": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*"
   }
 }

@@ -48,10 +48,10 @@ describe('Claude metadata-only worker protocol', () => {
     expect(parseReply(value).error).toBe('profile-mismatch'); expect(value).not.toContain('/different/private-profile')
   })
   it('counts full UTF8 request and reply wrappers, including multi-byte content', async () => {
-    const f = await fixture([{ sessionId: 'original', summary: '界'.repeat(320), lastModified: 1 }])
+    const f = await fixture([{ sessionId: 'original', summary: '\u{754C}'.repeat(320), lastModified: 1 }])
     const body = { ...f.body, maxBytes: 1024 }
     const reply = await parse(body, 1024); expect(reply.error).toBe('response-limit')
-    const text = JSON.stringify({ ...f.body, profileRoot: '/'+ '界'.repeat(2000) })
+    const text = JSON.stringify({ ...f.body, profileRoot: '/'+ '\u{754C}'.repeat(2000) })
     expect(parseReply(await executeClaudeSourceRequest(text, 1024)).error).toBe('request-limit')
   })
   it('bounds raw complete SDK frames before text projection', async () => {

@@ -6,13 +6,13 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createMessage, createUserMessage } from '@yharness/llm'
 import {
   SESSION_FORMAT_VERSION,
   Session,
   SessionId,
-} from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-title'
+} from '@yharness/session'
+import type {} from '@yharness/session-title'
 import {
   assertFixtureInventory,
   captureStableAria,
@@ -114,11 +114,11 @@ function markdownImageFixture(remoteUrl: string, outsidePath: string): string {
           '',
           '[View comparison](./valid.png)',
           '',
-          '![Space path]({{cwd}}/test workspace/测试图.png)',
+          '![Space path]({{cwd}}/test workspace/\u{6D4B}\u{8BD5}\u{56FE}.png)',
           '',
-          '![Encoded path]({{cwd}}/test%20workspace/测试图.png)',
+          '![Encoded path]({{cwd}}/test%20workspace/\u{6D4B}\u{8BD5}\u{56FE}.png)',
           '',
-          '![Encoded filename]({{cwd}}/test%20workspace/测试%23100%25.png)',
+          '![Encoded filename]({{cwd}}/test%20workspace/\u{6D4B}\u{8BD5}%23100%25.png)',
           '',
           '![Oversized image]({{cwd}}/oversized.png)',
           '',
@@ -175,8 +175,8 @@ describe('web e2e: Markdown image rendering', () => {
     await writeFile(join(scaffold.workspaceCwd, 'valid.png'), PNG)
     await writeFile(join(scaffold.workspaceCwd, 'local-image.png'), PNG)
     await mkdir(join(scaffold.workspaceCwd, 'test workspace'))
-    await writeFile(join(scaffold.workspaceCwd, 'test workspace/测试图.png'), PNG)
-    await writeFile(join(scaffold.workspaceCwd, 'test workspace/测试#100%.png'), PNG)
+    await writeFile(join(scaffold.workspaceCwd, 'test workspace/\u{6D4B}\u{8BD5}\u{56FE}.png'), PNG)
+    await writeFile(join(scaffold.workspaceCwd, 'test workspace/\u{6D4B}\u{8BD5}#100%.png'), PNG)
     await writeFile(join(scaffold.workspaceCwd, 'corrupt.png'), 'invalid image')
     const oversized = await open(join(scaffold.workspaceCwd, 'oversized.png'), 'w')
     try {
@@ -278,8 +278,8 @@ describe('web e2e: Markdown image rendering', () => {
     expect(mediaResponses).toEqual(new Map([
       [join(scaffold.workspaceCwd, 'valid.png'), 200],
       [`${scaffold.workspaceCwd}/./local-image.png`, 200],
-      [join(scaffold.workspaceCwd, 'test workspace/测试图.png'), 200],
-      [join(scaffold.workspaceCwd, 'test workspace/测试#100%.png'), 200],
+      [join(scaffold.workspaceCwd, 'test workspace/\u{6D4B}\u{8BD5}\u{56FE}.png'), 200],
+      [join(scaffold.workspaceCwd, 'test workspace/\u{6D4B}\u{8BD5}#100%.png'), 200],
       [join(scaffold.workspaceCwd, 'oversized.png'), 413],
       [join(scaffold.persistenceRoot, 'outside.png'), 200],
       [join(scaffold.workspaceCwd, 'missing.png'), 404],

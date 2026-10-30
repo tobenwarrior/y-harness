@@ -1,7 +1,7 @@
 /** Compound code map: the vendored graph viewer, served by this Y Harness build. */
 import { useState, type ReactNode, useEffect, useRef } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { Button } from '@yharness/client-ui-primitives'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import css from './MapPanel.module.css'
 
 /** Browser-relative route `dsh-skill-compound` serves the viewer under. */

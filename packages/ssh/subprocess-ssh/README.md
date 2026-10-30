@@ -3,7 +3,7 @@ description: "Managed SSH subprocess and terminal behavior for Bash, LSP and Nod
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-subprocess-ssh
+# @yharness/subprocess-ssh
 
 ## Summary
 

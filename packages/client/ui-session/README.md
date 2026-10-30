@@ -2,7 +2,7 @@
 description: "React and Slot adapters for Session Controller lists, interaction state, and per-session context."
 kind: "package-reference"
 ---
-# @deepseek-ai/dsh-client-ui-session
+# @yharness/client-ui-session
 
 ## Summary
 

@@ -1,9 +1,9 @@
 /** Prepared calls retain their endpoint and credential generation. */
 import { afterEach, expect, it } from 'vitest'
-import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import type { AnonymousUserId } from '@yharness/anonymous-user-id'
 import { DeepSeekAdapter } from '../src/index.ts'
-import { Config, plainOptions, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek-api-key'
-import type { ResolvedDeepSeekOptions as DeepSeekConnectionOptions } from '@deepseek-ai/dsh-llm-deepseek-api-key'
+import { Config, plainOptions, resolveAdapterOptions } from '@yharness/llm-deepseek-api-key'
+import type { ResolvedDeepSeekOptions as DeepSeekConnectionOptions } from '@yharness/llm-deepseek-api-key'
 import { assemble, chunks, MODEL, options, server } from './helpers.ts'
 
 const close: (() => Promise<void>)[] = []
@@ -30,7 +30,7 @@ it.each([false, true])('uses Messages, schema=%s', async (schema) => {
   const connection = resolveAdapterOptions(schema ? plainOptions(Config(raw)) : raw)
   const response = await assemble(adapter(() => connection).stream(options()))
 
-  expect(response.message.content).toEqual([{ type: 'text', text: 'Hello 世界' }])
+  expect(response.message.content).toEqual([{ type: 'text', text: 'Hello \u{4E16}\u{754C}' }])
   expect(http.requests).toHaveLength(1)
   expect(http.requests[0]).toMatchObject({
     path: '/anthropic/v1/messages',

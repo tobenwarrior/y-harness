@@ -23,7 +23,7 @@ import {
   splitMarkdownUrlTarget,
 } from './markdown.ts'
 
-const REPOSITORY_URL = 'https://github.com/deepseek-ai/deepseek-harness'
+const REPOSITORY_URL = 'https://github.com/tobenwarrior/y-harness'
 const root = resolve(import.meta.dirname, '..')
 const generatedRoot = resolve(root, 'website/.generated')
 
@@ -140,7 +140,7 @@ function githubTarget(
   image: boolean,
 ): string {
   const path = repoPath(absPath, repoRoot)
-  if (image) return `https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/${repositoryRef}/${path}${suffix}`
+  if (image) return `https://raw.githubusercontent.com/tobenwarrior/y-harness/${repositoryRef}/${path}${suffix}`
   const kind = lstatSync(absPath).isDirectory() ? 'tree' : 'blob'
   const lineSuffix = line === undefined ? suffix : `#L${line}`
   return `${REPOSITORY_URL}/${kind}/${repositoryRef}/${path}${lineSuffix}`
@@ -219,7 +219,7 @@ export function addProjectionFrontmatter(markdown: string, page: Pick<DocsPage, 
 }
 
 /** The switcher line a canonical page carries so its GitHub reader can reach the other language. */
-const LANGUAGE_SWITCHER = /^(?:English \| \[中文\]\([^)]*\)|\[English\]\([^)]*\) \| 中文)$/
+const LANGUAGE_SWITCHER = /^(?:English \| \[\u4e2d\u6587\]\([^)]*\)|\[English\]\([^)]*\) \| \u4e2d\u6587)$/
 
 /** The repository badge a canonical page carries for its GitHub reader. */
 const REPOSITORY_BADGE = /^\[!\[[^\]]*\]\(https:\/\/img\.shields\.io\/[^)]*\)\]\([^)]*\)$/
@@ -543,7 +543,7 @@ export interface LlmsTxtSite {
 
 /** Locale groups llms.txt lists, in the order the site's navigation presents them. */
 const llmsTxtLocales: readonly { heading: string; locale: DocsLocale }[] = [
-  { heading: '简体中文', locale: 'root' },
+  { heading: '\u7b80\u4f53\u4e2d\u6587', locale: 'root' },
   { heading: 'English', locale: 'en' },
 ]
 
@@ -563,7 +563,7 @@ export function llmsTxt(site: LlmsTxtSite): string {
     '',
     `> ${site.description}`,
     '',
-    '页面 URL 去掉末尾斜杠再加 `.md` 即为该页原始 Markdown(根路径用 `/index.md`);下方列表是各页精确地址。Drop any trailing slash and append `.md` to a page URL for its raw Markdown (the site root is `/index.md`); the list below carries the exact addresses.',
+    '\u9875\u9762 URL \u53bb\u6389\u672b\u5c3e\u659c\u6760\u518d\u52a0 `.md` \u5373\u4e3a\u8be5\u9875\u539f\u59cb Markdown(\u6839\u8def\u5f84\u7528 `/index.md`);\u4e0b\u65b9\u5217\u8868\u662f\u5404\u9875\u7cbe\u786e\u5730\u5740。Drop any trailing slash and append `.md` to a page URL for its raw Markdown (the site root is `/index.md`); the list below carries the exact addresses.',
   ]
   for (const { heading, locale } of llmsTxtLocales) {
     lines.push('', `## ${heading}`, '')

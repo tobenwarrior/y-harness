@@ -1,12 +1,12 @@
 /** Detached ordinary-Y history transactions use the existing durable single-writer handle. */
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
-import { Service } from '@deepseek-ai/cordis'
-import type { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence'
-import type {} from '@deepseek-ai/dsh-session-persistence'
+import { Service } from '@yharness/cordis'
+import type { Context } from '@yharness/cordis'
+import { brandString } from '@yharness/brand'
+import type { SessionEvent, SessionId } from '@yharness/session'
+import type { SessionHandle } from '@yharness/session-persistence'
+import type {} from '@yharness/session-persistence'
 import { codingSessionDigest } from './digest.ts'
 import type {
   CodingSessionImportDestinationSummary, CodingSessionDestinationRevision, CodingSessionImportRecoveryIntent,
@@ -93,7 +93,7 @@ export class CodingSessionColdDestinations {
   ): Promise<T> {
     return this.run(async (signal) => {
       const { persistence, sessions } = this.services()
-      const { interruptedTurnClosers } = await import('@deepseek-ai/dsh-session')
+      const { interruptedTurnClosers } = await import('@yharness/session')
       signal.throwIfAborted(); this.current(persistence, sessions, id)
       await this.preflight(id, signal)
       const handle = await persistence.open(id, 'write', { signal })
@@ -182,7 +182,7 @@ export class CodingSessionColdDestinations {
   }
   private matchesRecoveryPrefix(
     events: readonly SessionEvent[], recovery: CodingSessionImportRecoveryIntent | undefined,
-    turnClosers: typeof import('@deepseek-ai/dsh-session').interruptedTurnClosers,
+    turnClosers: typeof import('@yharness/session').interruptedTurnClosers,
   ): boolean {
     if (recovery === undefined) return false
     this.assertBytes(recovery)

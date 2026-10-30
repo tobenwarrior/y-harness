@@ -7,8 +7,8 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Button, Checkbox, Input, Modal, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { NousModelView } from '@deepseek-ai/dsh-api-remotes/client'
+import { Button, Checkbox, Input, Modal, Pill } from '@yharness/client-ui-primitives'
+import type { NousModelView } from '@yharness/api-remotes/client'
 import { countCopy, groupModels, modelLabel } from './nous-models.ts'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'

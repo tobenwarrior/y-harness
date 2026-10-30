@@ -6,8 +6,8 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
-import type { BotView } from '@deepseek-ai/dsh-bots'
-import type {} from '@deepseek-ai/dsh-bots'
+import type { BotView } from '@yharness/bots'
+import type {} from '@yharness/bots'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,

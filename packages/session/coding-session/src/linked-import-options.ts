@@ -1,12 +1,12 @@
 /** Host-owned durable journal and detached Session capabilities; excluded from public browser DTOs. */
-import type {} from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types'
+import type {} from '@yharness/llm'
+import type { Session } from '@yharness/session'
+import type { SessionEvent, SessionId } from '@yharness/session/types'
 import type {
   CodingSessionImportMessageSource, CodingSessionImportRecoveryIntent, CodingSessionLinkId, CodingSessionLinkRecord,
 } from './linked-import-types.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     /**
      * Producer-framed quoted historical user context. This kind supplies attribution

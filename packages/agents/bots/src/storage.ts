@@ -1,9 +1,9 @@
 /** Durable Bot roster declaration and record validation. */
 
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { AttachmentId, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { SessionId } from '@yharness/session'
+import { brandString } from '@yharness/brand'
+import type { AttachmentId, ImageAttachmentRef } from '@yharness/attachment'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'

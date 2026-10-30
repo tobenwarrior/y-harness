@@ -1,19 +1,19 @@
 /** Registers the target-neutral Conversation assembly, shell, input, and docks. */
-import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import type { ISessions, SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@yharness/client-product-analytics/client'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import type { ISessions, SessionBinding } from '@yharness/api-session-controller/client'
 import { readLastAssistantText } from './input/editor/transcript.ts'
-import { IconPaperclipOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import { createSnapshotStore, type BoundActions } from '@deepseek-ai/dsh-client-store'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { IconPaperclipOutlineRegular } from '@yharness/client-ui-primitives'
+import { createSnapshotStore, type BoundActions } from '@yharness/client-store'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import type { SessionId } from '@yharness/session/types'
 // Type-only service and declaration merges used by this assembly.
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { ShortcutCommandId, ShortcutFixedCommand } from '@deepseek-ai/dsh-client-shortcuts/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-settings/client'
+import type { ShortcutCommandId, ShortcutFixedCommand } from '@yharness/client-shortcuts/client'
 import { UiConversation } from './conversation/assembly.ts'
 import type { ViewTab } from './contract/views.ts'
 import type {
@@ -23,8 +23,8 @@ import type {
 import type { InputNotice } from './contract/input.ts'
 import type { ReferenceInsert } from './contract/draft-editor.ts'
 import { createConversationStore, readConversationViewPreference } from './stores.ts'
-import { formatFileMention } from '@deepseek-ai/dsh-file-reference/grammar'
-import { relativizeToCwd, workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
+import { formatFileMention } from '@yharness/file-reference/grammar'
+import { relativizeToCwd, workspaceTitleOf } from '@yharness/util-workspace-path'
 import { ConversationController, UnsupportedImageMediaTypeError, isImageMediaType } from './service.ts'
 import type { IConversation } from './service.ts'
 import { ComposerBlockRegistry } from './input/blocks.ts'
@@ -44,14 +44,14 @@ import { InputBar } from './skeleton/InputBar.tsx'
 import { todoDockEntry } from './skeleton/TodoPanel.tsx'
 import { installStopShortcut } from './stop-shortcut.ts'
 import { TRAJECTORY_VIEW_ID, resolveActiveView } from './view-selection.ts'
-import { en, NS, zh, type ConversationKey } from './locales.ts'
+import { en, NS, type ConversationKey } from './locales.ts'
 import { SessionDockStore } from './dock/store.ts'
 import type { ConversationDockFace } from './dock/face.ts'
 import { DockPaneClose } from './dock/DockPaneClose.tsx'
 import type { DockPaneCloseInjected } from './dock/DockPaneClose.tsx'
 import { CONVERSATION_SETTINGS_NAMESPACE, type ConversationSettings } from '../submission-settings.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Conversation shell, composer, queue, and dock copy. */
     conversation: ConversationKey
@@ -163,7 +163,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
   const workspaceNavigation = ctx.get('uiWorkspace') as unknown as WorkspaceNavigation
   const uiConversation = new UiConversation(ctx, sessions)
 
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-conversation: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-conversation: dictionaries')
   const t = ctx.locale.bind(NS)
   const conversationStore = createConversationStore()
   const submissionPolicy = new ComposerSubmissionPolicy(

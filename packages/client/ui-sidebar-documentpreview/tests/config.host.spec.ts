@@ -1,6 +1,6 @@
 /** Host configuration supplies bounded Office reuse settings to browser pages. */
-import { Context } from '@deepseek-ai/cordis'
-import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
+import { Context } from '@yharness/cordis'
+import type { IndexInjection } from '@yharness/host-webserver'
 import { expect, it, onTestFinished } from 'vitest'
 import { Config } from '../src/config.ts'
 import * as host from '../src/index.ts'

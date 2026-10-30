@@ -11,7 +11,7 @@
  *
  * ```yaml
  * - id: llm
- *   name: '@deepseek-ai/dsh-llm-pi-ai'
+ *   name: '@yharness/llm-pi-ai'
  *   config:
  *     providers:
  *       # Catalog route: everything but the credential comes from pi-ai.
@@ -52,18 +52,18 @@
  *               max: ultra
  * ```
  *
- * @module @deepseek-ai/dsh-llm-pi-ai
+ * @module @yharness/llm-pi-ai
  */
-import type {} from '@deepseek-ai/dsh-settings'
+import type {} from '@yharness/settings'
 
-import type {} from '@deepseek-ai/cordis-plugin-loader'
+import type {} from '@yharness/cordis-plugin-loader'
 
-import type { Context } from '@deepseek-ai/cordis'
-import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
-import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-fs'
-import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
+import type { Context } from '@yharness/cordis'
+import { launchEnvironmentOf } from '@yharness/launch-environment'
+import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess } from '@yharness/llm'
+import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@yharness/llm'
+import type {} from '@yharness/fs'
+import { deepEqualJson } from '@yharness/util-values'
 import { PiAiAdapter } from './adapter.ts'
 import { authContextFrom, credentialStoreFrom } from './auth.ts'
 import { catalogProviderIds } from './catalog.ts'
@@ -181,7 +181,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   profiles()
   if (launchEnvironmentOf(ctx).get('DSH_CODEX_BINARY')?.value) ctx.plugin(CodexBackendConnection)
-  ctx.on('internal/config', function (this: import('@deepseek-ai/cordis').Fiber, _raw, next) {
+  ctx.on('internal/config', function (this: import('@yharness/cordis').Fiber, _raw, next) {
     const raw: unknown = next()
     if (this !== ctx.fiber) return raw
     const candidate: Config = Config(raw as import('./config.ts').Options)

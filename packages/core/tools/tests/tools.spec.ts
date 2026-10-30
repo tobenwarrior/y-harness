@@ -1,22 +1,22 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { createUserMessage, ToolCallId, HarnessError, type ContentBlock  } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import ApprovalService, { type ApprovalOutcome, type ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
+import { Context } from '@yharness/cordis'
+import LlmRuntime, { createUserMessage, ToolCallId, HarnessError, type ContentBlock  } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import SessionStore, { Session, SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SystemPrompt from '@yharness/system-prompt'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
+import ApprovalService, { type ApprovalOutcome, type ApprovalRequest } from '@yharness/user-approval'
 import ToolRuntime, {
   defineContentToolFixture, defineTool, JsonSchemaError, parameterSchemaSpecToJsonSchema, validateArgs, ToolArgsError, ToolNotFoundError,
   TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH,
   type InferArgs, type ParameterSchemaSpec, type PreToolDecision, type PostToolDecision,
   type JsonSchemaNode, type ToolDefinition, type ToolDispatchExecution, type ToolExecutionResult, type ToolExecutionToken,
-} from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-util-values'
+} from '@yharness/tools'
+import type { JsonValue } from '@yharness/util-values'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'blocker': { kind: 'blocker' } & ContextFormed
     'child': { kind: 'child' } & ContextFormed
@@ -734,7 +734,7 @@ describe('ToolRuntime', () => {
   })
 
   it('ToolNotFoundError carries a stable message and code', async () => {
-    const { HarnessError } = await import('@deepseek-ai/dsh-llm')
+    const { HarnessError } = await import('@yharness/llm')
     const err = new ToolNotFoundError('ghost')
     expect(err).toBeInstanceOf(HarnessError)
     expect(err.name).toBe('ToolNotFoundError')
@@ -827,7 +827,7 @@ describe('ToolRuntime', () => {
         return Promise.resolve<ApprovalOutcome>('allowed-once')
       })
       ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> =>
-        ({ kind: 'ask', reason: 'hook wants a human', displayReason: { en: 'Allow it?', zh: '允许吗？' } }))
+        ({ kind: 'ask', reason: 'hook wants a human', displayReason: { en: 'Allow it?', zh: '\u{5141}\u{8BB8}\u{5417}？' } }))
 
       const result = await ctx.tools.execute({
         callId: ToolCallId('c1'), name: 'echo', arguments: { text: 'hi' }, agent, signal: controller.signal,
@@ -836,7 +836,7 @@ describe('ToolRuntime', () => {
       expect(result).toMatchObject({ isError: false, content: [{ type: 'text', text: 'hi' }] })
       expect(seen).toHaveLength(1)
       expect(seen[0]).toMatchObject({
-        agent, toolName: 'echo', callId: 'c1', reason: 'hook wants a human', displayReason: { en: 'Allow it?', zh: '允许吗？' },
+        agent, toolName: 'echo', callId: 'c1', reason: 'hook wants a human', displayReason: { en: 'Allow it?', zh: '\u{5141}\u{8BB8}\u{5417}？' },
       })
       expect(seen[0]?.signal).toBe(controller.signal)
     })
@@ -2740,7 +2740,7 @@ describe('defineTool validation (the runtime-validation Agent Note, part 1)', ()
   })
 
   it('a tool throwing a HarnessError surfaces its name and code', async () => {
-    const { HarnessError } = await import('@deepseek-ai/dsh-llm')
+    const { HarnessError } = await import('@yharness/llm')
     const ctx = await setup()
     ctx.tools.register({
       ...echoTool,

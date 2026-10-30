@@ -3,7 +3,7 @@ description: "Shared timeout arithmetic, deadline fusion, and timeout-versus-can
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-timeout
+# @yharness/timeout
 
 ## Summary
 
@@ -28,7 +28,7 @@ Use `deadline` when a capability runs one unit of work under a caller-visible ti
 ### Clamping a timeout hint
 
 ```ts
-import { clampTimeout } from '@deepseek-ai/dsh-timeout'
+import { clampTimeout } from '@yharness/timeout'
 
 declare const requested: number | undefined
 declare const DEFAULT_TIMEOUT_MS: number
@@ -42,7 +42,7 @@ const timeoutMs = clampTimeout(requested, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, 'b
 ### Running work under a deadline
 
 ```text
-import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { deadline, timeoutOf } from '@yharness/timeout'
 
 using d = deadline(upstream, timeoutMs, 'BASH_TIMEOUT')
 const outcome = await runWork({ signal: d.signal })   // work listens on d.signal and terminates itself
@@ -59,7 +59,7 @@ The signal only notifies: the caller must attach its own termination — hand `d
 ### Streaming with an idle watchdog
 
 ```ts
-import { idleWatchdog } from '@deepseek-ai/dsh-timeout'
+import { idleWatchdog } from '@yharness/timeout'
 
 declare const upstream: AbortSignal | undefined
 declare const idleMs: number

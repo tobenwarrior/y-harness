@@ -11,8 +11,8 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk'
 import { assistantBody } from './sdk-message-fixture.ts'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
 import * as yaml from 'js-yaml'
 import {
   afterEach,
@@ -23,17 +23,17 @@ import {
   type Mock,
   vi,
 } from 'vitest'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import SubagentRuntime from '@deepseek-ai/dsh-subagent'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import type { Agent } from '@yharness/agent'
+import type { ContentBlock } from '@yharness/llm'
+import SubagentRuntime from '@yharness/subagent'
+import SessionProjectionRegistry from '@yharness/session-projection'
 import type {
   SubprocessHandle,
   SubprocessOutcome,
   SubprocessSpawnSpec,
-} from '@deepseek-ai/dsh-subprocess'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+} from '@yharness/subprocess'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import * as claudeCode from '../src/index.ts'
 import {
   claudeSpawnSpec,
@@ -359,7 +359,7 @@ describe('task admission and package contracts', () => {
       '^1.29.0',
     )
     expect(manifest.dependencies).toHaveProperty('zod', '^4.4.3')
-    expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-codex')
+    expect(manifest.dependencies).not.toHaveProperty('@yharness/subagent-codex')
 
     const sdkRoot = dirname(fileURLToPath(
       import.meta.resolve('@anthropic-ai/claude-agent-sdk'),
@@ -396,7 +396,7 @@ describe('task admission and package contracts', () => {
       : []
     expect(rows).toEqual([{
       id: 'subagent-claude-code',
-      name: '@deepseek-ai/dsh-subagent-claude-code',
+      name: '@yharness/subagent-claude-code',
     }])
     expect(JSON.stringify(rows)).not.toContain('tool-subagent')
   })

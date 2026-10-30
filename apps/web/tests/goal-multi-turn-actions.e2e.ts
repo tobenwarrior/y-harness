@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
-import { parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-goal'
+import { parseSessionLog } from '@yharness/llm-replay'
+import type { SessionEvent, SessionId } from '@yharness/session'
+import type {} from '@yharness/goal'
 import {
   assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
@@ -23,25 +23,25 @@ const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
 const UI_EXPANDED_EXPECTED = join(SNAPSHOT_DIR, 'ui-expanded.expected.md')
 const MODE = webSnapshotMode()
 
-const PROMPT = '做两个turn，每个turn输出随机一个包的文件结构。注意你做完一个turn之后，直接输出内容，停止，我们的系统会帮你再开一个turn，你看着做一个类似的'
+const PROMPT = '\u{505A}\u{4E24}\u{4E2A}turn，\u{6BCF}\u{4E2A}turn\u{8F93}\u{51FA}\u{968F}\u{673A}\u{4E00}\u{4E2A}\u{5305}\u{7684}\u{6587}\u{4EF6}\u{7ED3}\u{6784}。\u{6CE8}\u{610F}\u{4F60}\u{505A}\u{5B8C}\u{4E00}\u{4E2A}turn\u{4E4B}\u{540E}，\u{76F4}\u{63A5}\u{8F93}\u{51FA}\u{5185}\u{5BB9}，\u{505C}\u{6B62}，\u{6211}\u{4EEC}\u{7684}\u{7CFB}\u{7EDF}\u{4F1A}\u{5E2E}\u{4F60}\u{518D}\u{5F00}\u{4E00}\u{4E2A}turn，\u{4F60}\u{770B}\u{7740}\u{505A}\u{4E00}\u{4E2A}\u{7C7B}\u{4F3C}\u{7684}'
 const COMMAND = `/goal ${PROMPT}`
 
 const PACKAGE_FILES: Readonly<Record<string, string>> = {
   'packages/client/ui-conversation/README.md': '# UI conversation\n',
-  'packages/client/ui-conversation/package.json': '{"name":"@deepseek-ai/dsh-client-ui-conversation"}\n',
+  'packages/client/ui-conversation/package.json': '{"name":"@yharness/client-ui-conversation"}\n',
   'packages/client/ui-conversation/src/client.ts': 'export {}\n',
   'packages/client/ui-chat/tests/chat-view.client.spec.tsx': 'export {}\n',
   'packages/context/session-reference/README.md': '# Session reference\n',
-  'packages/context/session-reference/package.json': '{"name":"@deepseek-ai/dsh-session-reference"}\n',
+  'packages/context/session-reference/package.json': '{"name":"@yharness/session-reference"}\n',
   'packages/context/session-reference/src/index.ts': 'export {}\n',
   'packages/context/session-reference/src/uri.ts': 'export {}\n',
   'packages/context/session-reference/tests/session-reference.spec.ts': 'export {}\n',
   'packages/llm/token-meter/README.md': '# Token meter\n',
-  'packages/llm/token-meter/package.json': '{"name":"@deepseek-ai/dsh-token-meter"}\n',
+  'packages/llm/token-meter/package.json': '{"name":"@yharness/token-meter"}\n',
   'packages/llm/token-meter/src/index.ts': 'export {}\n',
   'packages/llm/token-meter/tests/token-meter.spec.ts': 'export {}\n',
   'packages/skill/skill-filesystem/README.md': '# Local skill provider\n',
-  'packages/skill/skill-filesystem/package.json': '{"name":"@deepseek-ai/dsh-skill-filesystem"}\n',
+  'packages/skill/skill-filesystem/package.json': '{"name":"@yharness/skill-filesystem"}\n',
   'packages/skill/skill-filesystem/src/index.ts': 'export {}\n',
   'packages/skill/skill-filesystem/src/invariant.ts': 'export {}\n',
   'packages/skill/skill-filesystem/tests/skill-filesystem.spec.ts': 'export {}\n',

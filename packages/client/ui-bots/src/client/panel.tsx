@@ -1,16 +1,16 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
 import type { ReactNode } from 'react'
-import type { BotView } from '@deepseek-ai/dsh-bots/client'
-import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { BotView } from '@yharness/bots/client'
+import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-conversation/client'
+import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface SlotMap {
     /** Embedded Conversation for the selected Bot. */
     'bots.conversation': { kind: 'single'; scope: 'session-maybe' }

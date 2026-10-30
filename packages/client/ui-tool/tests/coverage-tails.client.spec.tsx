@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useDisclosure } from '@deepseek-ai/dsh-client-ui-chat/src/client/chat/use-disclosure.ts'
+import { useDisclosure } from '@yharness/client-ui-chat/src/client/chat/use-disclosure.ts'
 import { cleanup, render } from '@testing-library/react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { StartedToolCall, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { StartedToolCall, ToolResultNode } from '@yharness/client-ui-chat/client'
+import type { SessionId } from '@yharness/session/types'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import { GenericToolCard, type GenericToolCardProps } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { ToolRow } from '../src/client/tool/components/ToolRow.tsx'
 import { BashRow } from '../src/client/tool/toolviews/bash-sample.tsx'
-import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { PartialArguments } from '@yharness/util-values'
 
 type BashRowProps = Parameters<typeof BashRow>[0]
 
@@ -80,7 +80,7 @@ describe('Tool presentation tails', () => {
     }
     const view = render(<BashRow {...bashProps(settled)} />)
     const row = view.container.querySelector('[data-sample="bash"]')!
-    expect(row.textContent).toContain('运行命令')
+    expect(row.textContent).toContain('Bash')
     expect(row.textContent).toContain('Build')
     expect(row.getAttribute('data-clickable')).toBeNull()
   })
@@ -104,7 +104,7 @@ describe('Tool presentation tails', () => {
 
     const runningView = render(<BashRow {...bashProps(running)} />)
     expect(runningView.container.querySelector('[data-state="running"]')).not.toBeNull()
-    expect(runningView.getByText('运行命令')).toBeTruthy()
+    expect(runningView.getByText('Bash')).toBeTruthy()
     expect(runningView.getByText('List')).toBeTruthy()
     runningView.unmount()
 
@@ -112,7 +112,7 @@ describe('Tool presentation tails', () => {
     expect(errorView.container.querySelector('[data-sample="bash"]')).not.toBeNull()
     expect(errorView.container.querySelector('[data-state="error"]')).not.toBeNull()
     expect(errorView.container.querySelector('[data-state="error"] svg')).not.toBeNull()
-    expect(errorView.getByText('运行命令')).toBeTruthy()
+    expect(errorView.getByText('Bash')).toBeTruthy()
     expect(errorView.container.querySelector('[class*="_errorSummary_"]')).not.toBeNull()
     errorView.unmount()
 
@@ -120,7 +120,7 @@ describe('Tool presentation tails', () => {
     expect(stoppedView.container.querySelector('[data-state="stopped"]')).not.toBeNull()
     expect(stoppedView.container.querySelector('[data-state="stopped"] svg')).not.toBeNull()
     const stoppedSummary = stoppedView.getByRole('button').querySelector('[class*="_stoppedSummary_"]')
-    expect(stoppedSummary?.textContent).toBe('已停止')
-    expect(stoppedView.getAllByText('已停止')).toHaveLength(2)
+    expect(stoppedSummary?.textContent).toBe('Stopped')
+    expect(stoppedView.getAllByText('Stopped')).toHaveLength(2)
   })
 })

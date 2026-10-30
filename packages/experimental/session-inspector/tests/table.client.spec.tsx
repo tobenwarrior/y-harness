@@ -2,9 +2,9 @@
 /** Virtual Inspector rows expose raw data and flash on updates. */
 
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { bindSnapshotSelector, makeTranslate, RemoteError, sessionSnapshot } from '@deepseek-ai/dsh-client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
+import { bindSnapshotSelector, makeTranslate, RemoteError, sessionSnapshot } from '@yharness/client-test-runtime'
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest'
 import { InspectorTable, type InspectorTableProps } from '../src/client/views/InspectorTable.tsx'
 import type { InspectorRecord, InspectorRow } from '../src/client/views/table-model.ts'

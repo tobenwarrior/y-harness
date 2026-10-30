@@ -1,7 +1,7 @@
 /** Native initialization precedes Client mounting and does not persist automatic locale choices. */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
+import { stubConfigForm } from '@yharness/client-test-runtime'
 import { apply, LocaleRuntime } from '../src/client/index.ts'
 import { parseLocaleBootstrap } from '../src/client/bootstrap.ts'
 import type { LocaleSettings } from '../src/locale-settings.ts'
@@ -27,8 +27,8 @@ describe('native locale initialization', () => {
     const ctx = new Context()
     const host = stubConfigForm<LocaleSettings>()
     try {
-      const locale = new LocaleRuntime(ctx, host.scope, { languages: ['ja-JP', 'zh-Hant', 'en-US'], preference: null })
-      expect(locale.getSnapshot().active).toBe('zh')
+      const locale = new LocaleRuntime(ctx, host.scope, { languages: ['fr-FR', 'zh-Hant', 'en-US'], preference: null })
+      expect(locale.getSnapshot().active).toBe('en')
       expect(host.set).not.toHaveBeenCalled()
       locale.setLocale('en')
       expect(host.set).toHaveBeenCalledExactlyOnceWith('preference', 'en')
@@ -44,7 +44,7 @@ describe('native locale initialization', () => {
       expect(locale.getSnapshot().active).toBe('en')
       locale.register('native-test', 'en', {})
       expect(locale.getSnapshot().active).toBe('en')
-      locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' })
+      locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
       expect(locale.getSnapshot().active).toBe('en')
     } finally {
       await ctx.fiber.dispose()
@@ -54,12 +54,12 @@ describe('native locale initialization', () => {
   it('keeps an external preference pending until its language registers', async () => {
     const ctx = new Context()
     try {
-      const locale = new LocaleRuntime(ctx, undefined, { languages: ['zh-CN'], preference: 'ja' })
-      expect(locale.getSnapshot().active).toBe('zh')
-      const remove = locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' })
-      expect(locale.getSnapshot().active).toBe('ja')
+      const locale = new LocaleRuntime(ctx, undefined, { languages: ['zh-CN'], preference: 'fr' })
+      expect(locale.getSnapshot().active).toBe('en')
+      const remove = locale.addLanguage({ id: 'fr', label: 'French', fallback: 'en' })
+      expect(locale.getSnapshot().active).toBe('fr')
       remove()
-      expect(locale.getSnapshot().active).toBe('zh')
+      expect(locale.getSnapshot().active).toBe('en')
     } finally {
       await ctx.fiber.dispose()
     }

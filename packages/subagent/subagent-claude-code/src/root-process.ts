@@ -1,11 +1,11 @@
 /** Asynchronous whole-process confinement behind the SDK's synchronous spawn interface. */
 import { EventEmitter } from 'node:events'
 import { Transform, type TransformCallback } from 'node:stream'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
-import type { SubprocessHandle, SubprocessOutcome } from '@deepseek-ai/dsh-subprocess'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import type { SandboxExecutionPolicy } from '@yharness/sandbox'
+import type { SubprocessHandle, SubprocessOutcome } from '@yharness/subprocess'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { claudeSpawnSpec } from './process.ts'
 
 interface ProtocolBounds { readonly lineBytes: number; readonly lifetimeBytes: number }

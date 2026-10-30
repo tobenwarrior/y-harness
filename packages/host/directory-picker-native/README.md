@@ -3,7 +3,7 @@ description: "Native-OS-chooser backend of the directory-picker seam: opens one 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-host-directory-picker-native
+# @yharness/host-directory-picker-native
 
 ## Summary
 

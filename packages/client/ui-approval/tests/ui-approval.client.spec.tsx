@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { Context } from '@deepseek-ai/cordis'
-import { createScope, scopeOf } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { Context } from '@yharness/cordis'
+import { createScope, scopeOf } from '@yharness/api-session-controller/client'
+import type { ToolCallId } from '@yharness/llm'
+import type { SessionId } from '@yharness/session/types'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApprovalPanel } from '../src/client/ApprovalPanel.tsx'
@@ -223,14 +223,14 @@ describe('approval Remote Event consumer', () => {
       toolName: 'bash',
       callId: 'call-1',
       reason: 'needs access',
-      displayReason: { en: 'Display reason', zh: '展示原因' },
+      displayReason: { en: 'Display reason', zh: '\u{5C55}\u{793A}\u{539F}\u{56E0}' },
       signal: controller.signal,
     }, next)
     const pending = bench.pending.getSnapshot()[0]!
     const { options, component } = bench.registration()
 
     expect(component).toBe(ApprovalPanel)
-    expect(pending.displayReason).toEqual({ en: 'Display reason', zh: '展示原因' })
+    expect(pending.displayReason).toEqual({ en: 'Display reason', zh: '\u{5C55}\u{793A}\u{539F}\u{56E0}' })
     expect(options.inject().resolveReason(pending.displayReason!)).toBe('Display reason')
     expect(options.select({ pendingInteraction: undefined })).toBeNull()
     expect(options.select({ pendingInteraction: pending })).toBe(pending)
@@ -374,14 +374,14 @@ describe('ApprovalPanel', () => {
     const pending = new PendingApproval(id('s1'), {
       toolName: 'bash',
       reason: 'audit reason',
-      displayReason: { en: 'English explanation', zh: '中文说明' },
+      displayReason: { en: 'English explanation', zh: '\u{4E2D}\u{6587}\u{8BF4}\u{660E}' },
     })
     const props = panelProps(pending)
     const view = render(<ApprovalPanel {...props} />)
     expect(screen.getByText('English explanation')).toBeTruthy()
     expect(screen.queryByText('audit reason')).toBeNull()
     view.rerender(<ApprovalPanel {...props} resolveReason={reason => reason['zh']!} />)
-    expect(screen.getByText('中文说明')).toBeTruthy()
+    expect(screen.getByText('\u{4E2D}\u{6587}\u{8BF4}\u{660E}')).toBeTruthy()
     expect(pending.reason).toBe('audit reason')
   })
 

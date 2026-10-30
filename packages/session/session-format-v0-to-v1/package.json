@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-session-format-v0-to-v1",
+  "name": "@yharness/session-format-v0-to-v1",
   "description": "Frozen released-v0 Session codec and identity migration to v1",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/session/session-format-v0-to-v1"
   },
   "type": "module",
@@ -39,14 +39,14 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-session-format": "workspace:*",
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/session-format": "workspace:*",
+    "@yharness/util-values": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session": "workspace:*"
   }
 }

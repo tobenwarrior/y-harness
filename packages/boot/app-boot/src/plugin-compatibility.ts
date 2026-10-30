@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import semver from 'semver'
+import { bundlePackageNameCandidates } from './profile-resolution/package-aliases.ts'
 
 /** Incompatible dsh peers and the exact plugin/runtime exemption decision. */
 export interface PluginCompatibility {
@@ -36,6 +37,12 @@ function identityField(manifest: Record<string, unknown>, field: 'name' | 'versi
   return value
 }
 
+function isHarnessPeer(name: string): boolean {
+  return bundlePackageNameCandidates(name).some(candidate => (
+    candidate === '@deepseek-ai/dsh' || candidate.startsWith('@deepseek-ai/dsh-')
+  ))
+}
+
 /**
  * Read this app-boot package's version in both source and bundled installations.
  * @returns the validated runtime semantic version, preserving its exact spelling.
@@ -49,7 +56,7 @@ export function getDshRuntimeVersion(): string {
 }
 
 /**
- * Check every @deepseek-ai/dsh or @deepseek-ai/dsh-* peer against the runtime.
+ * Check every @yharness/cli or @yharness/* peer against the runtime.
  * Prereleases participate in ranges. workspace:^, workspace:~, and workspace:*
  * refer to the current runtime; other invalid ranges are incompatible.
  * @param manifest - parsed plugin package.json; inherited fields are ignored.
@@ -72,7 +79,7 @@ export function evaluatePluginCompatibility(
     if (typeof range !== 'string') {
       throw new Error(`Plugin manifest peerDependencies[${JSON.stringify(name)}] must be a string`)
     }
-    if (name !== '@deepseek-ai/dsh' && !name.startsWith('@deepseek-ai/dsh-')) continue
+    if (!isHarnessPeer(name)) continue
     const requirement = ['workspace:^', 'workspace:~', 'workspace:*'].includes(range) ? runtimeVersion : range
     if (requirement.trim() === '' || !semver.satisfies(runtimeVersion, requirement, { includePrerelease: true })) {
       peers[name] = range

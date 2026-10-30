@@ -1,5 +1,5 @@
 /**
- * Real-process tests for `@deepseek-ai/dsh-pwsh-local`: the LOCAL subprocess
+ * Real-process tests for `@yharness/pwsh-local`: the LOCAL subprocess
  * service plus a REAL pwsh executable, exercised through the executor seam
  * (`resolve` → `run`/`start`). These verify the world — actual PowerShell
  * runs, output capture, truncation and spill, deadlines, kill escalation, and
@@ -14,13 +14,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { PwshLocalExecutor, ENCODING_PREAMBLE, candidatePwshPaths, resolvePwshPath } from '@deepseek-ai/dsh-pwsh-local'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import SubprocessRuntime from '@deepseek-ai/dsh-subprocess'
-import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import type { ShellExecSpec, ShellExecution, ShellProcess, ShellRunResult } from '@deepseek-ai/dsh-shell'
+import { Context } from '@yharness/cordis'
+import { PwshLocalExecutor, ENCODING_PREAMBLE, candidatePwshPaths, resolvePwshPath } from '@yharness/pwsh-local'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import SubprocessRuntime from '@yharness/subprocess'
+import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputReader, SubprocessSpawnSpec } from '@yharness/subprocess'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import type { ShellExecSpec, ShellExecution, ShellProcess, ShellRunResult } from '@yharness/shell'
 
 /** Historical foreground shorthand over the unified execute() seam. */
 async function run(x: { execute(spec: ShellExecSpec): Promise<ShellExecution> }, spec: ShellExecSpec): Promise<ShellRunResult> {
@@ -234,11 +234,11 @@ describe('spawn construction (pure, every platform)', () => {
     const ctx = createContext()
     const subprocess = new CapturingSubprocessRuntime(ctx)
     await ctx.plugin(PwshLocalExecutor)
-    await run(ctx.shell, ctx.shell.resolve({ command: 'Write-Output 你好' }))
+    await run(ctx.shell, ctx.shell.resolve({ command: 'Write-Output \u{4F60}\u{597D}' }))
     expect(subprocess.specs).toHaveLength(1)
     const { argv } = subprocess.specs[0]!
     expect(argv.slice(0, 5)).toEqual([expect.any(String), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command'])
-    expect(argv[5]).toBe(`${ENCODING_PREAMBLE}Write-Output 你好`)
+    expect(argv[5]).toBe(`${ENCODING_PREAMBLE}Write-Output \u{4F60}\u{597D}`)
     expect(ENCODING_PREAMBLE).toContain('[Console]::OutputEncoding')
     expect(ENCODING_PREAMBLE).toContain('$OutputEncoding')
   })

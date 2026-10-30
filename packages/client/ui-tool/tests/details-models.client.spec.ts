@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 /** Detail adapters accept the exact recorded result text and retain safe fallback paths. */
 import { describe, expect, it } from 'vitest'
-import type { ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { en, zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import { statusLine } from '@deepseek-ai/dsh-tool-jobs/src/render.ts'
-import { presentation } from '@deepseek-ai/dsh-tool-session-query/src/presentation.ts'
-import { renderList, renderRead, renderSpawn } from '@deepseek-ai/dsh-tool-terminal/src/render.ts'
-import { formatSpillNotice } from '@deepseek-ai/dsh-spill-policy/notice'
+import type { ToolResultNode } from '@yharness/client-ui-chat/client'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { en, zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
+import { statusLine } from '@yharness/tool-jobs/src/render.ts'
+import { presentation } from '@yharness/tool-session-query/src/presentation.ts'
+import { renderList, renderRead, renderSpawn } from '@yharness/tool-terminal/src/render.ts'
+import { formatSpillNotice } from '@yharness/spill-policy/notice'
 import { detailBadge, detailJson, detailList, detailRecord, inspectionItems, nonempty } from '../src/client/tool/models/detail-model-shared.ts'
 import { detailsCardModel } from '../src/client/tool/models/details-card-model.ts'
-import { SpillLocator } from '@deepseek-ai/dsh-spill'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { SpillLocator } from '@yharness/spill'
+import { PartialArguments } from '@yharness/util-values'
 
 const t = makeTranslate(en, commonEn)
 
@@ -55,12 +55,12 @@ describe('shared detail values', () => {
 
 describe('control detail adapters', () => {
   it.each([
-    [{ timedOut: false }, '子智能体状态 · 检测到变化'],
-    [{ timedOut: true }, '子智能体状态 · 等待超时'],
-    [{ timedOut: false, noProgress: { message: 'No pending work' } }, '没有正在运行的子智能体'],
-  ] as const)('names subagents in Chinese wait results (%j)', (value, summary) => {
+    [{ timedOut: false }, 'Subagent activity · Change detected'],
+    [{ timedOut: true }, 'Subagent activity · Wait timed out'],
+    [{ timedOut: false, noProgress: { message: 'No pending work' } }, 'No active subagents'],
+  ] as const)('names subagents in the legacy locale alias (%j)', (value, summary) => {
     const translate = makeTranslate(zh, commonZh)
-    expect(translate('tool.title.waitAgent')).toBe('等待子智能体')
+    expect(translate('tool.title.waitAgent')).toBe('Wait for subagent')
     expect(detailsCardModel(output('wait_agent', JSON.stringify(value)), translate, 'zh-CN')?.summary).toBe(summary)
   })
 

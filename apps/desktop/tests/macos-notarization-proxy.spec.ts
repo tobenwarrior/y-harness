@@ -147,7 +147,7 @@ it('excludes both operations across processes and releases ownership after force
     const saved = readFileSync(join(lock, 'original.json'), 'utf8')
     // Coverage builds the addon, but does not emit the package's JavaScript entry.
     const flockSource = new URL('../../../native/system/packages/entry/src/flock.ts', import.meta.url).href
-    const child = spawn(process.execPath, ['--input-type=module', '-e', `
+    const child = spawn(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', `
       import { openSync } from 'node:fs';
       import { tryLockExclusive } from ${JSON.stringify(flockSource)};
       const fd = openSync(process.argv[1], 'a', 0o600);

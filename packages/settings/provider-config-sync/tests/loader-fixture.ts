@@ -2,12 +2,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { onTestFinished } from 'vitest'
-import { boot, initProfile, readProfilePatches, type ProfileContext } from '@deepseek-ai/dsh-app-boot'
-import ConfigEditor from '@deepseek-ai/dsh-config-editor'
-import Settings from '@deepseek-ai/dsh-settings'
-import Hmr from '@deepseek-ai/dsh-hmr'
-import Timer from '@deepseek-ai/cordis-plugin-timer'
-import z from '@deepseek-ai/schemastery'
+import { boot, initProfile, readProfilePatches, type ProfileContext } from '@yharness/app-boot'
+import ConfigEditor from '@yharness/config-editor'
+import Settings from '@yharness/settings'
+import Hmr from '@yharness/hmr'
+import Timer from '@yharness/cordis-plugin-timer'
+import z from '@yharness/schemastery'
 import ProviderConfigSync from '../src/index.ts'
 
 const Probe = { Config: z.object({ providers: z.dict(z.object({

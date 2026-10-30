@@ -1,6 +1,6 @@
 /** Lost native handles require reviewed cold history and explicit uncertainty, never synthetic release receipts. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { CodingSessionLibrary } from '../src/library.ts'
 import { codingSessionHandoffSchema } from '../src/handoff-record.ts'
 import type { CodingSessionHandoff, CodingSessionMirror, CodingSessionProvider, CodingSessionSnapshot, CodingSessionRecoveryAcknowledgement } from '../src/types.ts'
@@ -224,7 +224,7 @@ describe('restart recovery of cooperative native ownership', () => {
   })
   it('bounds complete multibyte mirror detail including its retained ownership marker', async () => {
     const f = await fixture()
-    const title = '界'.repeat(1000)
+    const title = '\u{754C}'.repeat(1000)
     f.records.set(f.mirror.id, { ...f.records.get(f.mirror.id)!, title })
     const completeBytes = Buffer.byteLength(JSON.stringify(await f.library.detail(f.mirror.id)), 'utf8')
     f.setMaxBytes(completeBytes)
@@ -236,7 +236,7 @@ describe('restart recovery of cooperative native ownership', () => {
   })
   it('refuses an oversized complete recovery result before committing its checkpoint', async () => {
     const f = await fixture()
-    const title = '界'.repeat(1000)
+    const title = '\u{754C}'.repeat(1000)
     f.records.set(f.mirror.id, { ...f.records.get(f.mirror.id)!, title }); f.set({ ...initial, title })
     const currentBytes = Buffer.byteLength(JSON.stringify(await f.library.detail(f.mirror.id)), 'utf8')
     f.setMaxBytes(currentBytes + 10)

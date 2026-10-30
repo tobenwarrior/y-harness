@@ -1,8 +1,8 @@
 /** Browser-safe Bot requests, durable values, and Remote failure vocabulary. */
 
-import { brandString, type Branded } from '@deepseek-ai/dsh-brand'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { brandString, type Branded } from '@yharness/brand'
+import type { ImageAttachmentRef } from '@yharness/attachment'
+import type { SessionId } from '@yharness/session/types'
 
 /** Stable user-owned identity for one roster entry. */
 export type BotId = Branded<'BotId'>
@@ -180,7 +180,7 @@ export interface BotAvatarReadValue {
   readonly data: string
 }
 
-declare module '@deepseek-ai/dsh-typert-protocol' {
+declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
     /** The requested Bot id is absent from the durable roster. */
     'bot/not-found': { readonly botId: BotId }
@@ -197,7 +197,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 }
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Events {
     /**
      * Post-commit notification for roster writes; listeners refetch `bots.list`.

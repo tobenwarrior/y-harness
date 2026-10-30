@@ -225,7 +225,7 @@
 
 /* Many-column tables (the renderer's `md-table-wide` hook) keep their
    natural width and scroll inside the wrapper; a hosting layout may widen
-   the wrapper through the hook (deepsuite chat TableWrapper parity). */
+   the wrapper through the hook. */
 .tableScroll table {
   border-collapse: collapse;
   width: max-content;
@@ -234,8 +234,7 @@
 
 /* Tables under four columns, and any table inside a blockquote, fill the
    column instead: cells wrap down to their minimum readable width, and the
-   wrapper's scroll only remains for the below-floor case (deepsuite chat
-   parity: `.wrapper:not(:has(th:nth-child(4), td:nth-child(4)))`). */
+   wrapper's scroll only remains for the below-floor case. */
 .tableFill table {
   width: 100%;
   max-width: none;

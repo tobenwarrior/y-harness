@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { Ajv2020 } from 'ajv/dist/2020.js'
 import * as yaml from 'js-yaml'
-import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
-import type { ConfigSchemaDump } from '@deepseek-ai/dsh-app-boot'
+import { entryListSchema } from '@yharness/cordis-plugin-include'
+import type { ConfigSchemaDump } from '@yharness/app-boot'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -21,7 +21,7 @@ if (process.env.DSH_EXAMPLE_MODE === 'lib' && !builtArtifactsExist) {
 const packageName = 'dsh-schema-acceptance-fixture'
 const profileName = 'schema-acceptance'
 const processTimeoutMs = 90_000
-const schemaImport = "import Schema from '@deepseek-ai/schemastery'"
+const schemaImport = "import Schema from '@yharness/schemastery'"
 const forbiddenApply = `
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -49,7 +49,7 @@ async function createFixture(modules: Record<string, string>, patches: string): 
     version: '1.0.0',
     type: 'module',
     exports: Object.fromEntries(Object.keys(modules).map(name => [`./${name}`, `./${name}.mjs`])),
-    peerDependencies: { '@deepseek-ai/schemastery': '*' },
+    peerDependencies: { '@yharness/schemastery': '*' },
     dsh: { bundle: { patch: './cordis.patch.yml' } },
   }))
   for (const [name, source] of Object.entries(modules)) {
@@ -67,13 +67,13 @@ async function createFixture(modules: Record<string, string>, patches: string): 
 }
 
 async function installNativeInclude(fixture: Fixture): Promise<void> {
-  const name = '@deepseek-ai/cordis-plugin-include'
+  const name = '@yharness/cordis-plugin-include'
   const directory = join(fixture.profile, 'node_modules', name)
   await mkdir(directory, { recursive: true })
   await copyFile(join(repoRoot, 'vendor/include/lib/index.js'), join(directory, 'index.js'))
   await writeFile(join(directory, 'package.json'), JSON.stringify({
     name, version: '1.0.3', type: 'module', exports: './index.js',
-    peerDependencies: { '@deepseek-ai/cordis': '*', '@deepseek-ai/cordis-plugin-loader': '*' },
+    peerDependencies: { '@yharness/cordis': '*', '@yharness/cordis-plugin-loader': '*' },
     dependencies: { 'js-yaml': '*' },
   }))
   const path = join(fixture.profile, 'package.json')
@@ -172,10 +172,10 @@ describe.skipIf(!builtArtifactsExist)('dsh --dump-config-schema assembled output
 
   it.each([false, true])('expands canonical Include and re-export aliases with profile-local copy: %s', async (localCopy) => {
     const fixture = await createFixture({
-      alias: "export { default } from '@deepseek-ai/cordis-plugin-include'",
+      alias: "export { default } from '@yharness/cordis-plugin-include'",
     }, `- insert:
     - id: canonical
-      name: '@deepseek-ai/cordis-plugin-include'
+      name: '@yharness/cordis-plugin-include'
       config:
         path: ./nested/plugins.yml
         patches:
@@ -306,9 +306,9 @@ describe.skipIf(!builtArtifactsExist)('dsh --dump-config-schema assembled output
       { level: 'error', path: '/2', message: 'fixture module import failed' },
     ])
     expect(result.stderr.split('\n')).toEqual([
-      'dsh: error: [/0] Config is not a native Schemastery schema',
-      'dsh: error: [/1] fixture lazy schema failed',
-      'dsh: error: [/2] fixture module import failed',
+      'yharness: error: [/0] Config is not a native Schemastery schema',
+      'yharness: error: [/1] fixture lazy schema failed',
+      'yharness: error: [/2] fixture module import failed',
     ])
   })
 
@@ -344,7 +344,7 @@ describe.skipIf(!builtArtifactsExist)('dsh --dump-config-schema assembled output
     await writeFile(overlay, '- id: missing\n  disabled: true\n')
     const schema = await dump(fixture, ['--patch', overlay])
     expect(schema.exitCode).toBe(0)
-    expect(schema.stderr).toBe('dsh: warning: patch: entry "missing" not found')
+    expect(schema.stderr).toBe('yharness: warning: patch: entry "missing" not found')
     expect(parseSchema(schema.stdout)['x-cordis'].diagnostics).toEqual([{ level: 'warning', message: 'patch: entry "missing" not found' }])
     const config = await dump(fixture, ['--patch', overlay], '--dump-config')
     expect(config.exitCode).toBe(0)

@@ -1,7 +1,7 @@
 /** Official Y Harness occupants for the generic browser-brand slots. */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-sidebar/client'
 import { OfficialBrandMark, OfficialBrandName } from './Brand.tsx'
 
 /** Required service: the UI slot registry. */

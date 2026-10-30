@@ -2,7 +2,7 @@
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type { CodingSessionEvent, CodingSessionProvider, CodingSessionSnapshot, CodingSessionReadRequest } from './types.ts'
 import { codingSessionDigest } from './digest.ts'
 

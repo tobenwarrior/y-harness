@@ -22,11 +22,13 @@ try {
     $desktop = Join-Path $Root ('Desktop space ' + [char]0x4e2d + [char]0x6587)
     $other = Join-Path $Root 'Other Desktop'
     $npm = Join-Path $Root 'npm'
+    $legacy = Join-Path $Root 'Legacy Desktop'
     $system = Join-Path $Root 'system'
-    New-Item -ItemType Directory -Force $desktop, $other, $npm, $system | Out-Null
-    [IO.File]::WriteAllText((Join-Path $desktop 'dsh.cmd'), 'fixture')
-    [IO.File]::WriteAllText((Join-Path $other 'dsh.cmd'), 'fixture')
-    [IO.File]::WriteAllText((Join-Path $npm 'dsh.cmd'), 'fixture')
+    New-Item -ItemType Directory -Force $desktop, $other, $npm, $legacy, $system | Out-Null
+    [IO.File]::WriteAllText((Join-Path $desktop 'yharness.cmd'), 'fixture')
+    [IO.File]::WriteAllText((Join-Path $other 'yharness.cmd'), 'fixture')
+    [IO.File]::WriteAllText((Join-Path $npm 'yharness.cmd'), 'fixture')
+    [IO.File]::WriteAllText((Join-Path $legacy 'dsh.cmd'), 'legacy fixture')
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($environmentKey)
     try { $key.SetValue('Path', $npm, [Microsoft.Win32.RegistryValueKind]::ExpandString) }
     finally { $key.Dispose() }
@@ -34,7 +36,8 @@ try {
     # .NET may expand a CI runner's short temporary-directory name.
     $desktop = $before.directory
     $other = (State $other).directory
-    Require ($before.activeCommand -eq (Join-Path $npm 'dsh.cmd')) 'existing npm command was not detected'
+    Require ($before.activeCommand -eq (Join-Path $npm 'yharness.cmd')) 'existing npm command was not detected'
+    Require ((State $legacy).available) 'legacy dsh launcher was not accepted'
     [void](Apply 'install' $desktop)
     Require ((UserPath) -eq ($desktop + ';' + $npm)) 'installation changed unrelated PATH entries'
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($environmentKey, $true)
@@ -77,7 +80,7 @@ try {
     finally { $key.Dispose() }
     [void](Apply 'remove' $desktop)
     Require ((UserPath) -eq $manualPath) 'removal deleted a retained entry after the owned entry was removed manually'
-    [IO.File]::Delete((Join-Path $npm 'dsh.cmd'))
+    [IO.File]::Delete((Join-Path $npm 'yharness.cmd'))
     [IO.File]::WriteAllText((Join-Path $npm 'dsh.ps1'), 'fixture')
     $options.MachinePath = ''
     Require ((State $desktop).activeCommand -eq (Join-Path $npm 'dsh.ps1')) 'PowerShell launcher was not detected'

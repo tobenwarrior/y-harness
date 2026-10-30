@@ -1,8 +1,8 @@
-import { Context } from '@deepseek-ai/cordis'
-import { LocalSpillStore } from '@deepseek-ai/dsh-spill-local'
-import { LocalFileSystem } from '@deepseek-ai/dsh-fs-local'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { Context } from '@yharness/cordis'
+import { LocalSpillStore } from '@yharness/spill-local'
+import { LocalFileSystem } from '@yharness/fs-local'
+import { SessionId } from '@yharness/session'
+import { ToolCallId } from '@yharness/llm'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -32,7 +32,7 @@ it.each([false, true])('keeps concurrent physical spill files private while reta
       const fork = ctx.plugin(locators, { root, locatorRoot })
       disposers.push(() => fork.dispose())
       await fork
-      const content = `physical UTF-8 内容 ${index}`
+      const content = `physical UTF-8 \u{5185}\u{5BB9} ${index}`
       const ref = await ctx.spillStore.saveText({
         owner: { sessionId: SessionId('same-session') },
         source: { kind: 'tool', toolName: 'bash', callId: ToolCallId('same-call'), label: 'result' },

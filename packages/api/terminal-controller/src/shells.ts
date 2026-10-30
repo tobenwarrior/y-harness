@@ -1,5 +1,5 @@
 /** Shell selection and executable verification use the target execution provider. */
-import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+import type { SubprocessRuntime } from '@yharness/subprocess'
 import type { TerminalShell } from './types.ts'
 
 /**

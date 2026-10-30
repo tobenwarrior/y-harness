@@ -3,7 +3,7 @@ description: "Browse project and shared skills, inspect explicit relationships, 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-skill-library
+# @yharness/client-ui-skill-library
 
 ## Summary
 

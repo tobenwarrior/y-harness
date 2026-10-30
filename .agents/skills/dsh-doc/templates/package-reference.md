@@ -14,7 +14,7 @@ kind: "package-reference"
 ## Skeleton
 
 ```markdown
-# @deepseek-ai/dsh-<name>
+# @yharness/<name>
 
 ## Summary
 

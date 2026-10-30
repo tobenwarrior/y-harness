@@ -1,10 +1,10 @@
-- radio "自定义地址" [checked]
-- text: 自定义地址
-- textbox "自定义地址" [invalid]:
+- radio "Custom address" [checked]
+- text: Custom address
+- textbox "Custom address" [invalid]:
   - /placeholder: https://npm.example.com/
   - text: invalid-registry
-- alert: 请输入以 http:// 或 https:// 开头的地址
-- text: 填写内网或私有 npm 源地址，以 http:// 或 https:// 开头。若为需要登录的源，请把凭据放在本机的 ~/.npmrc 里。
+- alert: Enter an address starting with http:// or https://
+- text: Enter an internal or private npm registry address starting with http:// or https://. If it requires a login, store the credentials in ~/.npmrc on this machine.
 
 {
   "registry": [
@@ -25,7 +25,7 @@
       "colorScheme": "dark",
       "focused": {
         "outline": "none",
-        "boxShadow": "rgb(122, 170, 255) 0px 0px 0px 0.5px inset",
+        "boxShadow": "rgb(89, 157, 231) 0px 0px 0px 0.5px inset",
         "borderColor": "rgb(242, 90, 90)"
       },
       "blurred": {
@@ -53,7 +53,7 @@
       "colorScheme": "dark",
       "focused": {
         "outline": "none",
-        "boxShadow": "rgb(122, 170, 255) 0px 0px 0px 0.5px inset",
+        "boxShadow": "rgb(89, 157, 231) 0px 0px 0px 0.5px inset",
         "borderColor": "rgb(242, 90, 90)"
       },
       "blurred": {

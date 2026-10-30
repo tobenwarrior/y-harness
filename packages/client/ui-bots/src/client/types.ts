@@ -2,13 +2,13 @@ import type {
   BotAccent as SharedBotAccent,
   BotAvatar as SharedBotAvatar,
   BotIdentity as SharedBotIdentity,
-} from '@deepseek-ai/dsh-bots/client'
+} from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
   AvatarGenerationStatus,
   AvatarGenerationValue,
-} from '@deepseek-ai/dsh-avatar-generation/types'
+} from '@yharness/avatar-generation/types'
 
 /** Visual accent families persisted by the Bot service. */
 export type BotAccent = SharedBotAccent

@@ -7,18 +7,18 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Locator, type Page, type Request } from 'playwright'
 import { expect, it, onTestFailed } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { LlmAdapter, ReasoningEffortId, ServiceTierId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SkillLearningNativeItem, SkillLibraryItem } from '@deepseek-ai/dsh-skill-library/types'
-import type { CodingSessionClaimAcknowledgement, CodingSessionNativeTurnId, CodingSessionProvider, CodingSessionReadRequest, CodingSessionSequentialReleaseReceipt, CodingSessionSnapshot, CodingSessionSource } from '@deepseek-ai/dsh-coding-session'
-import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-import type {} from '@deepseek-ai/dsh-agent-default-model'
-import type {} from '@deepseek-ai/dsh-agent-loop'
-import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import type {} from '@deepseek-ai/dsh-skill'
-import type {} from '@deepseek-ai/dsh-llm-pi-ai'
+import { brandString } from '@yharness/brand'
+import { LlmAdapter, ReasoningEffortId, ServiceTierId, createUserMessage } from '@yharness/llm'
+import type { GenerateOptions, LlmModelInfo, LlmResolvedModelInfo, StreamChunk } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
+import type { SkillLearningNativeItem, SkillLibraryItem } from '@yharness/skill-library/types'
+import type { CodingSessionClaimAcknowledgement, CodingSessionNativeTurnId, CodingSessionProvider, CodingSessionReadRequest, CodingSessionSequentialReleaseReceipt, CodingSessionSnapshot, CodingSessionSource } from '@yharness/coding-session'
+import { createLaunchEnvironmentSnapshot } from '@yharness/launch-environment'
+import type {} from '@yharness/agent-default-model'
+import type {} from '@yharness/agent-loop'
+import type {} from '@yharness/agent-preset-registry'
+import type {} from '@yharness/skill'
+import type {} from '@yharness/llm-pi-ai'
 import { launchWebScaffold, readPersistedEvents, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { connectFreshWorkspace, newEnglishPage, openSettings, saveFailureShot } from './support.ts'
 
@@ -128,14 +128,14 @@ async function capturePalettes(world: World, name: string): Promise<void> {
 async function changeLanguage(page: Page, language: 'en' | 'zh', settingsOpen = false): Promise<void> {
   const previous = language === 'zh' ? 'en' : 'zh'
   if (!settingsOpen) await openSettings(page, previous)
-  const dialog = page.getByRole('dialog', { name: previous === 'en' ? 'Settings' : '设置', exact: true })
-  await dialog.getByRole('button', { name: previous === 'en' ? 'General' : '通用设置', exact: true }).click()
-  await dialog.getByRole('button', { name: previous === 'en' ? 'English' : '中文', exact: true }).click()
-  await page.getByRole('menuitem', { name: language === 'en' ? 'English' : '中文', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: previous === 'en' ? 'Settings' : '\u{8BBE}\u{7F6E}', exact: true })
+  await dialog.getByRole('button', { name: previous === 'en' ? 'General' : '\u{901A}\u{7528}\u{8BBE}\u{7F6E}', exact: true }).click()
+  await dialog.getByRole('button', { name: previous === 'en' ? 'English' : '\u{4E2D}\u{6587}', exact: true }).click()
+  await page.getByRole('menuitem', { name: language === 'en' ? 'English' : '\u{4E2D}\u{6587}', exact: true }).click()
   await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe(language === 'en' ? 'en' : 'zh-CN')
   if (!settingsOpen) {
-    await page.getByRole('dialog', { name: language === 'en' ? 'Settings' : '设置', exact: true })
-      .getByRole('button', { name: language === 'en' ? 'Close' : '关闭', exact: true }).click()
+    await page.getByRole('dialog', { name: language === 'en' ? 'Settings' : '\u{8BBE}\u{7F6E}', exact: true })
+      .getByRole('button', { name: language === 'en' ? 'Close' : '\u{5173}\u{95ED}', exact: true }).click()
   }
 }
 
@@ -296,8 +296,8 @@ it('approves an empty native project, records fixture facts and updates one reve
     assertRemote(world, 'approveLearningPolicy')
     assertRemote(world, 'rollback')
     await changeLanguage(page, 'zh')
-    await page.getByRole('button', { name: '项目学习', exact: true }).click()
-    await page.getByRole('dialog', { name: '项目学习', exact: true }).getByRole('button', { name: '撤销项目学习', exact: true }).waitFor()
+    await page.getByRole('button', { name: '\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).click()
+    await page.getByRole('dialog', { name: '\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).getByRole('button', { name: '\u{64A4}\u{9500}\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).waitFor()
     await page.screenshot({ path: join(world.shots, 'remaining-native-project-policy-zh-dark.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
     registration()
@@ -436,7 +436,7 @@ it('forces only consented reference reduction, protects pinned and edited bundle
     assertRemote(world, 'archive')
     assertRemote(world, 'restore')
     await changeLanguage(page, 'zh')
-    await page.getByRole('button', { name: '已删除技能', exact: true }).waitFor()
+    await page.getByRole('button', { name: '\u{5DF2}\u{5220}\u{9664}\u{6280}\u{80FD}', exact: true }).waitFor()
     await page.screenshot({ path: join(world.shots, 'remaining-maintenance-restored-zh-dark.png'), animations: 'disabled' })
   })
 })
@@ -662,9 +662,9 @@ it('imports original fixture identities, refreshes append-only history idempoten
     assertRemote(world, 'importSession')
     assertRemote(world, 'refreshMirror')
     await changeLanguage(page, 'zh', true)
-    const chinese = page.getByRole('dialog', { name: '设置', exact: true })
-    await chinese.getByRole('button', { name: '编程会话', exact: true }).click()
-    await chinese.getByRole('region', { name: '会话记录', exact: true }).getByText(appended.text, { exact: true }).waitFor()
+    const chinese = page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
+    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
+    await chinese.getByRole('region', { name: '\u{4F1A}\u{8BDD}\u{8BB0}\u{5F55}', exact: true }).getByText(appended.text, { exact: true }).waitFor()
     await page.screenshot({ path: join(world.shots, 'remaining-coding-mirror-zh-dark.png'), animations: 'disabled' })
     await unregister()
     expect((await scaffold.ctx.codingSessions.getState()).sources.some(candidate => candidate.profileId === source.profileId)).toBe(false)
@@ -813,11 +813,11 @@ it('saves independent Decision controls, previews admitted order and falls back 
     assertRemote(world, 'configureDecision')
     assertRemote(world, 'retrieve')
     await changeLanguage(page, 'zh', true)
-    const chinese = page.getByRole('dialog', { name: '设置', exact: true })
-    await chinese.getByRole('button', { name: '模型', exact: true }).click()
-    const chineseDecision = chinese.getByRole('region', { name: 'Decision 建议', exact: true })
+    const chinese = page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
+    await chinese.getByRole('button', { name: '\u{6A21}\u{578B}', exact: true }).click()
+    const chineseDecision = chinese.getByRole('region', { name: 'Decision \u{5EFA}\u{8BAE}', exact: true })
     await chineseDecision.waitFor()
-    await chineseDecision.getByRole('heading', { name: 'Decision 建议', exact: true }).scrollIntoViewIfNeeded()
+    await chineseDecision.getByRole('heading', { name: 'Decision \u{5EFA}\u{8BAE}', exact: true }).scrollIntoViewIfNeeded()
     await page.screenshot({ path: join(world.shots, 'remaining-decision-footer-zh-dark.png'), animations: 'disabled' })
     apiRegistration()
     nativeRegistration()
@@ -1020,10 +1020,10 @@ it('hands the exact original fixture conversation to Y and waits for release evi
     assertRemote(world, 'continueSequential')
     assertRemote(world, 'releaseSequential')
     await changeLanguage(world.page, 'zh', true)
-    const chinese = world.page.getByRole('dialog', { name: '设置', exact: true })
-    await chinese.getByRole('button', { name: '编程会话', exact: true }).click()
-    await chinese.getByRole('region', { name: '会话记录', exact: true }).getByText(fixture.source.nativeSessionId, { exact: true }).waitFor()
-    await chinese.getByRole('button', { name: '交给 Y 继续', exact: true }).scrollIntoViewIfNeeded()
+    const chinese = world.page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
+    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
+    await chinese.getByRole('region', { name: '\u{4F1A}\u{8BDD}\u{8BB0}\u{5F55}', exact: true }).getByText(fixture.source.nativeSessionId, { exact: true }).waitFor()
+    await chinese.getByRole('button', { name: '\u{4EA4}\u{7ED9} Y \u{7EE7}\u{7EED}', exact: true }).scrollIntoViewIfNeeded()
     await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-external-ready-zh-dark.png'), animations: 'disabled' })
     await fixture.unregister()
   }, { enableSequentialHandoff: true })
@@ -1105,9 +1105,9 @@ it('retains original history and blocked ownership after conflicting native chan
     assertRemote(world, 'continueSequential')
     assertRemote(world, 'releaseSequential')
     await changeLanguage(world.page, 'zh', true)
-    const chinese = world.page.getByRole('dialog', { name: '设置', exact: true })
-    await chinese.getByRole('button', { name: '编程会话', exact: true }).click()
-    await chinese.getByRole('button', { name: '交还原生应用', exact: true }).scrollIntoViewIfNeeded()
+    const chinese = world.page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
+    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
+    await chinese.getByRole('button', { name: '\u{4EA4}\u{8FD8}\u{539F}\u{751F}\u{5E94}\u{7528}', exact: true }).scrollIntoViewIfNeeded()
     await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-release-uncertain-zh-dark.png'), animations: 'disabled' })
     // Owned cleanup restores the external double before awaiting this intentionally blocked source disposal.
   }, { enableSequentialHandoff: true })

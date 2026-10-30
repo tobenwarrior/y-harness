@@ -1,7 +1,7 @@
 /** Page-owned Loader entries; transport-independent reconciliation, retries and code replacement. */
-import type { Fiber, FiberState } from '@deepseek-ai/cordis'
-import type { Entry, Loader } from '@deepseek-ai/cordis-plugin-loader'
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { Fiber, FiberState } from '@yharness/cordis'
+import type { Entry, Loader } from '@yharness/cordis-plugin-loader'
+import type { ObservableSnapshot } from '@yharness/client-store'
 import { parseBootManifest } from './manifest.ts'
 import type { BootManifest, ClientModuleLoader } from './manifest.ts'
 import { removeOwnedStyles, tearDownEntryFiber } from './entry-lifecycle.ts'

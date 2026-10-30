@@ -1,7 +1,7 @@
 /** Display labels and toast sentences for global plugin management. */
 
-import type { IncompatiblePlugin, ManagementError, Registry } from '@deepseek-ai/dsh-api-remotes/client'
-import { withProductDisplayName, type PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { IncompatiblePlugin, ManagementError, Registry } from '@yharness/api-remotes/client'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import type { PluginManagerLocaleKey } from './locales.ts'
 import type { FailedAction, ManagerNotice, PackageRow, PackageView, PluginManagerFace } from './manager-store.ts'
 
@@ -104,12 +104,16 @@ export function managementText(error: {
  */
 export function shortName(name: string): string {
   const unscoped = name.startsWith('@') ? name.slice(name.indexOf('/') + 1) : name
-  return unscoped.replace(/^dsh-(?:host-|client-)?/, '')
+  return unscoped.replace(/^(?:dsh-)?(?:host-|client-)?/, '')
+}
+
+/** Whether a package is an experimental first-party bundle in either namespace. */
+function isExperimentalPackage(name: string): boolean {
+  return name.startsWith('@yharness/experimental-') || name.startsWith('@deepseek-ai/dsh-experimental-')
 }
 
 /**
- * Resolve installed package metadata without changing its technical identity.
- * Exact legacy product mentions in first-party descriptions follow the public display name.
+ * Resolve installed package metadata without changing its technical identity or package-supplied copy.
  * @param pkg - package identity and local metadata.
  * @param resolveText - current-locale package text resolver.
  * @returns localized copy with a technical-name fallback and the independent beta status.
@@ -122,16 +126,14 @@ export function packageText(
     : resolveText(pkg.meta.description) || undefined
   return {
     title: pkg.meta?.title === undefined ? pkg.name : resolveText(pkg.meta.title),
-    description: pkg.name.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
-      ? withProductDisplayName(description)
-      : description,
-    beta: pkg.name.startsWith('@deepseek-ai/dsh-experimental-'),
+    description,
+    beta: isExperimentalPackage(pkg.name),
   }
 }
 
 /**
  * Resolve a bundle row's plugin metadata, using its full module specifier as the final title fallback.
- * Exact legacy product mentions in first-party descriptions follow the public display name.
+ * Package-supplied descriptions remain unchanged so upstream and legal attribution stays exact.
  * @param row - row identity and local metadata.
  * @param resolveText - current-locale package text resolver.
  * @returns the row's display title and optional description.
@@ -144,9 +146,7 @@ export function rowText(
     : resolveText(row.meta.description) || undefined
   return {
     title: row.meta?.title === undefined ? row.moduleName : resolveText(row.meta.title),
-    description: row.moduleName.startsWith('@deepseek-ai/dsh-') && description?.includes('DeepSeek Harness')
-      ? withProductDisplayName(description)
-      : description,
+    description,
   }
 }
 

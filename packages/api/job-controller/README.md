@@ -6,7 +6,7 @@ kind: "package-reference"
 
 ## Summary
 
-`@deepseek-ai/dsh-api-job-controller` owns the Host `ctx.jobController` service and the generated Client `ctx.remote.job` namespace. Its two Remote streams are projections of `ctx.jobs`: `job.list` mirrors the jobs one session can see as whole-set frames, and `job.follow` delivers one job's retained output from an absolute byte offset; its one command, `job.kill`, stops a job on a human's behalf. The Client half installs `ctx.jobs`, the reference-counted service whose rosters and accumulated views the session-header job list renders and whose `kill` its stop control calls. Neither stream touches the model's consuming cursor or its completion notices, and a human kill is not the model's own.
+`@yharness/api-job-controller` owns the Host `ctx.jobController` service and the generated Client `ctx.remote.job` namespace. Its two Remote streams are projections of `ctx.jobs`: `job.list` mirrors the jobs one session can see as whole-set frames, and `job.follow` delivers one job's retained output from an absolute byte offset; its one command, `job.kill`, stops a job on a human's behalf. The Client half installs `ctx.jobs`, the reference-counted service whose rosters and accumulated views the session-header job list renders and whose `kill` its stop control calls. Neither stream touches the model's consuming cursor or its completion notices, and a human kill is not the model's own.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ The Client entry installs `ctx.jobs` (`IJobs`), backed by the package-internal `
 | `observeFlushMs` | `100` | Coalescing window after a registry commit before the next rows or output read, in milliseconds |
 | `observeMaxFrameBytes` | `65,536` | Soft byte budget per observation output frame; one larger chunk ships whole |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-api-job-controller) is the exhaustive source for accepted fields and their JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessapi-job-controller) is the exhaustive source for accepted fields and their JSDoc.
 
 -----
 

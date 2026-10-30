@@ -1,8 +1,8 @@
 /** Browser-session authentication for the Host Connection carrier. */
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
+import { credentialKey } from '@yharness/credentials'
+import type { CredentialProvider, CredentialRecord } from '@yharness/credentials'
 import type {
   ConnectionIndexRequest,
   ConnectionIndexResponse,
@@ -306,6 +306,6 @@ export class BrowserAuth {
     })
     res.end(req.method === 'HEAD'
       ? undefined
-      : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+      : 'Y Harness web authentication required; reopen the URL printed by yharness web.\n')
   }
 }

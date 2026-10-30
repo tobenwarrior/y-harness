@@ -46,7 +46,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-ubuntu-24-04-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / static
     env:
@@ -114,7 +114,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-ubuntu-24-04-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / coverage
     env:
@@ -229,7 +229,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install benchmark browser and hosted dependencies
-        run: pnpm --filter @deepseek-ai/dsh-benchmarks exec playwright install --with-deps chromium
+        run: pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium
 
       - name: Run performance benchmarks
         env:
@@ -243,7 +243,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-ubuntu-24-04-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / snapshots and artifacts
     env:
@@ -349,13 +349,13 @@ jobs:
         # Ephemeral runner images can carry Ubuntu mirrors whose HTTP endpoints are unreachable.
         run: |
           sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -E 's@http://([a-z]{2}\.)?archive\.ubuntu\.com/ubuntu@https://archive.ubuntu.com/ubuntu@g; s@http://security\.ubuntu\.com/ubuntu@https://security.ubuntu.com/ubuntu@g' {} +
-          pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium webkit
+          pnpm --filter @yharness/web-frontend exec playwright install --with-deps chromium webkit
 
       # The persistent VM image owns Playwright's Linux system packages; do
       # not mutate the shared host with apt on every failover run.
       - name: Install Playwright Chromium and WebKit on the failover VM
         if: vars.DSH_CI_FAILOVER_LINUX == 'selfhosted' && github.event.pull_request.user.login != 'dependabot[bot]'
-        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install chromium webkit
+        run: pnpm --filter @yharness/web-frontend exec playwright install chromium webkit
 
       - name: Build and execute the Linux Office runtime
         run: CI=true pnpm run prepare:primary-runtime --target linux-x64 --output "$RUNNER_TEMP/office-runtime" --cache "$RUNNER_TEMP/office-runtime-downloads"
@@ -507,7 +507,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-windows-2025-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / build & observational
     timeout-minutes: 60
@@ -570,7 +570,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-windows-2025-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / coverage
     timeout-minutes: 120
@@ -649,7 +649,7 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'deepseek-harness/deepseek-harness' && 'dsh-windows-2025-16core'
+          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / native tests
     timeout-minutes: 60

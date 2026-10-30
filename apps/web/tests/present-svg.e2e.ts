@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type {} from '@deepseek-ai/dsh-tool-present/types'
-import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
+import type {} from '@yharness/tool-present/types'
+import { deriveReplayScript, parseSessionLog } from '@yharness/llm-replay'
 import {
   assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria, compareOrRefreshGolden,
   fixtureUserPrompts, launchWebScaffold, recordFixture, watchConsole,
@@ -17,7 +17,7 @@ import { connectFreshWorkspaceZh, ZH_BROWSER_LOCALE } from './support.ts'
 const DIR = fileURLToPath(new URL('../../../snapshots/web/present-svg', import.meta.url))
 const FIXTURE = join(DIR, 'session.v3.jsonl')
 const MODE = webSnapshotMode()
-const RECORD_PROMPT = '简单画一个 SVG 表示冯诺依曼架构，保存为 von-neumann.svg，并提供独立文件卡片，方便打开。'
+const RECORD_PROMPT = '\u{7B80}\u{5355}\u{753B}\u{4E00}\u{4E2A} SVG \u{8868}\u{793A}\u{51AF}\u{8BFA}\u{4F9D}\u{66FC}\u{67B6}\u{6784}，\u{4FDD}\u{5B58}\u{4E3A} von-neumann.svg，\u{5E76}\u{63D0}\u{4F9B}\u{72EC}\u{7ACB}\u{6587}\u{4EF6}\u{5361}\u{7247}，\u{65B9}\u{4FBF}\u{6253}\u{5F00}。'
 const FILE = 'von-neumann.svg'
 
 describe('web e2e: requested SVG is explicitly delivered', () => {
@@ -119,13 +119,13 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
     const card = page.locator('[data-presented-file]').filter({ hasText: FILE })
     await card.waitFor({ state: 'visible' })
     expect(await card.count()).toBe(1)
-    expect(await page.getByText('产物', { exact: true }).count()).toBe(0)
+    expect(await page.getByText('\u{4EA7}\u{7269}', { exact: true }).count()).toBe(0)
     // The scaffold workspace is not a git repository; the write call supplies its single changed file.
     const changes = page.locator('[data-changed-files]')
     // Changed-file cards wait for a separate summary request after the presentation events arrive.
     await changes.waitFor({ state: 'visible' })
     expect(await changes.count()).toBe(1)
-    expect(await changes.getByText(`已编辑 ${FILE}`, { exact: true }).count()).toBe(1)
+    expect(await changes.getByText(`\u{5DF2}\u{7F16}\u{8F91} ${FILE}`, { exact: true }).count()).toBe(1)
     expect(await changes.getByRole('list').count()).toBe(0)
     expect(await changes.locator('svg').evaluate(icon => icon.innerHTML))
       .toBe(await card.locator('svg').evaluate(icon => icon.innerHTML))
@@ -166,10 +166,10 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
   })
 
   it('opens the single edited file from its compact card', async () => {
-    await page.locator('[data-changed-files]').getByRole('button', { name: `查看 ${FILE} 的改动` }).click()
+    await page.locator('[data-changed-files]').getByRole('button', { name: `\u{67E5}\u{770B} ${FILE} \u{7684}\u{6539}\u{52A8}` }).click()
     const review = page.locator('[data-changes-review]')
     await review.waitFor({ state: 'visible' })
-    expect(await review.getByRole('button', { name: '选择要查看的文件' }).innerText()).toContain(FILE)
+    expect(await review.getByRole('button', { name: '\u{9009}\u{62E9}\u{8981}\u{67E5}\u{770B}\u{7684}\u{6587}\u{4EF6}' }).innerText()).toContain(FILE)
     expect(tripwire.pageErrors).toEqual([])
   })
 })

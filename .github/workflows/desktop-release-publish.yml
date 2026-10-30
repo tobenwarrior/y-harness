@@ -1,0 +1,59 @@
+name: Y Harness Desktop Release Publish
+
+on:
+  workflow_run:
+    workflows: [Y Harness Desktop Release Package]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/heads/master
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify package commit and tag
+        env:
+          PACKAGE_SHA: ${{ github.event.workflow_run.head_sha }}
+          PACKAGE_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+          PACKAGE_SOURCE_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: |
+          set -eu
+          test "$PACKAGE_REPOSITORY" = 'tobenwarrior/y-harness'
+          test "$PACKAGE_SOURCE_REPOSITORY" = 'tobenwarrior/y-harness'
+          git fetch --no-tags origin "$PACKAGE_SHA"
+          git merge-base --is-ancestor "$PACKAGE_SHA" origin/master
+          git checkout --detach "$PACKAGE_SHA"
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")
+          tag="v$version"
+          test "$(git rev-list -n 1 "$tag")" = "$PACKAGE_SHA"
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.25.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Install publisher dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Download signed artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: desktop-*
+          path: apps/desktop/.desktop-release-input
+          merge-multiple: false
+      - name: Publish verified release assets
+        env:
+          GITHUB_REPOSITORY: tobenwarrior/y-harness
+          GH_TOKEN: ${{ github.token }}
+        run: pnpm --filter @yharness/desktop run publish:github-release -- --input apps/desktop/.desktop-release-input

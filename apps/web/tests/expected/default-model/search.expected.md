@@ -1,5 +1,5 @@
-- group "提供方、模型、推理等级与速度":
-  - searchbox "搜索模型…": ACMLG
-  - button "清除搜索"
-  - menu "模型":
+- group "Provider, model, reasoning effort, and speed":
+  - searchbox "Search models…": ACMLG
+  - button "Clear search"
+  - menu "Model":
     - menuitemradio "Acme Large"

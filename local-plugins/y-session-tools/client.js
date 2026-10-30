@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const { createPortal } = require('react-dom')
-    const { createSnapshotStore } = require('@deepseek-ai/dsh-client-store')
+    const { createSnapshotStore } = require('@yharness/client-store')
 
     const { useEffect, useRef, useState } = React
     const h = React.createElement
@@ -48,23 +48,7 @@ window.__ModuleLoader__.load({
       'cancel': 'Cancel',
     }
 
-    const ZH = {
-      'menu.copyId': '复制会话 ID',
-      'menu.copyReference': '复制会话引用',
-      'menu.copyPath': '复制会话路径',
-      'menu.copied': '已复制',
-      'menu.copyFailed': '复制失败',
-      'menu.delete': '删除会话…',
-      'delete.title': '永久删除会话？',
-      'delete.description': '“{title}”及其存储的日志将从磁盘中删除。',
-      'delete.warning': '此操作无法撤销。归档会保留会话，删除不会。',
-      'delete.action': '永久删除',
-      'delete.pending': '正在删除…',
-      'delete.live': '该会话正在运行，请先停止再删除。',
-      'delete.notFound': '该会话没有可删除的日志。',
-      'delete.failed': '删除失败。',
-      'cancel': '取消',
-    }
+    const ZH = EN
 
     /** Menu rows and the confirmation card, styled with host theme tokens. */
     const CSS = `

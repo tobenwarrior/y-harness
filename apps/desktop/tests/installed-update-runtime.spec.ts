@@ -28,13 +28,17 @@ describe('installed-update runtime preparation', () => {
       for (const version of versions) {
         const runtime = join(run.root, version, 'dsh')
         const descriptor = await verifyDesktopRuntime(runtime, version)
-        expect(descriptor.sharedPackages.find(entry => entry.name === '@deepseek-ai/cordis')?.version).toBe(source.version)
-        expect(descriptor.sharedPackages.find(entry => entry.name === '@deepseek-ai/dsh')?.version).toBe(version)
-        const metadata = JSON.parse(await readFile(join(runtime, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8')) as {
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/cordis')?.version).toBe(source.version)
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/cosmokit')?.version).toBe(source.version)
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/schemastery')?.version).toBe(source.version)
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/node-addon-system')?.version).toBe(source.version)
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/node-addon-system-darwin-arm64')?.version).toBe(source.version)
+        expect(descriptor.sharedPackages.find(entry => entry.name === '@yharness/cli')?.version).toBe(version)
+        const metadata = JSON.parse(await readFile(join(runtime, 'node_modules/@yharness/cli/package.json'), 'utf8')) as {
           dependencies: Record<string, string>
         }
-        expect(metadata.dependencies['@deepseek-ai/dsh-desktop-host']).toBe(version)
-        expect(metadata.dependencies['@deepseek-ai/cordis']).toBe(source.version)
+        expect(metadata.dependencies['@yharness/desktop-host']).toBe(version)
+        expect(metadata.dependencies['@yharness/cordis']).toBe(source.version)
       }
       expect(await readFile(join(original, 'desktop-runtime.json'))).toEqual(before)
       await expect(verifyDesktopRuntime(original, source.version)).resolves.toBeDefined()

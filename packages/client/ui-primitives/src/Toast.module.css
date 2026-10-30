@@ -57,8 +57,7 @@
   padding: 0;
   border: 0;
   background: none;
-  /* deepseek-400, brightened at the designer's request, reads as the action
-     against the always-dark toast surface without an underline. */
+  /* Brightened for contrast against the always-dark toast surface without an underline. */
   color: var(--yh-static-deepseek-400);
   font: inherit;
   cursor: pointer;

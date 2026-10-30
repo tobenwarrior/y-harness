@@ -3,11 +3,11 @@ description: "Anonymous per-harness-home identity for users and maintainers trac
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-anonymous-user-id
+# @yharness/anonymous-user-id
 
 ## Summary
 
-DeepSeek Harness uses one anonymous identifier per harness home to correlate telemetry, feedback, and DeepSeek requests from the same installation without identifying the user. The random UUID is stored in `$DSH_HOME/.anonymous-user-id` (`$DSH_HOME` defaults to `~/.dsh`), persists across restarts, and is regenerated after you delete the file. Different harness homes use different identifiers, and the value contains no machine or account data. Built-in features create and attach it automatically; package consumers can reuse the same value for installation-scoped correlation, but cannot join records across homes.
+Y Harness uses one anonymous identifier per harness home to correlate telemetry, feedback, and DeepSeek requests from the same installation without identifying the user. The random UUID is stored in `$DSH_HOME/.anonymous-user-id` (`$DSH_HOME` defaults to `~/.dsh`), persists across restarts, and is regenerated after you delete the file. Different harness homes use different identifiers, and the value contains no machine or account data. Built-in features create and attach it automatically; package consumers can reuse the same value for installation-scoped correlation, but cannot join records across homes.
 
 ## Table of Contents
 
@@ -42,7 +42,7 @@ The id lives in `$DSH_HOME/.anonymous-user-id` (`$DSH_HOME` defaults to `~/.dsh`
 When you build a feature that should share the installation's anonymous id, import the value once and reuse it — telemetry, feedback, and DeepSeek already use the same id, so your records line up with theirs:
 
 ```ts
-import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import { getOrCreateAnonymousUserId } from '@yharness/anonymous-user-id'
 
 const userId = getOrCreateAnonymousUserId() // stable for the process lifetime
 ```

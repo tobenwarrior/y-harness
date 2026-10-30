@@ -1,7 +1,7 @@
 /** Decorative occupant for the task-manager sidebar entry. */
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconSidebarAutomationOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type { PropsRuntime } from '@yharness/client-ui-slots'
+import { IconSidebarAutomationOutlineRegular } from '@yharness/client-ui-primitives'
+import type {} from '@yharness/client-ui-sidebar/client'
 
 /**
  * Render the clock glyph at the size the sidebar asks for; the sidebar owns

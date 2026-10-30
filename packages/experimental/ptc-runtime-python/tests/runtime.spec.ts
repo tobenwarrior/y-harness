@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { PythonPtcRuntime, hostFrameParseCeiling, readProcessStart, resolvePythonBin } from '../src/index.ts'
 import { logTruncationMarker } from '../src/protocol.ts'
 import type { Config } from '../src/index.ts'
@@ -13,7 +13,7 @@ import type { Config } from '../src/index.ts'
 // child only TMPDIR, so a bare `python3` inside a wrapper would resolve against
 // /bin/sh's default PATH rather than the caller's selected interpreter.
 const PYABS = resolvePythonBin('python3') ?? 'python3'
-import type { PtcBindingFunction, PtcJsonValue, PtcRunResult } from '@deepseek-ai/dsh-ptc-runtime'
+import type { PtcBindingFunction, PtcJsonValue, PtcRunResult } from '@yharness/ptc-runtime'
 
 /**
  * Names one `py/` script whose `copyFileSync` must fail, for the partial-staging
@@ -209,7 +209,7 @@ describe('PythonPtcRuntime — seam descriptors and misuse', () => {
     // budget is rejected at load even though the address-space gate alone
     // would admit it (50 MiB * 12 = 600 MiB < 1 GiB - 64 MiB).
     const script = [
-      "import { Context } from '@deepseek-ai/cordis'",
+      "import { Context } from '@yharness/cordis'",
       "import { PythonPtcRuntime } from './packages/experimental/ptc-runtime-python/src/index.ts'",
       'const ctx = new Context()',
       'try {',
@@ -5800,14 +5800,14 @@ describe('PythonPtcRuntime — hostile peer', () => {
     const result = await runtime.run(runtime.resolve({
       program: [
         'import os, json',
-        'os.write(3, json.dumps({"type":"done","error":{"kind":"exception","message":"中文中文中文"}}).encode() + b"\\n")',
+        'os.write(3, json.dumps({"type":"done","error":{"kind":"exception","message":"\u{4E2D}\u{6587}\u{4E2D}\u{6587}\u{4E2D}\u{6587}"}}).encode() + b"\\n")',
         'import time',
         'time.sleep(5)',
       ].join('\n'),
       bindings: [],
     }))
     expect(result.error?.kind).toBe('exception')
-    expect(result.error?.message).toBe('中文中文中文')
+    expect(result.error?.message).toBe('\u{4E2D}\u{6587}\u{4E2D}\u{6587}\u{4E2D}\u{6587}')
   }, 8000)
 
   it('re-caps a forged done error.message host-side on a UTF-8 boundary', async () => {

@@ -32,17 +32,15 @@
   height: 14px;
 }
 
-/* Windows' zero-width caption collapse keeps the historical status marker
-   inside the fixed expand control; the rail footer is not mounted there. */
-.badge {
-  position: absolute;
-  inset-inline-end: 2px;
-  top: 2px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  corner-shape: round;
-  background: var(--yh-alias-brand-primary-new-colorprimary-new-color);
+/* Windows' zero-width caption collapse has no rail footer track. Keep the
+   update action in its own fixed caption seat so it cannot nest in the
+   sidebar toggle's button or steal the toggle's click. */
+.captionIndicator {
+  position: fixed;
+  top: calc((var(--dsh-windows-titlebar-height) - 28px) / 2);
+  left: 84px;
+  z-index: 30;
+  -webkit-app-region: no-drag;
 }
 
 .spinner { animation: spin 1s linear infinite; }

@@ -14,30 +14,30 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
       class="logoRow"
       data-window-drag="true"
     >
-      <button
-        aria-label="Open sidebar"
-        class="iconButton toggle"
-        type="button"
+      <span
+        class="toggleAnchor"
       >
-        <svg
-          aria-hidden="true"
-          data-content="211cbc78"
-          fill="none"
-          focusable="false"
-          height="16"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1"
-          viewBox="0 0 16 16"
-          width="16"
-          xmlns="http://www.w3.org/2000/svg"
-        />
-        <div
-          data-slot="sidebar.toggle.badge"
-          style="display: contents;"
-        />
-      </button>
+        <button
+          aria-label="Open sidebar"
+          class="iconButton toggle"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            data-content="211cbc78"
+            fill="none"
+            focusable="false"
+            height="16"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1"
+            viewBox="0 0 16 16"
+            width="16"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
+      </span>
     </div>
     <button
       aria-label="New session"
@@ -68,6 +68,10 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
         </span>
       </span>
     </button>
+    <div
+      data-slot="sidebar.toggle.badge"
+      style="display: contents;"
+    />
     <div
       class="regionArea"
     >
@@ -139,26 +143,30 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded 
           </span>
         </span>
       </button>
-      <button
-        aria-label="Collapse sidebar"
-        class="iconButton toggle"
-        type="button"
+      <span
+        class="toggleAnchor"
       >
-        <svg
-          aria-hidden="true"
-          data-content="211cbc78"
-          fill="none"
-          focusable="false"
-          height="16"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1"
-          viewBox="0 0 16 16"
-          width="16"
-          xmlns="http://www.w3.org/2000/svg"
-        />
-      </button>
+        <button
+          aria-label="Collapse sidebar"
+          class="iconButton toggle"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            data-content="211cbc78"
+            fill="none"
+            focusable="false"
+            height="16"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1"
+            viewBox="0 0 16 16"
+            width="16"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
+      </span>
     </div>
     <button
       aria-label="New session"
@@ -240,30 +248,34 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
       class="logoRow"
       data-window-drag="true"
     >
-      <button
-        aria-label="Open sidebar"
-        class="iconButton toggle"
-        type="button"
+      <span
+        class="toggleAnchor"
       >
-        <svg
-          aria-hidden="true"
-          data-content="211cbc78"
-          fill="none"
-          focusable="false"
-          height="18"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1"
-          viewBox="0 0 16 16"
-          width="18"
-          xmlns="http://www.w3.org/2000/svg"
-        />
+        <button
+          aria-label="Open sidebar"
+          class="iconButton toggle"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            data-content="211cbc78"
+            fill="none"
+            focusable="false"
+            height="18"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1"
+            viewBox="0 0 16 16"
+            width="18"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
         <div
           data-slot="sidebar.toggle.badge"
           style="display: contents;"
         />
-      </button>
+      </span>
     </div>
     <button
       aria-label="New session"
@@ -365,26 +377,30 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
           </span>
         </span>
       </button>
-      <button
-        aria-label="Collapse sidebar"
-        class="iconButton toggle"
-        type="button"
+      <span
+        class="toggleAnchor"
       >
-        <svg
-          aria-hidden="true"
-          data-content="211cbc78"
-          fill="none"
-          focusable="false"
-          height="16"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1"
-          viewBox="0 0 16 16"
-          width="16"
-          xmlns="http://www.w3.org/2000/svg"
-        />
-      </button>
+        <button
+          aria-label="Collapse sidebar"
+          class="iconButton toggle"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            data-content="211cbc78"
+            fill="none"
+            focusable="false"
+            height="16"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1"
+            viewBox="0 0 16 16"
+            width="16"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
+      </span>
     </div>
     <button
       aria-label="New session"
@@ -452,7 +468,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
 </div>
 `;
 
-exports[`sidebar shell snapshots > renders the expanded column in the default locale (zh, no setLocale) 1`] = `
+exports[`sidebar shell snapshots > renders the expanded column in the English fallback for an unshipped browser locale 1`] = `
 <div
   data-slot="sidebar"
   style="display: contents;"
@@ -467,7 +483,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
       data-window-drag="true"
     >
       <button
-        aria-label="新建会话"
+        aria-label="New session"
         class="brand wide"
         type="button"
       >
@@ -485,35 +501,39 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
               <span
                 class="fallbackBrandName"
               >
-                Y Harness 本地构建
+                Y Harness Local Build
               </span>
             </div>
           </span>
         </span>
       </button>
-      <button
-        aria-label="收起侧边栏"
-        class="iconButton toggle"
-        type="button"
+      <span
+        class="toggleAnchor"
       >
-        <svg
-          aria-hidden="true"
-          data-content="211cbc78"
-          fill="none"
-          focusable="false"
-          height="16"
-          stroke="currentColor"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1"
-          viewBox="0 0 16 16"
-          width="16"
-          xmlns="http://www.w3.org/2000/svg"
-        />
-      </button>
+        <button
+          aria-label="Collapse sidebar"
+          class="iconButton toggle"
+          type="button"
+        >
+          <svg
+            aria-hidden="true"
+            data-content="211cbc78"
+            fill="none"
+            focusable="false"
+            height="16"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="1"
+            viewBox="0 0 16 16"
+            width="16"
+            xmlns="http://www.w3.org/2000/svg"
+          />
+        </button>
+      </span>
     </div>
     <button
-      aria-label="新建会话"
+      aria-label="New session"
       class="newSession"
       data-yh-part="new-session"
       type="button"
@@ -541,7 +561,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
           <span
             class="newSessionLabel wide"
           >
-            新会话
+            New Session
           </span>
         </span>
       </span>

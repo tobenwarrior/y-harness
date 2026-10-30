@@ -61,6 +61,8 @@ For rejected notes:
 
 After the triplet is sealed, never edit, move, translate, reformat, or delete it. Archived notes remain valid inbound-link targets but are historical snapshots, not authority for current behavior.
 
+The repository's one-time English-only archive migration is not ordinary Agent Note pruning. It retires only the translation artifact and its consistency record, preserves every English note, and records the retired SHA-256 seals in the versioned archive manifest. Do not repeat that migration for an individual note or weaken the archive verifier to permit a new deletion.
+
 ## Validate and report
 
 Run the archive verifier's focused test, `pnpm run verify-archived-agent-notes`, `pnpm run doc-sync`, `pnpm run lint`, and `git diff --check`; select any additional evidence through [dsh-pre-push-checks](../dsh-pre-push-checks/SKILL.md).

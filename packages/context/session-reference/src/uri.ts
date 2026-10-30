@@ -1,11 +1,11 @@
 /** Canonical session URI and inline mention encoding. */
 
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
+import { brandString } from '@yharness/brand'
+import type { SessionId as SessionIdType } from '@yharness/session'
 import { SessionReferenceError } from './config.ts'
 import type { SessionReferenceInput } from './types.ts'
 
-/** URI scheme reserved for DeepSeek Harness session snapshots. */
+/** URI scheme reserved for Y Harness session snapshots. */
 export const SESSION_REFERENCE_SCHEME = 'dsh-session:'
 
 /**

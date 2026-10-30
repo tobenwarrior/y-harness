@@ -3,7 +3,7 @@ description: "Target-neutral conversation assembly and browser shell: event and 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-conversation
+# @yharness/client-ui-conversation
 
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 
@@ -66,7 +66,7 @@ The composer registers the File command action and owns its label, availability,
 
 Drafts retain plain text and file, folder, and Session reference chips across Session switching and reload. Public input methods accept text; internal restoration and Workspace transfer preserve structured references. The input model imports saved content before its first published read; React only mounts that editor and binds the existing Conversation store writer. The original storage key accepts legacy strings and writes semantic snapshots without runtime node IDs. A pending skill catalog does not block editing: slash names remain ordinary text until a matching catalog entry arrives. Arrival rematches the current text without changing chips, selection, or Undo history. Browser-owned attachment File objects are not persisted by this mechanism. The [draft initialization decision](../../../.agents/notes/implemented/architecture/2026-09-30-structured-draft-initialization.md) defines ownership and restoration.
 
-Claimed commands retain their identity and highlight when only their arguments and trailing separator are deleted; editing the command name releases the claim. The same rules apply to every command and locale, including `/goal`, `/目标`, `/plan`, and `/计划`. Command hints and ordinary placeholders remain hidden throughout IME composition and reappear only after the editor commits the final text and the corresponding input is empty.
+Claimed commands retain their identity and highlight when only their arguments and trailing separator are deleted; editing the command name releases the claim. The same rules apply to every command and locale, including `/goal` and `/plan`. Command hints and ordinary placeholders remain hidden throughout IME composition and reappear only after the editor commits the final text and the corresponding input is empty.
 
 Workspace selection uses `uiWorkspace.openWorkspace` to prepare the target and commit navigation. Draft content, including structured references, and attachments move in its synchronous preparation callback only while that request is current; later navigation or owner disposal leaves the original draft intact.
 
@@ -122,9 +122,9 @@ interface ComposerChainProps {
 A business package may install one entry only while a Remote waterfall request is pending:
 
 ```tsx
-import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type { ChainSelect, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ComposerChainProps } from '@yharness/client-ui-conversation/client'
+import type { ChainSelect, PropsRuntime } from '@yharness/client-ui-slots'
+import type { SessionId } from '@yharness/session/types'
 
 interface Request {
   readonly sessionId: SessionId

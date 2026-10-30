@@ -5,6 +5,7 @@ import {
   resolveDesktopAutoUpdateConfig,
   resolveDesktopAutoUpdateEnvironment,
   resolveDesktopAutoUpdateTarget,
+  resolveDesktopPackagedUpdateConfig,
   resolveDesktopUploadConfig,
 } from '../scripts/desktop-auto-update-environment.mjs'
 
@@ -76,6 +77,21 @@ describe('desktop auto-update environment', () => {
       secretIdEnvName: 'DOWNLOAD_PROD_COS_SECRET_ID',
       secretKeyEnvName: 'DOWNLOAD_PROD_COS_SECRET_KEY',
     })
+  })
+
+  it('uses the owner GitHub Releases provider for production packages without COS credentials', () => {
+    expect(resolveDesktopPackagedUpdateConfig({ DSH_DESKTOP_AUTO_UPDATE_ENV: 'production' }, 'darwin', 'arm64'))
+      .toEqual({
+        environment: 'production',
+        target: 'mac-arm64',
+        provider: 'github',
+        owner: 'tobenwarrior',
+        repo: 'y-harness',
+        repository: 'y-harness',
+        channel: 'latest',
+        releaseType: 'release',
+        publicUrl: 'https://github.com/tobenwarrior/y-harness/releases/latest/download/',
+      })
   })
 
   it('requires the selected deployment origin for packages and bucket only for uploads', () => {

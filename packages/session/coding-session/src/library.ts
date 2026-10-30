@@ -1,6 +1,6 @@
 /** Serialized native mirrors, conservative exclusion and explicit sequential ownership. */
 import { randomUUID } from 'node:crypto'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { z } from 'zod'
 import { codingSessionDigest } from './digest.ts'
 import { codingSessionSnapshotSchema } from './record.ts'

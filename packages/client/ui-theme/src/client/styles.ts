@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import base from '../styles/base.css?inline'
 import cornerShape from '../styles/corner-shape.css?inline'
 import designPlatform from '../styles/design-platform.css?inline'
@@ -9,7 +9,7 @@ import gradientShadowText from '../styles/gradient-shadow-text.css?inline'
 import shiki from '../styles/shiki.css?inline'
 import terminal from '../styles/terminal.css?inline'
 
-const PLUGIN_ID = '@deepseek-ai/dsh-client-ui-theme'
+const PLUGIN_ID = '@yharness/client-ui-theme'
 
 const STYLES = [
   ['base.css', base],

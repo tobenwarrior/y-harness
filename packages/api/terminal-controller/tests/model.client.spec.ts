@@ -1,12 +1,12 @@
 /** Browser view ownership across slow RPCs, remounts and transport generations. */
 import { setImmediate } from 'node:timers/promises'
 import { afterEach, expect, it, vi } from 'vitest'
-import { RemoteStream, RemoteStreamCarrierError, type ClientRemote, type RemoteStreamOptions } from '@deepseek-ai/dsh-api-gateway/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { RemoteError, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import { streamMethod } from '@deepseek-ai/dsh-remote-mock'
-import type {} from '@deepseek-ai/dsh-api-terminal-controller/remote'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { RemoteStream, RemoteStreamCarrierError, type ClientRemote, type RemoteStreamOptions } from '@yharness/api-gateway/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import { RemoteError, type RemoteResult } from '@yharness/typert-protocol'
+import { streamMethod } from '@yharness/remote-mock'
+import type {} from '@yharness/api-terminal-controller/remote'
+import type { SessionId } from '@yharness/session/types'
 import { TerminalView, type TerminalRemote } from '../src/client/model.ts'
 import type { TerminalEnvironment, TerminalFrame, WebTerminalId, WebTerminalInfo } from '../src/types.ts'
 
@@ -148,16 +148,16 @@ it('bounds queued input by UTF-8 bytes and releases the byte budget after settle
   await connected(model)
   const input = Promise.withResolvers<RemoteResult<void>>()
   vi.mocked(remote.write).mockReturnValueOnce(input.promise)
-  model.write('界界')
+  model.write('\u{754C}\u{754C}')
   await expect.poll(() => vi.mocked(remote.write).mock.calls.length).toBe(1)
   model.write('a')
   expect(model.state.getSnapshot()).toMatchObject({ phase: 'failed', issue: 'inputFull' })
   input.resolve(success(undefined))
   model.connect()
   await expect.poll(() => model.state.getSnapshot().writable).toBe(true)
-  model.write('界界')
+  model.write('\u{754C}\u{754C}')
   await expect.poll(() => vi.mocked(remote.write).mock.calls.length).toBe(2)
-  expect(vi.mocked(remote.write).mock.calls.map(call => call[3])).toEqual(['界界', '界界'])
+  expect(vi.mocked(remote.write).mock.calls.map(call => call[3])).toEqual(['\u{754C}\u{754C}', '\u{754C}\u{754C}'])
 })
 
 it('drops queued commands from a detached attachment and ignores its late resize failure', async () => {

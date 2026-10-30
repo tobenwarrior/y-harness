@@ -14,53 +14,53 @@
 
 - insert:
     - id: tool-plugin-manager
-      name: '@deepseek-ai/dsh-plugin-manager/tools'
+      name: '@yharness/plugin-manager/tools'
       disabled: true
 
     - id: plugin-manager
-      name: '@deepseek-ai/dsh-plugin-manager'
+      name: '@yharness/plugin-manager'
       disabled: !!js "!ctx.get('profileContext')"
 
     - id: timer
-      name: '@deepseek-ai/cordis-plugin-timer'
+      name: '@yharness/cordis-plugin-timer'
 
     # Profile configuration reloads by default; module roots are opt-in.
     - id: hmr
-      name: '@deepseek-ai/dsh-hmr'
+      name: '@yharness/hmr'
       disabled: !!js "!ctx.get('profileContext')"
       config:
         root: []
 
     - id: llm
-      name: '@deepseek-ai/dsh-llm'
+      name: '@yharness/llm'
 
     - id: deepseek-llm-api-extensions
-      name: '@deepseek-ai/dsh-deepseek-llm-api-extensions'
+      name: '@yharness/deepseek-llm-api-extensions'
 
     - id: session
-      name: '@deepseek-ai/dsh-session'
+      name: '@yharness/session'
 
     - id: session-log-deepseek
-      name: '@deepseek-ai/dsh-session-log-deepseek'
+      name: '@yharness/session-log-deepseek'
 
     - id: typert
-      name: '@deepseek-ai/dsh-typert-registry'
+      name: '@yharness/typert-registry'
 
     - id: typert-loader
-      name: '@deepseek-ai/dsh-typert-loader'
+      name: '@yharness/typert-loader'
 
     - id: typert-gateway
-      name: '@deepseek-ai/dsh-api-gateway'
+      name: '@yharness/api-gateway'
 
     - id: session-title
-      name: '@deepseek-ai/dsh-session-title'
+      name: '@yharness/session-title'
       config:
         fallbackMaxWords: 5
         fallbackMaxBytes: 40
         maxTitleBytes: 80
 
     - id: session-title-llm
-      name: '@deepseek-ai/dsh-session-title-first-prompt-llm'
+      name: '@yharness/session-title-first-prompt-llm'
       config:
         targetWords: 5
         targetCjkCharacters: 10
@@ -69,42 +69,42 @@
         timeoutMs: 60000
 
     - id: user-questions
-      name: '@deepseek-ai/dsh-user-questions'
+      name: '@yharness/user-questions'
 
     - id: agent
-      name: '@deepseek-ai/dsh-agent'
+      name: '@yharness/agent'
 
     - id: plugin-package-inventory-deepseek
-      name: '@deepseek-ai/dsh-plugin-package-inventory-deepseek'
+      name: '@yharness/plugin-package-inventory-deepseek'
 
     # The transport-independent default for Agents created by entry points.
     # Settings may supply a saved selection; consumers read it at creation time.
     - id: agent-default-model
-      name: '@deepseek-ai/dsh-agent-default-model'
+      name: '@yharness/agent-default-model'
       config:
         provider: deepseek-official
         model: deepseek-flash
 
     - id: jobs
-      name: '@deepseek-ai/dsh-jobs-local'
+      name: '@yharness/jobs-local'
 
     - id: llm-retry
-      name: '@deepseek-ai/dsh-llm-retry'
+      name: '@yharness/llm-retry'
 
     # Live Config forms persist through the active profile patch.
 
     # Live configuration forms persist through the launcher's profile.
     - id: config-editor
-      name: '@deepseek-ai/dsh-config-editor'
+      name: '@yharness/config-editor'
       disabled: !!js "!ctx.get('profileContext')"
 
     - id: settings
-      name: '@deepseek-ai/dsh-settings'
+      name: '@yharness/settings'
       disabled: !!js "!ctx.get('profileContext')"
 
     # Shares ordinary catalog configuration only when sharedPath is explicit.
     - id: provider-config-sync
-      name: '@deepseek-ai/dsh-provider-config-sync'
+      name: '@yharness/provider-config-sync'
       disabled: !!js "!ctx.get('profileContext')"
 
     # Credential sources: inherited environment over the managed
@@ -112,15 +112,15 @@
     # Adapters resolve references per request; the Models page writes only the
     # managed document, which is never materialized into the process environment.
     - id: authorization
-      name: '@deepseek-ai/dsh-authorization'
+      name: '@yharness/authorization'
 
     - id: deepseek-account
-      name: '@deepseek-ai/dsh-deepseek-account-platform'
+      name: '@yharness/deepseek-account-platform'
       config:
         desktopPlatform: !!js "ctx.get('profileContext')?.name === 'desktop' && ['darwin', 'win32'].includes(process.platform) ? process.platform : null"
 
     - id: credentials
-      name: '@deepseek-ai/dsh-credentials-local'
+      name: '@yharness/credentials-local'
 
     # The pi-ai multi-provider twin, mounted dormant: zero routes (and no extra
     # models in the picker) until a `llm-pi-ai:` settings section supplies provider
@@ -130,10 +130,10 @@
     # adapters exist is composition; which providers run is the user's settings
     # document.
     - id: llm-pi-ai
-      name: '@deepseek-ai/dsh-llm-pi-ai'
+      name: '@yharness/llm-pi-ai'
 
     - id: session-persistence-jsonl
-      name: '@deepseek-ai/dsh-session-persistence-jsonl'
+      name: '@yharness/session-persistence-jsonl'
       config:
         root: !!js dshHomePath('sessions')
 
@@ -141,7 +141,7 @@
     # keep content-addressed references that this shared backend resolves for
     # provider requests and authorized history reads.
     - id: attachment-local
-      name: '@deepseek-ai/dsh-attachment-local'
+      name: '@yharness/attachment-local'
 
     # Full-text session search is opt-in. `openAt: never` keeps
     # ctx.sessionQuery mounted — exact reads, titles, and lineage traces
@@ -152,7 +152,7 @@
     # `first-search` or `startup` in a later patch layer (profile
     # cordis.patch.yml or a --patch overlay), typically with a durable `path`.
     - id: session-query-sqlite
-      name: '@deepseek-ai/dsh-session-query-sqlite'
+      name: '@yharness/session-query-sqlite'
       config:
         path: ':memory:'
         openAt: never
@@ -161,22 +161,22 @@
     # through its registered units, so the `list_agents` surface below fails
     # loud without it; web layers reuse this same mount for list rows.
     - id: session-projection
-      name: '@deepseek-ai/dsh-session-projection'
+      name: '@yharness/session-projection'
 
     # Durable KV storage: the storage hub, the json backend, and the
     # schema-validated domain form over them. Session-layer persistence (the
     # projection cache below; workspace in web layers)
     # routes through this stack, so it belongs to the shared base.
     - id: storage
-      name: '@deepseek-ai/dsh-storage'
+      name: '@yharness/storage'
 
     - id: storage-json
-      name: '@deepseek-ai/dsh-storage-json'
+      name: '@yharness/storage-json'
       config:
         root: !!js dshHomePath('storages')
 
     - id: storage-domain
-      name: '@deepseek-ai/dsh-storage-domain'
+      name: '@yharness/storage-domain'
       config:
         backend: json
 
@@ -185,17 +185,20 @@
     # checkpoint document per session), serving the session listing's
     # projection column.
     - id: session-projection-cache
-      name: '@deepseek-ai/dsh-session-projection-cache'
+      name: '@yharness/session-projection-cache'
       config:
         writeEveryEvents: 200
         writeIntervalMs: 5000
 
     - id: otel
-      name: '@deepseek-ai/dsh-otel'
+      name: '@yharness/otel'
 
     # OTel releases a Session-log prefix only after explicit user feedback,
     # regardless of model provider. Ordinary activity never triggers capture.
-    # DSH_TELEMETRY_OTLP_URL overrides the production endpoint. A non-empty
+    # YH_TELEMETRY_OTLP_URL selects the explicit collector endpoint; the
+    # legacy DSH_TELEMETRY_OTLP_URL is accepted only as a fallback. Whitespace
+    # around either value is ignored. No endpoint means no exporter is mounted.
+    # A non-empty
     # DSH_TELEMETRY_DISABLED — any value, including '0'/'false' — opts the
     # process out (the launchers patch the row disabled; config cannot disable
     # a row). Exports carry the harness home's anonymous user id ($DSH_HOME/.anonymous-user-id,
@@ -207,13 +210,14 @@
     # large prefixes or an unsettled transport may leave records unsent.
     # Every CLI exit path drains by disposing the root on SIGINT/SIGTERM.
     - id: session-telemetry-otel
-      name: '@deepseek-ai/dsh-session-telemetry-otel'
+      name: '@yharness/session-telemetry-otel'
+      disabled: !!js "process.env.DSH_TELEMETRY_MODE !== 'DISABLED' && !(process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim())"
       config:
         mode: !!js process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'
         shutdownTimeoutMillis: 3000
         maxRequestBytes: 4000000
         exporter:
-          url: !!js process.env.DSH_TELEMETRY_OTLP_URL ?? 'https://dsh-otel-collector.deepseeksvc.com/v1/logs'
+          url: !!js "process.env.YH_TELEMETRY_OTLP_URL?.trim() || process.env.DSH_TELEMETRY_OTLP_URL?.trim()"
           compression: gzip
           timeoutMillis: 1000
         processor:
@@ -223,37 +227,37 @@
           exportTimeoutMillis: 1500
 
     - id: subprocess
-      name: '@deepseek-ai/dsh-subprocess-local'
+      name: '@yharness/subprocess-local'
 
     # Every shipped CLI mode starts with the same file-effect boundary.
     # The environment remains an explicit deployment override; otherwise fresh
     # sessions pin workspace-write + ask through the permission service below.
     - id: sandbox
-      name: '@deepseek-ai/dsh-sandbox-local'
+      name: '@yharness/sandbox-local'
 
     - id: sandbox-policy
-      name: '@deepseek-ai/dsh-sandbox-policy'
+      name: '@yharness/sandbox-policy'
       config:
         mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
         workspaceRoot: !!js process.cwd()
 
     - id: bash-sandbox
-      name: '@deepseek-ai/dsh-bash-sandbox'
+      name: '@yharness/bash-sandbox'
       disabled: !!js process.platform === 'win32'
       config:
         timeoutMs: 60000
 
     - id: pwsh-sandbox
-      name: '@deepseek-ai/dsh-pwsh-sandbox'
+      name: '@yharness/pwsh-sandbox'
       disabled: !!js process.platform !== 'win32'
 
     - id: approval
-      name: '@deepseek-ai/dsh-user-approval'
+      name: '@yharness/user-approval'
       config:
         policy: !!js "(process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask'"
 
     - id: permission
-      name: '@deepseek-ai/dsh-permission-presets'
+      name: '@yharness/permission-presets'
       config:
         # New sessions start confined to the workspace without approval
         # prompts; wider access is refused. The composer selector and
@@ -277,50 +281,50 @@
             description: Unrestricted access to the internet and any file on your computer.
 
     - id: shell-env
-      name: '@deepseek-ai/dsh-shell-env'
+      name: '@yharness/shell-env'
 
     - id: tool-bash
-      name: '@deepseek-ai/dsh-tool-bash'
+      name: '@yharness/tool-bash'
       disabled: !!js process.platform === 'win32'
 
     - id: tool-pwsh
-      name: '@deepseek-ai/dsh-tool-pwsh'
+      name: '@yharness/tool-pwsh'
       disabled: !!js process.platform !== 'win32'
 
     - id: tool-jobs
-      name: '@deepseek-ai/dsh-tool-jobs'
+      name: '@yharness/tool-jobs'
 
     - id: fs-observation-policy
-      name: '@deepseek-ai/dsh-fs-observation-policy'
+      name: '@yharness/fs-observation-policy'
 
     - id: tool-fs
-      name: '@deepseek-ai/dsh-tool-fs'
+      name: '@yharness/tool-fs'
 
     - id: tool-fs-search
-      name: '@deepseek-ai/dsh-tool-fs-search'
+      name: '@yharness/tool-fs-search'
       config:
         sampleOverCapGlobResults: false
 
     - id: agent-instructions
-      name: '@deepseek-ai/dsh-agent-instructions'
+      name: '@yharness/agent-instructions'
       config:
         maxBytes: 65536
 
     - id: skill
-      name: '@deepseek-ai/dsh-skill'
+      name: '@yharness/skill'
 
     - id: skill-filesystem
-      name: '@deepseek-ai/dsh-skill-filesystem'
+      name: '@yharness/skill-filesystem'
 
     - id: skill-badge
-      name: '@deepseek-ai/dsh-skill-badge'
+      name: '@yharness/skill-badge'
       disabled: true
 
     - id: skill-compound
-      name: '@deepseek-ai/dsh-skill-compound'
+      name: '@yharness/skill-compound'
 
     - id: tool-skill
-      name: '@deepseek-ai/dsh-tool-skill'
+      name: '@yharness/tool-skill'
       config:
         catalogMode: relevant
         catalogLimit: 8
@@ -328,22 +332,22 @@
         catalogQueryMaxChars: 4096
 
     - id: commands
-      name: '@deepseek-ai/dsh-commands'
+      name: '@yharness/commands'
 
     - id: command-feedback
-      name: '@deepseek-ai/dsh-command-feedback'
+      name: '@yharness/command-feedback'
 
     - id: goal
-      name: '@deepseek-ai/dsh-goal'
+      name: '@yharness/goal'
 
     - id: goal-round-driver
-      name: '@deepseek-ai/dsh-goal-round-driver'
+      name: '@yharness/goal-round-driver'
 
     - id: command-goal
-      name: '@deepseek-ai/dsh-command-goal'
+      name: '@yharness/command-goal'
 
     - id: plan-mode
-      name: '@deepseek-ai/dsh-plan-mode'
+      name: '@yharness/plan-mode'
       config:
         section: |
               You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
@@ -359,39 +363,39 @@
               When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
 
     - id: token-meter
-      name: '@deepseek-ai/dsh-token-meter'
+      name: '@yharness/token-meter'
 
     - id: compaction-basic
-      name: '@deepseek-ai/dsh-compaction-basic'
+      name: '@yharness/compaction-basic'
 
     # Human `/compact`: one useful reduction below the automatic threshold. Backend
     # independent, so it follows whichever compaction service this leaf mounts.
     - id: command-compact
-      name: '@deepseek-ai/dsh-command-compact'
+      name: '@yharness/command-compact'
 
     - id: subagent
-      name: '@deepseek-ai/dsh-subagent'
+      name: '@yharness/subagent'
 
     - id: subagent-spawn-in-process
-      name: '@deepseek-ai/dsh-subagent-spawn-in-process'
+      name: '@yharness/subagent-spawn-in-process'
       config:
         providerName: spawn
 
     - id: subagent-fork-in-process
-      name: '@deepseek-ai/dsh-subagent-fork-in-process'
+      name: '@yharness/subagent-fork-in-process'
       config:
         providerName: fork
 
     # Continuable background children are selected per delegation tool. The
     # separately loaded follow-up tool registers the one global `send_message`.
     - id: tool-subagent-control
-      name: '@deepseek-ai/dsh-tool-subagent-control'
+      name: '@yharness/tool-subagent-control'
 
     - id: tool-subagent-list-agents
-      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+      name: '@yharness/tool-subagent-control/list-agents'
 
     - id: tool-subagent
-      name: '@deepseek-ai/dsh-tool-subagent'
+      name: '@yharness/tool-subagent'
       config:
         provider: spawn
         toolName: subagent
@@ -404,42 +408,42 @@
     # See .agents/notes/implemented/feature/2026-08-18-model-selected-subagent-routes.md
     # and .agents/notes/implemented/architecture/2026-08-10-fork-children-stay-one-shot.md.
     - id: tool-subagent-fork
-      name: '@deepseek-ai/dsh-tool-subagent'
+      name: '@yharness/tool-subagent'
       config:
         provider: fork
         toolName: subagent_fork
         backgroundMode: one-shot
 
     - id: ptc-runtime
-      name: '@deepseek-ai/dsh-ptc-runtime-node'
+      name: '@yharness/ptc-runtime-node'
 
     - id: workflow-ptc
-      name: '@deepseek-ai/dsh-workflow-ptc'
+      name: '@yharness/workflow-ptc'
       config:
         provider: spawn
 
     - id: tool-workflow
-      name: '@deepseek-ai/dsh-tool-workflow'
+      name: '@yharness/tool-workflow'
 
     - id: timeout-policy
-      name: '@deepseek-ai/dsh-tool-call-timeout-policy'
+      name: '@yharness/tool-call-timeout-policy'
 
     - id: spill-local
-      name: '@deepseek-ai/dsh-spill-local'
+      name: '@yharness/spill-local'
 
     - id: spill-policy
-      name: '@deepseek-ai/dsh-spill-policy'
+      name: '@yharness/spill-policy'
       config:
         maxInlineTokens: 12500
 
     # Durability checkpoints before each model request and top-level dispatch.
     - id: session-checkpoint-policy
-      name: '@deepseek-ai/dsh-session-checkpoint-policy'
+      name: '@yharness/session-checkpoint-policy'
 
     # Compacts oversized tool results before the broader conversation compactor
     # runs, preserving the model-visible result within the configured budget.
     - id: tool-result-pruner
-      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      name: '@yharness/compaction-tool-result-pruner'
       config:
         thresholdChars: 8192
         headChars: 4096
@@ -448,17 +452,17 @@
     # When an image-capable route rejects a request as over its image budget,
     # replace the oldest images with placeholders on the surface and retry.
     - id: image-offload
-      name: '@deepseek-ai/dsh-compaction-image-offload'
+      name: '@yharness/compaction-image-offload'
 
     - id: tool-todo
-      name: '@deepseek-ai/dsh-tool-todo'
+      name: '@yharness/tool-todo'
       config:
         allowParallelInProgress: true
 
     # Persisted same-session goals reach the model and the slash menu here; the
     # domain, driver, and `/goal` command are above.
     - id: tool-goal
-      name: '@deepseek-ai/dsh-tool-goal'
+      name: '@yharness/tool-goal'
 
     # Fresh-agent Ralph iteration over a build-time-fixed script. Off by
     # default: the tool description restricts `ralph` to runs the human
@@ -468,7 +472,7 @@
     #   - id: tool-ralph
     #     disabled: false
     - id: tool-ralph
-      name: '@deepseek-ai/dsh-tool-ralph'
+      name: '@yharness/tool-ralph'
       disabled: true
       config:
         subagentProvider: spawn
@@ -476,7 +480,7 @@
 
     # Consecutive-repeat reminders on the tool chain.
     - id: repeat-tool-reminder
-      name: '@deepseek-ai/dsh-repeat-tool-reminder'
+      name: '@yharness/repeat-tool-reminder'
       config:
         thresholds: [3, 5, 8]
         argumentsPreviewChars: 500
@@ -493,13 +497,13 @@
     # shipped DeepSeek route gets 60s while the provider-neutral tool default
     # remains 30s.
     - id: web
-      name: '@deepseek-ai/dsh-web'
+      name: '@yharness/web'
       config:
         searchProvider: deepseek-official
         fetchProvider: http
 
     - id: web-search-deepseek
-      name: '@deepseek-ai/dsh-web-search-deepseek'
+      name: '@yharness/web-search-deepseek'
       config:
         apiKeyEnv: DEEPSEEK_API_KEY
 
@@ -507,54 +511,54 @@
     # deepseek-fetch-api. They stay unselected until the Web search settings
     # switch points web.searchProvider and web.fetchProvider at them.
     - id: web-deepseek-api
-      name: '@deepseek-ai/dsh-web-deepseek-api'
+      name: '@yharness/web-deepseek-api'
       config:
         apiKeyEnv: DEEPSEEK_API_KEY
 
     - id: web-fetch-http
-      name: '@deepseek-ai/dsh-web-fetch-http'
+      name: '@yharness/web-fetch-http'
 
     - id: tool-web
-      name: '@deepseek-ai/dsh-tool-web'
+      name: '@yharness/tool-web'
       config:
         fetch: true
         searchTimeoutMs: 60000
 
     - id: mcp-resources
-      name: '@deepseek-ai/dsh-mcp-resources'
+      name: '@yharness/mcp-resources'
 
     # ── rows every mode mounts, whose values each overlay may state ──────────────
 
     # The tool registry. Presentation mode is a deployment choice; omitting it here
     # keeps the schema default (native).
     - id: tools
-      name: '@deepseek-ai/dsh-tools'
+      name: '@yharness/tools'
 
     # The deployment persona is a deployment choice; plan-mode and tool plugins own
     # their own prompt sections.
     - id: system-prompt
-      name: '@deepseek-ai/dsh-system-prompt'
+      name: '@yharness/system-prompt'
       config:
         personaPrefix: ''
 
     # Agents created at startup. The base stays empty; raw overlays may create
     # agents, while Web creates sessions on client request.
     - id: agent-loop
-      name: '@deepseek-ai/dsh-agent-loop'
+      name: '@yharness/agent-loop'
       config:
         agents: []
 
     # The sandboxed filesystem provider. `cwd` defaults to `process.cwd()`; an
     # overlay can pin another workspace.
     - id: fs-sandbox
-      name: '@deepseek-ai/dsh-fs-sandbox'
+      name: '@yharness/fs-sandbox'
 
     # The native DeepSeek adapter. No key or endpoint is inlined: both resolve per
     # request from the `llm-deepseek:` settings section over this entry, with the
     # key coming from the credential store below. Thinking defaults are a deployment
     # choice.
     - id: llm-deepseek
-      name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+      name: '@yharness/llm-deepseek-api-key'
 
     - id: llm-deepseek-account
-      name: '@deepseek-ai/dsh-llm-deepseek-account'
+      name: '@yharness/llm-deepseek-account'

@@ -1,9 +1,9 @@
 /** Request conversion and durable replay validation. */
 import { describe, expect, it, vi } from 'vitest'
-import { createDeveloperMessage, createUserMessage, createAssistantMessage, createMessage, createSystemMessage, createToolResultMessage, ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { ContentBlock, GenerateOptions, ImageBlock, Message, RequestMessage, RequestUserInput } from '@deepseek-ai/dsh-llm'
-import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef, RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { createDeveloperMessage, createUserMessage, createAssistantMessage, createMessage, createSystemMessage, createToolResultMessage, ReasoningEffortId, ToolCallId } from '@yharness/llm'
+import type { ContentBlock, GenerateOptions, ImageBlock, Message, RequestMessage, RequestUserInput } from '@yharness/llm'
+import { AttachmentId, ImageVariantId } from '@yharness/attachment'
+import type { ImageAttachmentRef, RequestImageAttachment } from '@yharness/attachment'
 import { resolveAdapterOptions } from '../src/config.ts'
 import { modelInfo } from '../src/model-info.ts'
 import type { Options as Config } from '../src/config.ts'
@@ -339,7 +339,7 @@ describe('Messages request conversion', () => {
     expect(() => body(messages)).toThrow(/tool/)
   })
 
-  it.each(['{', '', '[]', 'null', '42', 'true', '"text"', '{"description":"最快，但"某个说法"没有证据。"}'])('uses empty input for malformed or non-object historical tool arguments %s', (arguments_) => {
+  it.each(['{', '', '[]', 'null', '42', 'true', '"text"', '{"description":"\u{6700}\u{5FEB}，\u{4F46}"\u{67D0}\u{4E2A}\u{8BF4}\u{6CD5}"\u{6CA1}\u{6709}\u{8BC1}\u{636E}。"}'])('uses empty input for malformed or non-object historical tool arguments %s', (arguments_) => {
     const message = assistant([{ type: 'tool-call', id: ToolCallId('a'), name: 'read', arguments: arguments_ }])
     const history = [user(), message, createToolResultMessage({ callId: ToolCallId('a'), content: [{ type: 'text', text: 'Invalid arguments' }], isError: true }), user('Continue')]
     const saved = JSON.stringify(history)

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
+import { userAgent } from '@yharness/llm'
 import { PiAiAdapter } from '../src/adapter.ts'
 import { catalogModels } from '../src/catalog.ts'
 import { resolveProfiles } from '../src/config.ts'
@@ -31,7 +32,7 @@ it.each([
   // is defined by the origin/path, while the installed SDK owns this flag.
   expect(target.searchParams.get('beta')).toBe(api === 'anthropic-messages' ? 'true' : null)
   expect(seen[0]!.headers.get('x-opencode-session')).toBe('mock-conversation')
-  expect(seen[0]!.headers.get('user-agent')).toMatch(/deepseek|dsh/i)
+  expect(seen[0]!.headers.get('user-agent')).toBe(userAgent())
   expect(seen[0]!.body.model).toBe(model.id)
   expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'error' } })
 })

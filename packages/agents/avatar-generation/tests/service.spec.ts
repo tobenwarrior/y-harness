@@ -1,5 +1,5 @@
-import { Context } from '@deepseek-ai/cordis'
-import { AttachmentStore, AttachmentId, type ImageAttachmentRef, type SaveImageAttachment, type StoredImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { Context } from '@yharness/cordis'
+import { AttachmentStore, AttachmentId, type ImageAttachmentRef, type SaveImageAttachment, type StoredImageAttachment } from '@yharness/attachment'
 import { describe, expect, it, vi } from 'vitest'
 import AvatarGenerationService from '../src/index.ts'
 

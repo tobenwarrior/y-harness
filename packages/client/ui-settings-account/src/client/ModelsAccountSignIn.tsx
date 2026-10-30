@@ -1,7 +1,7 @@
 /** Optional DeepSeek account access alongside other model providers. */
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
+import { Button } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
+import type {} from '@yharness/client-ui-settings-models/client'
 import type { AccountSectionInjected } from './AccountSection.tsx'
 import css from './AccountSection.module.css'
 

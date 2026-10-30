@@ -2,16 +2,16 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { lstat, open, realpath, readFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
 import type { Options, Query, SDKAssistantMessage, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { z as jsonSchema } from 'zod'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
-import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import type {} from '@deepseek-ai/dsh-workspace'
-import type { SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId } from '@deepseek-ai/dsh-skill-library/types'
+import { scrubbedParentEnv } from '@yharness/subprocess'
+import type { SandboxExecutionPolicy } from '@yharness/sandbox'
+import type {} from '@yharness/sandbox-policy'
+import type {} from '@yharness/workspace'
+import type { SkillNativeConnectionId, SkillClaudeSessionId, SkillClaudeSendId } from '@yharness/skill-library/types'
 import { nativeProfile } from './root-profile.ts'
 import { ClaudeRootProcess } from './root-process.ts'
 import type { ClaudeRootProtocolRecord } from './root-types.ts'
@@ -183,7 +183,7 @@ export async function createClaudeSequentialExecutor(
   if (policy.mode === 'danger-full-access' || policy.workspaceRoot !== selection.directory || !exactRoot(ctx, agent, selection, policy)) throw new Error('Claude sequential handoff requires the selected idle project root and confined Y policy.')
   // This check protects the existing tool policy. The separate native persistence
   // process below has no model tools and gets only this project's transcript root.
-  const { writableRoots } = await import('@deepseek-ai/dsh-sandbox')
+  const { writableRoots } = await import('@yharness/sandbox')
   if (!exactRoot(ctx, agent, selection, policy)) throw new Error('Claude sequential initiating root changed during authority resolution.')
   const env = environment(selection); const profile = nativeProfile(env, policy, writableRoots(policy))
   const stateDirectory = claudeSequentialProjectDirectory(selection.profileRoot, selection.directory)

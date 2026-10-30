@@ -3,7 +3,7 @@ description: "Appearance settings for the dsh web client: Default or Terminal st
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-theme
+# @yharness/client-ui-theme
 
 ## Summary
 

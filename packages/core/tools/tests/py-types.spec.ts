@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { jsonSchemaToPy, renderToolsSdkPy } from '@deepseek-ai/dsh-tools/src/py-types.ts'
-import { parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
-import type { ToolSdkSchema } from '@deepseek-ai/dsh-tools/src/ts-types.ts'
+import { jsonSchemaToPy, renderToolsSdkPy } from '@yharness/tools/src/py-types.ts'
+import { parameterSchemaSpecToJsonSchema } from '@yharness/tools'
+import type { ToolSdkSchema } from '@yharness/tools/src/ts-types.ts'
 
 describe('jsonSchemaToPy', () => {
   it('maps the defineTool DSL subset', () => {
@@ -431,25 +431,25 @@ describe('renderToolsSdkPy', () => {
     // `camelCase` has to pass the same characters through instead of splitting
     // on them.
     const tool: ToolSdkSchema = {
-      name: '搜索',
+      name: '\u{641C}\u{7D22}',
       description: 'Unicode identifiers.',
       parameters: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          路径: { type: 'string' },
-          opts: { type: 'object', additionalProperties: false, properties: { 深度: { type: 'number' } } },
+          '\u8DEF\u5F84': { type: 'string' },
+          opts: { type: 'object', additionalProperties: false, properties: { '\u6DF1\u5EA6': { type: 'number' } } },
         },
-        required: ['路径'],
+        required: ['\u{8DEF}\u{5F84}'],
       },
       output: { type: 'string' },
     }
     const text = renderToolsSdkPy([tool])
-    expect(text).toContain('async def 搜索(self, args: 搜索Args) -> str:')
-    expect(text).toContain('class 搜索Args(TypedDict):')
-    expect(text).toContain('    路径: str')
-    expect(text).toContain('class 搜索ArgsOpts(TypedDict):')
-    expect(text).toContain('    深度: NotRequired[float]')
+    expect(text).toContain('async def \u{641C}\u{7D22}(self, args: \u{641C}\u{7D22}Args) -> str:')
+    expect(text).toContain('class \u{641C}\u{7D22}Args(TypedDict):')
+    expect(text).toContain('    \u{8DEF}\u{5F84}: str')
+    expect(text).toContain('class \u{641C}\u{7D22}ArgsOpts(TypedDict):')
+    expect(text).toContain('    \u{6DF1}\u{5EA6}: NotRequired[float]')
     expect(text).not.toContain('dict[str, Any]')
   })
 
@@ -520,8 +520,8 @@ describe('renderToolsSdkPy', () => {
       parameters: { type: 'object', additionalProperties: false, properties: { q: { type: 'string' } }, required: ['q'] },
       output: { type: 'string' },
     })
-    const text = renderToolsSdkPy([of('路径'), of('ﬁnd')])
-    expect(text).toContain('async def 路径(self, args: 路径Args) -> str:')
+    const text = renderToolsSdkPy([of('\u{8DEF}\u{5F84}'), of('ﬁnd')])
+    expect(text).toContain('async def \u{8DEF}\u{5F84}(self, args: \u{8DEF}\u{5F84}Args) -> str:')
     expect(text).toContain('# tools["ﬁnd"](args: FIndArgs) -> str')
     expect(text).toContain('class FIndArgs(TypedDict):')
     expect(text).not.toContain('async def ﬁnd')

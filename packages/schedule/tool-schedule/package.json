@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-tool-schedule",
+  "name": "@yharness/tool-schedule",
   "description": "Model-facing reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete) over the Host ctx.schedule service",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/schedule/tool-schedule"
   },
   "type": "module",
@@ -27,20 +27,20 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-schedule": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/llm": "workspace:*",
+    "@yharness/schedule": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/tools": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-schedule": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/schedule": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/tools": "workspace:*"
   }
 }

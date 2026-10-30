@@ -1,7 +1,8 @@
 - menu:
-  - menuitem "仅可查看"
-  - menuitem "工作区内修改"
-  - menuitem "完全权限"
+  - menuitem "Ask for approval": Ask for approval Ask before editing files outside the workspace or using the internet.
+  - menuitem "Approve for me": Approve for me Work freely inside the workspace without prompts; anything outside it is refused.
+  - menuitem "Full access": Full access Unrestricted access to the internet and any file on your computer.
   - menuitem "Auto review EXP":
     - text: Auto review
     - superscript: EXP
+    - text: Run without a sandbox after an experimental same-model review of every native tool call and PTC inner call.

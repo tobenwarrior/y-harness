@@ -3,7 +3,7 @@ description: "Opt in to sharing ordinary provider catalogs between isolated Harn
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-provider-config-sync
+# @yharness/provider-config-sync
 
 ## Summary
 
@@ -25,7 +25,7 @@ After both applications have qualified code supporting this package, configure t
 
 ```yaml
 - id: provider-config-sync
-  name: '@deepseek-ai/dsh-provider-config-sync'
+  name: '@yharness/provider-config-sync'
   config:
     sharedPath: /absolute/owner-only/provider-catalogs.json
 ```
@@ -36,7 +36,7 @@ An absent `sharedPath` performs no synchronization and creates no files. Pairing
 |---|---|---|
 | `sharedPath` | unset | Explicit absolute path to the ordinary catalog document shared by approved local profiles. |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-provider-config-sync) is the exhaustive source for accepted configuration fields.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessprovider-config-sync) is the exhaustive source for accepted configuration fields.
 
 The allowlist contains `displayName`, `api`, a credential-free HTTP(S) `baseURL`, `models`, and `modelOverrides`. Model fields contain IDs, names, capacities, supported input modalities, reasoning choices, and default effort. Unknown fields, request headers, API key references or values, OAuth grants and client identities, cookies, vault settings, experimental controls, default recipients, and session selections are excluded. URLs with userinfo, any query, or a fragment are refused rather than rewritten.
 

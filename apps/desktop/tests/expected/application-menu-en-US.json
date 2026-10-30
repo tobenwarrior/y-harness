@@ -3,11 +3,11 @@
     "label": "Check for Updates…"
   },
   {
-    "label": "Manage dsh Command…"
+    "label": "Manage Y Harness CLI…"
   },
   {
     "role": "hide",
-    "label": "Hide Y harness"
+    "label": "Hide Y Harness"
   },
   {
     "role": "hideOthers",
@@ -19,6 +19,6 @@
   },
   {
     "role": "quit",
-    "label": "Quit Y harness"
+    "label": "Quit Y Harness"
   }
 ]

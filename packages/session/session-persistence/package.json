@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-session-persistence",
-  "description": "Abstract durable session persistence seam (ctx.sessionPersistence) for the DeepSeek Harness",
+  "name": "@yharness/session-persistence",
+  "description": "Abstract durable session persistence seam (ctx.sessionPersistence) for the Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/session/session-persistence"
   },
   "type": "module",
@@ -27,19 +27,19 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/timeout": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-scope": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/scope": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/timeout": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-util-values": "workspace:*"
+    "@yharness/util-values": "workspace:*"
   }
 }

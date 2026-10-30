@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Session } from '@deepseek-ai/dsh-session'
-import WebRuntime from '@deepseek-ai/dsh-web'
-import type { DeepSeekAccount } from '@deepseek-ai/dsh-deepseek-account'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import { Context } from '@yharness/cordis'
+import AgentRegistry from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import type { Session } from '@yharness/session'
+import WebRuntime from '@yharness/web'
+import type { DeepSeekAccount } from '@yharness/deepseek-account'
+import SessionStore, { SessionId } from '@yharness/session'
 import {
   DeepSeekSearchApiProvider,
   DEEPSEEK_WEB_API_BASE_URL,
   mapSearchResponse,
   type DeepSeekSearchApiOptions,
-} from '@deepseek-ai/dsh-web-deepseek-api'
-import * as webApiPlugin from '@deepseek-ai/dsh-web-deepseek-api'
+} from '@yharness/web-deepseek-api'
+import * as webApiPlugin from '@yharness/web-deepseek-api'
 
 /** Construct the provider over a fixed options value; production passes a live thunk. */
 const searchProvider = (options: DeepSeekSearchApiOptions): DeepSeekSearchApiProvider =>
@@ -102,6 +102,7 @@ describe('DeepSeekSearchApiProvider request mapping', () => {
     expect(url).toBe('https://api.deepseek.test/api/v1/tools/search')
     expect(init).toMatchObject({ method: 'POST', redirect: 'error' })
     expect(init?.headers).toMatchObject({ authorization: 'Bearer ds-key', 'content-type': 'application/json' })
+    expect((init?.headers as Record<string, string>)['user-agent']).toBe('y-harness/0.0.1 (+https://github.com/tobenwarrior/y-harness)')
     expect(Object.keys(init?.headers ?? {}).sort()).toEqual(['accept', 'authorization', 'content-type', 'user-agent'])
     if (typeof init?.body !== 'string') throw new Error('expected JSON request body')
     expect(JSON.parse(init.body)).toEqual(expected)
@@ -109,7 +110,7 @@ describe('DeepSeekSearchApiProvider request mapping', () => {
 
   it.each([
     ['the collapsed question', '  How do\n\tI  install it?  ', 'How do I install it?'],
-    ['the first 128 characters', `${'问'.repeat(127)}题题`, `${'问'.repeat(127)}题`],
+    ['the first 128 characters', `${'\u{95EE}'.repeat(127)}\u{9898}\u{9898}`, `${'\u{95EE}'.repeat(127)}\u{9898}`],
     ['whole surrogate pairs', `${'a'.repeat(127)}😀😀`, `${'a'.repeat(127)}😀`],
   ])('sends %s as ori_question', async (_case, question, expected) => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse(searchResponse()))

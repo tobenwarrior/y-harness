@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DecisionController } from '../src/client/decision-controller.ts'
 import type { DecisionApi } from '../src/client/decision-controller.ts'
-import type { DecisionCapabilities, DecisionStatus } from '@deepseek-ai/dsh-skill-library/types'
+import type { DecisionCapabilities, DecisionStatus } from '@yharness/skill-library/types'
 
 const status: DecisionStatus = { configuration: { enabled: false, revision: 2 }, models: [
   { provider: 'codex', model: '', name: 'Codex gpt-6-luna', available: false, reason: 'native-tools' },

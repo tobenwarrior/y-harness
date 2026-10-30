@@ -1,8 +1,8 @@
 /** Separate Decision configuration and explicit preview query state. */
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { DecisionCapabilities, DecisionConfiguration, DecisionConfigureRequest, DecisionRoute, DecisionStatus, SkillLibraryItem, SkillLibraryList, SkillLibraryRetrieveRequest } from '@deepseek-ai/dsh-skill-library/types'
+import { createSnapshotStore } from '@yharness/client-store'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { RemoteResult } from '@yharness/typert-protocol'
+import type { DecisionCapabilities, DecisionConfiguration, DecisionConfigureRequest, DecisionRoute, DecisionStatus, SkillLibraryItem, SkillLibraryList, SkillLibraryRetrieveRequest } from '@yharness/skill-library/types'
 
 /** Minimal generated method face used by this separate settings consumer. */
 export interface DecisionApi {

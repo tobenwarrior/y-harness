@@ -115,6 +115,28 @@ async function main() {
     assert.equal((await unsigned.coordinator.install('1.0.1-nightly.1')).phase, 'installing')
     assert.equal(installed, 1, 'Installation handoff requires separate approval')
     report.cases.push('explicit-retry-signed-ready-and-separate-install-handoff')
+    // The feed URL and update channel stay stable across the artifact rename. Exercise the
+    // real updater against metadata from the last release, then the current Y Harness name.
+    const legacyCompatibility = await fixture()
+    const legacyVersion = '1.0.1-nightly.1'
+    const legacyFilename = 'deepseek-harness-1.0.1-nightly.1-win-x64.exe'
+    server.selectRelease(legacyVersion, legacyFilename)
+    assert.equal((await legacyCompatibility.coordinator.check(true)).version, legacyVersion)
+    assert.equal((await legacyCompatibility.coordinator.download(legacyVersion)).phase, 'ready')
+    assert.ok(server.requests.some(request => request.path === `/${legacyFilename}`),
+      'The previously published feed must still identify its legacy artifact')
+
+    const currentCompatibility = await fixture()
+    const currentVersion = '1.0.2-nightly.1'
+    const currentFilename = 'y-harness-1.0.2-nightly.1-win-x64.exe'
+    server.selectRelease(currentVersion, currentFilename)
+    assert.equal((await currentCompatibility.coordinator.check(true)).version, currentVersion)
+    assert.equal((await currentCompatibility.coordinator.download(currentVersion)).phase, 'ready')
+    assert.ok(server.requests.some(request => request.path === `/${currentFilename}`),
+      'A replacement release must download the Y Harness artifact from the same feed')
+    assert.equal(installed, 1, 'Download qualification must not invoke the installer')
+    report.cases.push('legacy-feed-to-y-harness-artifact')
+    server.selectRelease('1.0.1-nightly.1', 'payload-1.0.1-nightly.1.exe')
     if (server.artifacts.old) {
       report.differential = []
       for (const [name, multipleRanges, fault] of [

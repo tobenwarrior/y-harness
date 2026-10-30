@@ -77,7 +77,7 @@ The root build follows the generated dependency order:
 ```sh
 tsc -b tsconfig.host.json
 tsdown --env.DSH_BUILD_FACE host
-pnpm --filter @deepseek-ai/dsh-desktop run bundle
+pnpm --filter @yharness/desktop run bundle
 tsc -b tsconfig.client.json
 tsdown --env.DSH_BUILD_FACE client
 pnpm run build:web
@@ -151,7 +151,7 @@ pnpm run build
 The one-shot Headless coding agent needs `DEEPSEEK_API_KEY` in the environment or repo-root `.env`:
 
 ```sh
-pnpm dsh --profile headless "summarize this workspace"
+pnpm yharness --profile headless "summarize this workspace"
 ```
 
 The PTC mode demo runs the same headless profile with code presentation enabled:
@@ -165,13 +165,13 @@ pnpm run demo:ptc -- "summarize this workspace"
 Web and Desktop share one command pair. `start:*` launches the artifacts of a prior `pnpm run build`; `dev:*` runs that build first and then launches. Web additionally keeps client bundles rebuilt on source edits, because its Host runs from source while the browser loads built bundles:
 
 ```sh
-pnpm run start:web       # serve built Web artifacts through the source launcher (the same launch as pnpm dsh web)
+pnpm run start:web       # serve built Web artifacts through the source launcher (the same launch as pnpm yharness web)
 pnpm run dev:web         # build, serve, and rebuild Web client bundles on source edits
 pnpm run start:desktop   # launch built Desktop artifacts
 pnpm run dev:desktop     # build, then launch Desktop
 ```
 
-Arguments after a Web command reach `dsh web`, for example `pnpm run dev:web --no-open --port 3081`; `dev:web` also accepts `--skip-build` to reuse the existing artifact tree and `--no-serve` to run only the rebuild watchers beside a server started elsewhere. Both Web commands use the normal Harness home, while the Desktop commands use the isolated development home described in the [Desktop README](../apps/desktop/README.md). The root `Makefile` names the same commands as `make web`, `make dev-web`, `make desktop`, `make dev-desktop`, and `make build`; `ARGS='--no-open'` forwards options.
+Arguments after a Web command reach `yharness web`, for example `pnpm run dev:web --no-open --port 3081`; `dev:web` also accepts `--skip-build` to reuse the existing artifact tree and `--no-serve` to run only the rebuild watchers beside a server started elsewhere. Both Web commands use the normal Harness home, while the Desktop commands use the isolated development home described in the [Desktop README](../apps/desktop/README.md). The root `Makefile` names the same commands as `make web`, `make dev-web`, `make desktop`, `make dev-desktop`, and `make build`; `ARGS='--no-open'` forwards options.
 
 ### TODO markers
 

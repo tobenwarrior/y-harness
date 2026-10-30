@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
+import { Context } from '@yharness/cordis'
+import { stubConfigForm } from '@yharness/client-test-runtime'
 import { ThemeRuntime, type ThemeSettings } from '../src/client/index.ts'
 import { bootThemeInjections } from '../src/boot-theme.ts'
 

@@ -4,8 +4,8 @@
  * output, errors, and aborts all resolve to null (abstain) so the composer
  * never breaks.
  */
-import type { Context } from '@deepseek-ai/cordis'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Context } from '@yharness/cordis'
+import { createUserMessage } from '@yharness/llm'
 import type {
   FollowUpPrediction,
   FollowUpPredictionProvider,

@@ -7,12 +7,12 @@
  * and face — and that every registration is gone after dispose, which is what
  * makes a reload safe.
  */
-import type { ClientRemote } from '@deepseek-ai/dsh-api-remotes/client'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { ClientRemote } from '@yharness/api-remotes/client'
+import { RemoteError } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { SidebarRightTabRegistry } from '@deepseek-ai/dsh-client-ui-sidebar-right/src/client/tab-registry.ts'
+import { Context } from '@yharness/cordis'
+import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
 import { TEXTPREVIEW_ID, TEXTPREVIEW_KIND } from '../src/client/definition.ts'
 import { apply, inject } from '../src/client/index.ts'
 import { OfficeFontAction } from '../src/client/office/OfficeFontAction.tsx'
@@ -31,7 +31,7 @@ import { LazyPdfBody } from '../src/client/pdf/LazyPdfBody.tsx'
 import { LazyExcelBody } from '../src/client/excel/LazyExcelBody.tsx'
 import { PDF_BODY_ID } from '../src/client/pdf/index.ts'
 import { CodeBody } from '../src/client/code/CodeBody.tsx'
-import { en, zh } from '../src/client/locales.ts'
+import { en } from '../src/client/locales.ts'
 import type { textFace } from '../src/client/face.ts'
 import type { TextStore } from '../src/client/store.ts'
 import { FILE, SESSION, TAB_ID, byteResult, createResources, page } from './fixtures.client.ts'
@@ -85,7 +85,7 @@ describe('ui-sidebar-documentpreview apply', () => {
     const { tabs, registered, dictionaries } = await boot()
     expect(tabs.get(TEXTPREVIEW_KIND)?.priority).toBe('fallback')
     expect(tabs.get(TEXTPREVIEW_KIND)?.id).toBe(TEXTPREVIEW_ID)
-    expect(dictionaries.get('sidebarDocumentPreview')).toEqual({ zh, en })
+    expect(dictionaries.get('sidebarDocumentPreview')).toEqual({ en })
     // The seat key is the implementation's id, not the kind: an extension may
     // take the kind over, and the seat must still find this body.
     expect(registered.map(entry => [entry.name, entry.key, entry.locale, entry.component])).toEqual([
@@ -96,11 +96,11 @@ describe('ui-sidebar-documentpreview apply', () => {
       ['sidebar.right.tab.document', HTML_BODY_ID, 'documentHtml', HtmlBody],
       ['sidebar.right.tab.document', IMAGE_BODY_ID, 'sidebarImage', ImageBody],
       ['sidebar.right.tab.document', PDF_BODY_ID, 'sidebarPdf', LazyPdfBody],
-      ['sidebar.right.tab.document.action', '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office', 'sidebarOffice', OfficeFontAction],
-      ['sidebar.right.tab.document', '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office', 'sidebarOffice', OfficeBody],
-      ['sidebar.right.tab.document.office.pdf', '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office', 'sidebarPdf', LazyPdfBody],
-      ['sidebar.right.tab.document', '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/excel', 'sidebarExcel', LazyExcelBody],
-      ['sidebar.right.tab.document', '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code', 'sidebarCodePreview', CodeBody],
+      ['sidebar.right.tab.document.action', '@yharness/client-ui-sidebar-documentpreview/office', 'sidebarOffice', OfficeFontAction],
+      ['sidebar.right.tab.document', '@yharness/client-ui-sidebar-documentpreview/office', 'sidebarOffice', OfficeBody],
+      ['sidebar.right.tab.document.office.pdf', '@yharness/client-ui-sidebar-documentpreview/office', 'sidebarPdf', LazyPdfBody],
+      ['sidebar.right.tab.document', '@yharness/client-ui-sidebar-documentpreview/excel', 'sidebarExcel', LazyExcelBody],
+      ['sidebar.right.tab.document', '@yharness/client-ui-sidebar-documentpreview/code', 'sidebarCodePreview', CodeBody],
     ])
     expect(registered[0]?.store).toBeDefined()
     expect(typeof registered[0]?.inject).toBe('function')
@@ -118,7 +118,7 @@ describe('ui-sidebar-documentpreview apply', () => {
     const { ctx } = await boot()
     const previews = ctx.get('documentPreviews')
     if (previews === undefined) throw new Error('documentPreviews was not provided')
-    const sharedHighlighter = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code'
+    const sharedHighlighter = '@yharness/client-ui-sidebar-documentpreview/code'
     const owners = new Map<string, string>()
     for (const definition of previews.getSnapshot()) {
       for (const extension of new Set([...definition.extensions, ...definition.binaryExtensions ?? []])) {
@@ -133,7 +133,7 @@ describe('ui-sidebar-documentpreview apply', () => {
         owners.set(extension, earlier ?? definition.id)
       }
     }
-    const excel = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/excel'
+    const excel = '@yharness/client-ui-sidebar-documentpreview/excel'
     expect(previews.candidates('table.csv').map(candidate => candidate.id)).toEqual([excel, sharedHighlighter])
     expect(previews.candidates('table.tsv')[0]?.id).toBe(excel)
   })

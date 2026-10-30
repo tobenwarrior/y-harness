@@ -3,7 +3,7 @@ description: "Account consumers read stored login state, start or cancel a brows
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-deepseek-account
+# @yharness/deepseek-account
 
 getPlatformSession returns a Host-only origin/token snapshot for native Platform embedding, or null when signed out. Its userId repeats the stable account ID from the most recent successful getProfile, and is null until one succeeds or when that profile holds no ID. The snapshot reuses that ID without issuing a profile request, so an unknown ID leaves userId null instead of delaying the caller; a profile read whose stable ID first becomes available or changes notifies watch subscribers, which lets identity consumers re-read the snapshot. Consumers key persistent browser preference storage by origin and userId and use temporary storage while userId is null. It is absent from account-controller RPC and Client state. Consumers destroy documents holding a snapshot when the account changes. The snapshot carries deployment request headers only; the embedding client composes the Platform client identity of its own UI.
 

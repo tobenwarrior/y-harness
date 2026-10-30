@@ -1,6 +1,6 @@
 /** Remote-backed Bot roster state and one retained Session per selection. */
 
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import type {
   BotAppearanceUpdateRequest,
   BotAppearanceUpdateValue,
@@ -10,18 +10,18 @@ import type {
   BotId as BotIdType,
   BotListRequest,
   BotView,
-} from '@deepseek-ai/dsh-bots/client'
+} from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
   AvatarGenerationStatus,
   AvatarGenerationValue,
-} from '@deepseek-ai/dsh-avatar-generation/types'
-import type { ISessions, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
-import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
-import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
+} from '@yharness/avatar-generation/types'
+import type { ISessions, SessionReference } from '@yharness/api-session-controller/client'
+import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
+import type { HostObservable } from '@yharness/client-ui-slots'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import { randomUUID } from '@yharness/util-crypto'
 import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -59,7 +59,7 @@ export interface BotWorkspaceFace {
   readonly retry: () => void
 }
 
-declare module '@deepseek-ai/dsh-api-session-controller/client' {
+declare module '@yharness/api-session-controller/client' {
   interface SessionReferenceSourceMap {
     /** One retained reference owned by the Bot workspace selection. */
     botWorkspace: unknown

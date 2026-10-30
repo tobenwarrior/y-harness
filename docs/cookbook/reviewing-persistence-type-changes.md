@@ -58,9 +58,9 @@ Save the input as `.artifacts/persistence-change.prose.json`, creating the ignor
     "verification": "pnpm exec vitest run packages/hooks/hook-protocol/tests/events.spec.ts: 10 tests passed."
   },
   "zh": {
-    "summary": "将持久化的钩子审计决策改为可选。",
-    "compatibility": "已有记录仍然有效。钩子执行消费 HookOutput，不回放此审计字段。写入方仍然记录决策，缺失不代表 pass。",
-    "verification": "pnpm exec vitest run packages/hooks/hook-protocol/tests/events.spec.ts：10 个测试通过。"
+    "summary": "\u5c06\u6301\u4e45\u5316\u7684\u94a9\u5b50\u5ba1\u8ba1\u51b3\u7b56\u6539\u4e3a\u53ef\u9009。",
+    "compatibility": "\u5df2\u6709\u8bb0\u5f55\u4ecd\u7136\u6709\u6548。\u94a9\u5b50\u6267\u884c\u6d88\u8d39 HookOutput，\u4e0d\u56de\u653e\u6b64\u5ba1\u8ba1\u5b57\u6bb5。\u5199\u5165\u65b9\u4ecd\u7136\u8bb0\u5f55\u51b3\u7b56，\u7f3a\u5931\u4e0d\u4ee3\u8868 pass。",
+    "verification": "pnpm exec vitest run packages/hooks/hook-protocol/tests/events.spec.ts：10 \u4e2a\u6d4b\u8bd5\u901a\u8fc7。"
   }
 }
 ```

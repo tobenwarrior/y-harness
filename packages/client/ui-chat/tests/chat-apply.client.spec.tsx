@@ -1,34 +1,34 @@
 // @vitest-environment jsdom
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
 import {
   SlotTestRuntime, stubConfigForm, usePinnedBrowserLanguages,
-} from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
-import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+} from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import type { ObservableSnapshot } from '@yharness/client-store'
+import type { SessionBinding } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import type { WorkspaceId } from '@yharness/workspace/types'
 import {
   apply as applyConversation, inject as injectConversation,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-ui-conversation/client'
 import type {
   ConversationLocationDataSource, ConversationLocationDataStore, ConversationTurnDataMap,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-ui-conversation/client'
 import {
   apply as applyChat, EMPTY_CHAT_SNAPSHOT, inject as injectChat,
-} from '@deepseek-ai/dsh-client-ui-chat/client'
+} from '@yharness/client-ui-chat/client'
 import type {
   ChatNodeInjected, ChatSnapshot, TranscriptViewRowInjected, UseChatNodeTurnData, UseDisclosure,
-} from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { QuotaNoticeInjected } from '@deepseek-ai/dsh-client-ui-chat/client'
+} from '@yharness/client-ui-chat/client'
+import type { QuotaNoticeInjected } from '@yharness/client-ui-chat/client'
 import type { PerformanceUsageRowInjected } from '../src/client/settings/PerformanceUsageRow.tsx'
 import { CHAT_SETTINGS_NAMESPACE, type ChatSettings } from '../src/chat-settings.ts'
 import { ActivityPill, UsagePill } from '../src/client/chat/StatsPills.tsx'
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@yharness/client-ui-conversation/client' {
   interface ConversationTurnDataMap {
     metric: number
   }
@@ -124,7 +124,7 @@ describe('Chat apply wiring', () => {
     const b = await bench()
     const views = b.runtime.slots.entries('conversation.view')
     expect(views.map(row => row.options.id)).toEqual(['chat'])
-    expect(resolveSlotLabel(views[0]?.options.label)).toBe('对话')
+    expect(resolveSlotLabel(views[0]?.options.label)).toBe('Chat')
     expect(b.runtime.slots.spec('conversation.chat.node'))
       .toMatchObject({ kind: 'keyed', scope: 'session' })
     expect(b.runtime.slots.entries('conversation.composer.dock').map(row => row.options.id))

@@ -3,7 +3,7 @@ description: "Bot roster and persistent-session workspace for the Y Harness Web 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-bots
+# @yharness/client-ui-bots
 
 ## Summary
 
@@ -34,7 +34,7 @@ Choose this package for a second, switchable Bot mode with a dedicated roster an
 The Client package has no user configuration fields. Mount its browser entry in the Client composition:
 
 ```yaml
-- name: '@deepseek-ai/dsh-client-ui-bots/client'
+- name: '@yharness/client-ui-bots/client'
 ```
 
 The composition must provide the injected Bot Remote, Session store, locale, layout, sidebar, conversation, renderer, and slot services. The avatar-generation Remote is optional; without it the workspace still supports semantic character and color editing when the Bot Remote exposes appearance persistence.

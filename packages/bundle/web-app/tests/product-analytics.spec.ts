@@ -1,16 +1,43 @@
-import OTel from '@deepseek-ai/dsh-otel'
+import OTel from '@yharness/otel'
 /** Desktop-only collector policy and bounded shutdown against an unresponsive receiver. */
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
-import * as Telemetry from '@deepseek-ai/dsh-host-product-telemetry-otel'
-import Analytics from '@deepseek-ai/dsh-client-product-analytics'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import { loadOverlayPatches } from '@yharness/app-boot'
+import * as Telemetry from '@yharness/host-product-telemetry-otel'
+import Analytics from '@yharness/client-product-analytics'
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
 
 afterEach(() => { vi.unstubAllEnvs() })
+
+it('keeps the Desktop analytics rows and services disabled without an explicit endpoint', async () => {
+  vi.stubEnv('DSH_CLIENT_VERSION', 'test-version')
+  vi.stubEnv('YH_TELEMETRY_OTLP_URL', undefined)
+  vi.stubEnv('DSH_TELEMETRY_OTLP_URL', undefined)
+  vi.stubEnv('DSH_PRODUCT_ANALYTICS_OTLP_URL', undefined)
+  const ctx = new Context()
+  onTestFinished(() => ctx.fiber.dispose())
+  ctx.provide('profileContext', {
+    name: 'desktop', dir: '/profile', patchPath: '/profile/cordis.patch.yml', installAnchor: '/profile/package.json',
+    cwd: '/workspace', home: '/home', startedBundles: [], overlays: [], telemetryDisabledEnv: undefined,
+  })
+  await ctx.plugin(OTel)
+  ctx.baseUrl = 'file:///'
+  await ctx.plugin(Loader).await()
+  ctx.loader.builtins.telemetry = Telemetry
+  ctx.loader.builtins.analytics = Analytics
+  const rows = loadOverlayPatches('analytics', fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)))
+    .flatMap(patch => patch.insert ?? []).filter(row => row.id === 'desktop-product-telemetry' || row.id === 'product-analytics')
+  const entries = rows.map(row => ({ ...row, name: row.id === 'desktop-product-telemetry' ? 'cordis:telemetry' : 'cordis:analytics' }))
+  await ctx.loader.root.update(entries)
+  await ctx.loader.await()
+  expect(ctx.loader.resolve('desktop-product-telemetry').disabled).toBe(true)
+  expect(ctx.loader.resolve('product-analytics').disabled).toBe(true)
+  expect(ctx.get('productTelemetry')).toBeUndefined()
+  expect(ctx.get('productAnalytics')).toBeUndefined()
+})
 
 it.each(['desktop', 'web'])('limits collection and its shutdown to the Desktop launch: %s', async (profile) => {
   const received = Promise.withResolvers<undefined>()

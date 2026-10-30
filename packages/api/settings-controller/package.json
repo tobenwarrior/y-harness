@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-api-settings-controller",
+  "name": "@yharness/api-settings-controller",
   "description": "Remote owner for the configuration surfaces over the settings-domain seams",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/api/settings-controller"
   },
   "type": "module",
@@ -44,25 +44,25 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent-preset-registry": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-native-command": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-settings": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/native-command": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/settings": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent-preset-registry": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-native-command": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-settings": "workspace:*",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent-preset-registry": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/native-command": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/settings": "workspace:*",
+    "@yharness/typert-protocol": "workspace:*"
   }
 }

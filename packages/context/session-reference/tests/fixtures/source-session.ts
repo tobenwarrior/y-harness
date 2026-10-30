@@ -1,8 +1,8 @@
 /** Deterministic projected source shared by reference snapshot and Loader tests. */
 
-import type { Context } from '@deepseek-ai/cordis'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Context } from '@yharness/cordis'
+import { createMessage, createUserMessage } from '@yharness/llm'
+import { Session, SessionId } from '@yharness/session'
 
 export const name = 'session-reference-source-fixture'
 export const inject = ['sessions']
@@ -14,7 +14,7 @@ export const inject = ['sessions']
 export function apply(ctx: Context): void {
   const source = Session.create(SessionId('reference-source'))
   source.append('user/message', createUserMessage({
-    content: [{ type: 'text', text: 'EARLY_SOURCE_FACT\n' + 'Historical detail 界.\n'.repeat(30)
+    content: [{ type: 'text', text: 'EARLY_SOURCE_FACT\n' + 'Historical detail \u{754C}.\n'.repeat(30)
       + 'x'.repeat(4096) + 'GIANT_LINE_MIDDLE_FACT' + 'y'.repeat(4096) }],
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })

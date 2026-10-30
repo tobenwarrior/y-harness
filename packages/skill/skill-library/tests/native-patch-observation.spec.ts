@@ -1,6 +1,6 @@
 /** Independent patch metadata recomputation; observed updates never prove correctness or replay old content. */
 import { expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { nativeObservationGenerator, nativeObservationInstructions, nativeObservationValidator } from '../src/native-observation.ts'
 import type { SkillLearningEvidence, SkillLearningProposal, SkillLearningNativeProcedure, SkillNativeConnectionId, SkillCodexSessionId, SkillCodexTurnId, SkillCodexItemId } from '../src/learning-types.ts'
 

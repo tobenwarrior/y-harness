@@ -1,9 +1,9 @@
 /** Durable native ownership markers preserve uncertain handoffs independently from history mirrors. */
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { brandString } from '@yharness/brand'
+import { defineDomain, domainTable } from '@yharness/storage-domain'
+import type { SessionId } from '@yharness/session/types'
 import type { CodingSessionHandoff, CodingSessionMirrorId, CodingSessionNativeId, CodingSessionNativeTurnId, CodingSessionOwnerToken, CodingSessionProfileId } from './types.ts'
 
 const ownerToken = z.string().min(1).transform(value => brandString<CodingSessionOwnerToken>(value))

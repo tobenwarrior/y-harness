@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-browser-use",
+  "name": "@yharness/browser-use",
   "description": "Exclusive named browser-use provider registration",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/browser-use/browser-use"
   },
   "type": "module",
@@ -32,11 +32,11 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-brand": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/brand": "workspace:*"
   }
 }

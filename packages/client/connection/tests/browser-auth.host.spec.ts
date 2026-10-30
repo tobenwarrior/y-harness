@@ -2,7 +2,7 @@
 
 import { createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CredentialProvider } from '@deepseek-ai/dsh-credentials'
+import type { CredentialProvider } from '@yharness/credentials'
 import { BrowserAuth } from '../src/browser-auth.ts'
 import type { ConnectionIndexRequest, ConnectionIndexResponse } from '../src/rpc.ts'
 import { RecordCredentials } from './browser-credentials.ts'
@@ -186,7 +186,7 @@ describe('BrowserAuth', () => {
       })
       expect(denied.state.body).toBe(candidate.method === 'HEAD'
         ? undefined
-        : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+        : 'Y Harness web authentication required; reopen the URL printed by yharness web.\n')
     }
   })
 

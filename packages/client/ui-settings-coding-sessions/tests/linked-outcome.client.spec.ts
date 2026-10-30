@@ -1,7 +1,7 @@
 /** A retained divergence conflict is a successful Remote result, not an imported-history outcome. */
 import { describe, expect, it, vi } from 'vitest'
 import { CodingSessionsController } from '../src/client/controller.ts'
-import type { CodingSessionLinkRecord } from '@deepseek-ai/dsh-coding-session/types'
+import type { CodingSessionLinkRecord } from '@yharness/coding-session/types'
 import { mirror, ok } from './fixtures.client.ts'
 import { coldId, destinationRevision, link, linkedFixture, summary } from './linked-fixtures.client.ts'
 

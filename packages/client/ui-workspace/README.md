@@ -3,7 +3,7 @@ description: "Shared Workspace browser and picker plugin for the dsh web client:
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-workspace
+# @yharness/client-ui-workspace
 
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 
@@ -27,7 +27,7 @@ This package lets users browse grouped or flat Session lists, choose a Workspace
 
 Use the sidebar to browse Workspaces and their Sessions, reorder them, and start new ones; use the picker in the Session Intent hero to choose a Workspace for a new session. An open Workspace shows five idle, non-blank Sessions by default. Running Sessions, including parents with running children, remain visible in their ordered positions without using that quota; the selected blank **New Session** is also an extra row until its first prompt. Each **Show more** click reveals up to five more idle Sessions; after the final batch, **Show less** restores the initial rows while keeping running Sessions visible. Closing and reopening the Workspace also restores this folded projection.
 
-History rows without a stored title use the localized unnamed label (未命名 / Untitled), rather than a directory name. The current blank row remains New Session; other blank rows remain hidden. Rename drafts use the stored title, or start empty when unnamed; unnamed rows do not offer title copying.
+History rows without a stored title use the localized unnamed label (Untitled), rather than a directory name. The current blank row remains New Session; other blank rows remain hidden. Rename drafts use the stored title, or start empty when unnamed; unnamed rows do not offer title copying.
 
 ### Reordering and view options
 
@@ -104,27 +104,27 @@ An entry receives only the row identity (`sessionId`, `displayTitle`) and owns e
 Declare `ui-workspace`, `ui-slots`, `ui-renderer`, `client-locale`, and `ui-primitives` as browser/type development dependencies according to the Client dependency policy. The type-only `ui-workspace/client` import loads this package's `SlotMap` declaration; without it, an independently compiled plugin does not know the slot keys. Keep the Component at module scope and own visible copy in the contributing package's locale namespace.
 
 ```tsx
-import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { MenuItemButton } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { Context } from '@yharness/cordis'
+import type { SessionId } from '@yharness/session/types'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-workspace/client'
+import { MenuItemButton } from '@yharness/client-ui-primitives'
 import type {
   InjectFace, LocaleDictOf, PropsLocale, PropsRuntime,
-} from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-ui-slots'
 import { exportSession } from './export-session.ts'
 
 const NS = 'acme.sessionActions'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     'acme.sessionActions': 'export'
   }
 }
 
 const en: LocaleDictOf<typeof NS> = { export: 'Export {title}' }
-const zh: LocaleDictOf<typeof NS> = { export: '导出 {title}' }
+// This fork registers one English dictionary.
 
 interface ExportRowInjected {
   exportSession: (sessionId: SessionId) => void
@@ -147,7 +147,7 @@ function ExportRow({ sessionId, displayTitle, useMenuOpenState, exportSession, t
 export const inject = ['slots', 'locale']
 
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'acme-session-actions: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'acme-session-actions: dictionaries')
 
   // Order 500 places the row after the shipped Archive (400); `separatorBefore` opens the plugin group.
   ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
@@ -164,7 +164,7 @@ export function apply(ctx: Context): void {
 
 #### Dynamic client package
 
-A dynamically loaded browser half follows the same component contract; which modules it can reach depends on its lane. A Module Loader package (`factory(require)`, as in the real Loader/Web fixture) gets `@deepseek-ai/dsh-client-ui-primitives` as an implicit baseline external: resolve `MenuItemButton` through the loader's `require`, do not list the primitive as a runtime dependency or bundle another copy, and declare a development dependency only when source compilation needs its types. A `cordis-client-runner` closure (the audience of the generated Client Slot catalog) cannot import anything: it renders its own `role="menuitem"` `<button>` with `React.createElement`, styles it through `styles.insert`, and dismisses the menu through the same `useMenuOpenState` hook, as the catalog's example shows.
+A dynamically loaded browser half follows the same component contract; which modules it can reach depends on its lane. A Module Loader package (`factory(require)`, as in the real Loader/Web fixture) gets `@yharness/client-ui-primitives` as an implicit baseline external: resolve `MenuItemButton` through the loader's `require`, do not list the primitive as a runtime dependency or bundle another copy, and declare a development dependency only when source compilation needs its types. A `cordis-client-runner` closure (the audience of the generated Client Slot catalog) cannot import anything: it renders its own `role="menuitem"` `<button>` with `React.createElement`, styles it through `styles.insert`, and dismisses the menu through the same `useMenuOpenState` hook, as the catalog's example shows.
 
 ### View state
 

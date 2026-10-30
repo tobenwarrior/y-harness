@@ -3,7 +3,7 @@ description: "Scriptable Messages-compatible fault server for testing LLM adapte
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-llm-mock-server
+# @yharness/llm-mock-server
 
 ## Summary
 

@@ -2,10 +2,10 @@
 /** Bottom Inspector lifetime and shortcuts through the production slot renderer. */
 import { afterEach, expect, it } from 'vitest'
 import { act } from '@testing-library/react'
-import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import ShortcutsService from '@deepseek-ai/dsh-client-shortcuts/client'
-import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
+import { SlotTestRuntime } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import ShortcutsService from '@yharness/client-shortcuts/client'
+import type { ShortcutCommandId } from '@yharness/client-shortcuts/client'
 import { registerInspectorPage } from '../src/client/bottom/page.tsx'
 import { inspectorId } from '../src/shared/identity.ts'
 
@@ -170,8 +170,8 @@ it('keeps modal arbitration and updates locale without replacing the iframe', as
   press()
   const frame = body.view.getByTitle('NodeJS Inspector')
   act(() => { locale.setLocale('zh') })
-  expect(body.view.getByTitle('NodeJS 诊断')).toBe(frame)
-  act(() => { body.view.getByRole('button', { name: '收起' }).click() })
+  expect(body.view.getByTitle('NodeJS Inspector')).toBe(frame)
+  act(() => { body.view.getByRole('button', { name: 'Collapse' }).click() })
   expect(body.container.querySelector('section')?.hidden).toBe(true)
 })
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { TerminalSessionId } from '@deepseek-ai/dsh-terminal'
-import { boundTerminalText, renderList, renderRead, renderSend, renderSendRead, renderSpawn } from '@deepseek-ai/dsh-tool-terminal/src/render.ts'
+import { TerminalSessionId } from '@yharness/terminal'
+import { boundTerminalText, renderList, renderRead, renderSend, renderSendRead, renderSpawn } from '@yharness/tool-terminal/src/render.ts'
 
 describe('tool-terminal rendering', () => {
   it('renders spawn with and without names or MOTD', () => {
@@ -39,7 +39,7 @@ describe('tool-terminal rendering', () => {
 
   it('bounds complete UTF-8 results while retaining terminal metadata when it fits', () => {
     const send = renderSend({
-      viewport: `prefix-${'界'.repeat(40)}`,
+      viewport: `prefix-${'\u{754C}'.repeat(40)}`,
       waitReason: 'stdin_read',
       sessionStatus: { kind: 'running' },
       truncated: false,

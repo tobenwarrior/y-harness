@@ -1,34 +1,29 @@
-- dialog "设置":
+- dialog "Settings":
   - navigation:
-    - text: 设置
-    - button "通用设置"
-    - button "模型"
-    - button "内置插件"
-    - button "Agent 预设"
-  - button "打开配置文件"
-  - button "关闭"
-  - text: 权限 选择新会话的默认权限模式
-  - button "工作区内修改"
-  - text: 语言
-  - button "中文"
-  - text: 外观
-  - button "浅色"
-  - button "深色"
-  - button "跟随系统" [pressed]
-  - text: 字号大小 仅影响会话内容的字号 14
-  - button "增大字号"
-  - button "减小字号"
-  - text: px 工作步骤展示 选择希望看到多少工具调用细节
-  - button "标准"
-  - text: 显示代码工作视图 开启后，显示轨迹、本轮代码差异，可选择完整的 Agent 预设切换
-  - switch "显示代码工作视图" [checked]
-  - text: 快捷键
-  - paragraph: 查看和编辑当前可用的快捷键和输入操作
-  - button "编辑快捷键"
-  - text: 繁忙时的发送行为 智能体运行时 Enter 键和发送按钮的行为；Cmd/Ctrl+Enter 使用另一行为
-  - button "排队发送"
-  - text: 性能与用量 选择性能与用量信息展示的详细程度
-  - button "详细"
-  - text: 在使用官方模型 API 时上传 Session Log 帮助改进 DeepSeek 模型与产品
-  - switch "在使用官方模型 API 时上传 Session Log"
-  - text: 当前版本：{{version}}
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Coding sessions"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - text: Permission Choose the default permission mode for new sessions
+  - button "Approve for me"
+  - text: Language
+  - button "English"
+  - text: Work details Choose how much detail to show for tool calls
+  - button "Standard"
+  - text: Show coding view Shows trajectory, code diffs, and all Agent presets
+  - switch "Show coding view" [checked]
+  - text: Keyboard shortcuts
+  - paragraph: View and edit available shortcuts and input actions
+  - button "Edit shortcuts"
+  - text: Send behavior while busy What Enter and the Send button do while the agent is running; Cmd/Ctrl+Enter uses the other behavior
+  - button "Queue"
+  - text: Performance & usage Choose how much performance and usage information to show
+  - button "Detailed"
+  - text: Upload Session Log when using the official model API Help improve DeepSeek models and products.
+  - switch "Upload Session Log when using the official model API"
+  - text: "Current version: {{version}}"

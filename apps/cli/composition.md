@@ -8,301 +8,301 @@ The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; th
 ```mermaid
 flowchart LR
   cfg["packages/bundle/base/cordis.patch.yml<br/>cordis.yml"]
-  plugin_dsh_base_tool_plugin_manager["tool-plugin-manager<br/>@deepseek-ai/dsh-plugin-manager/tools"]
+  plugin_dsh_base_tool_plugin_manager["tool-plugin-manager<br/>@yharness/plugin-manager/tools"]
   cfg --> plugin_dsh_base_tool_plugin_manager
-  plugin_dsh_base_plugin_manager["plugin-manager<br/>@deepseek-ai/dsh-plugin-manager"]
+  plugin_dsh_base_plugin_manager["plugin-manager<br/>@yharness/plugin-manager"]
   cfg --> plugin_dsh_base_plugin_manager
-  plugin_dsh_base_timer["timer<br/>@deepseek-ai/cordis-plugin-timer"]
+  plugin_dsh_base_timer["timer<br/>@yharness/cordis-plugin-timer"]
   cfg --> plugin_dsh_base_timer
-  plugin_dsh_base_hmr["hmr<br/>@deepseek-ai/dsh-hmr"]
+  plugin_dsh_base_hmr["hmr<br/>@yharness/hmr"]
   cfg --> plugin_dsh_base_hmr
-  plugin_dsh_base_llm["llm<br/>@deepseek-ai/dsh-llm"]
+  plugin_dsh_base_llm["llm<br/>@yharness/llm"]
   cfg --> plugin_dsh_base_llm
-  plugin_dsh_base_deepseek_llm_api_extensions["deepseek-llm-api-extensions<br/>@deepseek-ai/dsh-deepseek-llm-api-extensions"]
+  plugin_dsh_base_deepseek_llm_api_extensions["deepseek-llm-api-extensions<br/>@yharness/deepseek-llm-api-extensions"]
   cfg --> plugin_dsh_base_deepseek_llm_api_extensions
-  plugin_dsh_base_session["session<br/>@deepseek-ai/dsh-session"]
+  plugin_dsh_base_session["session<br/>@yharness/session"]
   cfg --> plugin_dsh_base_session
-  plugin_dsh_base_session_log_deepseek["session-log-deepseek<br/>@deepseek-ai/dsh-session-log-deepseek"]
+  plugin_dsh_base_session_log_deepseek["session-log-deepseek<br/>@yharness/session-log-deepseek"]
   cfg --> plugin_dsh_base_session_log_deepseek
-  plugin_dsh_base_typert["typert<br/>@deepseek-ai/dsh-typert-registry"]
+  plugin_dsh_base_typert["typert<br/>@yharness/typert-registry"]
   cfg --> plugin_dsh_base_typert
-  plugin_dsh_base_typert_loader["typert-loader<br/>@deepseek-ai/dsh-typert-loader"]
+  plugin_dsh_base_typert_loader["typert-loader<br/>@yharness/typert-loader"]
   cfg --> plugin_dsh_base_typert_loader
-  plugin_dsh_base_typert_gateway["typert-gateway<br/>@deepseek-ai/dsh-api-gateway"]
+  plugin_dsh_base_typert_gateway["typert-gateway<br/>@yharness/api-gateway"]
   cfg --> plugin_dsh_base_typert_gateway
-  plugin_dsh_base_session_title["session-title<br/>@deepseek-ai/dsh-session-title"]
+  plugin_dsh_base_session_title["session-title<br/>@yharness/session-title"]
   cfg --> plugin_dsh_base_session_title
-  plugin_dsh_base_session_title_llm["session-title-llm<br/>@deepseek-ai/dsh-session-title-first-prompt-llm"]
+  plugin_dsh_base_session_title_llm["session-title-llm<br/>@yharness/session-title-first-prompt-llm"]
   cfg --> plugin_dsh_base_session_title_llm
-  plugin_dsh_base_user_questions["user-questions<br/>@deepseek-ai/dsh-user-questions"]
+  plugin_dsh_base_user_questions["user-questions<br/>@yharness/user-questions"]
   cfg --> plugin_dsh_base_user_questions
-  plugin_dsh_base_agent["agent<br/>@deepseek-ai/dsh-agent"]
+  plugin_dsh_base_agent["agent<br/>@yharness/agent"]
   cfg --> plugin_dsh_base_agent
-  plugin_dsh_base_plugin_package_inventory_deepseek["plugin-package-inventory-deepseek<br/>@deepseek-ai/dsh-plugin-package-inventory-deepseek"]
+  plugin_dsh_base_plugin_package_inventory_deepseek["plugin-package-inventory-deepseek<br/>@yharness/plugin-package-inventory-deepseek"]
   cfg --> plugin_dsh_base_plugin_package_inventory_deepseek
-  plugin_dsh_base_agent_default_model["agent-default-model<br/>@deepseek-ai/dsh-agent-default-model"]
+  plugin_dsh_base_agent_default_model["agent-default-model<br/>@yharness/agent-default-model"]
   cfg --> plugin_dsh_base_agent_default_model
-  plugin_dsh_base_jobs["jobs<br/>@deepseek-ai/dsh-jobs-local"]
+  plugin_dsh_base_jobs["jobs<br/>@yharness/jobs-local"]
   cfg --> plugin_dsh_base_jobs
-  plugin_dsh_base_llm_retry["llm-retry<br/>@deepseek-ai/dsh-llm-retry"]
+  plugin_dsh_base_llm_retry["llm-retry<br/>@yharness/llm-retry"]
   cfg --> plugin_dsh_base_llm_retry
-  plugin_dsh_base_config_editor["config-editor<br/>@deepseek-ai/dsh-config-editor"]
+  plugin_dsh_base_config_editor["config-editor<br/>@yharness/config-editor"]
   cfg --> plugin_dsh_base_config_editor
-  plugin_dsh_base_settings["settings<br/>@deepseek-ai/dsh-settings"]
+  plugin_dsh_base_settings["settings<br/>@yharness/settings"]
   cfg --> plugin_dsh_base_settings
-  plugin_dsh_base_provider_config_sync["provider-config-sync<br/>@deepseek-ai/dsh-provider-config-sync"]
+  plugin_dsh_base_provider_config_sync["provider-config-sync<br/>@yharness/provider-config-sync"]
   cfg --> plugin_dsh_base_provider_config_sync
-  plugin_dsh_base_authorization["authorization<br/>@deepseek-ai/dsh-authorization"]
+  plugin_dsh_base_authorization["authorization<br/>@yharness/authorization"]
   cfg --> plugin_dsh_base_authorization
-  plugin_dsh_base_deepseek_account["deepseek-account<br/>@deepseek-ai/dsh-deepseek-account-platform"]
+  plugin_dsh_base_deepseek_account["deepseek-account<br/>@yharness/deepseek-account-platform"]
   cfg --> plugin_dsh_base_deepseek_account
-  plugin_dsh_base_credentials["credentials<br/>@deepseek-ai/dsh-credentials-local"]
+  plugin_dsh_base_credentials["credentials<br/>@yharness/credentials-local"]
   cfg --> plugin_dsh_base_credentials
-  plugin_dsh_base_llm_pi_ai["llm-pi-ai<br/>@deepseek-ai/dsh-llm-pi-ai"]
+  plugin_dsh_base_llm_pi_ai["llm-pi-ai<br/>@yharness/llm-pi-ai"]
   cfg --> plugin_dsh_base_llm_pi_ai
-  plugin_dsh_base_session_persistence_jsonl["session-persistence-jsonl<br/>@deepseek-ai/dsh-session-persistence-jsonl"]
+  plugin_dsh_base_session_persistence_jsonl["session-persistence-jsonl<br/>@yharness/session-persistence-jsonl"]
   cfg --> plugin_dsh_base_session_persistence_jsonl
-  plugin_dsh_base_attachment_local["attachment-local<br/>@deepseek-ai/dsh-attachment-local"]
+  plugin_dsh_base_attachment_local["attachment-local<br/>@yharness/attachment-local"]
   cfg --> plugin_dsh_base_attachment_local
-  plugin_dsh_base_session_query_sqlite["session-query-sqlite<br/>@deepseek-ai/dsh-session-query-sqlite"]
+  plugin_dsh_base_session_query_sqlite["session-query-sqlite<br/>@yharness/session-query-sqlite"]
   cfg --> plugin_dsh_base_session_query_sqlite
-  plugin_dsh_base_session_projection["session-projection<br/>@deepseek-ai/dsh-session-projection"]
+  plugin_dsh_base_session_projection["session-projection<br/>@yharness/session-projection"]
   cfg --> plugin_dsh_base_session_projection
-  plugin_dsh_base_storage["storage<br/>@deepseek-ai/dsh-storage"]
+  plugin_dsh_base_storage["storage<br/>@yharness/storage"]
   cfg --> plugin_dsh_base_storage
-  plugin_dsh_base_storage_json["storage-json<br/>@deepseek-ai/dsh-storage-json"]
+  plugin_dsh_base_storage_json["storage-json<br/>@yharness/storage-json"]
   cfg --> plugin_dsh_base_storage_json
-  plugin_dsh_base_storage_domain["storage-domain<br/>@deepseek-ai/dsh-storage-domain"]
+  plugin_dsh_base_storage_domain["storage-domain<br/>@yharness/storage-domain"]
   cfg --> plugin_dsh_base_storage_domain
-  plugin_dsh_base_session_projection_cache["session-projection-cache<br/>@deepseek-ai/dsh-session-projection-cache"]
+  plugin_dsh_base_session_projection_cache["session-projection-cache<br/>@yharness/session-projection-cache"]
   cfg --> plugin_dsh_base_session_projection_cache
-  plugin_dsh_base_otel["otel<br/>@deepseek-ai/dsh-otel"]
+  plugin_dsh_base_otel["otel<br/>@yharness/otel"]
   cfg --> plugin_dsh_base_otel
-  plugin_dsh_base_session_telemetry_otel["session-telemetry-otel<br/>@deepseek-ai/dsh-session-telemetry-otel"]
+  plugin_dsh_base_session_telemetry_otel["session-telemetry-otel<br/>@yharness/session-telemetry-otel"]
   cfg --> plugin_dsh_base_session_telemetry_otel
-  plugin_dsh_base_subprocess["subprocess<br/>@deepseek-ai/dsh-subprocess-local"]
+  plugin_dsh_base_subprocess["subprocess<br/>@yharness/subprocess-local"]
   cfg --> plugin_dsh_base_subprocess
-  plugin_dsh_base_sandbox["sandbox<br/>@deepseek-ai/dsh-sandbox-local"]
+  plugin_dsh_base_sandbox["sandbox<br/>@yharness/sandbox-local"]
   cfg --> plugin_dsh_base_sandbox
-  plugin_dsh_base_sandbox_policy["sandbox-policy<br/>@deepseek-ai/dsh-sandbox-policy"]
+  plugin_dsh_base_sandbox_policy["sandbox-policy<br/>@yharness/sandbox-policy"]
   cfg --> plugin_dsh_base_sandbox_policy
-  plugin_dsh_base_bash_sandbox["bash-sandbox<br/>@deepseek-ai/dsh-bash-sandbox"]
+  plugin_dsh_base_bash_sandbox["bash-sandbox<br/>@yharness/bash-sandbox"]
   cfg --> plugin_dsh_base_bash_sandbox
-  plugin_dsh_base_pwsh_sandbox["pwsh-sandbox<br/>@deepseek-ai/dsh-pwsh-sandbox"]
+  plugin_dsh_base_pwsh_sandbox["pwsh-sandbox<br/>@yharness/pwsh-sandbox"]
   cfg --> plugin_dsh_base_pwsh_sandbox
-  plugin_dsh_base_approval["approval<br/>@deepseek-ai/dsh-user-approval"]
+  plugin_dsh_base_approval["approval<br/>@yharness/user-approval"]
   cfg --> plugin_dsh_base_approval
-  plugin_dsh_base_permission["permission<br/>@deepseek-ai/dsh-permission-presets"]
+  plugin_dsh_base_permission["permission<br/>@yharness/permission-presets"]
   cfg --> plugin_dsh_base_permission
-  plugin_dsh_base_shell_env["shell-env<br/>@deepseek-ai/dsh-shell-env"]
+  plugin_dsh_base_shell_env["shell-env<br/>@yharness/shell-env"]
   cfg --> plugin_dsh_base_shell_env
-  plugin_dsh_base_tool_bash["tool-bash<br/>@deepseek-ai/dsh-tool-bash"]
+  plugin_dsh_base_tool_bash["tool-bash<br/>@yharness/tool-bash"]
   cfg --> plugin_dsh_base_tool_bash
-  plugin_dsh_base_tool_pwsh["tool-pwsh<br/>@deepseek-ai/dsh-tool-pwsh"]
+  plugin_dsh_base_tool_pwsh["tool-pwsh<br/>@yharness/tool-pwsh"]
   cfg --> plugin_dsh_base_tool_pwsh
-  plugin_dsh_base_tool_jobs["tool-jobs<br/>@deepseek-ai/dsh-tool-jobs"]
+  plugin_dsh_base_tool_jobs["tool-jobs<br/>@yharness/tool-jobs"]
   cfg --> plugin_dsh_base_tool_jobs
-  plugin_dsh_base_fs_observation_policy["fs-observation-policy<br/>@deepseek-ai/dsh-fs-observation-policy"]
+  plugin_dsh_base_fs_observation_policy["fs-observation-policy<br/>@yharness/fs-observation-policy"]
   cfg --> plugin_dsh_base_fs_observation_policy
-  plugin_dsh_base_tool_fs["tool-fs<br/>@deepseek-ai/dsh-tool-fs"]
+  plugin_dsh_base_tool_fs["tool-fs<br/>@yharness/tool-fs"]
   cfg --> plugin_dsh_base_tool_fs
-  plugin_dsh_base_tool_fs_search["tool-fs-search<br/>@deepseek-ai/dsh-tool-fs-search"]
+  plugin_dsh_base_tool_fs_search["tool-fs-search<br/>@yharness/tool-fs-search"]
   cfg --> plugin_dsh_base_tool_fs_search
-  plugin_dsh_base_agent_instructions["agent-instructions<br/>@deepseek-ai/dsh-agent-instructions"]
+  plugin_dsh_base_agent_instructions["agent-instructions<br/>@yharness/agent-instructions"]
   cfg --> plugin_dsh_base_agent_instructions
-  plugin_dsh_base_skill["skill<br/>@deepseek-ai/dsh-skill"]
+  plugin_dsh_base_skill["skill<br/>@yharness/skill"]
   cfg --> plugin_dsh_base_skill
-  plugin_dsh_base_skill_filesystem["skill-filesystem<br/>@deepseek-ai/dsh-skill-filesystem"]
+  plugin_dsh_base_skill_filesystem["skill-filesystem<br/>@yharness/skill-filesystem"]
   cfg --> plugin_dsh_base_skill_filesystem
-  plugin_dsh_base_skill_badge["skill-badge<br/>@deepseek-ai/dsh-skill-badge"]
+  plugin_dsh_base_skill_badge["skill-badge<br/>@yharness/skill-badge"]
   cfg --> plugin_dsh_base_skill_badge
-  plugin_dsh_base_skill_compound["skill-compound<br/>@deepseek-ai/dsh-skill-compound"]
+  plugin_dsh_base_skill_compound["skill-compound<br/>@yharness/skill-compound"]
   cfg --> plugin_dsh_base_skill_compound
-  plugin_dsh_base_tool_skill["tool-skill<br/>@deepseek-ai/dsh-tool-skill"]
+  plugin_dsh_base_tool_skill["tool-skill<br/>@yharness/tool-skill"]
   cfg --> plugin_dsh_base_tool_skill
-  plugin_dsh_base_commands["commands<br/>@deepseek-ai/dsh-commands"]
+  plugin_dsh_base_commands["commands<br/>@yharness/commands"]
   cfg --> plugin_dsh_base_commands
-  plugin_dsh_base_command_feedback["command-feedback<br/>@deepseek-ai/dsh-command-feedback"]
+  plugin_dsh_base_command_feedback["command-feedback<br/>@yharness/command-feedback"]
   cfg --> plugin_dsh_base_command_feedback
-  plugin_dsh_base_goal["goal<br/>@deepseek-ai/dsh-goal"]
+  plugin_dsh_base_goal["goal<br/>@yharness/goal"]
   cfg --> plugin_dsh_base_goal
-  plugin_dsh_base_goal_round_driver["goal-round-driver<br/>@deepseek-ai/dsh-goal-round-driver"]
+  plugin_dsh_base_goal_round_driver["goal-round-driver<br/>@yharness/goal-round-driver"]
   cfg --> plugin_dsh_base_goal_round_driver
-  plugin_dsh_base_command_goal["command-goal<br/>@deepseek-ai/dsh-command-goal"]
+  plugin_dsh_base_command_goal["command-goal<br/>@yharness/command-goal"]
   cfg --> plugin_dsh_base_command_goal
-  plugin_dsh_base_plan_mode["plan-mode<br/>@deepseek-ai/dsh-plan-mode"]
+  plugin_dsh_base_plan_mode["plan-mode<br/>@yharness/plan-mode"]
   cfg --> plugin_dsh_base_plan_mode
-  plugin_dsh_base_token_meter["token-meter<br/>@deepseek-ai/dsh-token-meter"]
+  plugin_dsh_base_token_meter["token-meter<br/>@yharness/token-meter"]
   cfg --> plugin_dsh_base_token_meter
-  plugin_dsh_base_compaction_basic["compaction-basic<br/>@deepseek-ai/dsh-compaction-basic"]
+  plugin_dsh_base_compaction_basic["compaction-basic<br/>@yharness/compaction-basic"]
   cfg --> plugin_dsh_base_compaction_basic
-  plugin_dsh_base_command_compact["command-compact<br/>@deepseek-ai/dsh-command-compact"]
+  plugin_dsh_base_command_compact["command-compact<br/>@yharness/command-compact"]
   cfg --> plugin_dsh_base_command_compact
-  plugin_dsh_base_subagent["subagent<br/>@deepseek-ai/dsh-subagent"]
+  plugin_dsh_base_subagent["subagent<br/>@yharness/subagent"]
   cfg --> plugin_dsh_base_subagent
-  plugin_dsh_base_subagent_spawn_in_process["subagent-spawn-in-process<br/>@deepseek-ai/dsh-subagent-spawn-in-process"]
+  plugin_dsh_base_subagent_spawn_in_process["subagent-spawn-in-process<br/>@yharness/subagent-spawn-in-process"]
   cfg --> plugin_dsh_base_subagent_spawn_in_process
-  plugin_dsh_base_subagent_fork_in_process["subagent-fork-in-process<br/>@deepseek-ai/dsh-subagent-fork-in-process"]
+  plugin_dsh_base_subagent_fork_in_process["subagent-fork-in-process<br/>@yharness/subagent-fork-in-process"]
   cfg --> plugin_dsh_base_subagent_fork_in_process
-  plugin_dsh_base_tool_subagent_control["tool-subagent-control<br/>@deepseek-ai/dsh-tool-subagent-control"]
+  plugin_dsh_base_tool_subagent_control["tool-subagent-control<br/>@yharness/tool-subagent-control"]
   cfg --> plugin_dsh_base_tool_subagent_control
-  plugin_dsh_base_tool_subagent_list_agents["tool-subagent-list-agents<br/>@deepseek-ai/dsh-tool-subagent-control/list-agents"]
+  plugin_dsh_base_tool_subagent_list_agents["tool-subagent-list-agents<br/>@yharness/tool-subagent-control/list-agents"]
   cfg --> plugin_dsh_base_tool_subagent_list_agents
-  plugin_dsh_base_tool_subagent["tool-subagent<br/>@deepseek-ai/dsh-tool-subagent"]
+  plugin_dsh_base_tool_subagent["tool-subagent<br/>@yharness/tool-subagent"]
   cfg --> plugin_dsh_base_tool_subagent
-  plugin_dsh_base_tool_subagent_fork["tool-subagent-fork<br/>@deepseek-ai/dsh-tool-subagent"]
+  plugin_dsh_base_tool_subagent_fork["tool-subagent-fork<br/>@yharness/tool-subagent"]
   cfg --> plugin_dsh_base_tool_subagent_fork
-  plugin_dsh_base_ptc_runtime["ptc-runtime<br/>@deepseek-ai/dsh-ptc-runtime-node"]
+  plugin_dsh_base_ptc_runtime["ptc-runtime<br/>@yharness/ptc-runtime-node"]
   cfg --> plugin_dsh_base_ptc_runtime
-  plugin_dsh_base_workflow_ptc["workflow-ptc<br/>@deepseek-ai/dsh-workflow-ptc"]
+  plugin_dsh_base_workflow_ptc["workflow-ptc<br/>@yharness/workflow-ptc"]
   cfg --> plugin_dsh_base_workflow_ptc
-  plugin_dsh_base_tool_workflow["tool-workflow<br/>@deepseek-ai/dsh-tool-workflow"]
+  plugin_dsh_base_tool_workflow["tool-workflow<br/>@yharness/tool-workflow"]
   cfg --> plugin_dsh_base_tool_workflow
-  plugin_dsh_base_timeout_policy["timeout-policy<br/>@deepseek-ai/dsh-tool-call-timeout-policy"]
+  plugin_dsh_base_timeout_policy["timeout-policy<br/>@yharness/tool-call-timeout-policy"]
   cfg --> plugin_dsh_base_timeout_policy
-  plugin_dsh_base_spill_local["spill-local<br/>@deepseek-ai/dsh-spill-local"]
+  plugin_dsh_base_spill_local["spill-local<br/>@yharness/spill-local"]
   cfg --> plugin_dsh_base_spill_local
-  plugin_dsh_base_spill_policy["spill-policy<br/>@deepseek-ai/dsh-spill-policy"]
+  plugin_dsh_base_spill_policy["spill-policy<br/>@yharness/spill-policy"]
   cfg --> plugin_dsh_base_spill_policy
-  plugin_dsh_base_session_checkpoint_policy["session-checkpoint-policy<br/>@deepseek-ai/dsh-session-checkpoint-policy"]
+  plugin_dsh_base_session_checkpoint_policy["session-checkpoint-policy<br/>@yharness/session-checkpoint-policy"]
   cfg --> plugin_dsh_base_session_checkpoint_policy
-  plugin_dsh_base_tool_result_pruner["tool-result-pruner<br/>@deepseek-ai/dsh-compaction-tool-result-pruner"]
+  plugin_dsh_base_tool_result_pruner["tool-result-pruner<br/>@yharness/compaction-tool-result-pruner"]
   cfg --> plugin_dsh_base_tool_result_pruner
-  plugin_dsh_base_image_offload["image-offload<br/>@deepseek-ai/dsh-compaction-image-offload"]
+  plugin_dsh_base_image_offload["image-offload<br/>@yharness/compaction-image-offload"]
   cfg --> plugin_dsh_base_image_offload
-  plugin_dsh_base_tool_todo["tool-todo<br/>@deepseek-ai/dsh-tool-todo"]
+  plugin_dsh_base_tool_todo["tool-todo<br/>@yharness/tool-todo"]
   cfg --> plugin_dsh_base_tool_todo
-  plugin_dsh_base_tool_goal["tool-goal<br/>@deepseek-ai/dsh-tool-goal"]
+  plugin_dsh_base_tool_goal["tool-goal<br/>@yharness/tool-goal"]
   cfg --> plugin_dsh_base_tool_goal
-  plugin_dsh_base_tool_ralph["tool-ralph<br/>@deepseek-ai/dsh-tool-ralph"]
+  plugin_dsh_base_tool_ralph["tool-ralph<br/>@yharness/tool-ralph"]
   cfg --> plugin_dsh_base_tool_ralph
-  plugin_dsh_base_repeat_tool_reminder["repeat-tool-reminder<br/>@deepseek-ai/dsh-repeat-tool-reminder"]
+  plugin_dsh_base_repeat_tool_reminder["repeat-tool-reminder<br/>@yharness/repeat-tool-reminder"]
   cfg --> plugin_dsh_base_repeat_tool_reminder
-  plugin_dsh_base_web["web<br/>@deepseek-ai/dsh-web"]
+  plugin_dsh_base_web["web<br/>@yharness/web"]
   cfg --> plugin_dsh_base_web
-  plugin_dsh_base_web_search_deepseek["web-search-deepseek<br/>@deepseek-ai/dsh-web-search-deepseek"]
+  plugin_dsh_base_web_search_deepseek["web-search-deepseek<br/>@yharness/web-search-deepseek"]
   cfg --> plugin_dsh_base_web_search_deepseek
-  plugin_dsh_base_web_deepseek_api["web-deepseek-api<br/>@deepseek-ai/dsh-web-deepseek-api"]
+  plugin_dsh_base_web_deepseek_api["web-deepseek-api<br/>@yharness/web-deepseek-api"]
   cfg --> plugin_dsh_base_web_deepseek_api
-  plugin_dsh_base_web_fetch_http["web-fetch-http<br/>@deepseek-ai/dsh-web-fetch-http"]
+  plugin_dsh_base_web_fetch_http["web-fetch-http<br/>@yharness/web-fetch-http"]
   cfg --> plugin_dsh_base_web_fetch_http
-  plugin_dsh_base_tool_web["tool-web<br/>@deepseek-ai/dsh-tool-web"]
+  plugin_dsh_base_tool_web["tool-web<br/>@yharness/tool-web"]
   cfg --> plugin_dsh_base_tool_web
-  plugin_dsh_base_mcp_resources["mcp-resources<br/>@deepseek-ai/dsh-mcp-resources"]
+  plugin_dsh_base_mcp_resources["mcp-resources<br/>@yharness/mcp-resources"]
   cfg --> plugin_dsh_base_mcp_resources
-  plugin_dsh_base_tools["tools<br/>@deepseek-ai/dsh-tools"]
+  plugin_dsh_base_tools["tools<br/>@yharness/tools"]
   cfg --> plugin_dsh_base_tools
-  plugin_dsh_base_system_prompt["system-prompt<br/>@deepseek-ai/dsh-system-prompt"]
+  plugin_dsh_base_system_prompt["system-prompt<br/>@yharness/system-prompt"]
   cfg --> plugin_dsh_base_system_prompt
-  plugin_dsh_base_agent_loop["agent-loop<br/>@deepseek-ai/dsh-agent-loop"]
+  plugin_dsh_base_agent_loop["agent-loop<br/>@yharness/agent-loop"]
   cfg --> plugin_dsh_base_agent_loop
-  plugin_dsh_base_fs_sandbox["fs-sandbox<br/>@deepseek-ai/dsh-fs-sandbox"]
+  plugin_dsh_base_fs_sandbox["fs-sandbox<br/>@yharness/fs-sandbox"]
   cfg --> plugin_dsh_base_fs_sandbox
-  plugin_dsh_base_llm_deepseek["llm-deepseek<br/>@deepseek-ai/dsh-llm-deepseek-api-key"]
+  plugin_dsh_base_llm_deepseek["llm-deepseek<br/>@yharness/llm-deepseek-api-key"]
   cfg --> plugin_dsh_base_llm_deepseek
-  plugin_dsh_base_llm_deepseek_account["llm-deepseek-account<br/>@deepseek-ai/dsh-llm-deepseek-account"]
+  plugin_dsh_base_llm_deepseek_account["llm-deepseek-account<br/>@yharness/llm-deepseek-account"]
   cfg --> plugin_dsh_base_llm_deepseek_account
 ```
 
 | Plugin id | Package / module |
 | --- | --- |
-| `tool-plugin-manager` | `@deepseek-ai/dsh-plugin-manager/tools` |
-| `plugin-manager` | `@deepseek-ai/dsh-plugin-manager` |
-| `timer` | `@deepseek-ai/cordis-plugin-timer` |
-| `hmr` | `@deepseek-ai/dsh-hmr` |
-| `llm` | `@deepseek-ai/dsh-llm` |
-| `deepseek-llm-api-extensions` | `@deepseek-ai/dsh-deepseek-llm-api-extensions` |
-| `session` | `@deepseek-ai/dsh-session` |
-| `session-log-deepseek` | `@deepseek-ai/dsh-session-log-deepseek` |
-| `typert` | `@deepseek-ai/dsh-typert-registry` |
-| `typert-loader` | `@deepseek-ai/dsh-typert-loader` |
-| `typert-gateway` | `@deepseek-ai/dsh-api-gateway` |
-| `session-title` | `@deepseek-ai/dsh-session-title` |
-| `session-title-llm` | `@deepseek-ai/dsh-session-title-first-prompt-llm` |
-| `user-questions` | `@deepseek-ai/dsh-user-questions` |
-| `agent` | `@deepseek-ai/dsh-agent` |
-| `plugin-package-inventory-deepseek` | `@deepseek-ai/dsh-plugin-package-inventory-deepseek` |
-| `agent-default-model` | `@deepseek-ai/dsh-agent-default-model` |
-| `jobs` | `@deepseek-ai/dsh-jobs-local` |
-| `llm-retry` | `@deepseek-ai/dsh-llm-retry` |
-| `config-editor` | `@deepseek-ai/dsh-config-editor` |
-| `settings` | `@deepseek-ai/dsh-settings` |
-| `provider-config-sync` | `@deepseek-ai/dsh-provider-config-sync` |
-| `authorization` | `@deepseek-ai/dsh-authorization` |
-| `deepseek-account` | `@deepseek-ai/dsh-deepseek-account-platform` |
-| `credentials` | `@deepseek-ai/dsh-credentials-local` |
-| `llm-pi-ai` | `@deepseek-ai/dsh-llm-pi-ai` |
-| `session-persistence-jsonl` | `@deepseek-ai/dsh-session-persistence-jsonl` |
-| `attachment-local` | `@deepseek-ai/dsh-attachment-local` |
-| `session-query-sqlite` | `@deepseek-ai/dsh-session-query-sqlite` |
-| `session-projection` | `@deepseek-ai/dsh-session-projection` |
-| `storage` | `@deepseek-ai/dsh-storage` |
-| `storage-json` | `@deepseek-ai/dsh-storage-json` |
-| `storage-domain` | `@deepseek-ai/dsh-storage-domain` |
-| `session-projection-cache` | `@deepseek-ai/dsh-session-projection-cache` |
-| `otel` | `@deepseek-ai/dsh-otel` |
-| `session-telemetry-otel` | `@deepseek-ai/dsh-session-telemetry-otel` |
-| `subprocess` | `@deepseek-ai/dsh-subprocess-local` |
-| `sandbox` | `@deepseek-ai/dsh-sandbox-local` |
-| `sandbox-policy` | `@deepseek-ai/dsh-sandbox-policy` |
-| `bash-sandbox` | `@deepseek-ai/dsh-bash-sandbox` |
-| `pwsh-sandbox` | `@deepseek-ai/dsh-pwsh-sandbox` |
-| `approval` | `@deepseek-ai/dsh-user-approval` |
-| `permission` | `@deepseek-ai/dsh-permission-presets` |
-| `shell-env` | `@deepseek-ai/dsh-shell-env` |
-| `tool-bash` | `@deepseek-ai/dsh-tool-bash` |
-| `tool-pwsh` | `@deepseek-ai/dsh-tool-pwsh` |
-| `tool-jobs` | `@deepseek-ai/dsh-tool-jobs` |
-| `fs-observation-policy` | `@deepseek-ai/dsh-fs-observation-policy` |
-| `tool-fs` | `@deepseek-ai/dsh-tool-fs` |
-| `tool-fs-search` | `@deepseek-ai/dsh-tool-fs-search` |
-| `agent-instructions` | `@deepseek-ai/dsh-agent-instructions` |
-| `skill` | `@deepseek-ai/dsh-skill` |
-| `skill-filesystem` | `@deepseek-ai/dsh-skill-filesystem` |
-| `skill-badge` | `@deepseek-ai/dsh-skill-badge` |
-| `skill-compound` | `@deepseek-ai/dsh-skill-compound` |
-| `tool-skill` | `@deepseek-ai/dsh-tool-skill` |
-| `commands` | `@deepseek-ai/dsh-commands` |
-| `command-feedback` | `@deepseek-ai/dsh-command-feedback` |
-| `goal` | `@deepseek-ai/dsh-goal` |
-| `goal-round-driver` | `@deepseek-ai/dsh-goal-round-driver` |
-| `command-goal` | `@deepseek-ai/dsh-command-goal` |
-| `plan-mode` | `@deepseek-ai/dsh-plan-mode` |
-| `token-meter` | `@deepseek-ai/dsh-token-meter` |
-| `compaction-basic` | `@deepseek-ai/dsh-compaction-basic` |
-| `command-compact` | `@deepseek-ai/dsh-command-compact` |
-| `subagent` | `@deepseek-ai/dsh-subagent` |
-| `subagent-spawn-in-process` | `@deepseek-ai/dsh-subagent-spawn-in-process` |
-| `subagent-fork-in-process` | `@deepseek-ai/dsh-subagent-fork-in-process` |
-| `tool-subagent-control` | `@deepseek-ai/dsh-tool-subagent-control` |
-| `tool-subagent-list-agents` | `@deepseek-ai/dsh-tool-subagent-control/list-agents` |
-| `tool-subagent` | `@deepseek-ai/dsh-tool-subagent` |
-| `tool-subagent-fork` | `@deepseek-ai/dsh-tool-subagent` |
-| `ptc-runtime` | `@deepseek-ai/dsh-ptc-runtime-node` |
-| `workflow-ptc` | `@deepseek-ai/dsh-workflow-ptc` |
-| `tool-workflow` | `@deepseek-ai/dsh-tool-workflow` |
-| `timeout-policy` | `@deepseek-ai/dsh-tool-call-timeout-policy` |
-| `spill-local` | `@deepseek-ai/dsh-spill-local` |
-| `spill-policy` | `@deepseek-ai/dsh-spill-policy` |
-| `session-checkpoint-policy` | `@deepseek-ai/dsh-session-checkpoint-policy` |
-| `tool-result-pruner` | `@deepseek-ai/dsh-compaction-tool-result-pruner` |
-| `image-offload` | `@deepseek-ai/dsh-compaction-image-offload` |
-| `tool-todo` | `@deepseek-ai/dsh-tool-todo` |
-| `tool-goal` | `@deepseek-ai/dsh-tool-goal` |
-| `tool-ralph` | `@deepseek-ai/dsh-tool-ralph` |
-| `repeat-tool-reminder` | `@deepseek-ai/dsh-repeat-tool-reminder` |
-| `web` | `@deepseek-ai/dsh-web` |
-| `web-search-deepseek` | `@deepseek-ai/dsh-web-search-deepseek` |
-| `web-deepseek-api` | `@deepseek-ai/dsh-web-deepseek-api` |
-| `web-fetch-http` | `@deepseek-ai/dsh-web-fetch-http` |
-| `tool-web` | `@deepseek-ai/dsh-tool-web` |
-| `mcp-resources` | `@deepseek-ai/dsh-mcp-resources` |
-| `tools` | `@deepseek-ai/dsh-tools` |
-| `system-prompt` | `@deepseek-ai/dsh-system-prompt` |
-| `agent-loop` | `@deepseek-ai/dsh-agent-loop` |
-| `fs-sandbox` | `@deepseek-ai/dsh-fs-sandbox` |
-| `llm-deepseek` | `@deepseek-ai/dsh-llm-deepseek-api-key` |
-| `llm-deepseek-account` | `@deepseek-ai/dsh-llm-deepseek-account` |
+| `tool-plugin-manager` | `@yharness/plugin-manager/tools` |
+| `plugin-manager` | `@yharness/plugin-manager` |
+| `timer` | `@yharness/cordis-plugin-timer` |
+| `hmr` | `@yharness/hmr` |
+| `llm` | `@yharness/llm` |
+| `deepseek-llm-api-extensions` | `@yharness/deepseek-llm-api-extensions` |
+| `session` | `@yharness/session` |
+| `session-log-deepseek` | `@yharness/session-log-deepseek` |
+| `typert` | `@yharness/typert-registry` |
+| `typert-loader` | `@yharness/typert-loader` |
+| `typert-gateway` | `@yharness/api-gateway` |
+| `session-title` | `@yharness/session-title` |
+| `session-title-llm` | `@yharness/session-title-first-prompt-llm` |
+| `user-questions` | `@yharness/user-questions` |
+| `agent` | `@yharness/agent` |
+| `plugin-package-inventory-deepseek` | `@yharness/plugin-package-inventory-deepseek` |
+| `agent-default-model` | `@yharness/agent-default-model` |
+| `jobs` | `@yharness/jobs-local` |
+| `llm-retry` | `@yharness/llm-retry` |
+| `config-editor` | `@yharness/config-editor` |
+| `settings` | `@yharness/settings` |
+| `provider-config-sync` | `@yharness/provider-config-sync` |
+| `authorization` | `@yharness/authorization` |
+| `deepseek-account` | `@yharness/deepseek-account-platform` |
+| `credentials` | `@yharness/credentials-local` |
+| `llm-pi-ai` | `@yharness/llm-pi-ai` |
+| `session-persistence-jsonl` | `@yharness/session-persistence-jsonl` |
+| `attachment-local` | `@yharness/attachment-local` |
+| `session-query-sqlite` | `@yharness/session-query-sqlite` |
+| `session-projection` | `@yharness/session-projection` |
+| `storage` | `@yharness/storage` |
+| `storage-json` | `@yharness/storage-json` |
+| `storage-domain` | `@yharness/storage-domain` |
+| `session-projection-cache` | `@yharness/session-projection-cache` |
+| `otel` | `@yharness/otel` |
+| `session-telemetry-otel` | `@yharness/session-telemetry-otel` |
+| `subprocess` | `@yharness/subprocess-local` |
+| `sandbox` | `@yharness/sandbox-local` |
+| `sandbox-policy` | `@yharness/sandbox-policy` |
+| `bash-sandbox` | `@yharness/bash-sandbox` |
+| `pwsh-sandbox` | `@yharness/pwsh-sandbox` |
+| `approval` | `@yharness/user-approval` |
+| `permission` | `@yharness/permission-presets` |
+| `shell-env` | `@yharness/shell-env` |
+| `tool-bash` | `@yharness/tool-bash` |
+| `tool-pwsh` | `@yharness/tool-pwsh` |
+| `tool-jobs` | `@yharness/tool-jobs` |
+| `fs-observation-policy` | `@yharness/fs-observation-policy` |
+| `tool-fs` | `@yharness/tool-fs` |
+| `tool-fs-search` | `@yharness/tool-fs-search` |
+| `agent-instructions` | `@yharness/agent-instructions` |
+| `skill` | `@yharness/skill` |
+| `skill-filesystem` | `@yharness/skill-filesystem` |
+| `skill-badge` | `@yharness/skill-badge` |
+| `skill-compound` | `@yharness/skill-compound` |
+| `tool-skill` | `@yharness/tool-skill` |
+| `commands` | `@yharness/commands` |
+| `command-feedback` | `@yharness/command-feedback` |
+| `goal` | `@yharness/goal` |
+| `goal-round-driver` | `@yharness/goal-round-driver` |
+| `command-goal` | `@yharness/command-goal` |
+| `plan-mode` | `@yharness/plan-mode` |
+| `token-meter` | `@yharness/token-meter` |
+| `compaction-basic` | `@yharness/compaction-basic` |
+| `command-compact` | `@yharness/command-compact` |
+| `subagent` | `@yharness/subagent` |
+| `subagent-spawn-in-process` | `@yharness/subagent-spawn-in-process` |
+| `subagent-fork-in-process` | `@yharness/subagent-fork-in-process` |
+| `tool-subagent-control` | `@yharness/tool-subagent-control` |
+| `tool-subagent-list-agents` | `@yharness/tool-subagent-control/list-agents` |
+| `tool-subagent` | `@yharness/tool-subagent` |
+| `tool-subagent-fork` | `@yharness/tool-subagent` |
+| `ptc-runtime` | `@yharness/ptc-runtime-node` |
+| `workflow-ptc` | `@yharness/workflow-ptc` |
+| `tool-workflow` | `@yharness/tool-workflow` |
+| `timeout-policy` | `@yharness/tool-call-timeout-policy` |
+| `spill-local` | `@yharness/spill-local` |
+| `spill-policy` | `@yharness/spill-policy` |
+| `session-checkpoint-policy` | `@yharness/session-checkpoint-policy` |
+| `tool-result-pruner` | `@yharness/compaction-tool-result-pruner` |
+| `image-offload` | `@yharness/compaction-image-offload` |
+| `tool-todo` | `@yharness/tool-todo` |
+| `tool-goal` | `@yharness/tool-goal` |
+| `tool-ralph` | `@yharness/tool-ralph` |
+| `repeat-tool-reminder` | `@yharness/repeat-tool-reminder` |
+| `web` | `@yharness/web` |
+| `web-search-deepseek` | `@yharness/web-search-deepseek` |
+| `web-deepseek-api` | `@yharness/web-deepseek-api` |
+| `web-fetch-http` | `@yharness/web-fetch-http` |
+| `tool-web` | `@yharness/tool-web` |
+| `mcp-resources` | `@yharness/mcp-resources` |
+| `tools` | `@yharness/tools` |
+| `system-prompt` | `@yharness/system-prompt` |
+| `agent-loop` | `@yharness/agent-loop` |
+| `fs-sandbox` | `@yharness/fs-sandbox` |
+| `llm-deepseek` | `@yharness/llm-deepseek-api-key` |
+| `llm-deepseek-account` | `@yharness/llm-deepseek-account` |
 
 Source config: [`packages/bundle/base/cordis.patch.yml`](../../packages/bundle/base/cordis.patch.yml).
 

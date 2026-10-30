@@ -1,6 +1,6 @@
 /** Native read fixtures exercise durable mirrors without native auth or a model. */
 import { describe, expect, it } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { brandString } from '@yharness/brand'
 import { CodingSessionLibrary } from '../src/library.ts'
 import type { CodingSessionEvent, CodingSessionLibraryOptions, CodingSessionProvider, CodingSessionMirror, CodingSessionSource, CodingSessionSnapshot } from '../src/types.ts'
 
@@ -31,7 +31,7 @@ describe('coding session mirrors', () => {
     expect((await f.library.detail(mirror.id)).events[0]?.text).toBe('Check parser'); await f.library.close()
   })
   it('bounds complete inventory wrappers in UTF-8 bytes and retains readable data when full', async () => {
-    const f = fixture(); const mirror = await f.library.importSession(source); f.provider.label = '本地连接'
+    const f = fixture(); const mirror = await f.library.importSession(source); f.provider.label = '\u{672C}\u{5730}\u{8FDE}\u{63A5}'
     const exact = Buffer.byteLength(JSON.stringify(f.library.state()), 'utf8')
     const bounded = (maxBytes: number) => {
       const library = new CodingSessionLibrary({ store: { get: id => f.records.get(id), entries: () => f.records.entries(), put: async () => { throw new Error('No inventory writes expected') } }, pageSize: 20, maxEvents: 50, maxMirrors: 50, maxBytes, timeoutMs: 1000 })

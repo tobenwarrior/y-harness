@@ -3,7 +3,7 @@ description: "Sidebar shell plugin for the dsh web client: brand row, New Sessio
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-sidebar
+# @yharness/client-ui-sidebar
 
 Desktop product events use the optional [product analytics service](../product-analytics/README.md); ordinary Web interactions are excluded.
 
@@ -39,11 +39,11 @@ Plugins add an icon component to the root-scoped `sidebar.panellist` list with a
 
 The sidebar and conversation-header toggles show the effective shortcut from the command catalog in their hover and keyboard-focus tooltips and `aria-keyshortcuts`. An unbound command shows only the action label.
 
-The collapsed rail's top expand button always shows the panel-open icon and hosts the optional, non-interactive `sidebar.toggle.badge` slot. Its occupant supplies status and tooltip content without adding another action or changing the button's navigation behavior.
+The collapsed rail's top expand button always shows the panel-open icon. The optional `sidebar.toggle.badge` slot shares its tooltip anchor through a non-button wrapper, so an occupant can supply a separate accessible update action without nesting a button or changing the expand button's navigation behavior.
 
 During a live collapse, the expanded content fades out at its current width, the upper controls share one fade and leftward translation into the 56px rail, and the layout's column slide ends the motion. A page that starts collapsed renders the rail statically, and reduced-motion mode disables both transitions. The bottom-pinned `sidebar.settings` control shares the fade timing but has no horizontal translation.
 
-On Windows Electron, `html[data-windows-titlebar]` fixes the sidebar toggle in the caption's top-left corner in both states, aligned with New Session's left edge only when expanded. The expanded brand sits below the caption and above New Session, with 8px of extra space above that button. Collapsing hides the brand and sidebar content and places New Session between the sidebar toggle and the Desktop-owned menus. The sidebar sets the root `--dsh-windows-menu-start` to 84px when collapsed; the Desktop preload uses it to position its menu after New Session and defaults to 48px when expanded. Caption icon buttons use centered 16px glyphs in 28px circular controls and exclude themselves from the window drag region. The sidebar toggle and New Session bubbles open below the caption, where the Desktop-owned menu text cannot cover them; an occupying `sidebar.toggle.badge` chooses its own bubble side.
+On Windows Electron, `html[data-windows-titlebar]` fixes the sidebar toggle and its tooltip anchor in the caption's top-left corner in both states, aligned with New Session's left edge only when expanded. The expanded brand sits below the caption and above New Session, with 8px of extra space above that button. Collapsing hides the brand and sidebar content and places New Session between the sidebar toggle and the Desktop-owned menus. The sidebar sets the root `--dsh-windows-menu-start` to 84px when collapsed; when an update action occupies the optional caption seat, it advances the menu to 120px. The Desktop preload uses that variable to position its menu and defaults to 48px when expanded. Caption icon buttons use centered 16px glyphs in 28px circular controls and exclude themselves from the window drag region. The sidebar toggle, update action, and New Session bubbles open below the caption, where the Desktop-owned menu text cannot cover them; an occupying `sidebar.toggle.badge` chooses its own bubble side.
 
 ### macOS desktop
 

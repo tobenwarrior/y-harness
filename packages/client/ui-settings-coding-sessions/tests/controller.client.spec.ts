@@ -1,8 +1,8 @@
 /** Client operations retain imported history across failures and invalidate old connection responses. */
 import { describe, expect, it } from 'vitest'
-import type { CodingSessionMirror } from '@deepseek-ai/dsh-coding-session/types'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
+import type { CodingSessionMirror } from '@yharness/coding-session/types'
+import { brandString } from '@yharness/brand'
+import { RemoteError } from '@yharness/client-test-runtime'
 import { CodingSessionsController } from '../src/client/controller.ts'
 import type { CodingSessionsApi } from '../src/client/controller.ts'
 import { fixtureApi, mirror, ok } from './fixtures.client.ts'

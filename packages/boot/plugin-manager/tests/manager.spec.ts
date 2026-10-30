@@ -8,18 +8,18 @@ import { join, resolve } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execa } from 'execa'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest'
 import {
   boot, composeEntries, initProfile, loadProfileDirectory, readProfilePatches, readProfileManifest,
   reconcileProfilePatches, OPTIONAL_BUNDLES, PluginPackages, readPluginMeta, getDshRuntimeVersion,
   type ProfileContext, type RuntimeResolution,
-} from '@deepseek-ai/dsh-app-boot'
+} from '@yharness/app-boot'
 import PluginManager, { type Config, type PluginChange, type PluginInstallLogChunk, type PluginInstallProgress, type PluginInstallRequestId } from '../src/index.ts'
-import Hmr from '@deepseek-ai/dsh-hmr'
-import Timer from '@deepseek-ai/cordis-plugin-timer'
-import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
-import { Group } from '@deepseek-ai/cordis-plugin-loader'
+import Hmr from '@yharness/hmr'
+import Timer from '@yharness/cordis-plugin-timer'
+import type { PatchOptions } from '@yharness/cordis-plugin-include'
+import { Group } from '@yharness/cordis-plugin-loader'
 import * as operations from '../src/operations.ts'
 import * as githubConnection from '../src/github-connection.ts'
 import { parse, parseDocument } from 'yaml'
@@ -308,6 +308,44 @@ it('lists bundle versions and current-profile plugin targets', async () => {
   ])
 })
 
+it('lists a legacy profile key against a canonical installed bundle without duplicating it', async () => {
+  const { manager, dir, bundle } = await fixture('startup')
+  const legacy = '@deepseek-ai/dsh-addon'
+  const canonical = '@yharness/addon'
+  bundle(canonical, [])
+  const manifest = readProfileManifest('test', dir)
+  manifest.dependencies = { ...manifest.dependencies, [legacy]: '1.0.0' }
+  manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: [...manifest.dsh?.profile?.bundles ?? [], legacy] } }
+  writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+
+  const rows = await manager.listBundles()
+  expect(rows.filter(row => row.name === legacy || row.name === canonical)).toEqual([
+    expect.objectContaining({ name: legacy, version: '1.0.0', installed: true, enabled: true, removable: true }),
+  ])
+})
+
+it('removes a legacy profile key when the caller uses its canonical name', async () => {
+  const { manager, dir, bundle } = await fixture('startup')
+  const legacy = '@deepseek-ai/dsh-addon'
+  const canonical = '@yharness/addon'
+  bundle(canonical, [])
+  const manifest = readProfileManifest('test', dir)
+  manifest.dependencies = { ...manifest.dependencies, [legacy]: '1.0.0' }
+  manifest.dsh = { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles: [...manifest.dsh?.profile?.bundles ?? [], legacy] } }
+  writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest))
+  const remove = vi.spyOn(operations, 'runProfilePnpm').mockImplementation(async (_context, args) => {
+    expect(args).toEqual(['remove', legacy])
+    const after = readProfileManifest('test', dir)
+    delete after.dependencies?.[legacy]
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(after))
+    return { exitCode: 0, output: 'removed', truncated: false, logPath: join(dir, 'pnpm.log') }
+  })
+  onTestFinished(() => { remove.mockRestore() })
+
+  expect(await manager.removeBundle(canonical)).toMatchObject({ changed: true, application: 'restart-required' })
+  expect(readProfileManifest('test', dir).dependencies).not.toHaveProperty(legacy)
+})
+
 it('describes a bundle by its manifest and patch: one-liner, rows without a live entry, and the built-in rows it changes', async () => {
   const { manager, dir, bundle } = await fixture()
   bundle('described', [{ id: 'described-row', name: './plugin.mjs' }])
@@ -381,7 +419,7 @@ it.each(['native', 'runtime'] as const)('reads a disabled bundle and its indepen
       bundle: { patch: './cordis.patch.yml' },
     } }))
   writeFileSync(join(root, 'locale', 'en.json'), '{"meta":{"title":"Local bundle"}}')
-  writeFileSync(join(root, 'locale', 'zh.json'), '{"meta":{"title":"本地组合包"}}')
+  writeFileSync(join(root, 'locale', 'zh.json'), '{"meta":{"title":"\u{672C}\u{5730}\u{7EC4}\u{5408}\u{5305}"}}')
   writeFileSync(join(child, 'package.json'), JSON.stringify({ name: 'local-child', exports: {
     './first': './index.js', './second': './index.js',
     './first/locale/*.json': './first-locale/*.json', './second/locale/*.json': './second-locale/*.json',
@@ -415,7 +453,7 @@ it.each(['native', 'runtime'] as const)('reads a disabled bundle and its indepen
   }
   await ctx.plugin(PluginPackages, mode === 'runtime' ? { resolution } : {})
   const result = (await manager.listBundles()).find(row => row.name === 'localized')
-  expect(result).toMatchObject({ enabled: false, meta: { title: { en: 'Local bundle', zh: '本地组合包' } }, rows: [
+  expect(result).toMatchObject({ enabled: false, meta: { title: { en: 'Local bundle', zh: '\u{672C}\u{5730}\u{7EC4}\u{5408}\u{5305}' } }, rows: [
     { rowId: 'first', moduleName: 'local-child/first', meta: { title: { en: 'First plugin' } } },
     { rowId: 'second', moduleName: 'local-child/second', meta: { title: { en: 'Second plugin' } } },
   ] })

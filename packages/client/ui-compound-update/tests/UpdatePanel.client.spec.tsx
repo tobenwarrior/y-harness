@@ -2,7 +2,7 @@
 import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import type { CompoundUpdateState } from '../src/client/controller.ts'
 import { en } from '../src/client/locales.ts'
 import { UpdatePanel } from '../src/client/UpdatePanel.tsx'

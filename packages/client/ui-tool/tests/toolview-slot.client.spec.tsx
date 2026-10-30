@@ -1,21 +1,21 @@
 // @vitest-environment jsdom
 
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { createSnapshotStore } from '@yharness/client-store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent } from '@testing-library/react'
-import type { ISession } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { ISession } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
+import type { WorkspaceId } from '@yharness/workspace/types'
 import {
   apply as applyChat, inject as injectChat, type ToolResultNode,
-} from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
-import { SlotTestRuntime, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { apply as applyConversation, inject as injectConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { apply as applyTool, inject as injectTool } from '@deepseek-ai/dsh-client-ui-tool/client'
-import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+} from '@yharness/client-ui-chat/client'
+import type { PropsRenderSlots } from '@yharness/client-ui-slots'
+import { SlotTestRuntime, stubConfigForm } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import { apply as applyConversation, inject as injectConversation } from '@yharness/client-ui-conversation/client'
+import { apply as applyTool, inject as injectTool } from '@yharness/client-ui-tool/client'
+import type { ToolCallViewProps } from '@yharness/client-ui-tool/client'
+import { PartialArguments } from '@yharness/util-values'
 import { toolSessionEvents } from './tool-fixtures.client.ts'
 
 const SID = 's1' as SessionId

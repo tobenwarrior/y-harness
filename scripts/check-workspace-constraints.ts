@@ -28,47 +28,98 @@ const workspaceGlobs = [
   { dir: 'apps', depth: 1 },
 ] as const
 const vendoredPackages = new Set([
-  '@deepseek-ai/cordis',
-  '@deepseek-ai/cosmokit',
-  '@deepseek-ai/schemastery',
-  '@deepseek-ai/cordis-plugin-loader',
-  '@deepseek-ai/cordis-plugin-include',
-  '@deepseek-ai/cordis-plugin-group',
-  '@deepseek-ai/cordis-plugin-timer',
-  '@deepseek-ai/cordis-plugin-hmr',
-  '@deepseek-ai/cordis-plugin-logger-console',
+  '@yharness/cordis',
+  '@yharness/cosmokit',
+  '@yharness/schemastery',
+  '@yharness/cordis-plugin-loader',
+  '@yharness/cordis-plugin-include',
+  '@yharness/cordis-plugin-group',
+  '@yharness/cordis-plugin-timer',
+  '@yharness/cordis-plugin-hmr',
+  '@yharness/cordis-plugin-logger-console',
 ])
 const publicNativePackages = new Set([
-  '@deepseek-ai/node-addon-system',
-  '@deepseek-ai/node-addon-system-darwin-arm64',
-  '@deepseek-ai/node-addon-system-darwin-x64',
-  '@deepseek-ai/node-addon-system-linux-arm64',
-  '@deepseek-ai/node-addon-system-linux-x64',
+  '@yharness/node-addon-system',
+  '@yharness/node-addon-system-darwin-arm64',
+  '@yharness/node-addon-system-darwin-x64',
+  '@yharness/node-addon-system-linux-arm64',
+  '@yharness/node-addon-system-linux-x64',
 ])
 /** Deliberate source payloads whose exact bytes are part of the package's audit surface. */
 const publicationSourceAllowlist: Readonly<Record<string, readonly string[]>> = {
-  '@deepseek-ai/node-addon-system': ['src/main.c', 'src/flock.c'],
+  '@yharness/node-addon-system': ['src/main.c', 'src/flock.c'],
 }
 /** Public source home recorded in maintained package manifests. */
-const publishedRepositoryUrl = 'git+https://github.com/deepseek-ai/deepseek-harness.git'
+const publishedRepositoryUrl = 'git+https://github.com/tobenwarrior/y-harness.git'
 /** Packages that participate in the experimental policy. */
 const experimentalPackageDirectory = /^packages\/experimental\/[^/]+$/
-/** npm namespace reserved for experimental packages. */
-const experimentalPackageNamePrefix = '@deepseek-ai/dsh-experimental-'
+/** Canonical Y Harness package namespace. */
+const canonicalPackagePrefix = '@yharness/'
+const canonicalCliPackageName = '@yharness/cli'
+/** Legacy namespace retained for migration checks and compatibility aliases. */
+const legacyPackagePrefix = '@' + 'deepseek-ai/dsh-'
+const legacyCliPackageName = '@' + 'deepseek-ai/dsh'
+const experimentalPackageNamePrefix = `${canonicalPackagePrefix}experimental-`
+const legacyExperimentalPackageNamePrefix = `${legacyPackagePrefix}experimental-`
+
+function isHarnessPackageName(name: string | undefined): boolean {
+  if (isNativePackageName(name)) return false
+  return name === canonicalCliPackageName || name === legacyCliPackageName
+    || name?.startsWith(canonicalPackagePrefix) === true
+    || name?.startsWith(legacyPackagePrefix) === true
+}
+
+function isNativePackageName(name: string | undefined): boolean {
+  return name === '@yharness/node-addon-system'
+    || name?.startsWith('@yharness/node-addon-system-') === true
+    || name === '@deepseek-ai/node-addon-system'
+    || name?.startsWith('@deepseek-ai/node-addon-system-') === true
+}
+
+function canonicalPackageName(name: string): string {
+  if (name === legacyCliPackageName) return canonicalCliPackageName
+  return name.startsWith(legacyPackagePrefix)
+    ? `${canonicalPackagePrefix}${name.slice(legacyPackagePrefix.length)}`
+    : name
+}
+
+function legacyPackageName(name: string): string {
+  if (name === canonicalCliPackageName) return legacyCliPackageName
+  return name.startsWith(canonicalPackagePrefix)
+    ? `${legacyPackagePrefix}${name.slice(canonicalPackagePrefix.length)}`
+    : name
+}
+
+function packagePolicy<T>(table: Readonly<Record<string, T>>, name: string): T | undefined {
+  return table[name] ?? table[canonicalPackageName(name)] ?? table[legacyPackageName(name)]
+}
+
+function isExperimentalPackageName(name: string | undefined): boolean {
+  return name?.startsWith(experimentalPackageNamePrefix) === true
+    || name?.startsWith(legacyExperimentalPackageNamePrefix) === true
+}
+
+function experimentalPrefixFor(name: string | undefined): string {
+  return name?.startsWith(legacyPackagePrefix) === true
+    ? legacyExperimentalPackageNamePrefix
+    : experimentalPackageNamePrefix
+}
 /** Ordinary directories whose packages this repository publishes: one release member each. */
 const standardReleaseMemberDirectory = /^(?:packages\/(?!experimental\/)[^/]+\/[^/]+|apps\/(?!desktop(?:-host)?$)[^/]+|vendor\/[^/]+)$/
 /** Installable application assembled by electron-builder rather than published to npm. */
 const desktopApplicationDirectory = 'apps/desktop'
+/** Private compatibility workspace retained for source updater releases before the desktop rename. */
+const privateCompatibilityDirectories = new Set(['apps/desktop-legacy-compat'])
 const localArtifactDirs = new Set(['node_modules'])
 const appPackageFiles: Readonly<Record<string, readonly string[]>> = {
-  '@deepseek-ai/dsh': ['lib/*.js', 'lib/types/*.d.ts'],
-  '@deepseek-ai/dsh-desktop-host': [
+  '@yharness/cli': ['lib/*.js', 'lib/types/*.d.ts'],
+  '@yharness/desktop-host': [
     'lib/index.js', 'lib/cli.js',
   ],
   // Sourcemaps stay out by payload policy; the worker-preview surface
   // (dist/preview.html and dist/preview/) backs opt-in experimental
   // packages and is not published.
-  '@deepseek-ai/dsh-web-frontend': ['dist', '!dist/**/*.map', '!dist/preview.html', '!dist/preview'],
+  '@yharness/web-frontend': ['dist', '!dist/**/*.map', '!dist/preview.html', '!dist/preview'],
 }
 
 /** The subset of package.json fields this constraint check cares about. */
@@ -169,56 +220,56 @@ export function readWorkspaceManifests(repositoryRoot: string): WorkspaceManifes
 
 const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // Owned Worker bundles import this public bootstrap before their business entry.
-  '@deepseek-ai/dsh-app-boot': ['lib/worker/profile-resolution-bootstrap.js'],
+  '@yharness/app-boot': ['lib/worker/profile-resolution-bootstrap.js'],
   // Statically linked client libraries keep their stylesheets next to the emitted
   // JavaScript, which imports them by relative path: the compile shell runs
   // them through its own CSS pipeline, so the sheets are published artifacts.
   // The glob covers whichever sheets a package emits; sourcemaps stay
   // unpublished, as everywhere else in the repository.
-  '@deepseek-ai/dsh-client-ui-primitives': ['lib/**/*.css'],
-  '@deepseek-ai/dsh-client-ui-dockkit': ['lib/**/*.css'],
-  '@deepseek-ai/dsh-client-ui-sidebar-documentpreview': ['lib/client.*.js'],
-  '@deepseek-ai/dsh-client-ui-sidebar-terminal': ['lib/client.*.js'],
-  '@deepseek-ai/dsh-client-web': ['lib/**/*.css', 'lib/apply-injections.js'],
-  '@deepseek-ai/dsh-client-ui-theme': ['lib/styles'],
+  '@yharness/client-ui-primitives': ['lib/**/*.css'],
+  '@yharness/client-ui-dockkit': ['lib/**/*.css'],
+  '@yharness/client-ui-sidebar-documentpreview': ['lib/client.*.js'],
+  '@yharness/client-ui-sidebar-terminal': ['lib/client.*.js'],
+  '@yharness/client-web': ['lib/**/*.css', 'lib/apply-injections.js'],
+  '@yharness/client-ui-theme': ['lib/styles'],
   // The physical-key protocol is a public entry usable without the browser service.
-  '@deepseek-ai/dsh-client-shortcuts': ['lib/protocol.js'],
+  '@yharness/client-shortcuts': ['lib/protocol.js'],
   // Nous authorization retains the license notice for its adapted Hermes Agent code.
-  '@deepseek-ai/dsh-llm-pi-ai': ['NOUS-LICENSE.txt'],
+  '@yharness/llm-pi-ai': ['NOUS-LICENSE.txt'],
   // The CPython side ships as source .py files, published as-is rather than built.
-  '@deepseek-ai/dsh-experimental-ptc-runtime-python': ['py/**/*.py'],
-  '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice': ['runtime/assets.json'],
+  '@yharness/experimental-ptc-runtime-python': ['py/**/*.py'],
+  '@yharness/experimental-speech-to-text-sensevoice': ['runtime/assets.json'],
   // The isolated Node bootstrap is a separately launched bundle.
-  '@deepseek-ai/dsh-ptc-runtime-node': ['lib/process.js'],
+  '@yharness/ptc-runtime-node': ['lib/process.js'],
   // The Inspector owns a Worker and a mirrored frontend outside package export paths.
-  '@deepseek-ai/dsh-experimental-inspector': ['lib/client.*.js', 'lib/worker.js', 'lib/devtools/**'],
+  '@yharness/experimental-inspector': ['lib/client.*.js', 'lib/worker.js', 'lib/devtools/**'],
   // Creator's composition guidance travels with the declaration package.
-  '@deepseek-ai/dsh-agent-preset': ['skills'],
+  '@yharness/agent-preset': ['skills'],
   // The Web Host mounts the default-off settings owner independently of each
   // Agent-scoped delegation-tool instance.
-  '@deepseek-ai/dsh-tool-subagent': ['lib/model-selection-settings.js'],
+  '@yharness/tool-subagent': ['lib/model-selection-settings.js'],
   // The JSONL backend resolves its private verification Worker relative to
   // import.meta.url; it is shipped without a public package subpath.
-  '@deepseek-ai/dsh-session-persistence-jsonl': ['lib/worker.cjs'],
+  '@yharness/session-persistence-jsonl': ['lib/worker.cjs'],
   // The argv-prefix runner entry ships beside the lib as its own bundle;
   // sandbox-local resolves it through the package's ./runner export. tsdown
   // also shares its generated FFI code through a hashed runtime chunk.
-  '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js', 'assets'],
-  '@deepseek-ai/dsh-skill-badge': ['assets'],
-  // The vendored Compound skills ship as instruction and script assets read at runtime;
-  // the release record is loaded by the updater and Host at runtime as well.
-  '@deepseek-ai/dsh-skill-compound': ['assets', 'UPSTREAM.md'],
-  '@deepseek-ai/dsh-skill-office': ['assets'],
-  '@deepseek-ai/dsh-subprocess': ['lib/control.js'],
+  '@yharness/sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js', 'assets'],
+  '@yharness/skill-badge': ['assets'],
+  // The vendored Compound skills ship as instruction and script assets read at runtime.
+  // UPSTREAM.md records the package's upstream source and release history.
+  '@yharness/skill-compound': ['assets', 'UPSTREAM.md'],
+  '@yharness/skill-office': ['assets'],
+  '@yharness/subprocess': ['lib/control.js'],
   // SSH launches a private helper and shares wire definitions and TLS setup
   // between that helper and the connection owner.
-  '@deepseek-ai/dsh-ssh': [
+  '@yharness/ssh': [
     'lib/helper.js', 'lib/protocol.js', 'lib/schemas.js',
     'lib/protocol-*.js', 'lib/schemas-*.js', 'lib/stream-security-*.js',
   ],
   // Ordinary native containment ships a path-loaded runner and its shared
   // runner chunk beside the existing node-pty permission repair.
-  '@deepseek-ai/dsh-subprocess-local': [
+  '@yharness/subprocess-local': [
     'lib/runner.js',
     'lib/runner-*.js',
     'lib/output.js',
@@ -227,12 +278,12 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // tsdown shares the repository/pack code between the lib entry and the bin
   // through a hashed chunk. The committed bin.js is the link target pnpm can
   // resolve at install time, before the build produces lib/bin.js.
-  '@deepseek-ai/dsh-experimental-webworker-packer': ['bin.js', 'lib/repository-*.js'],
+  '@yharness/experimental-webworker-packer': ['bin.js', 'lib/repository-*.js'],
   // Startup and runtime share the advertised URL parser.
-  '@deepseek-ai/dsh-web-app': ['lib/public-url-*.js'],
+  '@yharness/web-app': ['lib/public-url-*.js'],
   // The headless entry and its startup row share the JSON projection code
   // through a hashed tsdown chunk; both import it by relative path.
-  '@deepseek-ai/dsh-headless': ['lib/json-stream-*.js'],
+  '@yharness/headless': ['lib/json-stream-*.js'],
 }
 
 function sameStringList(actual: readonly string[] | undefined, expected: readonly string[]): boolean {
@@ -255,7 +306,7 @@ export function expectedDshPackageFiles(manifest: PackageManifest): readonly str
   const bundleFiles = bundle === undefined ? [] : bundlePatchFiles(bundle).map(file => file.replace(/^\.\//, ''))
   const extras = [
     ...bundleFiles,
-    ...(manifest.name ? packageFileExtras[manifest.name] ?? [] : []),
+    ...(manifest.name ? packagePolicy(packageFileExtras, manifest.name) ?? [] : []),
   ]
   const targets = (value: ExportTarget | undefined): string[] => typeof value === 'string' ? [value]
     : typeof value === 'object' && value !== null ? Object.values(value).flatMap(targets) : []
@@ -347,8 +398,8 @@ export function checkExperimentalManifest(
   if (!experimentalPackageDirectory.test(dir)) return []
   const label = manifest.name ?? dir
   const errors: string[] = []
-  if (manifest.name?.startsWith(experimentalPackageNamePrefix) !== true) {
-    errors.push(`${label}: experimental package name must start with ${JSON.stringify(experimentalPackageNamePrefix)}`)
+  if (!isExperimentalPackageName(manifest.name)) {
+    errors.push(`${label}: experimental package name must start with ${JSON.stringify(experimentalPrefixFor(manifest.name))}`)
   }
   if (isPublicExperimentalPackageDirectory(dir, privateDirectories)) {
     if (manifest.private === true) errors.push(`${label}: public experimental package must not set "private": true`)
@@ -363,7 +414,8 @@ export function checkExperimentalManifest(
 }
 
 function isReleaseMemberDirectory(dir: string): boolean {
-  return standardReleaseMemberDirectory.test(dir) || isPublicExperimentalPackageDirectory(dir)
+  return !privateCompatibilityDirectories.has(dir)
+    && (standardReleaseMemberDirectory.test(dir) || isPublicExperimentalPackageDirectory(dir))
 }
 
 /**
@@ -381,7 +433,10 @@ function isReleaseMemberDirectory(dir: string): boolean {
  */
 export function checkDshFamilyVersion(manifest: PackageManifest, expected: string | undefined): string | undefined {
   const name = manifest.name
-  if (name !== '@deepseek-ai/dsh' && name?.startsWith('@deepseek-ai/dsh-') !== true) return undefined
+  // Vendored Cordis packages are their own release family. Their versions
+  // follow the framework snapshot, not the Y Harness workspace release.
+  if (name !== undefined && vendoredPackages.has(name)) return undefined
+  if (!isHarnessPackageName(name)) return undefined
   if (manifest.version !== expected) {
     return `${name}: package.json version must match root version ${expected ?? '(missing)'}`
   }
@@ -445,8 +500,8 @@ export function checkWorkspaceManifest({ dir, manifest }: WorkspaceManifest): st
     return errors
   }
 
-  if (manifest.name?.startsWith('@deepseek-ai/')) {
-    const allowedSources = publicationSourceAllowlist[manifest.name] ?? []
+  if (manifest.name?.startsWith('@deepseek-ai/') || manifest.name?.startsWith(canonicalPackagePrefix)) {
+    const allowedSources = packagePolicy(publicationSourceAllowlist, manifest.name) ?? []
     for (const file of manifest.files ?? []) {
       if (isForbiddenPublicationFile(file) && !allowedSources.includes(file)) {
         errors.push(`${label}: package.json files must not publish ${JSON.stringify(file)}`)
@@ -454,8 +509,10 @@ export function checkWorkspaceManifest({ dir, manifest }: WorkspaceManifest): st
     }
   }
 
-  if (dir.startsWith('apps/') && dir !== desktopApplicationDirectory && manifest.name?.startsWith('@deepseek-ai/')) {
-    const expectedFiles = appPackageFiles[manifest.name]
+  if (dir.startsWith('apps/') && dir !== desktopApplicationDirectory
+    && !privateCompatibilityDirectories.has(dir)
+    && (manifest.name?.startsWith('@deepseek-ai/') || manifest.name?.startsWith(canonicalPackagePrefix))) {
+    const expectedFiles = packagePolicy(appPackageFiles, manifest.name)
     if (expectedFiles === undefined) {
       errors.push(`${label}: app package has no publication files policy`)
     } else if (!sameStringList(manifest.files, expectedFiles)) {
@@ -472,14 +529,14 @@ export function checkWorkspaceManifest({ dir, manifest }: WorkspaceManifest): st
     }
   }
 
-  if (dir.startsWith('packages/') && manifest.name?.startsWith('@deepseek-ai/dsh-')) {
-    const peer = manifest.peerDependencies?.['@deepseek-ai/cordis']
-    const dev = manifest.devDependencies?.['@deepseek-ai/cordis']
+  if (dir.startsWith('packages/') && manifest.name !== undefined && isHarnessPackageName(manifest.name)) {
+    const peer = manifest.peerDependencies?.['@yharness/cordis']
+    const dev = manifest.devDependencies?.['@yharness/cordis']
 
-    if (!peer) errors.push(`${label}: @deepseek-ai/cordis must be a peerDependency`)
-    if (!dev) errors.push(`${label}: @deepseek-ai/cordis must also be a devDependency`)
+    if (!peer) errors.push(`${label}: @yharness/cordis must be a peerDependency`)
+    if (!dev) errors.push(`${label}: @yharness/cordis must also be a devDependency`)
     if (peer && dev && peer !== dev) {
-      errors.push(`${label}: @deepseek-ai/cordis peer (${peer}) and dev (${dev}) ranges must match`)
+      errors.push(`${label}: @yharness/cordis peer (${peer}) and dev (${dev}) ranges must match`)
     }
     if (manifest.type !== 'module') {
       errors.push(`${label}: package.json must set "type": "module"`)
@@ -524,7 +581,13 @@ function checkHierarchyShape(): string[] {
       if (!pkg.isDirectory()) continue
       if (localArtifactDirs.has(pkg.name)) continue
       const pkgRel = join(groupRel, pkg.name)
-      if (!existsSync(join(packagesRoot, group.name, pkg.name, 'package.json'))) {
+      const packagePath = join(packagesRoot, group.name, pkg.name)
+      // pnpm can leave a package-local node_modules directory after a package
+      // is removed from the workspace. It is generated residue, not a deeper
+      // source package, so do not turn it into a hierarchy violation.
+      const onlyArtifacts = readdirSync(packagePath, { withFileTypes: true })
+        .every(entry => localArtifactDirs.has(entry.name))
+      if (!existsSync(join(packagePath, 'package.json')) && !onlyArtifacts) {
         errors.push(`${pkgRel}: expected a package here (no package.json found) — the hierarchy is exactly packages/<group>/<pkg>, no deeper nesting`)
       }
     }
@@ -562,7 +625,8 @@ export function checkExperimentalDependencyIsolation(
   const errors: string[] = []
   for (const { dir, manifest } of manifests) {
     if (!standardReleaseMemberDirectory.test(dir) && dir !== 'python/sdk-runtime') continue
-    const offered = manifest.name === '@deepseek-ai/dsh' ? new Set(optionalBundles) : new Set<string>()
+    const offered = (manifest.name === canonicalCliPackageName || manifest.name === legacyCliPackageName)
+      ? new Set(optionalBundles) : new Set<string>()
     for (const section of runtimeDependencySections) {
       for (const name of Object.keys(manifest[section] ?? {})) {
         if (!experimentalNames.has(name)) continue
@@ -594,9 +658,9 @@ export function checkWorkspaceProtocol(manifests: readonly WorkspaceManifest[]):
     for (const section of dependencySections) {
       for (const [name, range] of Object.entries(manifest[section] ?? {})) {
         if (!members.has(name)) continue
-        const expected = name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')
-          ? 'workspace:*'
-          : vendors.has(name) ? 'workspace:~' : undefined
+        const expected = vendors.has(name)
+          ? 'workspace:~'
+          : isHarnessPackageName(name) ? 'workspace:*' : undefined
         if (expected !== undefined ? range === expected : range.startsWith('workspace:')) continue
         errors.push(`${manifest.name ?? dir}: ${section}.${name} must use ${expected ?? 'the workspace: protocol'}, got ${range}`)
       }

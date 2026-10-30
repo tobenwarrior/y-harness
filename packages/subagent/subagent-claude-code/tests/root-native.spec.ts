@@ -3,39 +3,39 @@ import { mkdir, mkdtemp, rm, writeFile, symlink } from 'node:fs/promises'
 import { PassThrough } from 'node:stream'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
+import { Context } from '@yharness/cordis'
+import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
 import { it, expect, onTestFinished, vi } from 'vitest'
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
-import * as Policy from '@deepseek-ai/dsh-sandbox-policy'
-import * as Approval from '@deepseek-ai/dsh-user-approval'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
-import { SandboxProvider, writableRoots, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import * as Llm from '@yharness/llm'
+import * as Sessions from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
+import * as Policy from '@yharness/sandbox-policy'
+import * as Approval from '@yharness/user-approval'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
+import { SandboxProvider, writableRoots, type SandboxPolicy } from '@yharness/sandbox'
+import SubprocessRuntime, { type SubprocessOutcome, type SubprocessSpawnSpec } from '@yharness/subprocess'
 import * as Library from '../../../skill/skill-library/src/index.ts'
 import * as Root from '../src/root.ts'
 import * as Plugin from '../src/index.ts'
-import * as Subagents from '@deepseek-ai/dsh-subagent'
+import * as Subagents from '@yharness/subagent'
 import { nativeProfile } from '../src/root-profile.ts'
 import { assistantBody } from './sdk-message-fixture.ts'
 
 const sdk = vi.hoisted(() => ({ query: vi.fn(), env: {} as Record<string, string> }))
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: sdk.query }))
-vi.mock('@deepseek-ai/dsh-subprocess', async importOriginal => ({
-  ...await importOriginal<typeof import('@deepseek-ai/dsh-subprocess')>(),
+vi.mock('@yharness/subprocess', async importOriginal => ({
+  ...await importOriginal<typeof import('@yharness/subprocess')>(),
   scrubbedParentEnv: () => ({ ...sdk.env }),
 }))
 
@@ -102,13 +102,13 @@ async function fixture(
     ...bundled ? [['subagent', Subagents] satisfies [string, unknown]] : [],
     ['fixture-confine', { default: Confine }], ['fixture-processes', { default: Processes }], ['fixture-root', bundled ? Plugin : Root],
   ]
-  const modules = new Map<string, unknown>(moduleEntries.map(([name, module]) => [`@deepseek-ai/dsh-${name}`, module]))
+  const modules = new Map<string, unknown>(moduleEntries.map(([name, module]) => [`@yharness/${name}`, module]))
   const config: Record<string, object> = { 'storage-json': { root: join(root, 'storage') }, 'storage-domain': { backend: 'json' },
     'session-persistence-jsonl': { root: join(root, 'sessions'), compression: 'none' }, 'sandbox-policy': { mode: 'workspace-write' },
     'agent-loop': { agents: [] }, 'user-approval': { policy: 'ask' },
     'skill-library': { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 },
     'fixture-root': bundled ? { rootRoute: { connectionId: 'fixture-profile', model: 'fixture-native-model', ...rootConfig } } : { connectionId: 'fixture-profile', model: 'fixture-native-model', ...rootConfig } }
-  const path = join(root, 'cordis.yml'); await writeFile(path, JSON.stringify([...modules.keys()].map(name => ({ name, config: config[name.replace('@deepseek-ai/dsh-', '')] }))))
+  const path = join(root, 'cordis.yml'); await writeFile(path, JSON.stringify([...modules.keys()].map(name => ({ name, config: config[name.replace('@yharness/', '')] }))))
   ctx.baseUrl = pathToFileURL(root).href + '/'; await ctx.plugin(Loader); ctx.loader.builtins.include = Include
   const internal: ModuleLoaderV2 = { version: 'v2', loadCache: new Map(), async import(specifier) {
     if (!modules.has(specifier)) throw new Error(`unknown fixture module ${specifier}`); return modules.get(specifier)
@@ -264,7 +264,7 @@ it.each(['foreign-session', 'unbound', 'nested', 'replay', 'compaction', 'supers
 it('counts oversized unbound frames and complete permission control payloads before filtering', async () => {
   const f = await fixture(async function* (input, options) {
     yield { type: 'assistant', uuid: '00000000-0000-4000-8000-000000000099', session_id: options.sessionId!, parent_tool_use_id: null,
-      message: assistantBody([{ type: 'text', text: '多'.repeat(600), citations: null }]) }
+      message: assistantBody([{ type: 'text', text: '\u{591A}'.repeat(600), citations: null }]) }
     yield* normalFrames(input, options, 1)
   }, { maxOutputBytes: 1024 })
   followup(f.agent); await f.agent.whenIdle()
@@ -375,7 +375,7 @@ it('rejects public native conversation resets and undeclared initialization sour
 it('caps complete permission callback bytes even when no source tool receipt exists', async () => {
   const outcomes: unknown[] = []
   const f = await fixture(async function* (_input, options) {
-    outcomes.push(await options.canUseTool!('Bash', { command: '多'.repeat(600) }, request('missing-source')))
+    outcomes.push(await options.canUseTool!('Bash', { command: '\u{591A}'.repeat(600) }, request('missing-source')))
   }, { maxOutputBytes: 1024 })
   followup(f.agent); await f.agent.whenIdle()
   expect(outcomes).toEqual([expect.objectContaining({ behavior: 'deny' })])

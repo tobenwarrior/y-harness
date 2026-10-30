@@ -3,11 +3,11 @@ description: "Host half of dynamic Cordis packages for agents and maintainers ch
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-cordis-host-runner
+# @yharness/cordis-host-runner
 
 ## Summary
 
-`dsh-cordis-host-runner` exposes runtime inspection and keeps process-local dynamic definitions available to programmatic callers and browser controls. Host halves run in a `node:vm` realm; browser halves use the Client runner and approval UI. Definitions disappear on restart. Agents discover APIs through `tool-cordis` and install persistent bundles through Plugin Manager; no model tool creates dynamic definitions.
+`yharness-cordis-host-runner` exposes runtime inspection and keeps process-local dynamic definitions available to programmatic callers and browser controls. Host halves run in a `node:vm` realm; browser halves use the Client runner and approval UI. Definitions disappear on restart. Agents discover APIs through `tool-cordis` and install persistent bundles through Plugin Manager; no model tool creates dynamic definitions.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Mount this plugin for the inspection registry or programmatic dynamic-package li
 ### Minimal configuration
 
 ```yaml
-- name: '@deepseek-ai/dsh-cordis-host-runner'
+- name: '@yharness/cordis-host-runner'
   config:
     vmTimeoutMs: 5000
 ```
@@ -38,7 +38,7 @@ Mount this plugin for the inspection registry or programmatic dynamic-package li
 | `vmTimeoutMs` | `5000` | Milliseconds the synchronous portion of a host half may run in the vm before evaluation is aborted |
 | `clientInspectTimeoutMs` | `10000` | Maximum wait for a valid Client inspect response; an integer from 1 to 2147483647 milliseconds |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) is the exhaustive source for every accepted field.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesscordis-host-runner) is the exhaustive source for every accepted field.
 
 <a id="client-inspection"></a>
 ### Client inspection
@@ -87,7 +87,7 @@ The runner is built on two separations. **Registry and sandbox are one service.*
 
 ### How a run flows
 
-`define` trims and requires the metadata, prechecks each half's syntax by compiling it (running nothing), mints the plugin and package ids, and records the definition against the session that asked. `run` resolves the target against `currentPackageId` and `nextPackageId`; a host-only package evaluates in the sandbox and commits immediately, while a browser-half package arms an approval request, emits `cordis/request-run`, and suspends. The answering page walks `runHostHalf`, `getClientCode`, then `resolveRequestRun`; a success naming the live revision commits the activation and sets `currentPackageId`, and `cordis/request-run-resolved` drops the pending affordance on every other page. `stop` retracts the live dispatch — handler disposers, fiber dispose, and the `cordis/dynamic-retract` broadcast — and leaves the definition runnable. Four forwarded events (`cordis/request-run`, `cordis/request-run-resolved`, `cordis/dynamic-package`, `cordis/dynamic-retract`) are declared on the client-safe `./types` subpath and allowlisted for delivery by `@deepseek-ai/dsh-api-remotes`, which is what lets a browser reach them through `ctx.remote.$on`.
+`define` trims and requires the metadata, prechecks each half's syntax by compiling it (running nothing), mints the plugin and package ids, and records the definition against the session that asked. `run` resolves the target against `currentPackageId` and `nextPackageId`; a host-only package evaluates in the sandbox and commits immediately, while a browser-half package arms an approval request, emits `cordis/request-run`, and suspends. The answering page walks `runHostHalf`, `getClientCode`, then `resolveRequestRun`; a success naming the live revision commits the activation and sets `currentPackageId`, and `cordis/request-run-resolved` drops the pending affordance on every other page. `stop` retracts the live dispatch — handler disposers, fiber dispose, and the `cordis/dynamic-retract` broadcast — and leaves the definition runnable. Four forwarded events (`cordis/request-run`, `cordis/request-run-resolved`, `cordis/dynamic-package`, `cordis/dynamic-retract`) are declared on the client-safe `./types` subpath and allowlisted for delivery by `@yharness/api-remotes`, which is what lets a browser reach them through `ctx.remote.$on`.
 
 </details>
 
@@ -101,7 +101,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Tool package](../tool-cordis/README.md) — the read-only tools that use its inspection registry.
 - [Client runner](../cordis-client-runner/README.md) — the browser half that answers run requests and loads browser-half code.
 - [UI package](../ui-cordis/README.md) — the panel users approve and operate runs with.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-cordis-host-runner) — every accepted config field.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesscordis-host-runner) — every accepted config field.
 - [Extensions subsystem](../../../docs/subsystems/extensions.md) — the generated `ctx.cordisInspect` and `ctx.dynamicCordisRunner` API and `cordis/*` events.
 - [historical Self-referential Cordis toolset Agent Note](../../../.agents/notes/archived/feature/2026-07-08-self-referential-cordis-toolset.md) — sandbox semantics, lifecycle, and composition rationale.
 

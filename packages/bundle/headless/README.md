@@ -1,13 +1,13 @@
 ---
-description: "One-shot task mode for dsh: run a single task from the command line and get the final answer printed, for users scripting or automating dsh."
+description: "One-shot task mode for yharness: run a single task from the command line and get the final answer printed, for users scripting or automating yharness."
 kind: "package-bundle"
 ---
 
-# @deepseek-ai/dsh-headless
+# @yharness/headless
 
 ## Summary
 
-`dsh-headless` runs one dsh task from the command line and prints the final answer, then exits — no GUI, no server, no browser. Type `dsh --profile headless "run the tests"` and the agent handles it with the same model, tools, and safety defaults as every other surface. It suits scripts, CI, and one-off jobs: it opens no ports and leaves nothing running behind. It also offers a JSON event stream (`--json`) and `--session-id` to resume a conversation. Exit code 0 means the task completed; 1 means it aborted or errored. The boundary: one task per invocation, no interactive follow-up.
+`yharness-headless` runs one yharness task from the command line and prints the final answer, then exits — no GUI, no server, no browser. Type `yharness --profile headless "run the tests"` and the agent handles it with the same model, tools, and safety defaults as every other surface. It suits scripts, CI, and one-off jobs: it opens no ports and leaves nothing running behind. It also offers a JSON event stream (`--json`) and `--session-id` to resume a conversation. Exit code 0 means the task completed; 1 means it aborted or errored. The boundary: one task per invocation, no interactive follow-up.
 
 ## Table of Contents
 
@@ -28,13 +28,13 @@ Run one task, get the final answer, and exit. The task is the command-line argum
 ### Running a one-shot task
 
 ```sh
-dsh --profile headless "run the tests"
+yharness --profile headless "run the tests"
 ```
 
-The agent works through the task, streams each non-empty provider reasoning delta to stderr under a `dsh: reasoning:` heading, then prints the final answer on stdout and exits. Consecutive reasoning deltas stay in one section, and the runner closes that section before later output when the provider supplied no trailing newline. A successful run without reasoning keeps stderr empty; a failure exits 1 and prints `dsh: <code>: <message>` to stderr. The task comes from the positional argument, or from stdin when the argument is omitted or is a lone `-`; a blank positional argument or an empty pipe is rejected before anything runs. A positional task is used as-is and stdin is not read, so put the whole prompt in the pipe when you want piped input; a piped task is sent verbatim, its trailing newline included.
+The agent works through the task, streams each non-empty provider reasoning delta to stderr under a `yharness: reasoning:` heading, then prints the final answer on stdout and exits. Consecutive reasoning deltas stay in one section, and the runner closes that section before later output when the provider supplied no trailing newline. A successful run without reasoning keeps stderr empty; a failure exits 1 and prints `yharness: <code>: <message>` to stderr. The task comes from the positional argument, or from stdin when the argument is omitted or is a lone `-`; a blank positional argument or an empty pipe is rejected before anything runs. A positional task is used as-is and stdin is not read, so put the whole prompt in the pipe when you want piped input; a piped task is sent verbatim, its trailing newline included.
 
 ```sh
-{ echo "Summarize these changes:"; git diff --stat; } | dsh --profile headless
+{ echo "Summarize these changes:"; git diff --stat; } | yharness --profile headless
 ```
 
 The task and run options are supplied through three settings:
@@ -45,7 +45,7 @@ The task and run options are supplied through three settings:
 | `sessionId` | `session-<uuid>` | Exact Session identity to adopt; an unknown id fails |
 | `json` | `false` | Project the run as newline-delimited events on stdout |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-headless) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessheadless) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Choosing the session identity
 
@@ -53,15 +53,15 @@ Every invocation defaults to a fresh `session-<uuid>` identity, which `--json` r
 
 ### Machine-readable output
 
-`--json` replaces the final-text stdout line with a newline-delimited JSON event stream, while stderr keeps only the `dsh:` diagnostics. The stream opens with `session` (carrying the identity the run used) and closes with `final`, and carries `status`, `text`, `thinking`, `tool_call`, and `tool_result` events in between. `text` and `thinking` are projected from committed assistant messages, so a retried or discarded attempt never reaches the stream; they arrive when the step commits, not per token, and default-mode stderr reasoning remains the only live text channel. The terminal `final` event carries the same lossless answer as the default mode and is not capped; every other string and object key is capped at 8 KiB and flagged with `truncated`, and one event line, its newline included, is capped at 32 KiB — an over-long event keeps its scalar fields, drops structured ones, and at the extreme reduces to `type` and `truncated`, while a payload nested 64 levels or deeper is cut at that depth. An empty tool-argument string projects as `{}`, matching what the executor runs, while arguments that JSON cannot round-trip — an overflowing number such as `1e400` — keep their raw text rather than the `null` that `JSON.stringify` would report. A failure the runner raises outside a turn writes an `error` event and ends the stream without `final`, in addition to the `dsh:` stderr line; a profile whose own plugins fail to load exits before the runner mounts, so that case keeps only the loader's stderr diagnostics. A turn that fails in-turn still ends with a `final` event (often empty) and no `error` event, so a well-formed stream can still describe a failed run: treat exit code 1 and the `turn_end` reason as the failure signal.
+`--json` replaces the final-text stdout line with a newline-delimited JSON event stream, while stderr keeps only the `yharness:` diagnostics. The stream opens with `session` (carrying the identity the run used) and closes with `final`, and carries `status`, `text`, `thinking`, `tool_call`, and `tool_result` events in between. `text` and `thinking` are projected from committed assistant messages, so a retried or discarded attempt never reaches the stream; they arrive when the step commits, not per token, and default-mode stderr reasoning remains the only live text channel. The terminal `final` event carries the same lossless answer as the default mode and is not capped; every other string and object key is capped at 8 KiB and flagged with `truncated`, and one event line, its newline included, is capped at 32 KiB — an over-long event keeps its scalar fields, drops structured ones, and at the extreme reduces to `type` and `truncated`, while a payload nested 64 levels or deeper is cut at that depth. An empty tool-argument string projects as `{}`, matching what the executor runs, while arguments that JSON cannot round-trip — an overflowing number such as `1e400` — keep their raw text rather than the `null` that `JSON.stringify` would report. A failure the runner raises outside a turn writes an `error` event and ends the stream without `final`, in addition to the `yharness:` stderr line; a profile whose own plugins fail to load exits before the runner mounts, so that case keeps only the loader's stderr diagnostics. A turn that fails in-turn still ends with a `final` event (often empty) and no `error` event, so a well-formed stream can still describe a failed run: treat exit code 1 and the `turn_end` reason as the failure signal.
 
 ### When to use it
 
-Use headless for scripted or automated dsh runs — CI steps, batch jobs, quick answers from a terminal. Avoid it when you need a multi-turn interactive session or a GUI; the browser surface ([dsh-web-app](../web-app/README.md)) serves that. The process stays alive only for the run, opens no listening port, and exits on its own, so it fits pipelines that wait on the process. When a supervisor needs progress rather than just the answer, `--json` gives it the event stream and `--session-id` lets a later invocation continue the same conversation.
+Use headless for scripted or automated yharness runs — CI steps, batch jobs, quick answers from a terminal. Avoid it when you need a multi-turn interactive session or a GUI; the browser surface ([yharness-web-app](../web-app/README.md)) serves that. The process stays alive only for the run, opens no listening port, and exits on its own, so it fits pipelines that wait on the process. When a supervisor needs progress rather than just the answer, `--json` gives it the event stream and `--session-id` lets a later invocation continue the same conversation.
 
 ### Help and task errors
 
-`dsh --profile headless --help` prints the command's help text and exits without running anything. A whitespace-only positional task is a usage error on its own — nothing runs and the process exits 1, even when stdin is not a terminal, so an accidental blank argument never consumes a pipe. A task that is absent entirely is a usage error only when stdin is a terminal; otherwise the runner reads the task from stdin and rejects an empty result the same way. A lone `-` is the only stdin marker; mixing it with other task words is a usage error rather than a task that starts with a dash. In `--json` mode every usage error — including commander's own grammar rejections such as an unknown option or a missing option value — also writes an `error` event to stdout before the process exits, so a line-oriented supervisor sees a well-formed stream even when the runner never mounts; the event `message` carries the text without commander's `error: ` prefix.
+`yharness --profile headless --help` prints the command's help text and exits without running anything. A whitespace-only positional task is a usage error on its own — nothing runs and the process exits 1, even when stdin is not a terminal, so an accidental blank argument never consumes a pipe. A task that is absent entirely is a usage error only when stdin is a terminal; otherwise the runner reads the task from stdin and rejects an empty result the same way. A lone `-` is the only stdin marker; mixing it with other task words is a usage error rather than a task that starts with a dash. In `--json` mode every usage error — including commander's own grammar rejections such as an unknown option or a missing option value — also writes an `error` event to stdout before the process exits, so a line-oriented supervisor sees a well-formed stream even when the runner never mounts; the event `message` carries the text without commander's `error: ` prefix.
 
 -----
 
@@ -79,11 +79,11 @@ The runner awaits the complete application (`ctx.get('loader')?.await()`) so the
 
 ### Patch surface over base
 
-The patch rides over `dsh-base`: it inherits the projection cache and shared PTC runtime, sets the coding persona prefix and separate cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, disables the shared HMR row, and mounts the startup provider and the runner. The cache checkpoints each persisted one-shot session for later consumers; its durability barrier flushes each covered log prefix before publishing the cache row and may split otherwise coalesced JSONL runs. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), reads the positional argument and the `--session-id`/`--json` options, prints the app's `--help`, and provides `headlessStartup`; the runner injects that service and reads its task and run options from lazy config.
+The patch rides over `yharness-base`: it inherits the projection cache and shared PTC runtime, sets the coding persona prefix and separate cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, disables the shared HMR row, and mounts the startup provider and the runner. The cache checkpoints each persisted one-shot session for later consumers; its durability barrier flushes each covered log prefix before publishing the cache row and may split otherwise coalesced JSONL runs. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`yharness-cmdline`](../../boot/cmdline/README.md)), reads the positional argument and the `--session-id`/`--json` options, prints the app's `--help`, and provides `headlessStartup`; the runner injects that service and reads its task and run options from lazy config.
 
 ### Exit mapping
 
-A completed final `turn/end` exits 0; any other outcome — aborted, error, or no turn in the owned interval — exits 1. An `error` reason also writes `dsh: <code>: <message>` to stderr. A direct driver failure (for example, Agent creation or an unusable `--session-id`) writes `dsh: <message>` to stderr and exits 1, and in `--json` mode also emits an `error` event.
+A completed final `turn/end` exits 0; any other outcome — aborted, error, or no turn in the owned interval — exits 1. An `error` reason also writes `yharness: <code>: <message>` to stderr. A direct driver failure (for example, Agent creation or an unusable `--session-id`) writes `yharness: <message>` to stderr and exits 1, and in `--json` mode also emits an `error` event.
 
 ### Source map
 
@@ -92,7 +92,7 @@ A completed final `turn/end` exits 0; any other outcome — aborted, error, or n
 | [`src/index.ts`](src/index.ts) | The `headless-runner` plugin: run flow, session resolution, output contract, exit mapping |
 | [`src/startup.ts`](src/startup.ts) | The `headless-startup` provider: task positional, `--session-id`, `--json`, and `--help` |
 | [`src/json-stream.ts`](src/json-stream.ts) | The `--json` projection: event vocabulary, commit-point emission, string bounding |
-| [`cordis.patch.yml`](cordis.patch.yml) | The one-shot patch over `dsh-base` |
+| [`cordis.patch.yml`](cordis.patch.yml) | The one-shot patch over `yharness-base` |
 | [`tests/headless.spec.ts`](tests/headless.spec.ts) | Run flow, aggregation, flush, session adoption, and exit mapping |
 | [`tests/json-stream.spec.ts`](tests/json-stream.spec.ts) | Projection ordering, commit-point emission, bounding, and disposal |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
@@ -107,10 +107,10 @@ A completed final `turn/end` exits 0; any other outcome — aborted, error, or n
 Read these pages when you want to go deeper into the shared core, the sibling GUI, or the command-line handoff.
 
 - [Bundle package map](../README.md) — the surfaces built on the same core.
-- [dsh-base](../base/README.md) — the shared core headless runs on.
-- [dsh-web-app](../web-app/README.md) — the interactive browser sibling for multi-turn work.
-- [dsh-cmdline](../../boot/cmdline/README.md) — how the launcher hands the command line to the app.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-headless) — every accepted config field and its source declaration.
+- [yharness-base](../base/README.md) — the shared core headless runs on.
+- [yharness-web-app](../web-app/README.md) — the interactive browser sibling for multi-turn work.
+- [yharness-cmdline](../../boot/cmdline/README.md) — how the launcher hands the command line to the app.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnessheadless) — every accepted config field and its source declaration.
 
 -----
 
@@ -127,10 +127,10 @@ The runner adds nothing to the request prefix; it only drives one user message t
 
 <a id="known-limitations-and-deferred-work"></a>
 
-These limits tell you when headless does not fit and what it needs from the `dsh` launcher. They are current package constraints, not a general CLI comparison or a task backlog.
+These limits tell you when headless does not fit and what it needs from the `yharness` launcher. They are current package constraints, not a general CLI comparison or a task backlog.
 
 - **One task per run** — after the task is answered the process exits; there is no interactive follow-up, so split multi-step work into separate runs.
-- **Runs through the `dsh` launcher** — starting the headless profile another way fails at startup, because only the launcher can request the process exit.
+- **Runs through the `yharness` launcher** — starting the headless profile another way fails at startup, because only the launcher can request the process exit.
 - **No pre-token heartbeat** — in default mode stderr stays silent until the provider emits a non-empty reasoning delta; a delayed first token exposes no earlier progress signal.
 - **Reasoning enters stderr logs** — in default mode, redirection and supervisors may retain substantially more and potentially sensitive model output; route stderr to a controlled sink when needed.
 - **Default stdout carries only the final answer** — a run without an assistant message prints an empty stdout line and exits 1; intermediate tool output is not printed unless you opt into `--json`.

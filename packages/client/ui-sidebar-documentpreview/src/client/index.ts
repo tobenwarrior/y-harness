@@ -10,16 +10,16 @@
  * business, read through its face. Every import from another
  * client plugin is a type.
  */
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-resources/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-api-gateway/client'
-import type {} from '@deepseek-ai/dsh-api-workspace-files/remote'
-import type { WorkspaceFileParams } from '@deepseek-ai/dsh-api-workspace-files/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/api-remotes/client'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-resources/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/api-gateway/client'
+import type {} from '@yharness/api-workspace-files/remote'
+import type { WorkspaceFileParams } from '@yharness/api-workspace-files/client'
 import { TextPreview } from './TextPreview.tsx'
 import type { TextPreviewInjected } from './TextPreview.tsx'
 import { TextTitle } from './TextTitle.tsx'
@@ -27,7 +27,7 @@ import { TEXTPREVIEW_ID, textDefinition } from './definition.ts'
 import { textFace } from './face.ts'
 import { createReadPage } from './rpc.ts'
 import { createTextStore } from './store.ts'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 import { DocumentPreviewRegistry } from './document/registry.ts'
 import { documentTabInfoFactory } from './document/contract.ts'
 import { apply as registerText } from './text/index.ts'
@@ -51,7 +51,7 @@ export type { TextPage, TextState, TextStore, TextTabState } from './store.ts'
 export type { DocumentContent, DocumentPreviewProps, DocumentTextPage } from './document/contract.ts'
 export type { DocumentLoadMode, DocumentPreviewDefinition } from './document/registry.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** File-extension renderer registrations, independent from their keyed document bodies. */
     documentPreviews: DocumentPreviewRegistry
@@ -61,14 +61,14 @@ declare module '@deepseek-ai/cordis' {
 /** This package's copy namespace. */
 const NS = 'sidebarDocumentPreview'
 
-declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+declare module '@yharness/client-ui-sidebar-right/client' {
   interface SidebarRightResourceParamsMap {
     /** File line navigation supported by the text preview. */
     file: WorkspaceFileParams
   }
 }
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Text-preview progress, paging, change, control, and failure lines. */
     sidebarDocumentPreview: import('./locales.ts').SidebarDocumentPreviewKey
@@ -91,7 +91,7 @@ export function apply(ctx: ClientContext): void {
   const disposePreviews = ctx.reflect.provide('documentPreviews', previews)
   ctx.effect(() => disposePreviews)
   ctx.effect(() => ctx.sidebarRightTabs.register(textDefinition()), 'ui-sidebar-documentpreview: text type')
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar-documentpreview: dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar-documentpreview: dictionaries')
 
   const store = createTextStore()
   const face = textFace(

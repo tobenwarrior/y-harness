@@ -1,8 +1,8 @@
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SubprocessOutcome, SubprocessTerminalForeground, SubprocessTerminalHandle } from '@deepseek-ai/dsh-subprocess'
-import type { TerminalSendOperation, TerminalSendResult } from '@deepseek-ai/dsh-terminal'
-import { CONTROLLED_PROMPT, TerminalSanitizer } from '@deepseek-ai/dsh-terminal-bash/src/sanitize.ts'
+import type { SubprocessOutcome, SubprocessTerminalForeground, SubprocessTerminalHandle } from '@yharness/subprocess'
+import type { TerminalSendOperation, TerminalSendResult } from '@yharness/terminal'
+import { CONTROLLED_PROMPT, TerminalSanitizer } from '@yharness/terminal-bash/src/sanitize.ts'
 import { ReadinessTimeline, TIMELINE_HEADER, replayPromptEvidence } from './readiness-timeline.ts'
 
 const MARKER = '\x1b]133;D;0\x07'
@@ -111,7 +111,7 @@ describe('ReadinessTimeline', () => {
     expect(windowA).toMatch(/^#1 a \(from \+\d+ ms\) → stdin_read after \d+ ms\n/)
     expect(windowA).toContain('write s0 7 units (input)')
     expect(windowA).toContain('write s0 6 units (reply)')
-    expect(windowA).toContain('replayed evidence at settle: promptSeen=true promptTail="dsh> " promptTextSeen=true')
+    expect(windowA).toContain('replayed evidence at settle: promptSeen=true promptTail="yharness> " promptTextSeen=true')
     expect(windowA).not.toContain('b-output')
     expect(windowB).toMatch(/^#2 b \(from \+\d+ ms\) → rejected after \d+ ms\n/)
     expect(windowB).toContain('polls 1')

@@ -1,15 +1,15 @@
-/** Command identity and localized input spelling over the effective Host catalog. */
-import type { CommandDescriptor } from '@deepseek-ai/dsh-commands/types'
-import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
-import { en, zh } from './locales.ts'
+/** Command identity and canonical input spelling over the effective Host catalog. */
+import type { CommandDescriptor } from '@yharness/commands/types'
+import type { TranslateNS } from '@yharness/client-locale/client'
+import { en } from './locales.ts'
 
 const BUILTINS = {
-  goal: '@deepseek-ai/dsh-command-goal',
-  plan: '@deepseek-ai/dsh-plan-mode',
-  feedback: '@deepseek-ai/dsh-command-feedback',
-  compact: '@deepseek-ai/dsh-command-compact',
-  permission: '@deepseek-ai/dsh-permission-presets',
-  export: '@deepseek-ai/dsh-session-log-export',
+  goal: '@yharness/command-goal',
+  plan: '@yharness/plan-mode',
+  feedback: '@yharness/command-feedback',
+  compact: '@yharness/command-compact',
+  permission: '@yharness/permission-presets',
+  export: '@yharness/session-log-export',
 } as const
 
 /** Names whose first-party definitions have localized client presentation. */
@@ -29,7 +29,7 @@ export function builtinCommandName(descriptor: CommandDescriptor): BuiltinComman
  * Select the input spelling for a menu-picked command.
  * @param descriptor - effective Host descriptor.
  * @param t - command-namespace translator.
- * @returns localized spelling for a known definition, otherwise its registered name.
+ * @returns canonical spelling for a known definition, otherwise its registered name.
  */
 export function claimToken(descriptor: CommandDescriptor, t: TranslateNS<'command'>): string {
   const name = builtinCommandName(descriptor)
@@ -37,8 +37,7 @@ export function claimToken(descriptor: CommandDescriptor, t: TranslateNS<'comman
 }
 
 const TOKEN_ALIASES = new Map(
-  (Object.keys(BUILTINS) as BuiltinCommandName[]).flatMap(name =>
-    [zh[`token.${name}`], en[`token.${name}`]].map(token => [token, name] as const)),
+  (Object.keys(BUILTINS) as BuiltinCommandName[]).map(name => [en[`token.${name}`], name] as const),
 )
 
 /**

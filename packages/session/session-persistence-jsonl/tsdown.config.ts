@@ -16,7 +16,11 @@ export default defineConfig(({ env }) => env?.DSH_BUILD_FACE === 'client' ? [] :
     entry: ['lib/types/worker.js'],
     // Fresh verifiers need no host singleton identity. Inline their JavaScript
     // closure to avoid resolving and compiling workspace packages on every open.
-    deps: { alwaysBundle: [/^@deepseek-ai\/(?!node-addon-system)/] },
+    deps: { alwaysBundle: [/^@yharness\/(?!node-addon-system)/] },
+    // tsdown passes a falsy top-level tsconfig as its default. Override the
+    // Rolldown input directly so this artifact never applies source aliases.
+    tsconfig: false,
+    inputOptions: { tsconfig: false },
     outDir: 'lib',
     format: ['cjs'],
     platform: 'node',

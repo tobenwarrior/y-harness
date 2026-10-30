@@ -3,30 +3,30 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import * as Llm from '@deepseek-ai/dsh-llm'
-import * as Sessions from '@deepseek-ai/dsh-session'
-import * as Projection from '@deepseek-ai/dsh-session-projection'
-import * as Prompt from '@deepseek-ai/dsh-system-prompt'
-import * as Tools from '@deepseek-ai/dsh-tools'
-import * as Agents from '@deepseek-ai/dsh-agent'
-import * as Loop from '@deepseek-ai/dsh-agent-loop'
-import * as Policy from '@deepseek-ai/dsh-sandbox-policy'
+import { brandString } from '@yharness/brand'
+import * as Llm from '@yharness/llm'
+import * as Sessions from '@yharness/session'
+import * as Projection from '@yharness/session-projection'
+import * as Prompt from '@yharness/system-prompt'
+import * as Tools from '@yharness/tools'
+import * as Agents from '@yharness/agent'
+import * as Loop from '@yharness/agent-loop'
+import * as Policy from '@yharness/sandbox-policy'
 import * as Storage from '../../../storage/storage/src/index.ts'
 import * as JsonStorage from '../../../storage/storage-json/src/index.ts'
 import * as Domain from '../../../storage/storage-domain/src/index.ts'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import * as Workspace from '@yharness/workspace'
 import * as Typert from '../../../typert/registry/src/index.ts'
 import { LocalSandboxProvider } from '../../../sandbox/sandbox-local/src/index.ts'
-import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import type { SandboxPolicy } from '@yharness/sandbox'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
 import { createClaudeSource, type ClaudeSource, type ClaudeSourceConfig } from '../../../session/coding-session/src/claude-source.ts'
 import { createClaudeSequentialWriter, type ClaudeSequentialWriterOwner } from '../../../session/coding-session/src/claude-sequential.ts'
 import { claudeSourceMessagesSchema, claudeSourceReplySchema, claudeSequentialPolicyReceiptSchema } from '../../../session/coding-session/src/claude-source-worker.ts'
@@ -84,7 +84,7 @@ async function boot(ctx: Context, root: string, port: number): Promise<void> {
     ['session-persistence-jsonl', Jsonl], ['workspace', Workspace], ['typert-registry', Typert],
     ['fixture-sandbox', { default: sandboxModule(port) }], ['fixture-subprocess', { default: LocalSubprocessRuntime }],
   ]
-  const modules = new Map<string, unknown>(entries.map(([name, module]) => [`@deepseek-ai/dsh-${name}`, module]))
+  const modules = new Map<string, unknown>(entries.map(([name, module]) => [`@yharness/${name}`, module]))
   const internal = ctx.loader.internal
   if (internal === undefined) throw new Error('Actual fixture needs Loader module resolution')
   ctx.loader.internal = new Proxy(internal, { get(target, property, receiver): unknown {
@@ -99,7 +99,7 @@ async function boot(ctx: Context, root: string, port: number): Promise<void> {
     'session-persistence-jsonl': { root: join(root, 'sessions'), compression: 'none' },
     'sandbox-policy': { mode: 'workspace-write' }, 'agent-loop': { agents: [] },
   }
-  for (const name of modules.keys()) await ctx.loader.create({ name, config: config[name.replace('@deepseek-ai/dsh-', '')] })
+  for (const name of modules.keys()) await ctx.loader.create({ name, config: config[name.replace('@yharness/', '')] })
   await ctx.loader.await()
 }
 

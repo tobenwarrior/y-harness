@@ -35,6 +35,12 @@ describe('macOS packaged updater configuration', () => {
     }
   })
 
+  it('accepts the Y Harness GitHub Releases provider', () => {
+    const github = { provider: 'github', owner: 'tobenwarrior', repo: 'y-harness', channel: 'latest', releaseType: 'release' } as const
+    expect(resolveMacOSAppUpdateFeed([github])).toEqual(github)
+    expect(createMacOSAppUpdateConfig(github, 'yharness-updater')).toEqual({ ...github, updaterCacheDirName: 'yharness-updater' })
+  })
+
   it('writes and verifies the fixed release feed before signing', async () => {
     const paths = await fixture()
     expect(createMacOSAppUpdateConfig(update, 'deepseek-harness-updater')).toEqual({

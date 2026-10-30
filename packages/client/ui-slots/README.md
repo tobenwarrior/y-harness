@@ -3,7 +3,7 @@ description: "Slot registry pure core for the dsh web client: ordinary extension
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-client-ui-slots
+# @yharness/client-ui-slots
 
 ## Summary
 
@@ -45,7 +45,7 @@ Declaring a slot is claiming it: the registering entry becomes the only entry al
 
 ### Product names in localized copy
 
-Dictionary authors may wrap selected product copy in `withProductDisplayName(text)`. It replaces exact `DeepSeek Harness` and `Y Harness` mentions with the public build-time `DSH_CLIENT_DISPLAY_NAME`, preserving the original text when unset. Provider names, legal credits, and other entries remain under their dictionary owner's control. Set the display name in the root [`app-branding.json`](../../../app-branding.json) and rebuild to change these labels.
+Dictionary authors may wrap selected product copy in `withProductDisplayName(text)`. It replaces legacy and current product mentions with the public build-time `DSH_CLIENT_DISPLAY_NAME`, defaulting to Y Harness when the setting is unset. Provider names, legal credits, and other entries remain under their dictionary owner's control. Set the display name in the root [`app-branding.json`](../../../app-branding.json) and rebuild to change these labels.
 
 -----
 

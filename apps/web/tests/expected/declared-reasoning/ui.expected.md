@@ -1,4 +1,4 @@
-- menu "提供方、模型、推理等级与速度":
+- menu "Provider, model, reasoning effort, and speed":
   - menuitemradio "Default" [checked]
   - menuitemradio "Off"
   - menuitemradio "High"

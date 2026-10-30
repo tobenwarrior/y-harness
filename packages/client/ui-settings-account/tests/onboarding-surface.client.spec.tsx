@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlatformOverlay } from '../src/client/PlatformOverlay.tsx'
 import { acquireOverlayInert } from '../src/client/overlay-inert.ts'
 import { OnboardingSurface } from '../src/client/OnboardingSurface.tsx'
-import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Modal } from '@yharness/client-ui-primitives'
 import { readFileSync } from 'node:fs'
 
 let appRoot: HTMLDivElement

@@ -1,18 +1,18 @@
 /** Builtin PDF registration through document metadata and the keyed body slot. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { retainDocumentTabs } from '../document/tab-lifetime.ts'
 import type {} from '../index.ts'
 import type { DocumentPreviewDefinition } from '../document/registry.ts'
 import type { PdfBodyInjected } from './pdf.tsx'
 import { LazyPdfBody } from './LazyPdfBody.tsx'
-import type { BoundActions } from '@deepseek-ai/dsh-client-store'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { BoundActions } from '@yharness/client-store'
+import type { SessionId } from '@yharness/session/types'
 import { createPdfStore, type PdfStore } from './store.ts'
 import { ZoomViewport, zoomSurfaceClass } from '../zoom/ZoomViewport.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 /** PDF metadata and keyed body share this package-local implementation identity. */
-export const PDF_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/pdf'
+export const PDF_BODY_ID = '@yharness/client-ui-sidebar-documentpreview/pdf'
 
 /**
  * Describe the builtin PDF renderer independently from its keyed body slot.
@@ -25,7 +25,7 @@ export function pdfBodyDefinition(title: () => string): DocumentPreviewDefinitio
 
 /** @param ctx - context carrying the locale, document registry, and slot registry. */
 export function apply(ctx: Context): void {
-  ctx.effect(() => ctx.locale.register('sidebarPdf', { zh, en }))
+  ctx.effect(() => ctx.locale.register('sidebarPdf', { en }))
   const t = ctx.locale.bind('sidebarPdf')
   ctx.effect(() => ctx.documentPreviews.register(pdfBodyDefinition(() => t('title'))))
   const presentation = pdfBodyRegistration(ctx)

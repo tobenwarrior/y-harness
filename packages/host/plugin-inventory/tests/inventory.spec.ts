@@ -3,11 +3,11 @@ import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context, FiberState, type Plugin } from '@deepseek-ai/cordis'
-import { PluginPackages, readPluginMeta, type RuntimeResolution } from '@deepseek-ai/dsh-app-boot'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
-import type { AgentPresetRegistry } from '@deepseek-ai/dsh-agent-preset-registry'
+import { Context, FiberState, type Plugin } from '@yharness/cordis'
+import { PluginPackages, readPluginMeta, type RuntimeResolution } from '@yharness/app-boot'
+import Loader from '@yharness/cordis-plugin-loader'
+import { remoteMethods } from '@yharness/typert-protocol'
+import type { AgentPresetRegistry } from '@yharness/agent-preset-registry'
 import PluginInventoryGateway from '../src/index.ts'
 
 const contexts: Context[] = []
@@ -100,7 +100,7 @@ describe('PluginInventoryGateway', () => {
     }))
     writeFileSync(join(dir, 'index.js'), 'throw new Error("metadata must not execute the plugin")\n')
     writeFileSync(join(dir, 'locale', 'en.json'), '{"meta":{"title":"Preset plugin","description":"Preset description"}}')
-    writeFileSync(join(dir, 'locale', 'zh.json'), '{"meta":{"title":"预设插件"}}')
+    writeFileSync(join(dir, 'locale', 'zh.json'), '{"meta":{"title":"\u{9884}\u{8BBE}\u{63D2}\u{4EF6}"}}')
     if (mode === 'runtime') {
       expectUnlinked()
       expect(readPluginMeta('local-plugin/feature', baseUrl)).toBeUndefined()
@@ -124,7 +124,7 @@ describe('PluginInventoryGateway', () => {
         rows: [
           {
             entryId: 'feature', moduleName: 'local-plugin/feature', enabled: false, fiberPhase: null,
-            meta: { title: { en: 'Preset plugin', zh: '预设插件' }, description: { en: 'Preset description' } },
+            meta: { title: { en: 'Preset plugin', zh: '\u{9884}\u{8BBE}\u{63D2}\u{4EF6}' }, description: { en: 'Preset description' } },
           },
           { entryId: null, moduleName: 'local-plugin/private', enabled: false, fiberPhase: null },
         ],
@@ -202,7 +202,7 @@ describe('PluginInventoryGateway', () => {
       compositionInventory: async () => [
         {
           id: 'standard',
-          name: '标准模式',
+          name: '\u{6807}\u{51C6}\u{6A21}\u{5F0F}',
           isDefault: true,
           rows: [
             { entryId: 'alpha', moduleName: 'pkg-alpha', enabled: true, fiberState: FiberState.ACTIVE },
@@ -217,7 +217,7 @@ describe('PluginInventoryGateway', () => {
     expect(snapshot.agentPresets).toEqual([
       {
         id: 'standard',
-        name: '标准模式',
+        name: '\u{6807}\u{51C6}\u{6A21}\u{5F0F}',
         isDefault: true,
         rows: [
           { entryId: 'alpha', moduleName: 'pkg-alpha', enabled: true, fiberPhase: 'active' },

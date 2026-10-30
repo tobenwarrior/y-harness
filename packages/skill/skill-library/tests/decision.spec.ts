@@ -1,9 +1,9 @@
 /** Bounded metadata advice with native denial and deterministic fallback; no real model calls. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { Context } from '@yharness/cordis'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import type { GenerateOptions, StreamChunk } from '@yharness/llm'
+import { brandString } from '@yharness/brand'
 import type { SkillLibraryId, SkillLibraryItem } from '../src/types.ts'
 import { DecisionAdvisory } from '../src/decision.ts'
 import type { DecisionStore } from '../src/decision.ts'

@@ -2,8 +2,8 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import { AssistantMarkdown, type AssistantMarkdownProps } from '../src/client/chat/AssistantMarkdown.tsx'
 import { useDetailedPresentation } from './presentation-fixture.client.ts'
 import { useDisclosure } from '../src/client/chat/use-disclosure.ts'
@@ -29,9 +29,9 @@ describe('tails', () => {
         renderMessageImages={renderMessageImages}
       />,
     )
-    expect(view.getByText('思考')).toBeTruthy()
+    expect(view.getByText('Think')).toBeTruthy()
     expect(view.getByText('thinking hard')).toBeTruthy()
-    expect(view.getByText(/未知内容块/)).toBeTruthy()
+    expect(view.getByText(/Unknown content block/)).toBeTruthy()
     const stopped = render(
       <AssistantMarkdown useDisclosure={useDisclosure}
         usePresentation={useDetailedPresentation}
@@ -42,7 +42,7 @@ describe('tails', () => {
         renderMessageImages={renderMessageImages}
       />,
     )
-    expect(stopped.getByText('已停止')).toBeTruthy()
+    expect(stopped.getByText('Stopped')).toBeTruthy()
   })
 
   it('AssistantMarkdown skips the root shell when only tool-call heads remain', () => {

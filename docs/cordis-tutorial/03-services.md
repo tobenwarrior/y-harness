@@ -7,9 +7,9 @@ A **service** is a named capability one plugin provides and other plugins consum
 Create `greeter.ts` in `tmp/cordis-tutorial`:
 
 ```ts
-import { Service, type Context } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@yharness/cordis'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     greeter: GreeterService
   }
@@ -44,7 +44,7 @@ A `Service` subclass is itself a plugin (the class form from chapter 1), so `ctx
 Create `consumer.ts`:
 
 ```ts
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 
 export const name = 'consumer'
 export const inject = ['greeter']
@@ -93,4 +93,4 @@ Service names live in one flat namespace per application. Prefix or namespace yo
 
 Next: [Events](04-events.md) — communication without a shared service.
 
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+[![]](https://img.shields.io/badge/powered_by-Y_Harness-4D6BFE?style=flat-square&logoColor=white)(https://github.com/tobenwarrior/y-harness)

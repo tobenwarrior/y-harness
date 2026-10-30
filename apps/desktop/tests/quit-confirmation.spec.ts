@@ -39,13 +39,13 @@ describe('DesktopQuitConfirmation', () => {
     expect([...idle.shown, ...starting.shown]).toEqual([])
   })
 
-  it('shows the macOS alert with the warning icon, Chinese copy, and Quit as the default right-hand button', async () => {
+  it('shows the macOS alert with the warning icon and Quit as the default button', async () => {
     const f = setup('darwin', async () => ({ activeTasks: true, scheduledTasks: true }))
     expect(await f.confirmation.confirm()).toBe(true)
     expect(f.shown).toEqual([{
-      type: 'warning', title: 'Y harness', message: '退出 Y harness？',
-      detail: '当前正在运行的任务将会中断，且应用关闭期间，定时任务不会运行',
-      buttons: ['退出', '取消'], defaultId: 0, cancelId: 1, noLink: true,
+      type: 'warning', title: 'Y Harness', message: 'Quit Y Harness?',
+      detail: 'Running tasks will be interrupted, and scheduled tasks will not run while the app is closed.',
+      buttons: ['Quit', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
     }])
   })
 
@@ -54,7 +54,7 @@ describe('DesktopQuitConfirmation', () => {
     f.answer(1)
     expect(await f.confirmation.confirm()).toBe(false)
     expect(f.shown).toEqual([{
-      type: 'none', icon: f.icon, title: 'Y harness', message: 'Quit Y harness?',
+      type: 'none', icon: f.icon, title: 'Y Harness', message: 'Quit Y Harness?',
       detail: 'Scheduled tasks will not run while the app is closed.',
       buttons: ['Quit', 'Cancel'], defaultId: 0, cancelId: 1, noLink: true,
     }])
@@ -65,7 +65,7 @@ describe('DesktopQuitConfirmation', () => {
     const f = setup('darwin', async () => { throw new Error('desktop quit: inspection timed out') })
     f.answer(1)
     expect(await f.confirmation.confirm()).toBe(false)
-    expect(f.shown.map(options => options.detail)).toEqual(['当前正在运行的任务将会中断'])
+    expect(f.shown.map(options => options.detail)).toEqual(['Running tasks will be interrupted.'])
     expect(console.warn).toHaveBeenCalledWith('desktop quit: task inspection unavailable', expect.any(Error))
   })
 

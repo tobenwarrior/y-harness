@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-command-feedback",
+  "name": "@yharness/command-feedback",
   "description": "Log-only session feedback: the record event, the sessionFeedback Host Remote, and the human-facing slash command",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/feedback/command-feedback"
   },
   "type": "module",
@@ -44,25 +44,25 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-commands": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-anonymous-user-id": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/commands": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/anonymous-user-id": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/typert-protocol": "workspace:*"
   },
   "dependencies": {
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
-    "@deepseek-ai/dsh-commands": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-anonymous-user-id": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop-testkit": "workspace:*",
+    "@yharness/commands": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/anonymous-user-id": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/typert-protocol": "workspace:*"
   }
 }

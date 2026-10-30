@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-typert-registry",
+  "name": "@yharness/typert-registry",
   "description": "Runtime registry for generated package reflection and Zod schemas",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/typert/registry"
   },
   "type": "module",
@@ -51,10 +51,10 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-typert-protocol": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/typert-protocol": "workspace:*"
   }
 }

@@ -2,9 +2,9 @@
 /** Bottom following and virtual sticky ancestors use the table's committed geometry. */
 
 import { act, cleanup, fireEvent, render, within } from '@testing-library/react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector, makeTranslate, sessionSnapshot } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindSnapshotSelector, makeTranslate, sessionSnapshot } from '@yharness/client-test-runtime'
+import type { SessionId } from '@yharness/session/types'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { InspectorTable, type InspectorTableProps } from '../src/client/views/InspectorTable.tsx'
 import type { InspectorRecord, InspectorRow } from '../src/client/views/table-model.ts'

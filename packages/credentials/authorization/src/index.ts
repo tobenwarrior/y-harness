@@ -23,12 +23,12 @@
  * })
  * ```
  *
- * @module @deepseek-ai/dsh-authorization
+ * @module @yharness/authorization
  */
 
-import { Context, Service } from '@deepseek-ai/cordis'
-import type { CredentialKey, CredentialRecord } from '@deepseek-ai/dsh-credentials'
-import { HarnessError } from '@deepseek-ai/dsh-llm'
+import { Context, Service } from '@yharness/cordis'
+import type { CredentialKey, CredentialRecord } from '@yharness/credentials'
+import { HarnessError } from '@yharness/llm'
 
 import type {
   AuthorizationEntry, AuthorizationMethod, AuthorizationNotice, AuthorizationOutcome, AuthorizationPrompt,
@@ -40,7 +40,7 @@ export type {
   AuthorizationPromptOption, AuthorizationSettlement, AuthorizationStatus,
 } from './types.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     authorization: AuthorizationService
   }

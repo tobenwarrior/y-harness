@@ -3,7 +3,7 @@ description: "The local PowerShell executor for deployments and maintainers choo
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-pwsh-local
+# @yharness/pwsh-local
 
 ## Summary
 
@@ -35,7 +35,7 @@ Load the executor with the budgets you want; every field has a default, so the s
 
 ```yaml
 - id: bash
-  name: '@deepseek-ai/dsh-pwsh-local'
+  name: '@yharness/pwsh-local'
   config:
     cwd: C:\path\to\workspace
     timeoutMs: 120000
@@ -51,7 +51,7 @@ Load the executor with the budgets you want; every field has a default, so the s
 | `graceMs` | `3,000` | Grace period for kill escalation and post-exit pipe draining |
 | `pwshPath` | resolved | Explicit pwsh executable; else well-known locations, then PATH |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-pwsh-local) is the exhaustive source for every accepted field and its JSDoc.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnesspwsh-local) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Running commands
 

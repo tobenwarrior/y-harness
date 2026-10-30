@@ -1,7 +1,7 @@
 /**
  * Compound code-map plugin, node half.
  *
- * The map the panel shows is served by `@deepseek-ai/dsh-skill-compound`
+ * The map the panel shows is served by `@yharness/skill-compound`
  * through the shared API channel; this half mounts nothing on the Host side.
  */
 

@@ -1,6 +1,6 @@
 /** Browser-safe avatar-generation vocabulary and Remote failures. */
 
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef } from '@yharness/attachment'
 
 /** Why the Host cannot currently offer generated avatars. */
 export type AvatarGenerationUnavailableReason =
@@ -52,7 +52,7 @@ export interface AvatarGenerationCommitValue {
   readonly attachment: ImageAttachmentRef
 }
 
-declare module '@deepseek-ai/dsh-typert-protocol' {
+declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
     /** OpenAI generation cannot run with the current Host configuration. */
     'avatar-generation/unavailable': { readonly reason: AvatarGenerationUnavailableReason }

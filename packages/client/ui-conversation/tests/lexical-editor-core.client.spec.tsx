@@ -29,9 +29,9 @@ import {
 const SESSION_REF: ReferenceInsert = {
   source: 'session-reference',
   ref: 'session-a',
-  label: '随意回复不调用工具',
+  label: '\u{968F}\u{610F}\u{56DE}\u{590D}\u{4E0D}\u{8C03}\u{7528}\u{5DE5}\u{5177}',
   appearance: 'session',
-  clipboardText: '@session:随意回复不调用工具',
+  clipboardText: '@session:\u{968F}\u{610F}\u{56DE}\u{590D}\u{4E0D}\u{8C03}\u{7528}\u{5DE5}\u{5177}',
 }
 
 const SKILL_REF: ReferenceInsert = {
@@ -82,9 +82,9 @@ describe('ReferenceChipNode', () => {
       const chip = $createReferenceChipNode(SESSION_REF)
       expect(chip.getSource()).toBe('session-reference')
       expect(chip.getReference()).toBe('session-a')
-      expect(chip.getLabel()).toBe('随意回复不调用工具')
+      expect(chip.getLabel()).toBe('\u{968F}\u{610F}\u{56DE}\u{590D}\u{4E0D}\u{8C03}\u{7528}\u{5DE5}\u{5177}')
       expect(chip.getAppearance()).toBe('session')
-      expect(chip.getTextContent()).toBe('@session:随意回复不调用工具')
+      expect(chip.getTextContent()).toBe('@session:\u{968F}\u{610F}\u{56DE}\u{590D}\u{4E0D}\u{8C03}\u{7528}\u{5DE5}\u{5177}')
       expect(chip.isInvalid()).toBe(false)
       expect(chip.isInline()).toBe(true)
       expect(chip.isKeyboardSelectable()).toBe(false)
@@ -172,7 +172,7 @@ describe('$projectComposer', () => {
     editor.read(() => {
       const projection = $projectComposer(idAssigner())
       expect(projection.detectText).toBe(`ask ${ATOMIC_CHAR} now`)
-      expect(projection.clipboardText).toBe('ask @session:随意回复不调用工具 now')
+      expect(projection.clipboardText).toBe('ask @session:\u{968F}\u{610F}\u{56DE}\u{590D}\u{4E0D}\u{8C03}\u{7528}\u{5DE5}\u{5177} now')
       expect(projection.occurrences).toHaveLength(1)
       const occurrence = projection.occurrences[0]
       expect(occurrence).toMatchObject({

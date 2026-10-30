@@ -1,1 +1,1 @@
-- alert: 已被「快捷键速查」占用
+- alert: Already used by “Open keyboard shortcuts”

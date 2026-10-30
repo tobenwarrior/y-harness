@@ -3,7 +3,7 @@ description: "Tool-output trimming for deployments composing compaction: choosin
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-compaction-tool-result-pruner
+# @yharness/compaction-tool-result-pruner
 
 ## Summary
 
@@ -30,9 +30,9 @@ Mount this package next to `dsh-compaction-basic` when tool output regularly dom
 Mount token measurement, this package, and the backend in this order:
 
 ```yaml
-- name: '@deepseek-ai/dsh-token-meter'
-- name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
-- name: '@deepseek-ai/dsh-compaction-basic'
+- name: '@yharness/token-meter'
+- name: '@yharness/compaction-tool-result-pruner'
+- name: '@yharness/compaction-basic'
 ```
 
 With these rows, oversized tool results are trimmed automatically as part of condensation. You can verify success by checking that future requests show the trimmed results; the full originals remain in the session log.
@@ -43,7 +43,7 @@ Every tool result whose text exceeds the threshold is replaced by a trimmed vers
 
 ### Setting the size limits
 
-All settings are optional; the defaults trim any result with more than 8,192 text characters to its first 4,096 plus its last 1,024, joined by the marker. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-compaction-tool-result-pruner) is the exhaustive source.
+All settings are optional; the defaults trim any result with more than 8,192 text characters to its first 4,096 plus its last 1,024, joined by the marker. The generated [configuration catalog](../../../docs/config-catalog.md#yharnesscompaction-tool-result-pruner) is the exhaustive source.
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -100,7 +100,7 @@ Read these pages when the package-level contract is not enough; they move from t
 - [Compaction seam](../compaction/README.md) — the condensation contract this package plugs into.
 - [Compaction subsystem reference](../../../docs/subsystems/compaction.md) — the condensation vocabulary, results, and service behavior.
 - [Token meter](../../llm/token-meter/README.md) — the measurement service that decides whether trimming relieved pressure.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-compaction-tool-result-pruner) — every accepted config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnesscompaction-tool-result-pruner) — every accepted config field and its source declaration.
 
 -----
 

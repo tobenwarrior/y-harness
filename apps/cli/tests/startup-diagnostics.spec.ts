@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { inspect } from 'node:util'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import { StartupError } from '@deepseek-ai/dsh-app-boot'
+import { StartupError } from '@yharness/app-boot'
 import { reportStartupFailure } from '../src/startup-diagnostics.ts'
 
 async function home(): Promise<string> {
@@ -130,7 +130,7 @@ describe('startup diagnostic files', () => {
     }, (text) => { chunks.push(text) })
     const output = chunks.join('')
     expect(output).toContain('dsh: startup failed:')
-    expect(output).toContain('dsh: warning: could not write startup diagnostics:')
+    expect(output).toContain('yharness: warning: could not write startup diagnostics:')
     expect(output).toContain('Full diagnostics:\n')
     expect(output).toContain('original details')
     expect(output).toContain('CUSTOM')

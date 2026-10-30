@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-attachment",
-  "description": "Durable immutable attachment storage seam for the DeepSeek Harness",
+  "name": "@yharness/attachment",
+  "description": "Durable immutable attachment storage seam for the Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/attachment/attachment"
   },
   "type": "module",
@@ -22,11 +22,11 @@
   "files": ["lib/index.js", "lib/types/**/*.js", "lib/types/**/*.d.ts"],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/brand": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/brand": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

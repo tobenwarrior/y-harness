@@ -1,11 +1,11 @@
-- dialog "添加插件":
-  - heading "添加插件" [level=2]
-  - button "关闭"
-  - paragraph: 输入插件的包名、GitHub 仓库地址或本地目录路径。
-  - textbox "包名或地址":
-    - /placeholder: 例如 dsh-plugin-whale-pet
+- dialog "Add plugin":
+  - heading "Add plugin" [level=2]
+  - button "Close"
+  - paragraph: Enter the plugin's package name, GitHub repository address, or local directory path.
+  - textbox "Package name or address":
+    - /placeholder: for example yharness-plugin-whale-pet
     - text: slow-package
-  - button "插件安装引导和示例"
-  - button "安装源 默认安装源"
-  - note: 请确认插件来源可信。插件在本机以你的权限运行，来源不明的插件可能损坏 Y Harness，或读取和泄露你的数据。 插件安装后，暂不支持自动更新。若需升级，请先卸载再安装新版，后续版本会持续改善升级体验。
-  - button "安装"
+  - button "Install guide and examples"
+  - button "Registry Default registry"
+  - note: "Install only plugins you trust: they run with your permissions and can damage Y Harness or leak your data. Installed plugins do not update automatically yet. To upgrade a plugin, uninstall it and install the new version. Later releases will keep improving the upgrade experience."
+  - button "Install"

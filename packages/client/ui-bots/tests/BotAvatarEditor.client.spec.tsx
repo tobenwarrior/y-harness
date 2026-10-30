@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import type { AvatarGenerationStatus } from '@deepseek-ai/dsh-avatar-generation/types'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import type { AvatarGenerationStatus } from '@yharness/avatar-generation/types'
 import { BotAvatarEditor } from '../src/client/BotAvatarEditor.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotAvatarEditorActions, BotSummary } from '../src/client/types.ts'

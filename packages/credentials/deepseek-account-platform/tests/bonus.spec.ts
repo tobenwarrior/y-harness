@@ -4,11 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { Context } from '@deepseek-ai/cordis'
-import AuthorizationService from '@deepseek-ai/dsh-authorization'
-import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
-import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountUserId, AccountView } from '@deepseek-ai/dsh-deepseek-account'
+import { Context } from '@yharness/cordis'
+import AuthorizationService from '@yharness/authorization'
+import { LocalCredentialProvider } from '@yharness/credentials-local'
+import { credentialKey } from '@yharness/credentials'
+import type { AccountBonusBatch, AccountBonusOrderId, AccountClientMetadata, AccountUserId, AccountView } from '@yharness/deepseek-account'
 import { PlatformAccount } from '../src/index.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
@@ -56,9 +56,9 @@ async function fixture() {
   let bonusStatus = 200
   let bonuses: unknown = [
     { order_id: ORDER, campaign: 'dsh_login_bonus', amount: '5.00', currency: 'CNY',
-      granted_at: '2026-09-21T12:00:00Z', expires_at: '2026-10-21T12:00:00Z', msg: '已赠送您 5.00 元 DSH 体验赠金。' },
+      granted_at: '2026-09-21T12:00:00Z', expires_at: '2026-10-21T12:00:00Z', msg: '\u{5DF2}\u{8D60}\u{9001}\u{60A8} 5.00 \u{5143} DSH \u{4F53}\u{9A8C}\u{8D60}\u{91D1}。' },
     { order_id: SECOND_ORDER, campaign: 'dsh_login_bonus', amount: '1.50', currency: 'CNY',
-      granted_at: '2026-09-20T12:00:00Z', expires_at: '2026-10-20T12:00:00Z', msg: '已赠送您 1.50 元 DSH 体验赠金。' },
+      granted_at: '2026-09-20T12:00:00Z', expires_at: '2026-10-20T12:00:00Z', msg: '\u{5DF2}\u{8D60}\u{9001}\u{60A8} 1.50 \u{5143} DSH \u{4F53}\u{9A8C}\u{8D60}\u{91D1}。' },
   ]
   let ackBizCode = 0
   let ackStatus = 200
@@ -193,9 +193,9 @@ it('reads unnotified bonuses with the platform origin, grant header, and locale 
     accountId: USER as AccountUserId,
     bonuses: [
       { orderId: ORDER as AccountBonusOrderId, campaign: 'dsh_login_bonus', amount: '5.00', currency: 'CNY',
-        grantedAt: '2026-09-21T12:00:00Z', expiresAt: '2026-10-21T12:00:00Z', message: '已赠送您 5.00 元 DSH 体验赠金。' },
+        grantedAt: '2026-09-21T12:00:00Z', expiresAt: '2026-10-21T12:00:00Z', message: '\u{5DF2}\u{8D60}\u{9001}\u{60A8} 5.00 \u{5143} DSH \u{4F53}\u{9A8C}\u{8D60}\u{91D1}。' },
       { orderId: SECOND_ORDER as AccountBonusOrderId, campaign: 'dsh_login_bonus', amount: '1.50', currency: 'CNY',
-        grantedAt: '2026-09-20T12:00:00Z', expiresAt: '2026-10-20T12:00:00Z', message: '已赠送您 1.50 元 DSH 体验赠金。' },
+        grantedAt: '2026-09-20T12:00:00Z', expiresAt: '2026-10-20T12:00:00Z', message: '\u{5DF2}\u{8D60}\u{9001}\u{60A8} 1.50 \u{5143} DSH \u{4F53}\u{9A8C}\u{8D60}\u{91D1}。' },
     ],
   })
   expect(f.requests).toEqual([

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { countCopy, groupModels, modelLabel, starterModels, vendorOf } from '../src/client/nous-models.ts'
-import type { NousModelView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { NousModelView } from '@yharness/api-remotes/client'
 
 const catalog: NousModelView[] = [
   { id: 'ling', name: 'inclusionAI: Ling 3.1 Flash', reasoning: false },

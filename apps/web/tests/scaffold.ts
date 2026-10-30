@@ -30,10 +30,10 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Page } from 'playwright'
 import { expect } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { entryListSchema, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
+import { Context } from '@yharness/cordis'
+import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@yharness/launch-environment'
+import Loader from '@yharness/cordis-plugin-loader'
+import { entryListSchema, type PatchOptions } from '@yharness/cordis-plugin-include'
 import yaml from 'js-yaml'
 import {
   captureExpectedWorkspaceSnapshot,
@@ -56,38 +56,38 @@ import {
   stabilizeRefreshLog,
   writesCurrentSessionFixtures,
   type NormalizeContext,
-} from '@deepseek-ai/dsh-session-snapshot'
-import type { Profile, ProfileContext } from '@deepseek-ai/dsh-app-boot'
-import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import { LlmAdapter } from '@deepseek-ai/dsh-llm'
+} from '@yharness/session-snapshot'
+import type { Profile, ProfileContext } from '@yharness/app-boot'
+import { dshHomePath } from '@yharness/home-paths'
+import { LlmAdapter } from '@yharness/llm'
 import type {
   LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk,
-} from '@deepseek-ai/dsh-llm'
-import type { ReplayHandle, ReplayProviderConfig } from '@deepseek-ai/dsh-llm-replay'
+} from '@yharness/llm'
+import type { ReplayHandle, ReplayProviderConfig } from '@yharness/llm-replay'
 import {
   installLlmReplay,
   parseSessionLog,
   prepareSessionSnapshotFixtureForComparison,
-} from '@deepseek-ai/dsh-llm-replay'
-import type { SessionFormatEvent } from '@deepseek-ai/dsh-session-format'
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+} from '@yharness/llm-replay'
+import type { SessionFormatEvent } from '@yharness/session-format'
+import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import {
   SESSION_FORMAT_VERSION,
   SessionId,
   type Session,
   type SessionEvent,
   type SessionHeader,
-} from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+} from '@yharness/session'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 // Empty type imports carry the webServer/agents/sessionPersistence Context merges.
-import type {} from '@deepseek-ai/dsh-host-webserver'
-import type {} from '@deepseek-ai/dsh-agent'
-import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
+import type {} from '@yharness/host-webserver'
+import type {} from '@yharness/agent'
+import { provideCmdline } from '@yharness/cmdline'
 import { startPrefixProxy, type PrefixProxy } from './prefix-proxy.ts'
 import { REPO_ROOT, requireBuilt, requireDist } from './support.ts'
 import { webProductCopy } from './branding.ts'
 
-type AppBoot = typeof import('@deepseek-ai/dsh-app-boot')
+type AppBoot = typeof import('@yharness/app-boot')
 let builtAppBoot: AppBoot | undefined
 
 /**
@@ -98,7 +98,7 @@ let builtAppBoot: AppBoot | undefined
  * helpers this module also exports load without one.
  */
 function appBoot(): AppBoot {
-  builtAppBoot ??= requireBuilt('@deepseek-ai/dsh-app-boot') as AppBoot
+  builtAppBoot ??= requireBuilt('@yharness/app-boot') as AppBoot
   return builtAppBoot
 }
 
@@ -109,17 +109,17 @@ function appBoot(): AppBoot {
 // import {
 //   WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE,
 //   WELCOME_NOTICE_VERSION, WELCOME_NOTICE_COPY,
-// } from '@deepseek-ai/dsh-client-ui-settings-models'
+// } from '@yharness/client-ui-settings-models'
 export const WELCOME_NOTICE_SETTINGS_NAMESPACE = 'ui-settings-general'
 /** The installed bundle carrying the scaffold's deployment defaults; the plugin manager lists it beside fixture bundles. */
 export const SCAFFOLD_DEFAULTS_BUNDLE = 'dsh-web-scaffold-defaults'
 export const WELCOME_NOTICE_ACK_FIELD = 'welcomeNoticeVersion'
 export const WELCOME_NOTICE_VERSION = '2026-09-28.1'
 export const WELCOME_NOTICE_COPY = {
-  zh: {
-    title: '预览版说明',
-    body: webProductCopy('Y Harness 目前的 0.2 版本仍处于预览阶段，还有许多地方需要持续改进和打磨，希望听取广大开发者和用户的反馈建议。现在，新的桌面端面向广泛用户，开发者相关的进阶功能可在配置中开启使用。预计 Y Harness 的产品功能以及插件 API 都会继续快速迭代、持续演化，并逐渐趋于稳定。\n\n我们期待与全球用户和开发者一起，在开源、可复用、可组合的基础设施之上，共同探索智能上限。欢迎大家用 Y Harness 将想法变成现实，与社区一起丰富插件生态。'),
-    continueLabel: '继续',
+  en: {
+    title: 'Preview Notice',
+    body: webProductCopy('Y Harness 0.2 is still in preview, and many areas need continued improvement and refinement. We welcome feedback and suggestions from all developers and users. The new desktop app now targets a broad range of users, while developer-related advanced features can be enabled in the settings. Y Harness’s product features and plugin APIs are expected to continue rapid iteration and evolution, and will gradually stabilize over time.\n\nWe look forward to exploring the limits of intelligence together with users and developers around the world, building on open-source, reusable, and composable infrastructure. We welcome everyone to bring their ideas to life with Y Harness and participate in the community to enrich the plugin ecosystem.'),
+    continueLabel: 'Continue',
   },
 } as const
 
@@ -416,7 +416,7 @@ export interface LaunchOptions {
   /** Preset selection default and additional declarative definitions for this scenario. */
   agentPresets?: {
     default: string
-    definitions?: import('@deepseek-ai/dsh-agent-preset-registry').PresetDefinition[]
+    definitions?: import('@yharness/agent-preset-registry').PresetDefinition[]
   }
   /**
    * Patch the telemetry exporter URL while preserving the shipped enabled
@@ -636,7 +636,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       },
     },
     // The bundle's web-runtime row resolves the same built dist under test
-    // (apps/web IS @deepseek-ai/dsh-web-frontend); native browser opening and the
+    // (apps/web IS @yharness/web-frontend); native browser opening and the
     // URL line are disabled because this scaffold owns its Playwright browser.
     // Preserve the composed surface-context choice because a patch replaces
     // the row's complete config.
@@ -661,8 +661,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // disable+insert pair.
     { id: 'directory-picker', disabled: true },
     { insert: [
-      { id: 'directory-picker-browse', name: '@deepseek-ai/dsh-host-directory-picker-browse' },
-      { id: 'ui-directory-picker-browse', name: '@deepseek-ai/dsh-client-ui-directory-picker-browse' },
+      { id: 'directory-picker-browse', name: '@yharness/host-directory-picker-browse' },
+      { id: 'ui-directory-picker-browse', name: '@yharness/client-ui-directory-picker-browse' },
     ] },
     // Ordinary scenarios exclude host-dependent application discovery. The
     // Open In scenario supplies launch facts that suppress every native probe.
@@ -670,7 +670,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     { id: 'ui-open-in-app', disabled: options.openInAppEnvironment === undefined },
     ...options.agentPresets === undefined ? [] : [
       { id: 'agent-preset-registry', config: { default: options.agentPresets.default } },
-      { insert: (options.agentPresets.definitions ?? []).map(config => ({ id: `preset-${config.id}`, name: '@deepseek-ai/dsh-agent-preset', config })) },
+      { insert: (options.agentPresets.definitions ?? []).map(config => ({ id: `preset-${config.id}`, name: '@yharness/agent-preset', config })) },
     ],
     ...options.toolsMode === undefined ? [] : [{ id: 'tools', config: { mode: options.toolsMode } }],
     ...options.deepSeekSearch === undefined
@@ -758,7 +758,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       // A real profile: the shipped web bundles plus each fixture package,
       // installed the way `dsh plugin add` leaves them.
       const dependencies: Record<string, string> = {}
-      const bundles = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...options.profile?.bundles ?? []]
+      const bundles = ['@yharness/base', '@yharness/web-app', ...options.profile?.bundles ?? []]
       for (const entry of options.profile?.packages ?? []) {
         const manifest = JSON.parse(await readFile(join(entry.dir, 'package.json'), 'utf8')) as { name: string }
         dependencies[manifest.name] = `file:${entry.dir}`
@@ -1542,7 +1542,7 @@ export async function readPersistedEvents(scaffold: WebScaffold, id: SessionId):
  * closing quote, where the bucket is always last.
  */
 const ARIA_AGE =
-  /(?:now|\d+min|\d+h|\d+d|\d+mo|\d+y|刚刚|\d+分钟|\d+小时|\d+天|\d+个月|\d+年)(?=")/g
+  /(?:now|\d+min|\d+h|\d+d|\d+mo|\d+y|\u521A\u521A|\d+\u5206\u949F|\d+\u5C0F\u65F6|\d+\u5929|\d+\u4E2A\u6708|\d+\u5E74)(?=")/g
 
 function normalizeAria(snapshot: string, workspaceCwd: string, age: boolean): string {
   // The session heading renders the workspace's basename, not the full
@@ -1560,8 +1560,8 @@ function normalizeAria(snapshot: string, workspaceCwd: string, age: boolean): st
     )
     .replace(/\b\d[\d,]*(?:\.\d+)? ms\b/g, '{{duration}}')
     .replace(
-      /约\d+(?:年(?:\d+个月)?|个月(?:\d+天)?)|\d+(?:天(?:\d+小时(?:\d+分\d+秒)?)?|小时\d+分\d+秒|分\d+秒|(?:\.\d+)?秒)/g,
-      duration => duration.startsWith('约') ? duration : '{{duration}}',
+      /\u7EA6\d+(?:\u5E74(?:\d+\u4E2A\u6708)?|\u4E2A\u6708(?:\d+\u5929)?)|\d+(?:\u5929(?:\d+\u5C0F\u65F6(?:\d+\u5206\d+\u79D2)?)?|\u5C0F\u65F6\d+\u5206\d+\u79D2|\u5206\d+\u79D2|(?:\.\d+)?\u79D2)/g,
+      duration => duration.startsWith('\u{7EA6}') ? duration : '{{duration}}',
     )
     .replace(/\d+(?:\.\d+)?(?= tok\/s(?!\w))/g, '{{throughput}}')
     // Seeded compaction prices realized file paths, whose length differs
@@ -1570,8 +1570,8 @@ function normalizeAria(snapshot: string, workspaceCwd: string, age: boolean): st
     // Session summaries and Message IconActions clocks cross calendar
     // boundaries; collapse every shape so goldens stay stable across them.
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '{{timestamp}}')
-    .replace(/\d{4}年\d{1,2}月\d{1,2}日 \d{2}:\d{2}/g, '{{clock}}')
-    .replace(/\d{1,2}月\d{1,2}日 \d{2}:\d{2}/g, '{{clock}}')
+    .replace(/\d{4}\u5E74\d{1,2}\u6708\d{1,2}\u65E5 \d{2}:\d{2}/g, '{{clock}}')
+    .replace(/\d{1,2}\u6708\d{1,2}\u65E5 \d{2}:\d{2}/g, '{{clock}}')
     .replace(/(?<!\d)\d{1,2}:\d{2}:\d{2}(?:\.\d+)?(?:\s*[AP]M)?(?!\d)/gi, '{{clock}}')
     .replace(/(?<!\d)\d{2}:\d{2}(?!\d)/g, '{{clock}}')
 }

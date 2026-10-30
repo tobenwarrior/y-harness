@@ -2,7 +2,7 @@
 description: "Browser approval UI that answers Host permission requests through the scoped interaction path."
 kind: "package-reference"
 ---
-# @deepseek-ai/dsh-client-ui-approval
+# @yharness/client-ui-approval
 
 ## Summary
 

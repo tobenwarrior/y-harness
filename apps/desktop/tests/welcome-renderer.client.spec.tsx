@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { Welcome } from '../src/client/WelcomePage.tsx'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveDesktopLocale } from '../src/locale.ts'
-import type { AccountView } from '@deepseek-ai/dsh-deepseek-account/types'
+import type { AccountView } from '@yharness/deepseek-account/types'
 import type { WelcomeSaveResult, WelcomeNotice } from '../src/welcome-api.ts'
 
 const html = readFileSync(join(import.meta.dirname, '../renderer/welcome.html'), 'utf8')
@@ -50,7 +50,8 @@ function mount(language = 'zh-CN', takeNotice = vi.fn<() => Promise<WelcomeNotic
 describe('desktop welcome presentation', () => {
   it.each(['zh-CN', 'en'])('renders the %s entry and API-key step', async (language) => {
     const view = mount(language)
-    expect(view.document.documentElement.lang).toBe(language)
+    // Legacy persisted locales are accepted by the shell but use the built-in English dictionary.
+    expect(view.document.documentElement.lang).toBe('en')
     expect(view.document.querySelector('.brand')!.textContent).toBe(view.api.messages.welcomeBrand)
     await expect(view.copy()).toMatchFileSnapshot(`./expected/welcome/${language}.expected.txt`)
     fireEvent.click(view.button('#api-key'))
@@ -93,7 +94,7 @@ describe('desktop welcome presentation', () => {
     expect(view.document.body.textContent).not.toContain('sk-desktop-example')
   })
 
-  it.each(['', 'bad key', '密钥', 'DEEPSEEK_API_KEY=sk-example', '"sk-example"', '`sk-example`'])(
+  it.each(['', 'bad key', 'clé', 'DEEPSEEK_API_KEY=sk-example', '"sk-example"', '`sk-example`'])(
     'rejects invalid input before sending it: %s', (value) => {
       const view = mount()
       fireEvent.click(view.button('#api-key'))

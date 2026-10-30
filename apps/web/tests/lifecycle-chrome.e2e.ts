@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import type { Browser, Page, WebSocketRoute } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished } from 'vitest'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@yharness/session'
 import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureExpandedTurnProcessAria,
   captureStableAria, compareOrRefreshGolden, fixtureUserPrompts,
@@ -121,9 +121,9 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     try {
       await zhPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await zhPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      const launcher = zhPage.getByRole('button', { name: '添加文件或调用指令' })
+      const launcher = zhPage.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{8C03}\u{7528}\u{6307}\u{4EE4}' })
       await launcher.click()
-      const menu = zhPage.getByRole('listbox', { name: '触发候选建议' })
+      const menu = zhPage.getByRole('listbox', { name: '\u{89E6}\u{53D1}\u{5019}\u{9009}\u{5EFA}\u{8BAE}' })
       await menu.getByRole('option').first().waitFor({ timeout: 10_000 })
       await menu.getByRole('status').waitFor({ state: 'hidden', timeout: 10_000 })
       const snapshot = await captureStableAria(zhPage, '[role="listbox"]', scaffold.workspaceCwd)
@@ -138,8 +138,8 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
   it.skipIf(MODE === 'record').each([
     { locale: 'en-US', token: '/goal', row: 'Goal Set or view the goal for a long-running task', hint: 'describe the objective for a long-running task' },
     { locale: 'en-US', token: '/plan', row: 'Plan Enter or leave plan mode', hint: 'describe your task to generate plan' },
-    { locale: ZH_BROWSER_LOCALE, token: '/目标', row: '目标 goal 设置或查看长期任务目标', hint: '输入目标，智能体将持续执行' },
-    { locale: ZH_BROWSER_LOCALE, token: '/计划', row: '计划 plan 进入或退出计划模式', hint: '描述你的任务以生成计划' },
+    { locale: ZH_BROWSER_LOCALE, token: '/\u{76EE}\u{6807}', row: '\u{76EE}\u{6807} goal \u{8BBE}\u{7F6E}\u{6216}\u{67E5}\u{770B}\u{957F}\u{671F}\u{4EFB}\u{52A1}\u{76EE}\u{6807}', hint: '\u{8F93}\u{5165}\u{76EE}\u{6807}，\u{667A}\u{80FD}\u{4F53}\u{5C06}\u{6301}\u{7EED}\u{6267}\u{884C}' },
+    { locale: ZH_BROWSER_LOCALE, token: '/\u{8BA1}\u{5212}', row: '\u{8BA1}\u{5212} plan \u{8FDB}\u{5165}\u{6216}\u{9000}\u{51FA}\u{8BA1}\u{5212}\u{6A21}\u{5F0F}', hint: '\u{63CF}\u{8FF0}\u{4F60}\u{7684}\u{4EFB}\u{52A1}\u{4EE5}\u{751F}\u{6210}\u{8BA1}\u{5212}' },
   ])('keeps $token claimed across separator edits and hides hints during IME composition', async ({ locale, token, row, hint }) => {
     const inputPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale })
     const inputTripwire = watchConsole(inputPage)
@@ -152,8 +152,8 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await inputPage.getByRole('listbox').getByRole('option', { name: row, exact: true }).click()
       await expect.poll(() => input.textContent()).toBe(`${token} `)
       await input.press('End')
-      await inputPage.keyboard.insertText('这是任务')
-      await expect.poll(() => input.textContent()).toBe(`${token} 这是任务`)
+      await inputPage.keyboard.insertText('\u{8FD9}\u{662F}\u{4EFB}\u{52A1}')
+      await expect.poll(() => input.textContent()).toBe(`${token} \u{8FD9}\u{662F}\u{4EFB}\u{52A1}`)
       for (let i = 0; i < 5; i++) await input.press('Backspace')
       const tokenText = () => input.locator('[data-lexical-text][style*="business-primary"]').textContent()
       await expect.poll(() => input.textContent()).toBe(token)
@@ -170,8 +170,8 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await expect.poll(shownHint).toBe('none')
       await cdp.send('Input.imeSetComposition', { text: 'zh', selectionStart: 2, selectionEnd: 2 })
       await expect.poll(shownHint).toBe('none')
-      await cdp.send('Input.insertText', { text: '这' })
-      await expect.poll(() => input.textContent()).toBe(`${token} 这`)
+      await cdp.send('Input.insertText', { text: '\u{8FD9}' })
+      await expect.poll(() => input.textContent()).toBe(`${token} \u{8FD9}`)
       await expect.poll(shownHint).toBe('none')
       await input.press('Backspace')
       await expect.poll(shownHint).toBe(JSON.stringify(hint))
@@ -275,13 +275,13 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await zhPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
       await connectFreshWorkspaceZh(zhPage, zhScaffold.workspaceCwd)
       const input = zhPage.locator('[data-composer-input]').first()
-      await zhPage.getByRole('button', { name: '添加文件或调用指令' }).click()
-      const menu = zhPage.getByRole('listbox', { name: '触发候选建议' })
+      await zhPage.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{8C03}\u{7528}\u{6307}\u{4EE4}' }).click()
+      const menu = zhPage.getByRole('listbox', { name: '\u{89E6}\u{53D1}\u{5019}\u{9009}\u{5EFA}\u{8BAE}' })
       await menu.waitFor({ timeout: 10_000 })
-      await menu.getByRole('option', { name: '计划 plan 进入或退出计划模式', exact: true }).click()
-      await expect.poll(() => input.textContent()).toBe('/计划 ')
+      await menu.getByRole('option', { name: '\u{8BA1}\u{5212} plan \u{8FDB}\u{5165}\u{6216}\u{9000}\u{51FA}\u{8BA1}\u{5212}\u{6A21}\u{5F0F}', exact: true }).click()
+      await expect.poll(() => input.textContent()).toBe('/\u{8BA1}\u{5212} ')
       await input.press('Enter')
-      const planButton = zhPage.getByRole('button', { name: '计划模式已开启，按下关闭' })
+      const planButton = zhPage.getByRole('button', { name: '\u{8BA1}\u{5212}\u{6A21}\u{5F0F}\u{5DF2}\u{5F00}\u{542F}，\u{6309}\u{4E0B}\u{5173}\u{95ED}' })
       await planButton.waitFor({ timeout: 10_000 })
       await expect.poll(() => input.textContent(), { timeout: 10_000 }).toBe('')
       const planSnapshot = await captureStableAria(zhPage, '[class*="frame"]', zhScaffold.workspaceCwd)

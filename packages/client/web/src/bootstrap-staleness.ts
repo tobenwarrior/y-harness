@@ -5,7 +5,7 @@
  * message already prescribes the remedy, so the shell performs it instead of
  * parking on the boot failure screen. Genuine breakage still reaches the
  * screen: the reload guard bounds automatic reloads to one per boot chain.
- * @module @deepseek-ai/dsh-client-web/src/bootstrap-staleness
+ * @module @yharness/client-web/src/bootstrap-staleness
  */
 
 /** Failure signature the module system raises for bootstrap replacement. */

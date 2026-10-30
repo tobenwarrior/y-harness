@@ -8,17 +8,17 @@
  */
 
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
-import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@yharness/client-locale/client'
 // Type-only: the settings shell's SlotMap merge (the 'settings.section'
 // entry). Cross-plugin collaboration goes through slots, never a value import
 // (client bundle purity gate).
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@yharness/client-ui-settings/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
 import { PluginsSettingsSection } from './PluginsSettingsSection.tsx'
 import type { PluginsSettingsSectionInjected, PluginsSettingsTabEntry } from './PluginsSettingsSection.tsx'
-import { en, zh } from './locales.ts'
+import { en } from './locales.ts'
 
 export type { PluginsSettingsSectionInjected, PluginsSettingsSectionProps } from './PluginsSettingsSection.tsx'
 
@@ -34,7 +34,7 @@ export const inject = ['slots', 'locale']
  */
 export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-plugins: section dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-settings-plugins: section dictionaries')
 
   let tabsVersion = -1
   let tabsRevision = -1

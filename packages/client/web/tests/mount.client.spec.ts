@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import { mountClient } from '../src/mount.ts'
 

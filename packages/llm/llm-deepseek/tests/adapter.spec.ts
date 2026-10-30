@@ -1,33 +1,33 @@
 /** HTTP lifecycle, routing and optional Cordis services under real composition. */
-import { installAccountTaskCancellation, type DeepSeekAccount } from '@deepseek-ai/dsh-deepseek-account'
-import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
+import { installAccountTaskCancellation, type DeepSeekAccount } from '@yharness/deepseek-account'
+import type { AnonymousUserId } from '@yharness/anonymous-user-id'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context, LoggerLevel, Service } from '@deepseek-ai/cordis'
-import LocalAttachments from '@deepseek-ai/dsh-attachment-local'
-import AgentRegistry, { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import LlmRuntime, { createAssistantMessage, createDeveloperMessage, createSystemMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { Message } from '@deepseek-ai/dsh-llm'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import LocalCredentials from '@deepseek-ai/dsh-credentials-local'
+import { Context, LoggerLevel, Service } from '@yharness/cordis'
+import LocalAttachments from '@yharness/attachment-local'
+import AgentRegistry, { installModelSelection } from '@yharness/agent'
+import type { Agent, ModelSelectionRef } from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import { AttachmentId } from '@yharness/attachment'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import LlmRuntime, { APP_IDENTITY, createAssistantMessage, createDeveloperMessage, createSystemMessage, createToolResultMessage, createUserMessage, ToolCallId, userAgent } from '@yharness/llm'
+import type { Message } from '@yharness/llm'
+import { credentialRef } from '@yharness/credentials'
+import LocalCredentials from '@yharness/credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId } from '@yharness/session'
 import { DeepSeekAdapter } from '../src/adapter.ts'
 import { object } from '../src/replay.ts'
 import { DeepSeekFileStore } from '../src/file-store.ts'
-import * as Messages from '@deepseek-ai/dsh-llm-deepseek-api-key'
-import * as AccountProvider from '@deepseek-ai/dsh-llm-deepseek-account'
+import * as Messages from '@yharness/llm-deepseek-api-key'
+import * as AccountProvider from '@yharness/llm-deepseek-account'
 import { adapter, assemble, chunks, MODEL, options, prepareExtensions, server, sse, textEvents, user, sourceModuleLoader } from './helpers.ts'
 
 const cleanup: (() => Promise<unknown>)[] = []
@@ -57,7 +57,7 @@ async function send(agent: Agent, text: string) {
   expect(agent.session.snapshotEvents().at(-1)).toMatchObject({ type: 'turn/end', data: { reason: { kind: 'completed' } } })
 }
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'saved-notice': { kind: 'saved-notice' }
   }
@@ -89,7 +89,7 @@ describe('direct Messages HTTP', () => {
     expect(http.requests[0]?.body.messages).toEqual([wireNotice])
     expect(http.requests[1]?.body.messages).toEqual([
       wireNotice,
-      { role: 'assistant', content: [{ type: 'text', text: 'Hello 世界' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'Hello \u{4E16}\u{754C}' }] },
       { role: 'user', content: [{ type: 'text', text: 'continue' }] },
     ])
     expect(JSON.stringify(history)).toBe(saved)
@@ -129,13 +129,13 @@ describe('direct Messages HTTP', () => {
     const http = await endpoint()
     const llm = adapter({ baseURL: http.url })
     const response = await assemble(llm.stream(options({ model: 'deepseek-flash', sessionId: SessionId('session-test'), purpose: 'compaction' })), 'deepseek-flash')
-    expect(response.message.content).toEqual([{ type: 'text', text: 'Hello 世界' }])
+    expect(response.message.content).toEqual([{ type: 'text', text: 'Hello \u{4E16}\u{754C}' }])
     expect(response.message.source).toMatchObject({
       model: 'deepseek-flash', replayState: { response: { model: 'deepseek-flash' } },
     })
     expect(http.requests[0]).toMatchObject({ path: '/anthropic/v1/messages', headers: {
       'x-api-key': 'test-key', 'anthropic-version': '2023-06-01',
-      'user-agent': expect.stringContaining('deepseek-harness/') as string, 'x-deepseek-harness-user-id': 'test-user',
+      'user-agent': userAgent(), 'x-deepseek-harness-user-id': 'test-user',
       'x-deepseek-harness-session-id': 'session-test', 'x-deepseek-harness-compact': '1',
     }, body: { thinking: { type: 'enabled' }, output_config: { effort: 'high' } } })
     expect(llm.providerInfo('deepseek-official')).toEqual({ id: 'deepseek-official', name: 'DeepSeek', auxiliaryGeneration: 'api' })
@@ -262,7 +262,7 @@ describe('direct Messages HTTP', () => {
       resolveAuth: () => Promise.resolve({ headers: { 'x-api-key': 'fixture-key' },
         onRequestError: async () => { throw new Error('credential storage unavailable') },
       }),
-      resolveUserId: () => 'fixture-user' as import('@deepseek-ai/dsh-anonymous-user-id').AnonymousUserId,
+      resolveUserId: () => 'fixture-user' as import('@yharness/anonymous-user-id').AnonymousUserId,
       prepareExtensions,
     })
     await expect(chunks(llm.stream(options()))).rejects.toMatchObject({ code: 'AUTH', failure: { status: 401 } })
@@ -310,11 +310,11 @@ describe('Cordis provider composition', () => {
     await ctx.plugin(Loader)
     ctx.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
-      ['@deepseek-ai/dsh-llm', LlmRuntime], ['@deepseek-ai/dsh-llm-deepseek-api-key', Messages], ['@deepseek-ai/dsh-llm-deepseek-account', AccountProvider],
-      ['@deepseek-ai/dsh-credentials-local', LocalCredentials],
-      ['@deepseek-ai/dsh-agent', AgentRegistry], ['@deepseek-ai/dsh-agent-loop', AgentLoop],
-      ['@deepseek-ai/dsh-session', SessionStore], ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
-      ['@deepseek-ai/dsh-system-prompt', SystemPrompt], ['@deepseek-ai/dsh-tools', ToolRuntime],
+      ['@yharness/llm', LlmRuntime], ['@yharness/llm-deepseek-api-key', Messages], ['@yharness/llm-deepseek-account', AccountProvider],
+      ['@yharness/credentials-local', LocalCredentials],
+      ['@yharness/agent', AgentRegistry], ['@yharness/agent-loop', AgentLoop],
+      ['@yharness/session', SessionStore], ['@yharness/session-projection', SessionProjectionRegistry],
+      ['@yharness/system-prompt', SystemPrompt], ['@yharness/tools', ToolRuntime],
     ])
     // The importer supplies source modules while Loader still owns configuration and effects.
     for (const name of modules.keys()) {
@@ -401,7 +401,7 @@ describe('Cordis provider composition', () => {
       },
       {
         id: 'deepseek-v5', name: 'DeepSeek-V5', api_capabilities: { anthropic_messages: {} },
-        client_requirements: { 'deepseek-harness': { min_version: '99.0.0' } },
+        client_requirements: { [APP_IDENTITY.product]: { min_version: '99.0.0' } },
       },
     ] })
     ctx.provide('deepseekAccount', { resolveToken: async (_url: string): Promise<string | undefined> => 'fixture-token',

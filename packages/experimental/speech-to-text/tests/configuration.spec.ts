@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { boot, initProfile, readProfilePatches, type ProfileContext } from '@deepseek-ai/dsh-app-boot'
-import ConfigEditor from '@deepseek-ai/dsh-config-editor'
-import Settings from '@deepseek-ai/dsh-settings'
+import { boot, initProfile, readProfilePatches, type ProfileContext } from '@yharness/app-boot'
+import ConfigEditor from '@yharness/config-editor'
+import Settings from '@yharness/settings'
 import SpeechToText from '../src/index.ts'
 import type { SpeechProviderId } from '../src/types.ts'
 

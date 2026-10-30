@@ -33,38 +33,8 @@ export const en = {
   priorOwnerUncertainty: 'Prior owner process exit and stream drain were not observed; native persistence remains unestablished. Recovery permits a separate claim and does not certify native release.', recoveredAt: 'Recovery reviewed at', previousOwner: 'Previous owner', unresolvedDispatches: 'Unresolved admitted turns', sourceRevision: 'Cold source revision',
   codex: 'Codex', claude: 'Claude Code', user: 'User', assistant: 'Assistant', system: 'System', tool: 'Native item',
 } as const
+
+/** Compatibility export for the retired locale name. */
+export const zh = en
 /** Dictionary key set shared by the registration and derived component props. */
 export type CodingSessionsKey = keyof typeof en
-/** Simplified Chinese source and operation copy. */
-export const zh: Record<CodingSessionsKey, string> = {
-  nav: '编程会话', title: '编程会话', intro: '浏览明确配置的 Codex 和 Claude 来源。导入可读镜像，再刷新来源中的新记录',
-  sources: '原生来源', emptySources: '暂无可用原生来源。请配置原始 Codex 或 Claude 来源、连接 Codex 后端，或注册 Claude 项目',
-  discover: '浏览会话', more: '加载更多', importedSessions: '已导入会话', emptyMirrors: '选择一个原生会话进行导入', emptyDiscovery: '此来源没有可导入的会话',
-  import: '导入', refresh: '刷新来源', reload: '刷新来源列表', cancel: '取消操作', detail: '会话记录', source: '来源', profile: '配置', nativeId: '原生会话 ID', refreshedAt: '上次刷新',
-  readOnly: '只读镜像', continuationUnavailable: '此连接无法安全交接原生写入权。请在原生应用中继续，再在此刷新',
-  continuable: '可继续原生会话', sourceUnavailable: '此来源不可用。镜像仍可阅读；重新连接来源后可刷新',
-  conflict: '来源记录已变化，现有镜像已保留。查看原生会话后可重试刷新',
-  continue: '继续原生会话', prompt: '继续消息', connected: '可用', disconnected: '不可用', active: '运行中', idle: '空闲', unknown: '写入状态未知',
-  queryError: '无法读取会话，请重试刷新来源', retry: '重试', imported: '会话已导入', refreshed: '会话已刷新', continued: '已继续原生会话', failed: '操作未完成，镜像已保留',
-  claim: '交给 Y 继续', continueSequential: '继续原生对话', release: '交还原生应用', claimed: 'Y 已接管原生会话', released: '原生会话已释放',
-  executionSession: 'Y 执行会话', chooseExecutionSession: '选择运行中的 Y 会话', noExecutionSession: '此项目暂无空闲的 Y 根会话。请先在此项目打开 Y 会话',
-  project: '项目', projectUnknown: '未知', unchangedProfile: '释放之前，我会保持原生配置不变',
-  closedWriter: '我已关闭此会话先前的原生写入程序',
-  sequentialPrecondition: 'Y 接管期间，请保持原生应用中的此会话关闭。此交接无法阻止其他外部程序写入',
-  conversationMode: '继续原生对话，项目工具已禁用', projectFilesMode: '仅支持项目文件工具，无法使用 Shell 或扩展原生权限', toolModeUnknown: '原生工具能力未知', projectToolsMode: '原生项目工具使用所选 Y 会话当前的沙箱和审批设置',
-  sequentialReady: '可顺序交接', claiming: '正在接管原生会话', 'y-owned': 'Y 已接管此原生会话', continuing: '正在继续原生会话', releasing: '正在释放原生会话', 'external-ready': '可在原生应用中继续', 'blocked-uncertain': '写入权尚未确认',
-  releaseUncertain: '释放尚未确认。请保持原生应用中的此会话关闭，并重试释放',
-  restartUncertain: '重启后无法确认释放，因为原始进程句柄已不可用。请保持此会话关闭，直到其写入程序和持久化记录得到验证',
-  interruptedPhase: '原始中断阶段', dispatchedTurnCount: '持久化接收轮次总数', nativeTurnIds: '记录的原生轮次回执', noNativeTurnReceipts: '没有记录原生轮次回执',
-  linkedImports: '关联到 Y 的导入', quotedContext: '导入的原生记录仅作为引用上下文，不授予模型、工具、权限或原生写入权',
-  importDestination: 'Y 导入目标', chooseImportDestination: '选择此项目中未加载的 Y 会话', noImportDestination: '此项目暂无未加载的 Y 目标会话。请明确创建一个目标以导入引用记录',
-  createImportDestination: '创建未加载的 Y 目标', reviewDestination: '查看目标记录版本', destinationEventCount: '目标持久化事件数量', destinationDigest: '目标持久化记录摘要', mirrorRevision: '已查看的镜像版本', linkRevision: '关联导入版本',
-  importIntoY: '将引用记录导入 Y', refreshLinkedImport: '刷新关联引用记录', reviewLink: '查看关联导入', linkStatus: '关联导入状态', importGenerationCount: '保留的导入批次', linkedActive: '引用记录有效', linkedRolledBack: '引用记录已补偿', linkedConflict: '来源记录冲突',
-  rollbackImport: '补偿关联导入', compensationExplanation: '补偿会追加一条新记录，将导入上下文标记为无效。原始事件日志和目标中无关的记录都会保留', acceptCompensation: '我了解补偿会保留原始事件日志',
-  preparedImport: '已准备的导入尚未解决。恢复或放弃必须明确执行', recoverImport: '恢复已准备的导入', abandonImport: '放弃已准备的导入', acceptAbandon: '我了解仅在服务确认尚未写入本次导入内容时才能放弃',
-  linked: '引用记录已导入 Y', compensated: '关联导入已补偿', importRecovered: '已恢复准备中的导入', importAbandoned: '已放弃准备中的导入', destinationCreated: '已创建未加载的 Y 目标', recovered: '已确认重启后的恢复',
-  'recovered-acknowledged': '已确认重启恢复，可另行接管', recoverSequential: '查看并恢复重启后的状态', recoveryClosedWriter: '我已关闭此原生会话的所有外部写入程序', recoveryStableProfile: '我已核实相同的原生配置，并会保持不变', acceptUnresolvedTurns: '我接受没有原生回执的已接收轮次仍未解决',
-  restartRecoveryExplanation: '停止所有写入程序后，请核实此旧接管者和镜像版本。冷读取记录允许重新接管，但不能证明丢失的进程已退出或已持久化接收的轮次',
-  priorOwnerUncertainty: '未观测到先前接管进程的退出和流排空，原生持久化仍未得到确认。恢复允许另行接管，但不证明原生写入权已经释放', recoveredAt: '恢复核实时间', previousOwner: '先前接管者', unresolvedDispatches: '未解决的已接收轮次', sourceRevision: '冷读取来源版本',
-  codex: 'Codex', claude: 'Claude Code', user: '用户', assistant: '助手', system: '系统', tool: '原生记录',
-}

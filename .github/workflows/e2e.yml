@@ -56,7 +56,7 @@ env:
 jobs:
   configuration:
     if: >-
-      github.repository != 'deepseek-harness/deepseek-harness'
+      github.repository != 'tobenwarrior/y-harness'
       && vars.DSH_REAL_API_TESTS_ENABLED != 'true'
     runs-on: ubuntu-latest
     name: real API tests disabled
@@ -74,7 +74,7 @@ jobs:
     # Enabled repositories validate trusted events. Cross-repo and Dependabot
     # PRs lack secrets and would otherwise hard-fail the preflight.
     if: >-
-      (github.repository == 'deepseek-harness/deepseek-harness'
+      (github.repository == 'tobenwarrior/y-harness'
        || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
       && (github.event_name != 'pull_request'
           || (github.event.pull_request.head.repo.full_name == github.repository

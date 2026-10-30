@@ -85,7 +85,7 @@
   "apps/web/tests/assembled-boot.ts": {
     "203f87d9e4f18ce1f00bf575fe96f724975341cbb67b8c51ea45d4cbb8e60005": 1,
     "56cede35ce34488cdae4b19aec217c9c939377eb891fe68827fbd64cd019170c": 1,
-    "fda84896a47e7f9d046fcd7e10e9096c8b002bc5f1ea0c7753e57abe87528dea": 1
+    "84d15991af19a1ecfb41f1c7e491a79fc70697f6812f703586bfe1e4ca3451e3": 1
   },
   "apps/web/tests/onboarding-deepseek-config.e2e.ts": {
     "326597b335539db945b2e3b7c86638d40849d2077c0a5670d064e45486f4e407": 2
@@ -284,7 +284,7 @@
     "7f2d35b6be247c2410599d4b91260905bc2ada88f62507af622fe067a9295f5b": 1
   },
   "packages/api/session-controller/tests/session-pending-submissions.client.spec.ts": {
-    "f35467810e1f7bd9ea7659c947c274c48d310411d0eabcf528366708ea3b7ca1": 1
+    "b21d4a8dda7dae321c1b929d47d9d447e03423f8c549fca7d86fbc31216200a5": 1
   },
   "packages/api/session-controller/tests/session-presets.host.spec.ts": {
     "c051663ae60f381f30367e71bae4da0ea88c490453bbc1d86230b71c0fde8d6f": 1
@@ -385,7 +385,7 @@
     "2e78263d16d54ccfd8d322bcdf1bf738bd8134e15c24063ece9a1d1b52f4ebd9": 1
   },
   "packages/bundle/web-app/tests/document-conversion.e2e.ts": {
-    "743a7488a765c578e607d08ba6bdcf6f2f2971f67b05a42d5097aad2458134a1": 1
+    "b7316b36d3a5ad568f0d704fbbc5725d02a77ab65bbe25529d7b0514c05929eb": 1
   },
   "packages/bundle/web-app/tests/document-preview.spec.ts": {
     "154da39139a0074bad3d13a624e5fa62d1f7ce19dc8b9c28a73af3263cd7f10e": 1
@@ -566,7 +566,7 @@
   },
   "packages/client/ui-goal/tests/goal-command-input.client.spec.tsx": {
     "1c1b6199197153a573f0fe4407b8558555422b0d50dbbba17b25b3ca93c61c4d": 1,
-    "ac130009bd2e1d0af0c730a148e5e01a5a504bf712c43692bc62a8084c73e148": 1,
+    "6fc5d84b3542742902557207905770b8032dacff7cd8ecaad30b6137c975c44a": 1,
     "c94a4dd0df97005875a97b9228b3f536765ee6d31872ee05e69677da27086124": 1
   },
   "packages/client/ui-input-trigger/tests/apply.client.spec.ts": {
@@ -651,9 +651,9 @@
     "85f4d0d762126e709ae2178ca656f586dac1ba425eb1d8dd402cb5577d6e8225": 1
   },
   "packages/client/ui-settings-plugin-inventory/tests/components.client.spec.tsx": {
-    "0d78ec7c8ca39f70a4033ff4d330f8ef26832bb89932f98d1c87d76b4ce16d00": 1,
-    "79c53da50aa08004e201cebca842267ae2650a543b435a7906960f6492c2398b": 1,
-    "a3c1509d552d0102e118f3071a234002a5c83c30ca6923f8a87e9e3733ce0dcf": 1
+    "7647727f81e3d82a9a4d51f82dd594c2dc76a33c17ece0cc195dabb56fd656d6": 1,
+    "a3c1509d552d0102e118f3071a234002a5c83c30ca6923f8a87e9e3733ce0dcf": 1,
+    "aadf7b7a4190f7700fb5cb3b920f028c58d3065a2204ea265fe9a707b569fcab": 1
   },
   "packages/client/ui-settings/tests/schema.client.spec.ts": {
     "0584be4cde4cd33049ef7c02e9d1562a30ec48ef2176f2f22b328b5be2903407": 1
@@ -829,7 +829,7 @@
     "9dae2342b022f2c9c7f61de694191cf5e0be290723a4e1235c603a7a78c6d4ca": 1
   },
   "packages/compaction/compaction-tool-result-pruner/tests/loader-composition.spec.ts": {
-    "cf608c9b27ee8323dcd5ca6261251861abf5243d4f61896effb2e7e765d14759": 1
+    "26ad52c2ec39eeffc9d6e8e61758f48ba8434061a22a8d04a19adad3468e2ade": 1
   },
   "packages/compaction/compaction/tests/compaction.spec.ts": {
     "6517a00893f4956fa1670426a26a1e2e6e7fe21136e82bf1b42731394998f221": 1
@@ -1038,7 +1038,7 @@
     "d80a3368311f07e812a76ff265125b072175f58b6003d9f96a37d4f3e70e3dec": 1
   },
   "packages/credentials/credentials-local/tests/drain.spec.ts": {
-    "a96f4a3497a1c661f76e47ef5fda3c32d2759a7a5f9c519527fa46801a91bf79": 1
+    "3ab1902469e735907571efc4e0900eee01bc731d933969e6e19f86ac4e570726": 1
   },
   "packages/credentials/credentials-local/tests/watcher.spec.ts": {
     "6dfe702b6cb8848eeb1d56c5af6ff723d84841aaa1d96790295db4ed70616c65": 1
@@ -1249,7 +1249,7 @@
     "67c8811e65c7d4c40d6de95cb9b9576873c717164d609124dcac39e82e95abca": 1
   },
   "packages/extensions/ui-cordis/tests/inventory.client.spec.ts": {
-    "205cd2f0d90ee000d0bd5f8c9e7e03d7d602f22e12220ebdf8043d68fd9b796a": 1
+    "d44550837053e92aa4a3ace0505ab3280819dc296e011c6c03be89d882ad7635": 1
   },
   "packages/feedback/command-feedback/tests/loader-composition.spec.ts": {
     "59c63f734e8bba862325f776e3fcbebd78a84cfb4161f8df41c216950d9bf351": 1
@@ -1335,7 +1335,7 @@
     "52e6bc7e2a6c58a465a5e1c7a1e92caa4f771235b19ebf4642df5c0845de72aa": 1
   },
   "packages/jobs/jobs-local/tests/loader-composition.spec.ts": {
-    "6dc45d44a978dd86bb9ac2c9baf5d31aed699055698709e09bb34e99150e239d": 1
+    "6ab165ed13020865ed456fd666f01c1325a4c8cdd9bb31fbc1100f1c38b2e7d3": 1
   },
   "packages/jobs/tool-jobs/src/index.ts": {
     "64ab5463fdb068e88a33f022baff473b7a0da77854c4ecf8e26412763d6dccf6": 1
@@ -1811,7 +1811,7 @@
     "52faf4558fcd91bd27dbdfa7e497843e8eeb75ea5f68ee231335018d5b3f2053": 2
   },
   "packages/spill/spill-local/tests/loader-composition.spec.ts": {
-    "a1bc71cd51432754ad8ccc5a1d1cb7f764e8e423d46f685bee8715b79bd2df04": 1
+    "bb6d5c08a16cfae22942ff8c234a1919214ad267fae93105a4be70438487a8a7": 1
   },
   "packages/spill/spill-policy/tests/spill-policy.spec.ts": {
     "454b667cdac6de305d79d51ef853272212a80166952a84385c7c915f595ae0a6": 1
@@ -1991,16 +1991,16 @@
     "f5b7ed19aea21153c86ef4e2596f39d1b667b3b8a1d1ba2b2a2a95bf90869b58": 1
   },
   "packages/terminal/terminal-bash/tests/index.spec.ts": {
-    "2878860b606c2614696f97227e4e580a65b1ae1680b6261f233163cd8b838ee0": 1,
     "30c8c859832405858e95a7de1493488b75a9030e3baa8fcaf3647e071bd5bbf1": 1,
     "6d3dc24d166f2c9d373b869b5e9810906741932830e4b7f695014bc121e6ab24": 1,
-    "9112a2d5c1256fa954c76768f4135294dd6a6a4ffd13871fab2e54d90a894e90": 1,
+    "95eb2597dbafb5330e6b78e8b17186f861dc0deecb3a7b4e20fd4fbcd376f74b": 1,
     "9890d3018d70b3a93d39d6c12b2a56c3011e77d38cd6b34919e93ba526360c6e": 2,
-    "9f84551b52cab038fe0cb49c70862fcd68d5008c8f32d8f43b8c6bfaea694f66": 1,
     "ad770543b1406f728aa6a91fc8ede6bf3a6b6a2b76b32870151d77ffd28c6711": 1,
     "b33f57d0f6305110b507b0caa10a49574fa86ed9fcd41992e6a7b9aec8db9769": 1,
     "b35ecf6f26fe1f37a664a8845e319f31d8e53a954f8fa0b882cbca3bbef70f15": 1,
-    "cd1ee4add9efb17e75b8490177dbe86cb0c4de4d5db404650376de3841be180a": 1
+    "cd1ee4add9efb17e75b8490177dbe86cb0c4de4d5db404650376de3841be180a": 1,
+    "cfde0ad6de6197089d8db026a31124a89e67447263683fd1a7346efd1f59bff1": 1,
+    "dd509f9e6f7690b9ce972114b2568eab53551afa90fcb4b2ac13283b5269d979": 1
   },
   "packages/terminal/terminal-bash/tests/session.spec.ts": {
     "18212835b0bf110a8b3694aa4ddc90a710b10321ee133aeaeaa86c305642a474": 1,

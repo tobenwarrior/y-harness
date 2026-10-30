@@ -1,20 +1,44 @@
-- dialog "设置":
+- dialog "Settings":
   - navigation:
-    - text: 设置
-    - button "通用设置"
-    - button "模型"
-    - button "内置插件"
-    - button "Agent 预设"
-  - button "打开配置文件"
-  - button "关闭"
-  - heading "模型" [level=2]
-  - paragraph: 填入各提供商的 API 密钥即可使用其模型。
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Coding sessions"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - heading "Models" [level=2]
+  - paragraph: Enter your API keys to use models from the following providers.
+  - text: ChatGPT subscription
+  - button "Edit ChatGPT subscription": Edit
+  - text: Nous Portal
+  - button "Edit Nous Portal": Edit
+  - text: Grok subscription
+  - button "Edit Grok subscription": Edit
   - list:
     - listitem:
-      - text: DeepSeek deepseek-official API 密钥
-      - textbox "API 密钥":
-        - /placeholder: 输入 API 密钥
-      - group: 自定义设置
-      - button "取消"
-      - button "保存"
-  - button "添加模型提供商"
+      - text: DeepSeek deepseek-official API key
+      - textbox "API key":
+        - /placeholder: Enter your API key
+      - group: Customized settings
+      - button "Cancel"
+      - button "Apply"
+  - button "Add model provider"
+  - region "Decision advice":
+    - heading "Decision advice" [level=3]
+    - paragraph: Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.
+    - paragraph: Native Codex routes, including gpt-6-luna, expose native tools and are unavailable for Decision. No new account or credentials are configured.
+    - switch "Enable skill candidate advice"
+    - text: Enable skill candidate advice Decision model
+    - combobox "Decision model":
+      - option "Choose a value" [selected]
+    - paragraph: At most 1 call · input budget 16000 · output 512 tokens · {{duration}} deadline
+    - button "Save Decision settings"
+    - text: Project
+    - combobox "Preview project":
+      - option "Choose a project" [selected]
+    - textbox "Enter a skill candidate query"
+    - button "Preview candidate order" [disabled]
+    - button "Refresh"

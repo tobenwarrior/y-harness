@@ -2,12 +2,12 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import SessionStore from '@deepseek-ai/dsh-session'
-import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
-import TypertGateway from '@deepseek-ai/dsh-api-gateway'
-import { HostConnectionService } from '@deepseek-ai/dsh-client-connection/src/rpc-host.ts'
-import type { BrowserAuth } from '@deepseek-ai/dsh-client-connection/src/browser-auth.ts'
-import { createWebConnectionRpc } from '@deepseek-ai/dsh-client-connection/src/client/rpc.ts'
+import SessionStore from '@yharness/session'
+import TypertRegistry from '@yharness/typert-registry'
+import TypertGateway from '@yharness/api-gateway'
+import { HostConnectionService } from '@yharness/client-connection/src/rpc-host.ts'
+import type { BrowserAuth } from '@yharness/client-connection/src/browser-auth.ts'
+import { createWebConnectionRpc } from '@yharness/client-connection/src/client/rpc.ts'
 import WorkspaceFiles, { type WorkspaceByteReadOptions } from '../src/index.ts'
 import { openWorkspace, type Harness } from './harness.ts'
 
@@ -38,8 +38,8 @@ function read(path: string, options: WorkspaceByteReadOptions, signal = new Abor
 
 it('returns complete binary contents through the ordinary Remote endpoint', async () => {
   const data = new Uint8Array([0, 128, 255, 1])
-  await writeFile(join(harness.workspace, '字节.bin'), data)
-  expect(await read('字节.bin', {})).toMatchObject({ ok: true, value: { offset: 0, eof: true, bytes: 4, data } })
+  await writeFile(join(harness.workspace, '\u{5B57}\u{8282}.bin'), data)
+  expect(await read('\u{5B57}\u{8282}.bin', {})).toMatchObject({ ok: true, value: { offset: 0, eof: true, bytes: 4, data } })
   expect(harness.ctx.get('agents')).toBeUndefined()
 })
 

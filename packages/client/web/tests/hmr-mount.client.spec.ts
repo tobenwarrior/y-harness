@@ -1,31 +1,31 @@
 // @vitest-environment jsdom
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { createElement, useEffect } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import * as modulesClient from '@deepseek-ai/dsh-client-modules/client'
+import * as modulesClient from '@yharness/client-modules/client'
 import type {
   ClientBundleRegistration, ClientModuleLoaderTarget, WebBootEntry, WebBootGraph,
-} from '@deepseek-ai/dsh-client-modules/client'
-import * as rendererClient from '@deepseek-ai/dsh-client-ui-renderer/client'
-import * as uiSessionClient from '@deepseek-ai/dsh-client-ui-session/client'
-import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
+} from '@yharness/client-modules/client'
+import * as rendererClient from '@yharness/client-ui-renderer/client'
+import * as uiSessionClient from '@yharness/client-ui-session/client'
+import type { ComposedProps } from '@yharness/client-ui-slots'
 import { ClientSessions } from '../../../api/session-controller/src/client/sessions/service.ts'
 import type { SessionRemotes } from '../../../api/session-controller/src/client/sessions/remotes.ts'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
-import { RemoteMock } from '@deepseek-ai/dsh-remote-mock'
+import { SessionId } from '@yharness/session/types'
+import { RemoteMock } from '@yharness/remote-mock'
 import { bootClient } from '../src/boot-client.ts'
 import { mountClient } from '../src/mount.ts'
 
-const BOOTSTRAP = '@deepseek-ai/dsh-client-modules'
-const RENDERER = '@deepseek-ai/dsh-client-ui-renderer'
+const BOOTSTRAP = '@yharness/client-modules'
+const RENDERER = '@yharness/client-ui-renderer'
 const SESSIONS = 'hmr-sessions'
 const REMOTE = 'hmr-remotes'
-const UI_SESSION = '@deepseek-ai/dsh-client-ui-session'
+const UI_SESSION = '@yharness/client-ui-session'
 const APP = 'hmr-app'
 const EXTRA = 'hmr-extra'
 const STABLE = 'hmr-stable'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface SlotMap {
     'hmr.leaves': { kind: 'list'; scope: 'root' }
   }

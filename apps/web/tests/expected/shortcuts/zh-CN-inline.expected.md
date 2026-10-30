@@ -1,5 +1,5 @@
-- group "展开／收起左侧栏":
-  - button "恢复默认"
-  - button "移除"
-  - button "按下快捷键"
-  - text: 可设置 Command+/、Command+,、Command+反斜杠、Control+反引号、Command+Option+按键或 Command+Shift+按键。也支持三个或四个不同修饰键的组合。浏览器或系统占用的组合可能无法送达页面。
+- group "Toggle left sidebar":
+  - button "Restore default"
+  - button "Remove"
+  - button "Press a shortcut"
+  - text: Use Command+/, Command+,, Command+Backslash, Control+Backquote, Command+Option+key, or Command+Shift+key. Combinations with three or four distinct modifiers are also supported. Browser or system shortcuts may not reach the page.

@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-subagent-codex",
+  "name": "@yharness/subagent-codex",
   "description": "One-shot Codex subagent provider over the official app-server protocol",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/subagent/subagent-codex"
   },
   "type": "module",
@@ -33,36 +33,36 @@
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/llm": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/timeout": "workspace:*"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-brand": "workspace:*",
-    "@deepseek-ai/dsh-sdk-protocol": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/brand": "workspace:*",
+    "@yharness/sdk-protocol": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "@openai/codex": "0.153.4"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/cordis-plugin-loader": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-app-boot": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-loader-smoke": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-session-checkpoint-policy": "workspace:*",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:*",
-    "@deepseek-ai/dsh-session-projection": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-subprocess": "workspace:*",
-    "@deepseek-ai/dsh-subprocess-local": "workspace:*",
-    "@deepseek-ai/dsh-timeout": "workspace:*",
-    "@deepseek-ai/dsh-tool-jobs": "workspace:*",
-    "@deepseek-ai/dsh-tool-subagent": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/cordis-plugin-loader": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/app-boot": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/loader-smoke": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/session-checkpoint-policy": "workspace:*",
+    "@yharness/session-persistence-jsonl": "workspace:*",
+    "@yharness/session-projection": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
+    "@yharness/timeout": "workspace:*",
+    "@yharness/tool-jobs": "workspace:*",
+    "@yharness/tool-subagent": "workspace:*",
+    "@yharness/tools": "workspace:*"
   }
 }

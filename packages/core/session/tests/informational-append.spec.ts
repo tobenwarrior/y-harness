@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId, SessionLogOffset, snapshotSessionEvent, type SessionEvent, type SessionInformationalOptions } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@yharness/llm'
+import { Session, SessionId, SessionLogOffset, snapshotSessionEvent, type SessionEvent, type SessionInformationalOptions } from '@yharness/session'
 
-declare module '@deepseek-ai/dsh-session' {
+declare module '@yharness/session' {
   interface SessionEventMap {
     'fixture/information': { nested: { count: number } }
   }

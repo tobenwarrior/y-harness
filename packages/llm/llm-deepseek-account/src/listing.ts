@@ -1,9 +1,12 @@
 /** DeepSeek `GET /models` listing: one authenticated request and per-entry decoding. */
-import { APP_IDENTITY, attributionHeaders, LlmError } from '@deepseek-ai/dsh-llm'
-import type { ModelModality } from '@deepseek-ai/dsh-llm'
-import { timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { APP_IDENTITY, attributionHeaders, LlmError } from '@yharness/llm'
+import type { ModelModality } from '@yharness/llm'
+import { timeoutOf } from '@yharness/timeout'
 
 const LISTED_MODALITIES = ['text', 'image'] as const satisfies readonly ModelModality[]
+
+/** Provider catalog key used before the product rename; accepted only when the canonical key is absent. */
+const LEGACY_PRODUCT = 'deepseek-harness'
 
 /** Code of a listing deadline's timeout reason; {@link requestModelListing} reports it as `TIMEOUT`. */
 export const LISTING_TIMEOUT = 'MODEL_LISTING_TIMEOUT'
@@ -37,7 +40,7 @@ export interface ListingEntry {
   readonly id: string
   /** Display name, when the entry declares a non-empty one. */
   readonly name?: string
-  /** Requirement declared under `client_requirements[APP_IDENTITY.product]`. */
+  /** Requirement declared under the canonical product key, or the legacy key when the canonical key is absent. */
   readonly requirement: ClientRequirement
   /** Declared capabilities. */
   readonly capabilities: ListedCapabilities
@@ -75,7 +78,9 @@ function requirementOf(entry: Fields): ClientRequirement {
   if (entry.client_requirements === undefined) return { kind: 'none' }
   const requirements = fieldsOf(entry.client_requirements)
   if (requirements === undefined) return { kind: 'invalid' }
-  const declared = requirements[APP_IDENTITY.product]
+  const declared = Object.hasOwn(requirements, APP_IDENTITY.product)
+    ? requirements[APP_IDENTITY.product]
+    : Object.hasOwn(requirements, LEGACY_PRODUCT) ? requirements[LEGACY_PRODUCT] : undefined
   if (declared === undefined) return { kind: 'none' }
   const own = fieldsOf(declared)
   if (own === undefined) return { kind: 'invalid' }
@@ -91,7 +96,7 @@ function capabilitiesOf(entry: Fields): ListedCapabilities {
   const outputs = entry.output_modalities === undefined ? ['text'] : knownModalities(entry.output_modalities)
   if (outputs?.includes('text') !== true) return { usable: false, reason: 'declares no text output' }
   const inputs = entry.input_modalities === undefined ? ['text' as const] : knownModalities(entry.input_modalities)
-  if (inputs === undefined || inputs.length === 0) return { usable: false, reason: 'declares no input modality DeepSeek Harness supports' }
+  if (inputs === undefined || inputs.length === 0) return { usable: false, reason: 'declares no input modality Y Harness supports' }
   const contextWindow = capacity(entry.context_window)
   const maxOutputTokens = capacity(entry.max_output_tokens)
   if (contextWindow === false || maxOutputTokens === false) {

@@ -1,6 +1,6 @@
 /** Deployment configuration for the managed local SenseVoice recognizer. */
-import z from '@deepseek-ai/schemastery'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import z from '@yharness/schemastery'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 
 /** Local runtime, inference, and retention settings. */
 export interface Config {

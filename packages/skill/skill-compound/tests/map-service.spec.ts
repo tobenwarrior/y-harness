@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
+import { Context } from '@yharness/cordis'
+import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import {
   MAP_ASSET_ROUTES, MAP_PROXY_ROUTES, MAP_ROUTE_PREFIX, MapServiceBridge, registerMapRoutes, resolveStateDir,
   rewriteViewerScript, STATE_DIR_VARIABLE, VIEWER_ROUTE,

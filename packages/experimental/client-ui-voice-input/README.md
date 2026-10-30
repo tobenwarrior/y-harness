@@ -3,7 +3,7 @@ description: "Record speech and insert reviewable transcripts into the conversat
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-experimental-client-ui-voice-input
+# @yharness/experimental-client-ui-voice-input
 
 ## Summary
 

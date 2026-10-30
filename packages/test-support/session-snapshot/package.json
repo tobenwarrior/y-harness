@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-session-snapshot",
+  "name": "@yharness/session-snapshot",
   "description": "Session-log snapshot core with an ACP protocol adapter, expected-output normalization, and fixture invariants",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/test-support/session-snapshot"
   },
   "type": "module",
@@ -28,31 +28,31 @@
   "license": "MIT",
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/dsh-llm-replay": "workspace:*",
-    "@deepseek-ai/dsh-loader-smoke": "workspace:*",
-    "@deepseek-ai/dsh-session-format": "workspace:*",
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/llm-replay": "workspace:*",
+    "@yharness/loader-smoke": "workspace:*",
+    "@yharness/session-format": "workspace:*",
     "js-yaml": "^4.2.0",
     "vitest": "^4.1.8"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/session": "workspace:*",
+    "@yharness/http-proxy": "workspace:*"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-agent-loop": "workspace:*",
-    "@deepseek-ai/dsh-compaction": "workspace:*",
-    "@deepseek-ai/dsh-llm": "workspace:*",
-    "@deepseek-ai/dsh-sandbox": "workspace:*",
-    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-subagent": "workspace:*",
-    "@deepseek-ai/dsh-tools": "workspace:*",
-    "@deepseek-ai/dsh-user-questions": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/compaction": "workspace:*",
+    "@yharness/llm": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/subagent": "workspace:*",
+    "@yharness/tools": "workspace:*",
+    "@yharness/user-questions": "workspace:*",
     "@types/js-yaml": "^4.0.9",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*"
+    "@yharness/http-proxy": "workspace:*"
   }
 }

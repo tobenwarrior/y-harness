@@ -1,11 +1,11 @@
 /** Session-scoped Sidebar tab backed by the existing Chat and Session-log models. */
 
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type { SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/client-ui-session/client'
+import type { SessionBinding } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import { ChatNodeModel } from './chat-node/model.ts'
 import { SessionLogModel } from './session-log/model.ts'
 import { sessionLogChatTarget } from './session-log/chat-target.ts'
@@ -24,7 +24,7 @@ export function registerInspectorTab(ctx: Context): void {
   let disposed = false
   ctx.effect(() => () => { disposed = true; activePicker?.dispose() }, 'session-inspector: chat picker')
   const t = ctx.locale.bind(NS)
-  const id = '@deepseek-ai/dsh-experimental-session-inspector'
+  const id = '@yharness/experimental-session-inspector'
   ctx.effect(() => ctx.sidebarRightTabs.register({
     id, kind: 'session-inspector-log', title: () => t('tab.title'),
     guide: [{ id: 'open', order: 60, title: () => t('tab.title'), description: () => t('tab.description') }],

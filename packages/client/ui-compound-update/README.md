@@ -3,11 +3,11 @@ description: "Sidebar update indicator and steps panel for the Compound skills v
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-compound-update
+# @yharness/client-ui-compound-update
 
 ## Summary
 
-The sidebar shows a circular action when a Compound skills update is pending or a check fails. Its tooltip identifies the update, and the action opens version details and retry controls. Updates apply automatically in the Host; manual apply verifies and publishes a commit-pinned skill tree to a private overlay. A failed attempt leaves the active revision untouched.
+The sidebar foot shows a circular status action when a Compound skills update is pending or its latest check fails. Its tooltip identifies the update, and the action opens version details and retry controls. A successful check stays quiet, leaving the app-update affordance as the persistent update signal; the Host checks and applies Compound revisions automatically. Manual apply downloads the commit-pinned skill tree into a private overlay, verifies every file, and publishes the revision atomically. A failed attempt leaves the active revision untouched and reports why.
 
 ## Table of Contents
 
@@ -22,10 +22,10 @@ The sidebar shows a circular action when a Compound skills update is pending or 
 <a id="use this package"></a>
 ## Use this package
 
-Mount beside `@deepseek-ai/dsh-skill-compound`, which registers the `api/skill-compound.update` reading route and the `api/skill-compound.update.apply` route the button posts to.
+Mount beside `@yharness/skill-compound`, which registers the `api/skill-compound.update` reading route and the `api/skill-compound.update.apply` route the button posts to.
 
 ```yaml
-- name: '@deepseek-ai/dsh-client-ui-compound-update'
+- name: '@yharness/client-ui-compound-update'
 ```
 
 The badge registers into `sidebar.footer.action` and the steps panel into `shell.overlay`; both share one reading controller, so the panel shows the state the badge announced.
@@ -65,7 +65,7 @@ The indicator does not alter model request prefixes.
 
 - The panel applies a verified user-owned overlay. The managed production checkout is intentionally left unchanged, so applying a revision does not depend on a detached Git checkout or a live-app rebuild.
 - The reading is cached by the Host for six hours after success and fifteen minutes after a failure, so a release published in between appears on the next read rather than immediately.
-- The package reads one route and renders no version of its own; a deployment that mounts it without `@deepseek-ai/dsh-skill-compound` shows no badge and reports the missing route as an unreadable check.
+- The package reads one route and renders no version of its own; a deployment that mounts it without `@yharness/skill-compound` shows no badge and reports the missing route as an unreadable check.
 
 ### Dev Note
 

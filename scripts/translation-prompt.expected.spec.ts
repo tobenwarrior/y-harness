@@ -5,6 +5,7 @@ import { access, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { englishOnlyReason } from './translation-pairing.ts'
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
@@ -18,6 +19,10 @@ describe('translation prompt runnable snapshot', () => {
       '--snapshot',
     ], { cwd: root, maxBuffer: 4 * 1024 * 1024 })
     expect(stderr).toBe('')
+    if (englishOnlyReason(root) !== undefined) {
+      expect(stdout).toBe('verify-translation-prompt: English-only checkout; the translation prompt is not used\n')
+      return
+    }
     expect(() => {
       JSON.parse(stdout)
     }).not.toThrow()

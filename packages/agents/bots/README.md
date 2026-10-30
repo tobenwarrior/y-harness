@@ -3,7 +3,7 @@ description: "Durable user-owned Bot roster with one persistent Session per Bot,
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-bots
+# @yharness/bots
 
 ## Summary
 
@@ -34,7 +34,7 @@ Choose this package when a Web surface needs named agents with durable visual id
 The plugin has no user configuration fields. Mount it with the storage domain, Session controller, Agent registry, and attachment provider supplied by the composition:
 
 ```yaml
-- name: '@deepseek-ai/dsh-bots'
+- name: '@yharness/bots'
 ```
 
 | Field | Default | Meaning |

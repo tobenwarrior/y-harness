@@ -18,9 +18,9 @@ function fixture(packages: Readonly<Record<string, readonly string[]>>): string 
     const directory = join(root, 'packages', 'client', name)
     mkdirSync(directory, { recursive: true })
     writeFileSync(join(directory, 'package.json'), `${JSON.stringify({
-      name: `@deepseek-ai/dsh-${name}`,
+      name: `@yharness/${name}`,
       peerDependencies: Object.fromEntries(dependencies.map(dependency => [
-        `@deepseek-ai/dsh-${dependency}`,
+        `@yharness/${dependency}`,
         'workspace:^',
       ])),
     }, null, 2)}\n`)
@@ -47,23 +47,23 @@ describe('collectPackageGraph', () => {
     const root = fixture({ consumer: ['missing'] })
 
     expect(() => collectPackageGraph(root, ['client'], 'fixture'))
-      .toThrow('fixture: @deepseek-ai/dsh-consumer references missing in-repo peer @deepseek-ai/dsh-missing')
+      .toThrow('fixture: @yharness/consumer references missing in-repo peer @yharness/missing')
   })
 })
 
 describe('renderModuleGraph', () => {
   it('renders the same peer edge in both generated languages', () => {
     const packages = [
-      { short: 'provider', name: '@deepseek-ai/dsh-provider', group: 'core', rel: 'packages/core/provider', deps: [] },
-      { short: 'consumer', name: '@deepseek-ai/dsh-consumer', group: 'core', rel: 'packages/core/consumer', deps: ['provider'] },
+      { short: 'provider', name: '@yharness/provider', group: 'core', rel: 'packages/core/provider', deps: [] },
+      { short: 'consumer', name: '@yharness/consumer', group: 'core', rel: 'packages/core/consumer', deps: ['provider'] },
     ]
 
     const english = renderModuleGraph(packages, 'en')
     const chinese = renderModuleGraph(packages, 'zh')
 
     expect(english).toContain('# Shared-instance dependency graph')
-    expect(chinese).toContain('# 共享实例依赖关系图')
-    expect(chinese).toContain('[English](module-graph.md) | 中文')
+    expect(chinese).toContain('# \u5171\u4eab\u5b9e\u4f8b\u4f9d\u8d56\u5173\u7cfb\u56fe')
+    expect(chinese).toContain('[English](module-graph.md) | \u4e2d\u6587')
     for (const output of [english, chinese]) {
       expect(output).toContain('pkg_consumer --> pkg_provider')
       expect(output).toContain('| [`consumer`](../packages/core/consumer) | `core` | [`provider`](../packages/core/provider) |')

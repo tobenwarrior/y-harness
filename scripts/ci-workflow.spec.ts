@@ -336,7 +336,7 @@ describe('CI workflow', () => {
     expect(node24Bench.env).toBeUndefined()
     expect(node24Bench.steps).toContainEqual({
       name: 'Install benchmark browser and hosted dependencies',
-      run: 'pnpm --filter @deepseek-ai/dsh-benchmarks exec playwright install --with-deps chromium',
+      run: 'pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium',
     })
     expect(JSON.stringify(node24Bench.steps)).not.toContain('DSH_CI_FAILOVER_LINUX')
     expect(node24Bench.steps).toContainEqual({
@@ -377,7 +377,7 @@ describe('CI workflow', () => {
       return evaluateRunsOn(expression, {
         vars,
         fromJSON: JSON.parse,
-        github: { repository: 'deepseek-harness/deepseek-harness', event: { pull_request: { user: { login } } } },
+        github: { repository: 'tobenwarrior/y-harness', event: { pull_request: { user: { login } } } },
       })
     }
     for (const [name, selector, variable, pool, hosted] of [
@@ -573,7 +573,7 @@ describe('CI workflow', () => {
         if (job.if === false) return false // `if: false` parses as a boolean
         if (typeof job.if !== 'string') return true // unrecognized shape: surface it
         return evaluateCondition(job.if, {
-          github: { event_name: 'push', ref: 'refs/heads/master', repository: 'deepseek-harness/deepseek-harness' },
+          github: { event_name: 'push', ref: 'refs/heads/master', repository: 'tobenwarrior/y-harness' },
           inputs: {},
           vars: {},
         })
@@ -741,7 +741,7 @@ describe('Fork CI configuration', () => {
       ['windows-native-tests', 'windows-2025', 'dsh-windows-2025-16core'],
     ] as const) {
       const job = workflowJob(workflow, name)
-      for (const [repository, expected] of [['tobenwarrior/y-harness', hosted], ['deepseek-harness/deepseek-harness', upstream]]) {
+      for (const [repository, expected] of [['contributor/harness', hosted], ['tobenwarrior/y-harness', upstream]]) {
         expect(evaluateRunsOn(job['runs-on'], {
           github: { repository }, vars: {}, fromJSON: JSON.parse,
         }), `${name} in ${repository}`).toBe(expected)
@@ -759,10 +759,10 @@ describe('Fork CI configuration', () => {
     ] as const) {
       const job = workflowJob(workflow, name)
       for (const [repository, enabled, expected] of [
-        ['deepseek-harness/deepseek-harness', '', true],
-        ['tobenwarrior/y-harness', '', false],
-        ['tobenwarrior/y-harness', 'false', false],
-        ['tobenwarrior/y-harness', 'true', true],
+        ['tobenwarrior/y-harness', '', true],
+        ['contributor/harness', '', false],
+        ['contributor/harness', 'false', false],
+        ['contributor/harness', 'true', true],
       ] as const) {
         const context = {
           github: { repository, event_name: event, ref: 'refs/heads/master' },
@@ -787,25 +787,25 @@ describe('DeepSeek e2e workflow', () => {
     expect(apiSteps).toHaveLength(4)
 
     for (const [repository, enabled, event, headRepository, author, expected] of [
-      ['deepseek-harness/deepseek-harness', '', 'push', '', 'maintainer', true],
-      ['deepseek-harness/deepseek-harness', 'false', 'push', '', 'maintainer', true],
-      ['tobenwarrior/y-harness', '', 'push', '', 'maintainer', false],
-      ['tobenwarrior/y-harness', 'false', 'push', '', 'maintainer', false],
-      ['tobenwarrior/y-harness', 'true', 'push', '', 'maintainer', true],
+      ['tobenwarrior/y-harness', '', 'push', '', 'maintainer', true],
+      ['tobenwarrior/y-harness', 'false', 'push', '', 'maintainer', true],
+      ['contributor/harness', '', 'push', '', 'maintainer', false],
+      ['contributor/harness', 'false', 'push', '', 'maintainer', false],
+      ['contributor/harness', 'true', 'push', '', 'maintainer', true],
       ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'maintainer', true],
-      ['deepseek-harness/deepseek-harness', 'true', 'pull_request', 'contributor/harness', 'maintainer', false],
-      ['deepseek-harness/deepseek-harness', 'true', 'pull_request', 'deepseek-harness/deepseek-harness', 'dependabot[bot]', false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'contributor/harness', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'dependabot[bot]', false],
     ] as const) {
       const context = {
         github: {
           repository, event_name: event, actor: 'maintainer',
-          event: { pull_request: { head: { repo: { full_name: headRepository, fork: repository !== 'deepseek-harness/deepseek-harness' } }, user: { login: author } } },
+          event: { pull_request: { head: { repo: { full_name: headRepository, fork: repository !== 'tobenwarrior/y-harness' } }, user: { login: author } } },
         },
         vars: { DSH_REAL_API_TESTS_ENABLED: enabled },
         inputs: { ci: true },
       }
       expect(evaluateCondition(e2e.if, context), `${repository} ${event} ${author} enabled=${enabled}`).toBe(expected)
-      expect(evaluateCondition(configuration.if, context)).toBe(repository !== 'deepseek-harness/deepseek-harness' && enabled !== 'true')
+      expect(evaluateCondition(configuration.if, context)).toBe(repository !== 'tobenwarrior/y-harness' && enabled !== 'true')
       for (const step of apiSteps) {
         const os = String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux'
         expect(evaluateCondition(step.if, { ...context, runner: { os } }), String(step.name)).toBe(expected)
@@ -820,8 +820,8 @@ describe('DeepSeek e2e workflow', () => {
     for (const step of reports) {
       expect(JSON.stringify(step)).toContain('keyless black-box tests still run')
       const runner = { os: String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux' }
-      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: {}, runner })).toBe(true)
-      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'deepseek-harness/deepseek-harness' }, vars: {}, runner })).toBe(false)
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: {}, runner })).toBe(false)
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'contributor/harness' }, vars: {}, runner })).toBe(true)
     }
   })
 
@@ -896,8 +896,8 @@ describe('Python release workflows', () => {
     })
     expect(pythonCompat.strategy).toMatchObject({ matrix: { python: ['3.10', '3.14'] } })
     const pythonCompatSteps = JSON.stringify(pythonCompat.steps)
-    expect(pythonCompatSteps).toContain('dist/deepseek_harness_sdk-$VERSION-py3-none-any.whl')
-    expect(pythonCompatSteps).toContain('dist/deepseek_harness_runtime_bin-$VERSION-py3-none-manylinux_2_28_x86_64.whl')
+    expect(pythonCompatSteps).toContain('dist/yharness_sdk-$VERSION-py3-none-any.whl')
+    expect(pythonCompatSteps).toContain('dist/yharness_runtime_bin-$VERSION-py3-none-manylinux_2_28_x86_64.whl')
     expect(pythonCompatSteps).not.toContain('--find-links')
     const validateSteps = JSON.stringify(validate.steps)
     const authorize = validate.steps.filter(isRecord).find(step => step.name === 'Authorize publication request')
@@ -1259,8 +1259,8 @@ describe('Issue lifecycle workflow', () => {
       with: {
         'client-id': '${{ vars.DSH_ISSUE_APP_CLIENT_ID }}',
         'private-key': '${{ secrets.DSH_ISSUE_APP_PRIVATE_KEY }}',
-        owner: 'deepseek-harness',
-        repositories: 'deepseek-harness',
+        owner: 'tobenwarrior',
+        repositories: 'y-harness',
         'permission-issues': 'read',
         'permission-organization-projects': 'read',
       },

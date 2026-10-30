@@ -20,17 +20,17 @@ Groups nest a sub-list of entries that load and unload as one unit, and `isolate
 
 ## Hot module replacement
 
-Because unloading releases effects ([chapter 2](02-lifecycle-and-effects.md)) and loading follows dependencies ([chapter 3](03-services.md)), HMR can replace a running plugin by unloading and loading it. The `@deepseek-ai/dsh-hmr` plugin watches your files and does exactly that on save.
+Because unloading releases effects ([chapter 2](02-lifecycle-and-effects.md)) and loading follows dependencies ([chapter 3](03-services.md)), HMR can replace a running plugin by unloading and loading it. The `@yharness/hmr` plugin watches your files and does exactly that on save.
 
 In `tmp/cordis-tutorial`, write `cordis.yml`:
 
 ```yaml
 - id: logger
-  name: '@deepseek-ai/cordis-plugin-logger-console'
+  name: '@yharness/cordis-plugin-logger-console'
 - id: timer
-  name: '@deepseek-ai/cordis-plugin-timer'
+  name: '@yharness/cordis-plugin-timer'
 - id: hmr
-  name: '@deepseek-ai/dsh-hmr'
+  name: '@yharness/hmr'
   config:
     root: ['.']
 - id: hello
@@ -63,7 +63,7 @@ The flip side of dependency-driven loading: a plugin whose `inject` names a serv
 You can see the states directly. Every context can enumerate the plugin registry; create `diagnose.ts`:
 
 ```ts
-import { FiberState, type Context } from '@deepseek-ai/cordis'
+import { FiberState, type Context } from '@yharness/cordis'
 
 export const name = 'diagnose'
 
@@ -83,7 +83,7 @@ export function apply(ctx: Context) {
 And a plugin with an unsatisfiable dependency, `needs-timer.ts`:
 
 ```ts
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 
 export const name = 'needs-timer'
 export const inject = ['timer']
@@ -108,4 +108,4 @@ needs-timer is PENDING — a required service is missing
 
 Next: [Into the harness](07-into-the-harness.md) — the same patterns against real harness services.
 
-[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+[![]](https://img.shields.io/badge/powered_by-Y_Harness-4D6BFE?style=flat-square&logoColor=white)(https://github.com/tobenwarrior/y-harness)

@@ -2,16 +2,16 @@
 /** ToolCallTree-owned root/subcall markers and keyed Tool dispatch. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindDisclosure, useDisclosure } from '@deepseek-ai/dsh-client-ui-chat/src/client/chat/use-disclosure.ts'
-import type { SessionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindDisclosure, useDisclosure } from '@yharness/client-ui-chat/src/client/chat/use-disclosure.ts'
+import type { SessionSnapshot } from '@yharness/api-session-controller/client'
+import type { ToolCallBlock, ToolResultNode } from '@yharness/client-ui-chat/client'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { zh as commonZh } from '@yharness/client-locale/src/locales/zh.ts'
 import type { ToolCallOwnerProps, ToolTreeProps } from '../src/client/contract/slots.ts'
 import { ToolCallTree } from '../src/client/tool/ToolCallTree.tsx'
-import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
-import { PartialArguments } from '@deepseek-ai/dsh-util-values'
+import { zh } from '@yharness/client-ui-conversation/src/client/locales.ts'
+import { PartialArguments } from '@yharness/util-values'
 
 afterEach(cleanup)
 
@@ -201,6 +201,6 @@ describe('ToolCallTree', () => {
 
     expect(renderSlot).not.toHaveBeenCalled()
     expect(view.queryByTestId('keyed-skill')).toBeNull()
-    expect(view.getByText('Auto review 已拒绝')).toBeTruthy()
+    expect(view.getByText('Rejected by Auto review')).toBeTruthy()
   })
 })

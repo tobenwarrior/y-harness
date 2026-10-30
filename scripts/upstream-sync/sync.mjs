@@ -3,8 +3,8 @@
  * Scoped upstream sync for the Y Harness fork.
  *
  * The fork's `master` is a squashed import with no ancestry shared with
- * `deepseek-ai/deepseek-harness`, so a normal merge cannot express "take the
- * official changes, but only the ones this fork wants". This tool expresses
+ * the source repository, so a normal merge cannot express "take the official
+ * changes, but only the ones this fork wants". This tool expresses
  * that policy instead: `config.json` names the upstream paths this fork tracks
  * and the upstream commit whose content it has already ingested. The tool
  * diffs `baseline..target` over those paths, applies the result with git's

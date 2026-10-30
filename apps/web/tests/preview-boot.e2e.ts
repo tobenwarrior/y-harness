@@ -30,11 +30,11 @@ import { expect, it } from 'vitest'
 import {
   composeProfile, configTrees, indexWorkspacePackages, packVfsImage, packPreviewFixture,
   previewFixtures, WRAPPER_CONTRACT,
-} from '@deepseek-ai/dsh-experimental-webworker-packer'
+} from '@yharness/experimental-webworker-packer'
 import {
   IMAGE_FILE_NAME, PREVIEW_FIXTURE_MANIFEST_FILE, PREVIEW_FIXTURE_MANIFEST_VERSION,
   type PreviewFixtureManifest,
-} from '@deepseek-ai/dsh-experimental-webworker-runtime'
+} from '@yharness/experimental-webworker-runtime'
 import {
   VFS_EXAMPLE_SESSION_IDS,
   buildVfsExampleFiles,
@@ -495,7 +495,7 @@ async function bootEmptyPreview(origin: string, browser: Browser): Promise<void>
   })
   try {
     await page.goto(`${origin}/preview.html?preview-fixture=none`, { waitUntil: 'domcontentloaded' })
-    expect(await page.getByRole('heading', { name: '选择 Preview 数据源' }).count()).toBe(0)
+    expect(await page.getByRole('heading', { name: '\u{9009}\u{62E9} Preview \u{6570}\u{636E}\u{6E90}' }).count()).toBe(0)
     const bootLine = await within(
       treeActive,
       BOOT_TIMEOUT_MS,

@@ -9,49 +9,14 @@
  * model".
  */
 
-import { withProductDisplayName } from '@deepseek-ai/dsh-client-ui-slots'
+import { withProductDisplayName } from '@yharness/client-ui-slots'
 
-/** Simplified Chinese dictionary (the key-set source of truth). */
-export const zh = {
-  'provider.account': 'DeepSeek 账号',
-  'provider.select': '请选择提供方',
-  'provider.route': '{name} ({id})',
-  'model.route': '{name} ({id})',
-  'command.label': '模型',
-  'command.description': '选择本会话使用的模型',
-  'option.loadError': '目录加载失败：{message}',
-  'trigger.fallback': '请选择模型',
-  'trigger.loading': '正在加载模型…',
-  'trigger.selectAria': '请选择模型',
-  'trigger.aria': '选择模型，当前 {model}',
-  'trigger.ariaEffort': '选择模型，当前 {model}，推理等级 {effort}',
-  'trigger.ariaSpeed': '选择模型，当前 {model}，速度 {speed}',
-  'trigger.ariaEffortSpeed': '选择模型，当前 {model}，推理等级 {effort}，速度 {speed}',
-  'menu.aria': '提供方、模型、推理等级与速度',
-  'menu.model': '模型',
-  'menu.provider': '提供方',
-  'menu.effort': '推理等级',
-  'menu.speed': '速度',
-  'effort.providerDefault': 'Default',
-  'status.loading': '正在刷新模型列表…',
-  'error.action': '模型操作失败：{message}',
-  'error.sessionInUse': withProductDisplayName('当前会话已被占用，可能是其他正在运行的 Y Harness 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 Y Harness 后重试。'),
-  'action.reload': '重新加载',
-  'warning.groupLoad': '{name} 加载失败：{message}',
-  'search.placeholder': '搜索模型…',
-  'search.clear': '清除搜索',
-  'search.empty': '没有匹配的模型。',
-  'empty.models': '没有可用的模型。',
-  'empty.providers': '没有已配置的提供方。',
-  'empty.provider': '当前提供方未配置。',
-  'empty.efforts': '当前模型未提供推理等级。',
-  'empty.tiers': '当前模型未提供速度选项。',
-} satisfies Record<string, string>
+/** English dictionary for this namespace. */
 
 /** The model namespace key union. */
-export type ModelKey = keyof typeof zh
+export type ModelKey = keyof typeof en
 
-/** English dictionary, checked complete against the zh key set. */
+/** English dictionary for this namespace. */
 export const en = {
   'provider.account': 'DeepSeek Account',
   'provider.select': 'Select provider',
@@ -75,7 +40,7 @@ export const en = {
   'effort.providerDefault': 'Default',
   'status.loading': 'Refreshing model list…',
   'error.action': 'Model operation failed: {message}',
-  'error.sessionInUse': withProductDisplayName('This session is already in use, possibly by another running Y Harness instance (such as dsh web or the desktop app). Quit other running Y Harness instances and try again.'),
+  'error.sessionInUse': withProductDisplayName('This session is already in use, possibly by another running Y Harness instance (such as yharness web or the desktop app). Quit other running Y Harness instances and try again.'),
   'action.reload': 'Reload',
   'warning.groupLoad': '{name} failed to load: {message}',
   'search.placeholder': 'Search models…',
@@ -86,4 +51,7 @@ export const en = {
   'empty.provider': 'This provider is not configured.',
   'empty.efforts': 'This model provides no reasoning effort levels.',
   'empty.tiers': 'This model provides no speed choices.',
-} satisfies Record<ModelKey, string>
+} satisfies Record<string, string>
+
+/** Compatibility export for the retired locale name. */
+export const zh = en

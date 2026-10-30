@@ -7,8 +7,10 @@ import { AGENT_NOTE_CLASSES, agentNoteRoot } from './agent-note-tree.ts'
 import { englishOnlyReason } from './translation-pairing.ts'
 import {
   extendArchiveManifest,
+  isRetiredTranslationArtifact,
   parseArchiveManifest,
   renderArchiveManifest,
+  rewriteArchiveEnglishOnlySource,
   validateArchiveArtifacts,
   validateArchiveManifestExtension,
   type ArchiveManifest,
@@ -24,6 +26,7 @@ if (args.length > 0 && !writeMode) {
 const archiveRoot = resolve(agentNoteRoot, 'archived')
 const manifestPath = resolve(archiveRoot, 'manifest.json')
 const repoRoot = resolve(agentNoteRoot, '../..')
+const archiveRootRepoPath = '.agents/notes/archived'
 const manifestRepoPath = '.agents/notes/archived/manifest.json'
 const errors: string[] = []
 const allowedRootFiles = new Set(['AGENTS.md', 'manifest.json'])
@@ -66,11 +69,82 @@ function runGit(args: string[]): string {
   return result.stdout
 }
 
+function readBaselineArchiveSources(ref: string, paths: readonly string[]): Map<string, Buffer> {
+  const input = Buffer.from(paths.map(path => `${ref}:${archiveRootRepoPath}/${path}\n`).join(''))
+  const result = spawnSync('git', ['cat-file', '--batch'], { cwd: repoRoot, input, maxBuffer: 64 * 1024 * 1024 })
+  if (result.error !== undefined) throw result.error
+  if (result.status !== 0) throw new Error(result.stderr.toString().trim() || `git exited with status ${result.status}`)
+  if (!Buffer.isBuffer(result.stdout)) throw new Error('git cat-file --batch returned no data')
+  const output = result.stdout
+  const sources = new Map<string, Buffer>()
+  let offset = 0
+  for (const path of paths) {
+    const headerEnd = output.indexOf(10, offset)
+    if (headerEnd < 0) throw new Error(`git cat-file --batch returned no header for ${path}`)
+    const [objectId, type, sizeText] = output.subarray(offset, headerEnd).toString('utf8').split(' ')
+    if (type === 'missing') throw new Error(`baseline archive source is missing: ${path}`)
+    const size = Number(sizeText)
+    if (objectId === undefined || type !== 'blob' || !Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`invalid git cat-file header for ${path}`)
+    }
+    const contentStart = headerEnd + 1
+    const contentEnd = contentStart + size
+    if (contentEnd >= output.length || output[contentEnd] !== 10) {
+      throw new Error(`invalid git cat-file payload for ${path}`)
+    }
+    sources.set(path, output.subarray(contentStart, contentEnd))
+    offset = contentEnd + 1
+  }
+  return sources
+}
+
 function readBaselineManifest(ref: string): ArchiveManifest {
   runGit(['cat-file', '-e', `${ref}^{commit}`])
   const manifestEntry = runGit(['ls-tree', '--name-only', ref, '--', manifestRepoPath]).trim()
   if (manifestEntry === '') return { version: 1, files: {} }
   return parseArchiveManifest(runGit(['show', `${ref}:${manifestRepoPath}`]))
+}
+
+/** Prove that the version-2 manifest is the exact one-time English-only migration. */
+function validateEnglishOnlyMigration(
+  baselineRef: string,
+  baseline: ArchiveManifest,
+  current: ArchiveManifest,
+  currentArtifacts: ReadonlyMap<string, Buffer>,
+): string[] {
+  if (baseline.version !== 1 || current.version !== 2) return []
+  const errors: string[] = []
+  const baselinePaths = new Set(Object.keys(baseline.files))
+  for (const path of Object.keys(current.files)) {
+    if (!baselinePaths.has(path)) errors.push(`${path}: new archive artifact cannot be added during the one-time migration`)
+  }
+
+  const sourcePaths = [...baselinePaths].filter(path => path.endsWith('.md') && !path.endsWith('.zh.md')).sort()
+  let baselineSources: Map<string, Buffer>
+  try {
+    baselineSources = readBaselineArchiveSources(baselineRef, sourcePaths)
+  } catch (error: unknown) {
+    errors.push(`cannot read baseline archive sources: ${error instanceof Error ? error.message : String(error)}`)
+    return errors
+  }
+  for (const path of sourcePaths) {
+    let expected: Buffer
+    try {
+      const source = baselineSources.get(path)
+      if (source === undefined) throw new Error(`baseline archive source is missing: ${path}`)
+      expected = rewriteArchiveEnglishOnlySource(path, source)
+    } catch (error: unknown) {
+      errors.push(`${path}: cannot derive the deterministic migration result: ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
+    const actual = currentArtifacts.get(path)
+    if (actual === undefined) errors.push(`${path}: migrated English archive source is missing`)
+    else if (!actual.equals(expected)) errors.push(`${path}: migration changed archived prose beyond the approved switcher/reference rewrite`)
+  }
+  for (const path of currentArtifacts.keys()) {
+    if (isRetiredTranslationArtifact(path)) errors.push(`${path}: translation artifact is forbidden after the English-only migration`)
+  }
+  return errors
 }
 
 let manifest: ArchiveManifest = { version: 1, files: {} }
@@ -84,11 +158,18 @@ if (existsSync(manifestPath)) {
   errors.push('archived/manifest.json is required; seal new artifacts with `pnpm run verify-archived-agent-notes --write`')
 }
 
+if (manifest.version === 2) {
+  for (const path of artifacts.keys()) {
+    if (isRetiredTranslationArtifact(path)) errors.push(`${path}: translation artifact is forbidden after the English-only migration`)
+  }
+}
+
 // CI supplies its trusted pre-change commit; local writes compare with committed HEAD.
 const baselineRef = process.env.DSH_ARCHIVE_BASE_REF ?? 'HEAD'
 try {
   const baseline = readBaselineManifest(baselineRef)
   errors.push(...validateArchiveManifestExtension(baseline, manifest))
+  errors.push(...validateEnglishOnlyMigration(baselineRef, baseline, manifest, artifacts))
 } catch (error: unknown) {
   errors.push(`archived/manifest.json: cannot read baseline ${JSON.stringify(baselineRef)}: ${error instanceof Error ? error.message : String(error)}`)
 }
@@ -106,7 +187,11 @@ if (errors.length > 0) {
 }
 
 if (writeMode) {
-  const rendered = renderArchiveManifest(extended.files)
+  const rendered = renderArchiveManifest(extended.files, {
+    version: manifest.version,
+    ...(manifest.retired === undefined ? {} : { retired: manifest.retired }),
+    ...(manifest.rewritten === undefined ? {} : { rewritten: manifest.rewritten }),
+  })
   if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8') !== rendered) {
     writeFileSync(manifestPath, rendered)
   }

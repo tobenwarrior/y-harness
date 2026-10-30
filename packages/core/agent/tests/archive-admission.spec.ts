@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentCancelCause, AgentStatus, CancelOptions } from '@deepseek-ai/dsh-agent'
-import type { SessionActivity } from '@deepseek-ai/dsh-workspace'
+import { Context } from '@yharness/cordis'
+import { Session, SessionId } from '@yharness/session'
+import AgentRegistry from '@yharness/agent'
+import type { Agent, AgentCancelCause, AgentStatus, CancelOptions } from '@yharness/agent'
+import type { SessionActivity } from '@yharness/workspace'
 
 type CancelCall = [AgentCancelCause, CancelOptions | undefined]
 
@@ -85,7 +85,7 @@ describe('Turn archive admission', () => {
 })
 
 // The registry knows only its own family; this suite merges a second one to observe ordering.
-declare module '@deepseek-ai/dsh-workspace/types' {
+declare module '@yharness/workspace/types' {
   interface SessionActivityKindMap {
     probe: true
   }

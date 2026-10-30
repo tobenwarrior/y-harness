@@ -1,6 +1,6 @@
-Y harness
-Y harness
-Welcome to Y harness
+Y Harness
+Y Harness
+Welcome to Y Harness
 Build potential. Explore intelligence.
 Sign in
 Add API Key

@@ -1,8 +1,8 @@
 /** Native JSONL reads enforce developer relationships before exposing stored data. */
-import { Context } from '@deepseek-ai/cordis'
-import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
-import { SessionPersistenceCorruptionError } from '@deepseek-ai/dsh-session-persistence'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { Context } from '@yharness/cordis'
+import { SESSION_FORMAT_VERSION, SessionId } from '@yharness/session'
+import { SessionPersistenceCorruptionError } from '@yharness/session-persistence'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'

@@ -1,5 +1,5 @@
 /**
- * @deepseek-ai/dsh-web-app — the browser-surface bundle's runtime glue plugin
+ * @yharness/web-app — the browser-surface bundle's runtime glue plugin
  * plus the bundle patch (`cordis.patch.yml`, declared by the `dsh.bundle.patch`
  * manifest field). The plugin owns the browser-surface glue: it resolves
  * the built frontend dist (workspace knowledge of this bundle, never user
@@ -9,7 +9,7 @@
  * advertised `publicUrl` replaces the published root — the loopback URL
  * otherwise. App command-line values arrive through the `webStartup` service
  * expressions in the bundle patch.
- * @module @deepseek-ai/dsh-web-app
+ * @module @yharness/web-app
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -17,22 +17,22 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { networkInterfaces } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { addHarnessSourceSection, auditStartupEntries } from '@deepseek-ai/dsh-app-boot'
-import type {} from '@deepseek-ai/dsh-client-connection'
-import * as FrontendStatic from '@deepseek-ai/dsh-host-frontend-static'
-import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import type {} from '@deepseek-ai/cordis-plugin-loader'
-import type {} from '@deepseek-ai/dsh-host-webserver'
-import type {} from '@deepseek-ai/dsh-shell-env'
+import type { Context } from '@yharness/cordis'
+import z from '@yharness/schemastery'
+import { addHarnessSourceSection, auditStartupEntries } from '@yharness/app-boot'
+import type {} from '@yharness/client-connection'
+import * as FrontendStatic from '@yharness/host-frontend-static'
+import { launchedThroughSsh, launchEnvironmentOf } from '@yharness/launch-environment'
+import { scrubbedParentEnv } from '@yharness/subprocess'
+import type {} from '@yharness/cordis-plugin-loader'
+import type {} from '@yharness/host-webserver'
+import type {} from '@yharness/shell-env'
 import { parsePublicUrl } from './public-url.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
 
-/** This dsh installation's root, from either this package's source or built entry. */
+/** This Y Harness installation's root, from either this package's source or built entry. */
 const SOURCE_ROOT = fileURLToPath(new URL('../../../..', import.meta.url))
 const ANNOUNCED_ROOTS = new WeakSet<Context>()
 
@@ -142,7 +142,7 @@ export function resolveLanTrust(bindHost: string, extra: readonly string[]): Web
   return { lanAddresses, trustedHosts: [...lanAddresses, ...extra] }
 }
 
-/** Model-visible orientation and acceptance boundary for sessions created through `dsh web`. */
+/** Model-visible orientation and acceptance boundary for sessions created through `yharness web`. */
 function webSurfacePrompt(webUrl: string): string {
   const updateContract = 'The client-plugin HMR receiver is active, but client-plugin changes reload without a refresh only while '
     + '`pnpm run dev:web` is also running from this same checkout to rebuild their bundles; verify that watcher before promising automatic updates. '
@@ -152,7 +152,7 @@ function webSurfacePrompt(webUrl: string): string {
     + 'The browser provides no implicit DOM, route, or screenshot context. '
     + updateContract
     + 'Starting another server does not update this GUI. '
-    + 'The apps/web Vite entry builds the shell but is not a standalone application because only dsh web injects window.__DSH_BOOT__. '
+    + 'The apps/web Vite entry builds the shell but is not a standalone application because only yharness web injects window.__DSH_BOOT__. '
     + 'Do not start a replacement server unless the user asks; if one is needed, use a managed background job and verify its exact URL.'
 }
 
@@ -178,10 +178,10 @@ function appRootUrl(ctx: Context, publicUrl: string | undefined): string {
 function resolveDistIndex(): string {
   const require = createRequire(import.meta.url)
   try {
-    return join(dirname(require.resolve('@deepseek-ai/dsh-web-frontend/package.json')), 'dist', 'index.html')
+    return join(dirname(require.resolve('@yharness/web-frontend/package.json')), 'dist', 'index.html')
   } catch {
     /* v8 ignore next 2 -- reachable only when the frontend package is absent from the checkout */
-    throw new Error('web-app: @deepseek-ai/dsh-web-frontend is not resolvable from this composition')
+    throw new Error('web-app: @yharness/web-frontend is not resolvable from this composition')
   }
 }
 
@@ -287,13 +287,13 @@ export function apply(ctx: Context, config: Config): void {
           : connectionCtx.connection.authenticatedUrl(`http://${lanCandidate}:${String(port)}`)
         ANNOUNCED_ROOTS.add(connectionCtx.root)
         if (config.printUrl) {
-          console.log(`dsh web: ${authenticatedUrl}${lanUrl === undefined ? '' : ` (LAN: ${lanUrl})`}`)
+          console.log(`yharness web: ${authenticatedUrl}${lanUrl === undefined ? '' : ` (LAN: ${lanUrl})`}`)
         }
         if (handoffBrowser) {
-          console.log('dsh web: opening the default browser; pass --no-open to disable')
+          console.log('yharness web: opening the default browser; pass --no-open to disable')
           void internals.openBrowser(authenticatedUrl).catch((error: unknown) => {
             const reason = error instanceof Error ? error.message : String(error)
-            console.error(`web-app: could not open the default browser because ${reason}; use the dsh web URL printed at startup`)
+            console.error(`web-app: could not open the default browser because ${reason}; use the yharness web URL printed at startup`)
           })
         }
       }
@@ -304,7 +304,7 @@ export function apply(ctx: Context, config: Config): void {
       if (settled === undefined) announceReady()
       else {
         void settled.then(async () => {
-          await auditStartupEntries(connectionCtx.root, 'dsh web', () => {})
+          await auditStartupEntries(connectionCtx.root, 'yharness web', () => {})
           // The tree can be disposed while the boot was in flight (early
           // SIGTERM); a URL line or browser tab for a dead server would only
           // mislead, and reading torn-down services would turn a clean shutdown

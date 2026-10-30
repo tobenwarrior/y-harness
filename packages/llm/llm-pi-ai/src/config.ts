@@ -12,16 +12,16 @@
  *
  * @module dsh-llm-pi-ai/config
  */
-import type { Volatile } from '@deepseek-ai/cordis'
+import type { Volatile } from '@yharness/cordis'
 
 import type { CacheRetention, ChatTemplateKwargValue, ModelThinkingLevel, Provider, ThinkingBudgets, Transport } from '@earendil-works/pi-ai'
-import z from '@deepseek-ai/schemastery'
-import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import { resolveRetryPolicy, RetryPolicySchema } from '@deepseek-ai/dsh-llm'
-import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@deepseek-ai/dsh-llm'
-import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
+import z from '@yharness/schemastery'
+import { credentialRef } from '@yharness/credentials'
+import type { CredentialRef } from '@yharness/credentials'
+import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import { resolveRetryPolicy, RetryPolicySchema } from '@yharness/llm'
+import type { ResolvedRetryPolicy, RetryPolicyConfig } from '@yharness/llm'
+import { deepEqualJson } from '@yharness/util-values'
 import {
   CACHE_CONTROL_FORMATS,
   CHAT_TEMPLATE_VARS,

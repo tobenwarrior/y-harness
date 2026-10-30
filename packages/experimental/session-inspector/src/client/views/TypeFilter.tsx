@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MenuSurface, useAnchoredPosition } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { MenuSurface, useAnchoredPosition } from '@yharness/client-ui-primitives'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import css from './inspector.module.css'
 
 /** Current confirmed query and an asynchronous candidate source. */

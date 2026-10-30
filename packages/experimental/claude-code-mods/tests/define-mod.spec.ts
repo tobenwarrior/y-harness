@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context, type Fiber } from '@deepseek-ai/cordis'
+import { Context, type Fiber } from '@yharness/cordis'
 import ClaudeCodeMods, { defineMod } from '../src/index.ts'
 
 const fibers: Fiber[] = []

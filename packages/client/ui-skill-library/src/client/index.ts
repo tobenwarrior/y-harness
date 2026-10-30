@@ -1,11 +1,11 @@
 /** Skills main panel and sidebar entry, browser plugin. */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-models/client'
+import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/api-remotes/client'
+import type {} from '@yharness/client-locale/client'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/client-ui-sidebar/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-settings-models/client'
 import { DecisionController } from './decision-controller.ts'
 import { DecisionSettings, DecisionToast } from './DecisionSettings.tsx'
 import { SkillLibraryController } from './controller.ts'
@@ -13,9 +13,9 @@ import { SkillLibraryPage } from './SkillLibraryPage.tsx'
 import { SkillLibraryToast } from './SkillLibraryToast.tsx'
 import { SkillsPanelIcon } from './SkillsPanelIcon.tsx'
 import { createNavigationStore } from './navigation-store.ts'
-import { en, zh, type SkillLibraryKey } from './locales.ts'
+import { en, type SkillLibraryKey } from './locales.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Skill inventory, graph, and maintenance copy. */
     skillLibrary: SkillLibraryKey
@@ -31,7 +31,7 @@ export const inject = ['slots', 'locale', 'remote', 'remote.skillLibrary', 'layo
  */
 export function apply(ctx: Context): void {
   const panelId = 'skills' as MainPanelId
-  ctx.effect(() => ctx.locale.register('skillLibrary', { en, zh }), 'ui-skill-library: dictionaries')
+  ctx.effect(() => ctx.locale.register('skillLibrary', { en }), 'ui-skill-library: dictionaries')
   const t = ctx.locale.bind('skillLibrary')
   const controller = new SkillLibraryController(ctx.remote.skillLibrary)
   ctx.effect(() => () => { controller.dispose() }, 'ui-skill-library: controller')

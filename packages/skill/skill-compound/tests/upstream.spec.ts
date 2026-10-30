@@ -1,8 +1,8 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Context } from '@deepseek-ai/cordis'
-import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
+import { Context } from '@yharness/cordis'
+import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import {
   APPLY_ROUTE, compareReleases, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
   VENDORED_VERSION,

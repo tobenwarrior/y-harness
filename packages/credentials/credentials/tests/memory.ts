@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { CredentialProvider } from '../src/index.ts'
 import type {
   CredentialInfo,

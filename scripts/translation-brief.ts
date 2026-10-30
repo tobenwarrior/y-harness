@@ -11,6 +11,7 @@
  */
 
 import type { Nodes } from 'mdast'
+import { decodeUnicodeEscapes } from './legacy-unicode.ts'
 import { parseTranslationMarkdown } from './translation-pairing.ts'
 
 /** One block-level span of a Markdown document, in document order. */
@@ -225,7 +226,8 @@ function plainTerm(cell: string): string {
  */
 export function parseTerminologyRows(terminology: string): TerminologyRow[] {
   const rows: TerminologyRow[] = []
-  for (const line of terminology.split('\n')) {
+  for (const encodedLine of terminology.split('\n')) {
+    const line = decodeUnicodeEscapes(encodedLine)
     if (!line.startsWith('|')) continue
     if (/^\|[\s:|-]+\|$/.test(line)) continue
     const cells = line.split('|').map(cell => cell.trim())
@@ -264,7 +266,9 @@ export type BriefDirection = 'en-to-zh' | 'zh-to-en'
 
 /** Whether a row's source-language term occurs in the given text. */
 function rowOccurs(row: TerminologyRow, direction: BriefDirection, text: string): boolean {
-  const terms = direction === 'en-to-zh' ? [row.english] : [row.first, row.chinese].filter(term => /[一-鿿]/.test(term))
+  const terms = direction === 'en-to-zh'
+    ? [row.english]
+    : [row.first, row.chinese].filter(term => /[\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{F900}-\u{FAFF}]/u.test(term))
   return terms.some(term => termOffsets(text, term, direction === 'en-to-zh').length > 0)
 }
 
@@ -388,8 +392,8 @@ const ZH_TARGET_DIGEST = [
   '- Code fences byte-identical to the English side, comments included; inline code spans verbatim.',
   '- Repository-relative document links keep the same semantic target and exact query/fragment; targets in the active bilingual corpus use `.zh.md` for Chinese, a missing in-scope counterpart is an error, and targets outside the corpus keep the authored path. The switcher remains the cross-locale exception.',
   '- Structure mirrors the counterpart: heading depths and order, list kinds and item counts, table rows and columns.',
-  '- 首次出现 annotations attach to the document-wide first occurrence only; later occurrences use the bare form, and an empty 首次出现 cell means never gloss.',
-  '- Typography: one half-width space between Chinese and Latin or digits; full-width punctuation in Chinese prose; 顿号 for enumerations; second person is 你.',
+  '- \u{9996}\u{6B21}\u{51FA}\u{73B0} annotations attach to the document-wide first occurrence only; later occurrences use the bare form, and an empty \u{9996}\u{6B21}\u{51FA}\u{73B0} cell means never gloss.',
+  '- Typography: one half-width space between Chinese and Latin or digits; full-width punctuation in Chinese prose; \u{987F}\u{53F7} for enumerations; second person is \u{4F60}.',
   '- One physical line per paragraph; exactly one trailing newline.',
 ]
 
@@ -491,7 +495,7 @@ export function renderTranslationBrief(input: TranslationBriefInput): string {
     out.push('')
     out.push('## Binding terminology rows matching this change (docs/i18n/terminology.md)')
     out.push('')
-    out.push('| English | 中文 | 首次出现 | 不要译作 | 备注 |')
+    out.push('| English | \u{4E2D}\u{6587} | \u{9996}\u{6B21}\u{51FA}\u{73B0} | \u{4E0D}\u{8981}\u{8BD1}\u{4F5C} | \u{5907}\u{6CE8} |')
     out.push('|---|---|---|---|---|')
     for (const row of input.terminology) out.push(row.line)
     out.push('')

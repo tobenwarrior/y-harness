@@ -118,10 +118,10 @@ class SourceUpdater:
         if not 0 < timeout <= 3600:
             raise ValueError('timeout must be in (0, 3600]')
         install = install if install is not None else [['pnpm', 'install', '--frozen-lockfile'],
-            ['pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'exec', 'install-electron']]
+            ['pnpm', '--filter', '@yharness/desktop', 'exec', 'install-electron']]
         build = build if build is not None else [['pnpm', 'run', 'build'],
-            ['pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'run', 'build'],
-            ['pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'run', 'prepare:primary-runtime']]
+            ['pnpm', '--filter', '@yharness/desktop', 'run', 'build'],
+            ['pnpm', '--filter', '@yharness/desktop', 'run', 'prepare:primary-runtime']]
         def commands(value):
             if isinstance(value, (list, tuple)) and value and isinstance(value[0], str):
                 value = [value]

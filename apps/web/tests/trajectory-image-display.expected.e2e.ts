@@ -37,7 +37,7 @@ async function openFixtureSession(): Promise<void> {
       expect(group.getAttribute('aria-expanded')).toBe('true')
     })
   }
-  const session = await within(tree).findByText('Fixture 历史会话')
+  const session = await within(tree).findByText('Fixture \u{5386}\u{53F2}\u{4F1A}\u{8BDD}')
   fireEvent.click(session)
   await waitFor(() => {
     expect(document.querySelectorAll('[data-align] img').length).toBeGreaterThan(0)
@@ -87,7 +87,7 @@ it('renders durable record images in the Trajectory details panel from the share
   if (chatSrc === null || chatSrc === undefined) throw new Error('chat gallery image missing')
 
   fireEvent.click(screen.getByRole('tab', { name: 'Trajectory' }))
-  const userRow = await scrollRowIntoWindow('历史用户图片')
+  const userRow = await scrollRowIntoWindow('\u{5386}\u{53F2}\u{7528}\u{6237}\u{56FE}\u{7247}')
   fireEvent.click(userRow)
 
   // Selecting the record opens the details panel; the ui-attachment gallery

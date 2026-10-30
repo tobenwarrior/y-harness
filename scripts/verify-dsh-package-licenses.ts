@@ -7,7 +7,15 @@ import { globSync, readFileSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const DSH_PACKAGE_NAME = /^@deepseek-ai\/dsh(?:-|$)/
+const Y_HARNESS_PACKAGE_NAME = /^@yharness\/[^/]+$/
+
+/** Repository-owned package manifests; vendored and native packages keep their own license policy. */
+function isRepositoryPackage(file: string): boolean {
+  const normalizedFile = file.split(sep).join('/')
+  return normalizedFile === 'package.json'
+    || normalizedFile.startsWith('apps/')
+    || normalizedFile.startsWith('packages/')
+}
 
 /** Result of checking every DSH package reachable through the root workspace list. */
 export interface DshPackageLicenseReport {
@@ -61,7 +69,7 @@ export function inspectDshPackageLicenses(root: string): DshPackageLicenseReport
   for (const file of workspaceManifestPaths(root)) {
     const manifest = readManifest(root, file)
     const name = manifest.name
-    if (typeof name !== 'string' || !DSH_PACKAGE_NAME.test(name)) continue
+    if (!isRepositoryPackage(file) || typeof name !== 'string' || !Y_HARNESS_PACKAGE_NAME.test(name)) continue
 
     packageCount++
     if (manifest.license !== 'MIT') {

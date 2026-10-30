@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { platformPackageNames, resolvePlatformPackageJson } from './platform-package.js'
 
 /** The launcher binary's file name inside each platform package's `bin/`. */
 export const LAUNCHER_BIN = 'landlock-run'
@@ -52,15 +53,17 @@ export interface LauncherGrants {
 }
 
 /**
- * Path of the launcher binary for this host: resolved from the per-platform
- * npm package `@deepseek-ai/node-addon-system-<platform>-<arch>` (npm's
- * `os`/`cpu` fields make installers fetch only the matching one). When the
- * package is not resolvable — a platform without one, or an install that
- * skipped the optional dependency — the returned fallback path points inside
- * this package's own `node_modules` and simply never exists. Existence is
- * deliberately not checked either way: {@link probe} is the single
- * availability signal (a missing binary probes `unusable` the same way an
- * unenforcing kernel does).
+ * Path of the launcher binary for this host: resolved from the canonical
+ * per-platform npm package `@yharness/node-addon-system-<platform>-<arch>`,
+ * with a fallback to the legacy
+ * `@deepseek-ai/node-addon-system-<platform>-<arch>` package for existing
+ * installs. npm's `os`/`cpu` fields make installers fetch only the matching
+ * one. When neither package is resolvable — a platform without one, or an
+ * install that skipped the optional dependency — the returned fallback path
+ * points inside this package's own `node_modules` and simply never exists.
+ * Existence is deliberately not checked either way: {@link probe} is the
+ * single availability signal (a missing binary probes `unusable` the same way
+ * an unenforcing kernel does).
  * @param resolvePackageJson - test hook over `require.resolve` (the default
  *   covers real installs); receives the platform package's `package.json`
  *   specifier and returns its absolute path, throwing when unresolvable.
@@ -69,16 +72,20 @@ export interface LauncherGrants {
 export function launcherPath(
   resolvePackageJson: (specifier: string) => string = createRequire(import.meta.url).resolve,
 ): string {
-  const platformPackage = `@deepseek-ai/node-addon-system-${process.platform}-${process.arch}`
+  const [canonicalPackage] = platformPackageNames()
   try {
-    return join(dirname(resolvePackageJson(`${platformPackage}/package.json`)), 'bin', LAUNCHER_BIN)
-  } catch {
+    const { manifest } = resolvePlatformPackageJson(resolvePackageJson)
+    return join(dirname(manifest), 'bin', LAUNCHER_BIN)
+  } catch (error) {
+    // No supported platform package is installed, so retain the package-local
+    // fallback path and let probe() report the capability as unusable.
+    void error
     // Unresolvable platform package: no such package exists for this host, or
     // it was not installed. Fall back to the path pnpm's layout WOULD use —
     // absolute, inside this package's boundary (never cwd-relative: a
     // spawnable relative path here would hand cwd control over which binary
     // confines), and nonexistent exactly when the package is absent.
-    return fileURLToPath(new URL(`../node_modules/${platformPackage}/bin/${LAUNCHER_BIN}`, import.meta.url))
+    return fileURLToPath(new URL(`../node_modules/${canonicalPackage}/bin/${LAUNCHER_BIN}`, import.meta.url))
   }
 }
 

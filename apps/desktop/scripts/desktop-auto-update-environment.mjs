@@ -1,6 +1,7 @@
 /** Resolve the Desktop auto-update channel and its Tencent COS destination. */
 
 import { valid } from 'semver'
+import { resolveDesktopGitHubReleaseConfig } from './desktop-github-release.mjs'
 
 /** Environment variable that selects the Desktop update deployment. */
 export const DESKTOP_AUTO_UPDATE_ENV = 'DSH_DESKTOP_AUTO_UPDATE_ENV'
@@ -153,6 +154,26 @@ export function resolveDesktopAutoUpdateConfig(env, platform, arch) {
     keyPrefix,
     binaryKeyPrefix: `${releasePrefix}/bin/${target}`,
     publicUrl: `${origin}/${keyPrefix}/`,
+  }
+}
+
+/**
+ * Resolve the updater configuration embedded in a signed application.
+ * Test packages retain their private generic feed. Production packages use
+ * the public GitHub Releases provider and never require COS credentials.
+ * @param {NodeJS.ProcessEnv} env - Packaging environment.
+ * @param {NodeJS.Platform} platform - Target Node.js platform.
+ * @param {string} arch - Target Node.js architecture.
+ * @returns {Record<string, unknown>} Validated packaged updater configuration.
+ */
+export function resolveDesktopPackagedUpdateConfig(env, platform, arch) {
+  if (resolveDesktopAutoUpdateEnvironment(env) === 'production') {
+    return resolveDesktopGitHubReleaseConfig(platform, arch)
+  }
+  return {
+    ...resolveDesktopAutoUpdateConfig(env, platform, arch),
+    provider: 'generic',
+    channel: 'nightly',
   }
 }
 

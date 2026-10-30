@@ -1,6 +1,6 @@
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
-import { NPMMIRROR_REGISTRY, OFFICIAL_NPM_REGISTRY } from '@deepseek-ai/dsh-plugin-manager/registry'
+import { NPMMIRROR_REGISTRY, OFFICIAL_NPM_REGISTRY } from '@yharness/plugin-manager/registry'
 import PluginRegistryProbe, { type Config } from '../src/index.ts'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })

@@ -41,13 +41,54 @@ interface UpdateLock {
 
 const updateLocks = new Map<string, UpdateLock>()
 
-/** A private, per-user location, never inside the managed installation. */
-export function overlayRoot(): string {
-  return join(homedir(), '.local', 'share', 'deepseek-harness', 'compound-skills')
+/**
+ * Resolve the canonical private, per-user location, never inside the managed installation.
+ * @param home - account home directory.
+ * @returns the canonical overlay root.
+ */
+export function overlayRoot(home = homedir()): string {
+  return join(home, '.local', 'share', 'y-harness', 'compound-skills')
 }
 
-/** Read only an explicitly published, syntactically valid revision. */
-export function activeOverlay(root = overlayRoot()): ActiveOverlay | undefined {
+/**
+ * Resolve the pre-rebrand private overlay location retained for existing installations.
+ * @param home - account home directory.
+ * @returns the legacy overlay root.
+ */
+export function legacyOverlayRoot(home = homedir()): string {
+  return join(home, '.local', 'share', 'deepseek-harness', 'compound-skills')
+}
+
+/**
+ * Select the overlay root that owns the active installation for one home.
+ *
+ * The canonical root wins when both roots contain active revisions. A legacy
+ * root remains the update target when it is the only existing copy, including
+ * while an update is being prepared; callers never need to move or overwrite
+ * that data during the path rename.
+ * @param home - account home directory used to derive both roots.
+ * @returns the root used by default overlay reads and updates.
+ */
+export function resolveOverlayRoot(home = homedir()): string {
+  const canonical = overlayRoot(home)
+  const legacy = legacyOverlayRoot(home)
+  if (activeOverlayAt(canonical) !== undefined) return canonical
+  if (activeOverlayAt(legacy) !== undefined) return legacy
+  if (overlayRootExists(canonical)) return canonical
+  if (overlayRootExists(legacy)) return legacy
+  return canonical
+}
+
+/**
+ * Read only an explicitly published, syntactically valid revision.
+ * @param root - overlay root to inspect.
+ * @returns the active revision, or `undefined` when no valid revision is published.
+ */
+export function activeOverlay(root = resolveOverlayRoot()): ActiveOverlay | undefined {
+  return activeOverlayAt(root)
+}
+
+function activeOverlayAt(root: string): ActiveOverlay | undefined {
   try {
     checkPrivateDirectory(root)
     checkPrivateDirectory(join(root, 'revisions'))
@@ -66,6 +107,17 @@ export function activeOverlay(root = overlayRoot()): ActiveOverlay | undefined {
     }
     return { commit, version, assetRoot }
   } catch { return undefined }
+}
+
+function overlayRootExists(root: string): boolean {
+  try {
+    lstatSync(root)
+    return true
+  } catch (error) {
+    if (typeof error !== 'object' || error === null || !('code' in error)) return true
+    const code = error.code
+    return code !== 'ENOENT' && code !== 'ENOTDIR'
+  }
 }
 
 function checkPrivateDirectory(path: string): void {
@@ -267,8 +319,14 @@ function shouldUseGitFallback(error: unknown): boolean {
   return /GitHub answered HTTP (?:403|429)/u.test(error.message)
 }
 
-/** Download and publish a commit-pinned overlay. This does not restart any process. */
-export function updateOverlay(root = overlayRoot(), minimumVersion?: string, signal?: AbortSignal): Promise<OverlayRevision> {
+/**
+ * Download and publish a commit-pinned overlay. This does not restart any process.
+ * @param root - overlay root to update.
+ * @param minimumVersion - bundled release that the update must not precede.
+ * @param signal - optional cancellation signal.
+ * @returns the published commit and release.
+ */
+export function updateOverlay(root = resolveOverlayRoot(), minimumVersion?: string, signal?: AbortSignal): Promise<OverlayRevision> {
   if (signal?.aborted) return Promise.reject(abortError(signal))
   const key = resolve(root)
   const variant = minimumVersion === undefined ? '<none>' : minimumVersion

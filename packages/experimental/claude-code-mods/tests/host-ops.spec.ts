@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Message } from '@deepseek-ai/dsh-llm'
-import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import CommandRuntime from '@deepseek-ai/dsh-commands'
-import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
-import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import { Context } from '@yharness/cordis'
+import type { Agent } from '@yharness/agent'
+import type { Message } from '@yharness/llm'
+import { mountAgentLoopTestDependencies } from '@yharness/agent-loop-testkit'
+import CommandRuntime from '@yharness/commands'
+import LocalFileSystem from '@yharness/fs-local'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
 import { ModsEngine } from '../src/engine.ts'
 import type { OpContext } from '../src/engine.ts'
 import { createHostOps, FS_MAX_BYTES, STORE_MAX_BYTES, toolCallResultOf } from '../src/host-ops.ts'
@@ -221,7 +221,7 @@ describe('the store limit', () => {
     expect(await call('store.keys', {})).toEqual(['ok'])
     await expect(call('store.set', { key: 'big', value: 'x'.repeat(STORE_MAX_BYTES) })).rejects.toThrow(/would exceed/)
     // The limit counts UTF-8 bytes: 1.5 Mi CJK characters are 4.5 MiB of JSON.
-    await expect(call('store.set', { key: 'cjk', value: '中'.repeat(1.5 * 1024 * 1024) })).rejects.toThrow(/would exceed/)
+    await expect(call('store.set', { key: 'cjk', value: '\u{4E2D}'.repeat(1.5 * 1024 * 1024) })).rejects.toThrow(/would exceed/)
     expect(await call('store.set', { key: 'ascii', value: 'y'.repeat(1.5 * 1024 * 1024) })).toBeUndefined()
     await call('store.delete', { key: 'ascii' })
     // Concurrent writes to one plugin's record are serialized, so neither update is lost.

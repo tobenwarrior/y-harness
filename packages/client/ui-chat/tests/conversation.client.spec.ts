@@ -1,8 +1,8 @@
 /** Chat-owned event-to-view projection. */
 
 import { describe, expect, it } from 'vitest'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import type { ContentBlock } from '@deepseek-ai/dsh-api-remotes/client'
+import { AttachmentId } from '@yharness/attachment'
+import type { ContentBlock } from '@yharness/api-remotes/client'
 import {
   displayFailure, emptyAssistantBlock, toAssistantBlock, toAssistantBlocks,
   isTokenDelta,
@@ -18,18 +18,18 @@ describe('toAssistantBlock', () => {
       height: 1,
     }
     const blocks: ContentBlock[] = [
-      { type: 'text', text: '正文' },
-      { type: 'reasoning', text: '思考' },
+      { type: 'text', text: 'Body' },
+      { type: 'reasoning', text: 'Reasoning' },
       { type: 'tool-call', id: 'c1', name: 'echo', arguments: '{}' } as ContentBlock,
       { type: 'image', attachment },
     ]
     expect(toAssistantBlocks(blocks)).toEqual([
-      { kind: 'text', text: '正文' },
-      { kind: 'reasoning', text: '思考' },
+      { kind: 'text', text: 'Body' },
+      { kind: 'reasoning', text: 'Reasoning' },
       { kind: 'tool-call', callId: 'c1', name: 'echo', argsRaw: '{}' },
       { kind: 'image', attachment },
     ])
-    expect(toAssistantBlock(blocks[0] as ContentBlock)).toEqual({ kind: 'text', text: '正文' })
+    expect(toAssistantBlock(blocks[0] as ContentBlock)).toEqual({ kind: 'text', text: 'Body' })
     expect(toAssistantBlock({ type: 'future' } as unknown as ContentBlock))
       .toEqual({ kind: 'other', block: { type: 'future' } })
   })

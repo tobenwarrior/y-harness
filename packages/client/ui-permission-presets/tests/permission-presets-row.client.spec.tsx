@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import { createSnapshotStore } from '@yharness/client-store'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
-import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import { bindSnapshotSelector, RemoteError } from '@yharness/client-test-runtime'
+import type { SettingsNamespaceView } from '@yharness/api-remotes/client'
 import { PermissionRow, type PermissionRowProps } from '../src/client/PermissionRow.tsx'
-import { zh } from '../src/client/locales.ts'
-import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
+import { en } from '../src/client/locales.ts'
+import { SettingsDescribeMirror } from '@yharness/client-ui-settings/src/client/settings-mirror.ts'
 import { PermissionPresetSettingsController } from '../src/client/settings-store.ts'
 
 // Every fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
@@ -53,7 +53,7 @@ function ok<T>(value: T) {
   return { ok: true as const, value }
 }
 
-const dictionary: Record<string, string> = zh
+const dictionary: Record<string, string> = en
 const t: PermissionRowProps['t'] = key => dictionary[key] ?? key
 type AttentionSnapshot = Parameters<Parameters<PermissionRowProps['useSessionStatus']>[0]>[0]
 const noAttention: AttentionSnapshot = new Map()
@@ -87,7 +87,7 @@ describe('PermissionRow', () => {
       },
     })
     mount(controller)
-    const button = await screen.findByRole('button', { name: '仅可查看' })
+    const button = await screen.findByRole('button', { name: en['preset.readOnly'] })
     expect(button.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(button)
     expect(button.getAttribute('aria-expanded')).toBe('true')
@@ -97,11 +97,11 @@ describe('PermissionRow', () => {
     fireEvent.click(button)
     expect(button.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(button)
-    fireEvent.click(screen.getByRole('menuitem', { name: '仅可查看' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.readOnly'] }))
     expect(mutate).not.toHaveBeenCalled()
     fireEvent.click(button)
-    fireEvent.click(screen.getByRole('menuitem', { name: zh['preset.workspaceWrite'] }))
-    await screen.findByRole('button', { name: zh['preset.workspaceWrite'] })
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.workspaceWrite'] }))
+    await screen.findByRole('button', { name: en['preset.workspaceWrite'] })
     expect(mutate).toHaveBeenCalledOnce()
   })
 
@@ -114,15 +114,15 @@ describe('PermissionRow', () => {
       },
     })
     mount(controller)
-    fireEvent.click(await screen.findByRole('button', { name: '仅可查看' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '完全权限' }))
+    fireEvent.click(await screen.findByRole('button', { name: en['preset.readOnly'] }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.fullAccess'] }))
     expect(mutate).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    expect(screen.queryByRole('dialog', { name: '确认启用完全权限？' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '仅可查看' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '完全权限' }))
-    const dialog = screen.getByRole('dialog', { name: '确认启用完全权限？' })
-    const enable = screen.getByRole('button', { name: '启用完全权限' })
+    fireEvent.click(screen.getByRole('button', { name: en['confirm.cancel'] }))
+    expect(screen.queryByRole('dialog', { name: en['confirm.title'] })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en['preset.readOnly'] }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.fullAccess'] }))
+    const dialog = screen.getByRole('dialog', { name: en['confirm.title'] })
+    const enable = screen.getByRole('button', { name: en['confirm.enable'] })
     expect((enable as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(enable)
@@ -148,7 +148,7 @@ describe('PermissionRow', () => {
       },
     })
     mount(readonly)
-    expect((await screen.findByRole('button', { name: '仅可查看' })).hasAttribute('disabled')).toBe(true)
+    expect((await screen.findByRole('button', { name: en['preset.readOnly'] })).hasAttribute('disabled')).toBe(true)
   })
 
   it('shows loading and a contained write error', async () => {
@@ -168,11 +168,11 @@ describe('PermissionRow', () => {
       },
     })
     mount(controller)
-    expect((await screen.findByRole('button', { name: '加载中' })).hasAttribute('disabled')).toBe(true)
+    expect((await screen.findByRole('button', { name: en.loading })).hasAttribute('disabled')).toBe(true)
     describe.resolve(ok({ writable: true, hasDocument: false, namespaces: [view('read-only')] }))
-    const button = await screen.findByRole('button', { name: '仅可查看' })
+    const button = await screen.findByRole('button', { name: en['preset.readOnly'] })
     fireEvent.click(button)
-    fireEvent.click(screen.getByRole('menuitem', { name: zh['preset.workspaceWrite'] }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en['preset.workspaceWrite'] }))
     expect((await screen.findByRole('alert')).textContent).toBe('changed elsewhere')
   })
 })

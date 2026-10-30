@@ -3,9 +3,9 @@ import { dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Transform, Writable } from 'node:stream'
 import { finished } from 'node:stream/promises'
-import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
-import type { CodingSessionReadRequest } from '@deepseek-ai/dsh-coding-session/types'
-import type { SubprocessHandle, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { JsonRpcLineTransport } from '@yharness/sdk-protocol'
+import type { CodingSessionReadRequest } from '@yharness/coding-session/types'
+import type { SubprocessHandle, SubprocessSpawnSpec } from '@yharness/subprocess'
 import { z } from 'zod'
 import { codexProcessArguments, codexRequestFailure } from './codex-backend-process.ts'
 import type { CodexSessionSourceConfig } from './coding-session-source.ts'
@@ -87,7 +87,7 @@ export async function openCodexSequentialPeer(
   // name. A never-reused unpredictable name has no enrollment in a stable
   // original profile; a fixed application name could reconnect one.
   const clientName = `${clientPrefix}-${randomUUID()}`
-  const { scrubbedParentEnv } = await import('@deepseek-ai/dsh-subprocess')
+  const { scrubbedParentEnv } = await import('@yharness/subprocess')
   request.signal.throwIfAborted()
   const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(scrubbedParentEnv()).map(key => [key, undefined]))
   Object.assign(env, { PATH: `${dirname(config.nodePath)}:/usr/bin:/bin`, HOME: config.shellHome, CODEX_HOME: config.home,

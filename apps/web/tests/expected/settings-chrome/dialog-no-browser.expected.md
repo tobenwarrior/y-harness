@@ -5,11 +5,12 @@
     - button "Appearance"
     - button "Models"
     - button "Built-in plugins"
+    - button "Coding sessions"
     - button "Agent presets"
   - button "Open configuration file"
   - button "Close"
   - text: Permission Choose the default permission mode for new sessions
-  - button "Workspace Write"
+  - button "Approve for me"
   - text: Language
   - button "English"
   - text: Work details Choose how much detail to show for tool calls

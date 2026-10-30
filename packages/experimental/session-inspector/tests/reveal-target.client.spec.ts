@@ -1,9 +1,9 @@
 /** Inspector ranks precise and nearby reveal candidates from the loaded Chat model. */
 
 import { expect, it } from 'vitest'
-import { ConversationLocationIndex } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
-import type { ChatConversationViewNode } from '@deepseek-ai/dsh-client-ui-chat/client'
+import { ConversationLocationIndex } from '@yharness/client-ui-conversation/client'
+import { SessionSeq, type SessionEvent } from '@yharness/session/types'
+import type { ChatConversationViewNode } from '@yharness/client-ui-chat/client'
 import { resolveChatRevealTargets } from '../src/client/views/chat-node/reveal-target.ts'
 
 function node(key: string, anchorSeq: number, kind = 'user', turnNumber = 1, stepNumber = 1): ChatConversationViewNode {

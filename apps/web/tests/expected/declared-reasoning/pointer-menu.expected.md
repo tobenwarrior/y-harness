@@ -1,5 +1,5 @@
-- group "提供方、模型、推理等级与速度":
-  - menu "模型":
+- group "Provider, model, reasoning effort, and speed":
+  - menu "Model":
     - menuitemradio "Acme Think"
     - menuitemradio "Acme Swift" [checked]
     - menuitemradio "Acme Lite"

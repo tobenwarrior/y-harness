@@ -3,7 +3,7 @@ description: "The DeepSeek web-search settings page on the dsh web client's Plug
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-client-ui-settings-web-search
+# @yharness/client-ui-settings-web-search
 
 ## Summary
 

@@ -28,20 +28,20 @@
  * per-Session source.
  */
 
-import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-client-connection/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { ScheduleCatalogEntry, ScheduleDeliveryHistoryRequest, ScheduleId, ScheduleUpdateRequest } from '@deepseek-ai/dsh-schedule/client'
+import type { Context as ClientContext } from '@yharness/cordis'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/client-ui-conversation/client'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/client-ui-session/client'
+import type {} from '@yharness/client-ui-sidebar/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
+import type {} from '@yharness/client-ui-tool/client'
+import type {} from '@yharness/client-ui-workspace/client'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
+import type {} from '@yharness/api-remotes/client'
+import type {} from '@yharness/client-connection/client'
+import type { SessionId } from '@yharness/session/types'
+import type { ScheduleCatalogEntry, ScheduleDeliveryHistoryRequest, ScheduleId, ScheduleUpdateRequest } from '@yharness/schedule/client'
 import { createCatalogSource, type CatalogDeleteOutcome, type CatalogInjected } from './catalog-source.ts'
 import { createDeleteToastSource, ScheduleDeleteToast } from './DeleteToast.tsx'
 import { SCHEDULE_TASK_ID, SCHEDULE_TASK_KIND, scheduleTaskDefinition } from './definition.ts'
@@ -58,13 +58,13 @@ import { TaskManagerPage, type TaskManagerInjected } from './TaskManagerPage.tsx
 import type { TaskDetailInjected } from './TaskDetail.tsx'
 import { TaskManagerIcon } from './TaskManagerIcon.tsx'
 import { sessionLinkState } from './session-link.ts'
-import { en, NS, zh, type ScheduleCatalogKey } from './locales.ts'
-import { en as managerEn, zh as managerZh, type TaskManagerKey } from './task-manager-locales.ts'
+import { en, NS, type ScheduleCatalogKey } from './locales.ts'
+import { en as managerEn, type TaskManagerKey } from './task-manager-locales.ts'
 
 const MANAGER_NS = 'schedule.manager'
 const PANEL_ID = 'schedules' as MainPanelId
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Active Schedule catalog copy. */
     'schedule.catalog': ScheduleCatalogKey
@@ -86,8 +86,8 @@ export const inject = [
  * @param ctx - browser services used by these contributions.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-schedule: dictionaries')
-  ctx.effect(() => ctx.locale.register(MANAGER_NS, { zh: managerZh, en: managerEn }), 'ui-schedule: manager dictionaries')
+  ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-schedule: dictionaries')
+  ctx.effect(() => ctx.locale.register(MANAGER_NS, { en: managerEn }), 'ui-schedule: manager dictionaries')
   const t = ctx.locale.bind(MANAGER_NS)
   const manager: CatalogInjected<ScheduleCatalogEntry> = createCatalogSource<ScheduleCatalogEntry>({
     list: () => ctx.remote.schedule.catalog(),

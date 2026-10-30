@@ -9,9 +9,9 @@ import { basename, delimiter, dirname, isAbsolute, join, relative, sep } from 'n
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
-import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import { releasedV0SessionFormatCodec } from '@deepseek-ai/dsh-session-format-v0-to-v1'
-import type { SessionFormatEvent, SessionFormatMigrationContext } from '@deepseek-ai/dsh-session-format'
+import { SESSION_FORMAT_VERSION } from '@yharness/session'
+import { releasedV0SessionFormatCodec } from '@yharness/session-format-v0-to-v1'
+import type { SessionFormatEvent, SessionFormatMigrationContext } from '@yharness/session-format'
 import { assertWorkspaceOutsideTemp, outsideTempWorkspaceParent } from '../../scripts/snapshot-workspace-parent.ts'
 import {
   assertPersistedSessionVersion,
@@ -49,10 +49,10 @@ import {
   type NormalizeContext,
   type SnapshotManifest,
   type WorkspaceSnapshotEntry,
-} from '@deepseek-ai/dsh-session-snapshot'
-import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
-import { resolvePwshPath } from '@deepseek-ai/dsh-pwsh-local'
-import { parseSessionLog, prepareSessionSnapshotFixtureForComparison } from '@deepseek-ai/dsh-llm-replay'
+} from '@yharness/session-snapshot'
+import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@yharness/loader-smoke'
+import { resolvePwshPath } from '@yharness/pwsh-local'
+import { parseSessionLog, prepareSessionSnapshotFixtureForComparison } from '@yharness/llm-replay'
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const snapshotsRoot = fileURLToPath(new URL('./', import.meta.url))
@@ -367,7 +367,7 @@ function stderrFromSession(log: string): string {
   const appendReasoning = (text: string): void => {
     if (text === '') return
     if (!open) {
-      output += 'dsh: reasoning:\n'
+      output += 'yharness: reasoning:\n'
       open = true
     }
     output += text
@@ -904,11 +904,11 @@ describe('headless recorded-session snapshots', () => {
     ].map(record => JSON.stringify(record)).join('\n')
 
     expect(stderrFromSession(log)).toBe([
-      'dsh: reasoning:',
+      'yharness: reasoning:',
       'first',
-      'dsh: reasoning:',
+      'yharness: reasoning:',
       'second',
-      'dsh: reasoning:',
+      'yharness: reasoning:',
       'third',
       '',
     ].join('\n'))
@@ -932,7 +932,7 @@ describe('headless recorded-session snapshots', () => {
         { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
       ].map(record => JSON.stringify(record)).join('\n')
 
-      expect(stderrFromSession(log)).toBe('dsh: reasoning:\nfirst thought\n')
+      expect(stderrFromSession(log)).toBe('yharness: reasoning:\nfirst thought\n')
     },
   )
 
@@ -955,7 +955,7 @@ describe('headless recorded-session snapshots', () => {
       { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
     ].map(record => JSON.stringify(record)).join('\n')
 
-    expect(stderrFromSession(log)).toBe('dsh: reasoning:\nfirst thought\ndsh: reasoning:\nsecond\n')
+    expect(stderrFromSession(log)).toBe('yharness: reasoning:\nfirst thought\nyharness: reasoning:\nsecond\n')
   })
 
   it.each([10, 20])('assigns sibling roles by catalog order when the first child timestamp is %i', async (firstCreatedAt) => {
@@ -1010,7 +1010,7 @@ describe('headless recorded-session snapshots', () => {
         { type: 'system/message', seq: 2, time: 3, data: {
           turn: 1, step: 1,
           message: { role: 'system', content: [{ type: 'text', text: 'fresh system prompt' }],
-            source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' }, id: 'fresh-msg' },
+            source: { kind: 'plugin', plugin: '@yharness/system-prompt' }, id: 'fresh-msg' },
         }, surfaceOp: 'append' },
         {
           type: 'request/header',

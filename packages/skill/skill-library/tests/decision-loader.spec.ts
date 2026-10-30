@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import * as Storage from '@deepseek-ai/dsh-storage'
-import * as JsonStorage from '@deepseek-ai/dsh-storage-json'
-import * as Domain from '@deepseek-ai/dsh-storage-domain'
-import * as Workspace from '@deepseek-ai/dsh-workspace'
-import * as Typert from '@deepseek-ai/dsh-typert-registry'
-import * as Session from '@deepseek-ai/dsh-session'
-import * as Jsonl from '@deepseek-ai/dsh-session-persistence-jsonl'
-import Llm, { LlmAdapter } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import * as Storage from '@yharness/storage'
+import * as JsonStorage from '@yharness/storage-json'
+import * as Domain from '@yharness/storage-domain'
+import * as Workspace from '@yharness/workspace'
+import * as Typert from '@yharness/typert-registry'
+import * as Session from '@yharness/session'
+import * as Jsonl from '@yharness/session-persistence-jsonl'
+import Llm, { LlmAdapter } from '@yharness/llm'
+import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import * as Library from '../src/index.ts'
 
 let root: string | undefined; let ctx: Context | undefined
@@ -37,13 +37,13 @@ describe('Decision real Loader consumer', () => {
     }
     const api = { name: 'fixture-decision-api', inject: ['llm'], apply(context: Context) { context.llm.registerAdapter(['fixture'], new FixtureAdapter()) } }
     const config = join(root, 'cordis.yml'); await writeFile(config, JSON.stringify([
-      { name: '@deepseek-ai/dsh-storage' }, { name: '@deepseek-ai/dsh-storage-json', config: { root: join(root, 'storage') } },
-      { name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'json' } }, { name: '@deepseek-ai/dsh-workspace' }, { name: '@deepseek-ai/dsh-typert-registry' },
-      { name: '@deepseek-ai/dsh-session' }, { name: '@deepseek-ai/dsh-session-persistence-jsonl', config: { root: join(root, 'sessions'), compression: 'none' } },
-      { name: '@deepseek-ai/dsh-llm' }, { name: 'fixture-decision-api' }, { name: '@deepseek-ai/dsh-skill-library', config: { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 } },
+      { name: '@yharness/storage' }, { name: '@yharness/storage-json', config: { root: join(root, 'storage') } },
+      { name: '@yharness/storage-domain', config: { backend: 'json' } }, { name: '@yharness/workspace' }, { name: '@yharness/typert-registry' },
+      { name: '@yharness/session' }, { name: '@yharness/session-persistence-jsonl', config: { root: join(root, 'sessions'), compression: 'none' } },
+      { name: '@yharness/llm' }, { name: 'fixture-decision-api' }, { name: '@yharness/skill-library', config: { dshHome: join(root, 'home'), agentsHome: join(root, 'agents'), automaticMaintenanceIntervalMs: 0 } },
     ]))
     ctx = new Context(); ctx.baseUrl = pathToFileURL(root).href + '/'; await ctx.plugin(Loader); ctx.loader.builtins.include = Include
-    const modules = new Map<string, unknown>([['@deepseek-ai/dsh-storage', Storage], ['@deepseek-ai/dsh-storage-json', JsonStorage], ['@deepseek-ai/dsh-storage-domain', Domain], ['@deepseek-ai/dsh-workspace', Workspace], ['@deepseek-ai/dsh-typert-registry', Typert], ['@deepseek-ai/dsh-session', Session], ['@deepseek-ai/dsh-session-persistence-jsonl', Jsonl], ['@deepseek-ai/dsh-llm', Llm], ['fixture-decision-api', api], ['@deepseek-ai/dsh-skill-library', Library]])
+    const modules = new Map<string, unknown>([['@yharness/storage', Storage], ['@yharness/storage-json', JsonStorage], ['@yharness/storage-domain', Domain], ['@yharness/workspace', Workspace], ['@yharness/typert-registry', Typert], ['@yharness/session', Session], ['@yharness/session-persistence-jsonl', Jsonl], ['@yharness/llm', Llm], ['fixture-decision-api', api], ['@yharness/skill-library', Library]])
     const internal = ctx.loader.internal; if (internal === undefined) throw new Error('Loader fixture requires its internal importer')
     ctx.loader.internal = new Proxy(internal, {
       get(target, property, receiver): unknown {

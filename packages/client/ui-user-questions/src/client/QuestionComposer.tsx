@@ -7,7 +7,7 @@ import {
   Button, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronLeftOutlineRegular,
   IconChevronRightOutlineRegular, IconChevronUpOutlineRegular, IconCloseOutlineRegular,
   IconEditOutlineRegular, MarkdownText,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+} from '@yharness/client-ui-primitives'
 import { planReviewOf, type QuestionAnswer, type QuestionCardSnapshot, type QuestionComposerProps } from './contract/slots.ts'
 import type { PendingQuestion } from './contract/slots.ts'
 import type { QuestionDraftAnswer, QuestionDraftProgress } from './draft-store.ts'
@@ -33,7 +33,7 @@ const REMOVED_CARD: QuestionCardSnapshot = {
  * @returns Display label plus recommendation state.
  */
 export function parseRecommendedLabel(label: string): { label: string; recommended: boolean } {
-  const suffix = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i
+  const suffix = /\s*(?:\((?:recommended|\u63a8\u8350)\)|\uFF08(?:recommended|\u63a8\u8350)\uFF09)\s*$/i
   return suffix.test(label)
     ? { label: label.replace(suffix, ''), recommended: true }
     : { label, recommended: false }

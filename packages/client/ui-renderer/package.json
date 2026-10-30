@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-ai/dsh-client-ui-renderer",
+  "name": "@yharness/client-ui-renderer",
   "description": "Browser UI renderer: React slot bindings, ctx.uiRenderer, and the assembled application root",
   "version": "0.2.1-rc.2",
   "publishConfig": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/client/ui-renderer"
   },
   "type": "module",
@@ -37,12 +37,12 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-client-test-runtime": "workspace:*",
-    "@deepseek-ai/dsh-client-ui-slots": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/client-test-runtime": "workspace:*",
+    "@yharness/client-ui-slots": "workspace:*",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
     "@types/use-sync-external-store": "^1.5.0",

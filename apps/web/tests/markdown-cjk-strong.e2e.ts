@@ -2,9 +2,9 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-title'
+import { createMessage, createUserMessage } from '@yharness/llm'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
+import type {} from '@yharness/session-title'
 import {
   assertFixtureInventory,
   captureStableAria,
@@ -23,14 +23,14 @@ const MODE = webSnapshotMode()
 const SEED_ID = 'markdown-cjk-strong-web-e2e'
 const DONE = 'CJK_STRONG_DONE'
 const CASES = [
-  ['**注意：**内容', '注意：', '注意：内容'],
-  ['**Notice:**内容', 'Notice:', 'Notice:内容'],
-  ['**事件中间件（waterfall）**实现', '事件中间件（waterfall）', '事件中间件（waterfall）实现'],
-  ['**事件中间件(waterfall)**实现', '事件中间件(waterfall)', '事件中间件(waterfall)实现'],
-  ['**句号。**后续', '句号。', '句号。后续'],
-  ['**Period.**后续', 'Period.', 'Period.后续'],
-  ['**提醒！**继续', '提醒！', '提醒！继续'],
-  ['**Warning!**继续', 'Warning!', 'Warning!继续'],
+  ['**\u{6CE8}\u{610F}：**\u{5185}\u{5BB9}', '\u{6CE8}\u{610F}：', '\u{6CE8}\u{610F}：\u{5185}\u{5BB9}'],
+  ['**Notice:**\u{5185}\u{5BB9}', 'Notice:', 'Notice:\u{5185}\u{5BB9}'],
+  ['**\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}（waterfall）**\u{5B9E}\u{73B0}', '\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}（waterfall）', '\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}（waterfall）\u{5B9E}\u{73B0}'],
+  ['**\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}(waterfall)**\u{5B9E}\u{73B0}', '\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}(waterfall)', '\u{4E8B}\u{4EF6}\u{4E2D}\u{95F4}\u{4EF6}(waterfall)\u{5B9E}\u{73B0}'],
+  ['**\u{53E5}\u{53F7}。**\u{540E}\u{7EED}', '\u{53E5}\u{53F7}。', '\u{53E5}\u{53F7}。\u{540E}\u{7EED}'],
+  ['**Period.**\u{540E}\u{7EED}', 'Period.', 'Period.\u{540E}\u{7EED}'],
+  ['**\u{63D0}\u{9192}！**\u{7EE7}\u{7EED}', '\u{63D0}\u{9192}！', '\u{63D0}\u{9192}！\u{7EE7}\u{7EED}'],
+  ['**Warning!**\u{7EE7}\u{7EED}', 'Warning!', 'Warning!\u{7EE7}\u{7EED}'],
 ] as const
 
 /** Build one settled assistant reply covering CJK-adjacent strong punctuation boundaries. */

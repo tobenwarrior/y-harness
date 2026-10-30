@@ -1,25 +1,25 @@
-import { createUserMessage, createMessage } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, createMessage } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import type { Session, SessionEvent, SessionHeader, SessionId as SessionIdType } from '@deepseek-ai/dsh-session'
+import { Context } from '@yharness/cordis'
+import SessionStore, { SessionLogOffset, SessionSeq, SESSION_FORMAT_VERSION, SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import type { Session, SessionEvent, SessionHeader, SessionId as SessionIdType } from '@yharness/session'
 import SessionPersistence, {
   SessionPersistenceNotFoundError,
   SessionPersistenceRevision,
   SessionReadOnlyError,
-} from '@deepseek-ai/dsh-session-persistence'
+} from '@yharness/session-persistence'
 import type {
   SessionAccess,
   SessionHandle,
   SessionHandleReadResult,
   SessionPersistenceSnapshot,
-} from '@deepseek-ai/dsh-session-persistence'
-import { type SessionQueryErrorCode } from '@deepseek-ai/dsh-session-query'
+} from '@yharness/session-persistence'
+import { type SessionQueryErrorCode } from '@yharness/session-query'
 import { TestSessionQueryEngine } from './test-service.ts'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
   }

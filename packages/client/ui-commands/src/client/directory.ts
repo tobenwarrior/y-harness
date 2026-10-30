@@ -5,11 +5,11 @@
  * / epoch-guard behavior of the original global cache; the session-key axis
  * is the only extra dimension.
  */
-import type { CommandDescriptor } from '@deepseek-ai/dsh-commands/types'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { CommandDescriptor } from '@yharness/commands/types'
+import type { SessionId } from '@yharness/session/types'
 import { resolveCommand } from './resolution.ts'
 
-export type { CommandDescriptor } from '@deepseek-ai/dsh-commands/types'
+export type { CommandDescriptor } from '@yharness/commands/types'
 
 /**
  * cold = never pulled; pending = pull in flight with nothing servable;
@@ -47,7 +47,7 @@ export class CommandDirectory {
   }
 
   /**
-   * Synchronous command lookup over one Session's ready catalog; exact names precede localized aliases.
+   * Synchronous command lookup over one Session's ready catalog; exact names precede canonical aliases.
    * @param sessionId - session key.
    * @param name - typed command spelling without the leading slash.
    * @returns the descriptor, or undefined when absent or the entry is not ready.

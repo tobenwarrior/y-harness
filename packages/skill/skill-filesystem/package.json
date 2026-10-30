@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-skill-filesystem",
-  "description": "Local filesystem skill provider for the DeepSeek Harness",
+  "name": "@yharness/skill-filesystem",
+  "description": "Local filesystem skill provider for the Y Harness",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/skill/skill-filesystem"
   },
   "type": "module",
@@ -27,20 +27,20 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-fs": "workspace:*",
-    "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/fs": "workspace:*",
+    "@yharness/home-paths": "workspace:*",
+    "@yharness/skill": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/schemastery": "workspace:~",
     "yaml": "^2.4.2"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-fs": "workspace:*",
-    "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/dsh-skill": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/fs": "workspace:*",
+    "@yharness/home-paths": "workspace:*",
+    "@yharness/skill": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   }
 }

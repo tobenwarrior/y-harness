@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-sdk-app",
-  "description": "The dsh SDK profile bundle: stdio JSON-RPC serving and process lifecycle over dsh-base",
+  "name": "@yharness/sdk-app",
+  "description": "The Y Harness SDK profile bundle: stdio JSON-RPC serving and process lifecycle over yharness-base",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/bundle/sdk-app"
   },
   "type": "module",
@@ -34,18 +34,18 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-cmdline": "workspace:*",
-    "@deepseek-ai/dsh-sdk-jsonrpc-server": "workspace:*",
-    "@deepseek-ai/schemastery": "workspace:~",
+    "@yharness/cmdline": "workspace:*",
+    "@yharness/sdk-jsonrpc-server": "workspace:*",
+    "@yharness/schemastery": "workspace:~",
     "commander": "^15.0.0",
-    "@deepseek-ai/dsh-skill-office": "workspace:*",
-    "@deepseek-ai/dsh-tool-workspace-dependencies": "workspace:*"
+    "@yharness/skill-office": "workspace:*",
+    "@yharness/tool-workspace-dependencies": "workspace:*"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis-plugin-include": "workspace:~",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/cordis-plugin-include": "workspace:~",
+    "@yharness/cordis": "workspace:~"
   }
 }

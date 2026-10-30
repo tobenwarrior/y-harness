@@ -1,0 +1,5 @@
+# This scenario explicitly exercises the optional browser API-key onboarding
+# step; the shipped browser default remains disabled for ordinary users.
+- id: ui-settings-models
+  config:
+    credentialOnboarding: true

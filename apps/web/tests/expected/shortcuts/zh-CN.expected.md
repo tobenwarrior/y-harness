@@ -1,78 +1,78 @@
-- dialog "快捷键":
+- dialog "Keyboard shortcuts":
   - banner:
-    - heading "快捷键" [level=2]
-    - button "关闭快捷键"
-  - search "搜索快捷键":
-    - searchbox "搜索快捷键"
-  - region "应用操作":
+    - heading "Keyboard shortcuts" [level=2]
+    - button "Close keyboard shortcuts"
+  - search "Search shortcuts":
+    - searchbox "Search shortcuts"
+  - region "Application":
     - list:
       - listitem:
-        - button "修改快捷键速查快捷键"
-        - text: 快捷键速查 ⌘ /
+        - button "Edit shortcut for Open keyboard shortcuts"
+        - text: Open keyboard shortcuts ⌘ /
       - listitem:
-        - button "修改新会话快捷键"
-        - text: 新会话 ⌥ ⌘ N
+        - button "Edit shortcut for New Session"
+        - text: New Session ⌥ ⌘ N
       - listitem:
-        - button "修改展开／收起左侧栏快捷键"
-        - text: 展开／收起左侧栏 ⌥ ⌘ B
+        - button "Edit shortcut for Toggle left sidebar"
+        - text: Toggle left sidebar ⌥ ⌘ B
       - listitem:
-        - button "修改搜索会话快捷键"
-        - text: 搜索会话 ⌥ ⌘ K
+        - button "Edit shortcut for Search sessions"
+        - text: Search sessions ⌥ ⌘ K
       - listitem:
-        - button "修改添加工作区快捷键"
-        - text: 添加工作区 ⌥ ⌘ O
+        - button "Edit shortcut for Add workspace"
+        - text: Add workspace ⌥ ⌘ O
       - listitem:
-        - button "修改重命名会话快捷键"
-        - text: 重命名会话 ⌥ ⌘ G
+        - button "Edit shortcut for Rename session"
+        - text: Rename session ⌥ ⌘ G
       - listitem:
-        - button "修改分叉会话快捷键"
-        - text: 分叉会话 ⇧ ⌘ F
+        - button "Edit shortcut for Fork session"
+        - text: Fork session ⇧ ⌘ F
       - listitem:
-        - button "修改归档会话快捷键"
-        - text: 归档会话 ⌥ ⌘ A
+        - button "Edit shortcut for Archive session"
+        - text: Archive session ⌥ ⌘ A
       - listitem:
-        - button "修改打开设置快捷键"
-        - text: 打开设置 ⌥ ⌘ ,
+        - button "Edit shortcut for Open settings"
+        - text: Open settings ⌥ ⌘ ,
       - listitem:
-        - button "修改展开／收起右侧栏快捷键"
-        - text: 展开／收起右侧栏 ⇧ ⌘ B
+        - button "Edit shortcut for Toggle right sidebar"
+        - text: Toggle right sidebar ⇧ ⌘ B
       - listitem:
-        - button "修改工作区文件快捷键"
-        - text: 工作区文件 ⌥ ⌘ P
+        - button "Edit shortcut for Workspace files"
+        - text: Workspace files ⌥ ⌘ P
       - listitem:
-        - button "修改新建终端快捷键"
-        - text: "新建终端 ⌃ `"
+        - button "Edit shortcut for New terminal"
+        - text: "New terminal ⌃ `"
       - listitem:
-        - button "修改分栏快捷键"
-        - text: 分栏 ⌘ \
+        - button "Edit shortcut for Split"
+        - text: Split ⌘ \
       - listitem:
-        - button "修改面板全屏／退出全屏快捷键"
-        - text: 面板全屏／退出全屏 ⌥ ⌘ Enter
+        - button "Edit shortcut for Toggle panel fullscreen"
+        - text: Toggle panel fullscreen ⌥ ⌘ Enter
       - listitem:
-        - button "修改刷新当前页面快捷键"
-        - text: 刷新当前页面 暂无快捷键
+        - button "Edit shortcut for Refresh current page"
+        - text: Refresh current page No shortcut
       - listitem:
-        - button "修改关闭当前页面／窗口快捷键"
-        - text: 关闭当前页面／窗口 ⌥ ⌘ W
-  - region "消息输入":
-    - heading "消息输入" [level=3]
+        - button "Edit shortcut for Close current page or window"
+        - text: Close current page or window ⌥ ⌘ W
+  - region "Message input":
+    - heading "Message input" [level=3]
     - list:
-      - listitem: 使用互补的 Queue／Steer 方式 ⌘ Enter
-      - listitem: 打开引用菜单 @
-      - listitem: 换行 ⇧ Enter
-      - listitem: 发送消息 Enter
-      - listitem: 打开命令菜单 /
-      - listitem: 停止生成 Esc Esc
-  - region "菜单与弹层":
-    - heading "菜单与弹层" [level=3]
+      - listitem: Use the complementary Queue / Steer action ⌘ Enter
+      - listitem: Open reference menu @
+      - listitem: New line ⇧ Enter
+      - listitem: Send message Enter
+      - listitem: Open command menu /
+      - listitem: Stop generating Esc Esc
+  - region "Menus and dialogs":
+    - heading "Menus and dialogs" [level=3]
     - list:
-      - listitem: 关闭菜单或顶层弹窗 Esc
-      - listitem: 移动菜单选择 ↑ ↓
-      - listitem: 选择菜单项 Enter
-  - region "审批区域":
-    - heading "审批区域" [level=3]
+      - listitem: Close menu or top dialog Esc
+      - listitem: Move menu selection ↑ ↓
+      - listitem: Select menu item Enter
+  - region "Approval area":
+    - heading "Approval area" [level=3]
     - list:
-      - listitem: 允许一次 Enter
-      - listitem: 拒绝 Esc
+      - listitem: Allow once Enter
+      - listitem: Reject Esc
   - contentinfo:
-    - button "恢复全部默认" [disabled]
+    - button "Restore all defaults" [disabled]

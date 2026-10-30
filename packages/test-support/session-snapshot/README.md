@@ -3,7 +3,7 @@ description: "Session-log snapshot support for keyless profile tests: manifests,
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-session-snapshot
+# @yharness/session-snapshot
 
 ## Summary
 
@@ -36,7 +36,7 @@ import {
   defineAcpSnapshotSuite,
   type Scenario,
   type SnapshotSuiteOptions,
-} from '@deepseek-ai/dsh-session-snapshot'
+} from '@yharness/session-snapshot'
 
 function snapshotMode(value: string | undefined): SnapshotSuiteOptions['mode'] {
   switch (value) {

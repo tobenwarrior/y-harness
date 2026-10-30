@@ -7,16 +7,16 @@
  * scope-birth roster warm — is InputTriggerController behavior, tested on a real
  * session scope (createScope).
  */
-import { Context } from '@deepseek-ai/cordis'
+import { Context } from '@yharness/cordis'
 import { describe, expect, it, vi } from 'vitest'
-import { createScope, scopeOf } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { LocaleSnapshot } from '@deepseek-ai/dsh-client-locale/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { InputTriggerController, InputTriggerService } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import { createScope, scopeOf } from '@yharness/api-session-controller/client'
+import type { LocaleSnapshot } from '@yharness/client-locale/client'
+import type { SessionId } from '@yharness/session/types'
+import { InputTriggerController, InputTriggerService } from '@yharness/client-ui-input-trigger/client'
 import type {
   BeginCommandRequest, ClientSessionContext, CommandClaim, InsertReferenceRequest, PickOutcome,
   ReferenceInsert, InputTriggerCandidate, InputTriggerPick, InputTriggerSource, SourceRoster, TriggerChar,
-} from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+} from '@yharness/client-ui-input-trigger/client'
 
 const sid = (k: string): SessionId => k as SessionId
 
@@ -301,7 +301,7 @@ describe('track', () => {
     const { controller } = controllerBench([reference.source])
     controller.track('@r', 2, { tier: 'plain' }, 1)
     expect(controller.menu.getSnapshot().groups[0]).toMatchObject({ showGroupTitle: false, status: 'pending' })
-    reference.pending[0]!.resolve([{ name: 'README.md', section: '文件与文件夹' }])
+    reference.pending[0]!.resolve([{ name: 'README.md', section: 'Files and folders' }])
     await tick()
     expect(controller.menu.getSnapshot().groups[0]).toMatchObject({ showGroupTitle: false, status: 'ready' })
   })

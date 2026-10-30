@@ -4,21 +4,20 @@ import { en, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLo
 describe('desktop locale dictionaries', () => {
   afterEach(() => { vi.unstubAllEnvs() })
 
-  it('ships the same key set in English and Chinese', () => {
+  it('ships one English dictionary and keeps the retired locale alias compatible', () => {
     expect(Object.keys(zh)).toEqual(Object.keys(en))
-    expect(resolveDesktopLocale('zh-Hans-CN').messages).toEqual(zh)
+    expect(resolveDesktopLocale('zh-Hans-CN').id).toBe('en')
+    expect(resolveDesktopLocale('zh-Hans-CN').messages).toEqual(en)
     expect(resolveDesktopLocale('en-US').messages).toEqual(en)
     expect(resolveDesktopLocale('fr-FR').messages).toEqual(en)
   })
 
-  it.each([undefined, 'Y Harness', 'Atlas', '星图 $& $`'])('names the application in listener-conflict guidance for %s', (displayName) => {
+  it.each([undefined, 'Y Harness', 'Atlas', 'Atlas $& $`'])('names the application in listener-conflict guidance for %s', (displayName) => {
     vi.stubEnv('DSH_CLIENT_DISPLAY_NAME', displayName)
     const name = displayName ?? 'Y Harness'
     const english = resolveDesktopLocale('en-US').messages
-    const chinese = resolveDesktopLocale('zh-CN').messages
-    expect(english.startupAddressInUse).toBe(`Another ${name} instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running ${name} instance, then restart.`)
-    expect(chinese.startupAddressInUse).toBe(`有其他正在运行的 ${name}（如其他 dsh web、桌面端），无法同时启动，请退出其他正在运行的 ${name} 后重启。`)
-    expect(english.cliCommandTitle).toBe('Manage dsh Command')
+    expect(english.startupAddressInUse).toBe(`Another ${name} instance (such as the web or desktop app) is running. They cannot start at the same time. Quit the other running ${name} instance, then restart.`)
+    expect(english.cliCommandTitle).toBe(`Manage ${name} CLI`)
     expect(english.welcomeKeyDescription).toContain('official DeepSeek models')
   })
 
@@ -27,20 +26,16 @@ describe('desktop locale dictionaries', () => {
       .toBe('plugin@1.2.3 {missing}')
   })
 
-  it('uses a custom display label in both locales without changing the shipped dictionaries', () => {
+  it('uses a custom display label without changing the shipped dictionary', () => {
     const english = resolveDesktopLocale('en-US', 'Atlas').messages
-    const chinese = resolveDesktopLocale('zh-CN', 'Atlas').messages
     expect(english).toMatchObject({ aboutMenu: 'About Atlas', aboutProduct: 'Atlas',
       hideApplication: 'Hide Atlas', openApplication: 'Open Atlas', quitTitle: 'Quit Atlas?',
       welcomeTitle: 'Atlas', welcomeKeyDescription: 'Configure official DeepSeek models to start using Atlas',
       updateTitle: 'Atlas Update' })
-    expect(chinese).toMatchObject({ aboutMenu: '关于 Atlas', aboutProduct: 'Atlas',
-      hideApplication: '隐藏 Atlas', openApplication: '打开 Atlas', quitTitle: '退出 Atlas？',
-      welcomeTitle: 'Atlas', updateTitle: 'Atlas 更新' })
-    expect(english.cliCommandTitle).toBe('Manage dsh Command')
+    expect(english.cliCommandTitle).toBe('Manage Atlas CLI')
     expect(english.aboutVersion).toBe('Version V{version}')
-    expect(en.aboutProduct).toBe('Y harness')
-    expect(zh.aboutProduct).toBe('Y harness')
+    expect(en.aboutProduct).toBe('Y Harness')
+    expect(zh.aboutProduct).toBe('Y Harness')
   })
 
   it('resolves the configured display label from the public client environment', () => {
@@ -53,14 +48,14 @@ describe('desktop locale dictionaries', () => {
     expect(resolveDesktopLocale('en-US', 'Atlas $&').messages.aboutMenu).toBe('About Atlas $&')
   })
 
-  it('prefers an explicit supported choice, then the first supported system language', () => {
-    expect(resolveDesktopStartupLocale('zh', ['en-US']).id).toBe('zh-CN')
+  it('accepts legacy and unknown choices while always resolving the English shell', () => {
+    expect(resolveDesktopStartupLocale('zh', ['en-US']).id).toBe('en')
     expect(resolveDesktopStartupLocale('EN', ['zh-CN']).id).toBe('en')
-    expect(resolveDesktopStartupLocale(null, ['ja-JP', 'zh-Hant', 'en-US']).id).toBe('zh-CN')
+    expect(resolveDesktopStartupLocale(null, ['ja-JP', 'zh-Hant', 'en-US']).id).toBe('en')
     expect(resolveDesktopStartupLocale(null, ['en-US', 'zh-CN']).id).toBe('en')
     expect(resolveDesktopStartupLocale(null, ['ja-JP']).id).toBe('en')
     expect(resolveDesktopStartupLocale(null, []).id).toBe('en')
-    expect(resolveDesktopStartupLocale('ja', ['zh-CN']).id).toBe('zh-CN')
+    expect(resolveDesktopStartupLocale('ja', ['zh-CN']).id).toBe('en')
   })
 
 })

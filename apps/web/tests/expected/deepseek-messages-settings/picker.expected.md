@@ -1,4 +1,4 @@
-- group "提供方、模型、推理等级与速度":
-  - menu "模型":
+- group "Provider, model, reasoning effort, and speed":
+  - menu "Model":
     - menuitemradio "Messages Flash" [checked]
     - menuitemradio "DeepSeek-V4-Pro"

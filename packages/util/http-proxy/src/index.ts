@@ -1,5 +1,5 @@
 /**
- * Outbound HTTP proxy support for DeepSeek Harness.
+ * Outbound HTTP proxy support for Y Harness.
  *
  * Node's built-in `fetch` ignores `HTTP_PROXY` and friends, so every harness request would connect
  * directly no matter what the user exported. The launcher resolves one policy from the launch
@@ -11,7 +11,7 @@
  *
  * Four functions, one per way a caller needs the policy — install it, ask how to send one request,
  * build a child's environment, and strip the ambient one for a replay.
- * @module @deepseek-ai/dsh-http-proxy
+ * @module @yharness/http-proxy
  */
 
 export {

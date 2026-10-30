@@ -1,27 +1,59 @@
-- dialog "设置":
+- dialog "Settings":
   - navigation:
-    - text: 设置
-    - button "通用设置"
-    - button "模型"
-    - button "内置插件"
-    - button "Agent 预设"
-  - button "打开配置文件"
-  - button "关闭"
-  - heading "模型" [level=2]
-  - paragraph: 填入各提供商的 API 密钥即可使用其模型。
+    - text: Settings
+    - button "General"
+    - button "Appearance"
+    - button "Models"
+    - button "Built-in plugins"
+    - button "Coding sessions"
+    - button "Agent presets"
+  - button "Open configuration file"
+  - button "Close"
+  - heading "Models" [level=2]
+  - paragraph: Enter your API keys to use models from the following providers.
+  - text: ChatGPT subscription
+  - button "Edit ChatGPT subscription": Edit
+  - text: Nous Portal
+  - button "Edit Nous Portal": Edit
+  - text: Grok subscription
+  - button "Edit Grok subscription": Edit
   - list:
     - listitem:
       - text: openrouter
-      - button "编辑 openrouter": 编辑
-      - button "删除 openrouter": 删除
+      - button "Edit openrouter": Edit
+      - button "Delete openrouter": Delete
       - alert: "llm-pi-ai: provider \"openrouter\" model \"111\" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks"
     - listitem:
       - text: zai
-      - button "编辑 zai": 编辑
-      - button "删除 zai": 删除
+      - button "Edit zai": Edit
+      - button "Delete zai": Delete
     - listitem:
-      - text: acme-gateway 自定义
-      - button "编辑 acme-gateway": 编辑
-      - button "删除 acme-gateway": 删除
+      - text: acme-gateway Custom
+      - button "Edit acme-gateway": Edit
+      - button "Delete acme-gateway": Delete
       - alert: "llm-pi-ai: provider \"acme-gateway\" model \"custom-model\" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks"
-  - button "添加模型提供商"
+  - button "Add model provider"
+  - region "Decision advice":
+    - heading "Decision advice" [level=3]
+    - paragraph: Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.
+    - paragraph: Native Codex routes, including gpt-6-luna, expose native tools and are unavailable for Decision. No new account or credentials are configured.
+    - switch "Enable skill candidate advice"
+    - text: Enable skill candidate advice Decision model
+    - combobox "Decision model":
+      - option "Choose a value" [selected]
+      - option "GLM-4.7 · zai"
+      - option "GLM-5-Turbo · zai"
+      - option "GLM-5.2 · zai"
+      - option "GLM-5.2 Highspeed · zai"
+      - option "GLM-5.3 · zai"
+      - option "GLM-5.3-Flash · zai"
+      - option "GLM-5.3 Highspeed · zai"
+      - option "DeepSeek · deepseek-official · Unavailable" [disabled]
+    - paragraph: At most 1 call · input budget 16000 · output 512 tokens · {{duration}} deadline
+    - button "Save Decision settings"
+    - text: Project
+    - combobox "Preview project":
+      - option "Choose a project" [selected]
+    - textbox "Enter a skill candidate query"
+    - button "Preview candidate order" [disabled]
+    - button "Refresh"

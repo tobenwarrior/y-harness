@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import type {
   ComposerAttachment, ComposerAttachmentsOwnerProps, ComposerAttachmentsProps,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+} from '@yharness/client-ui-conversation/client'
 import { ComposerAttachments } from '../src/client/ComposerAttachments.tsx'
 
 beforeEach(() => {
@@ -22,37 +22,37 @@ afterEach(() => {
 
 const t = ((key: string, params?: Readonly<Record<string, unknown>>): string => {
   const messages: Record<string, string> = {
-    'attachment.pending': '待发送附件',
-    'attachment.scrollLeft': '向左滚动附件',
-    'attachment.scrollRight': '向右滚动附件',
-    'file.pending': '待发送文件',
-    'file.uploading': '上传中…',
-    'file.uploadFailed': '上传失败，点击重试',
-    'file.label': '文件',
-    'image.pending': '待发送图片',
-    'image.original': '原图',
-    'image.preview': '原图预览',
-    'image.closePreview': '关闭原图预览',
-    'image.openOriginal': '查看原图',
-    'attachment.dropBlocked': '当前无法添加文件或图片',
-    'attachment.dropTitle': '文件或图片拖动到此处即可添加',
+    'attachment.pending': '\u{5F85}\u{53D1}\u{9001}\u{9644}\u{4EF6}',
+    'attachment.scrollLeft': '\u{5411}\u{5DE6}\u{6EDA}\u{52A8}\u{9644}\u{4EF6}',
+    'attachment.scrollRight': '\u{5411}\u{53F3}\u{6EDA}\u{52A8}\u{9644}\u{4EF6}',
+    'file.pending': '\u{5F85}\u{53D1}\u{9001}\u{6587}\u{4EF6}',
+    'file.uploading': '\u{4E0A}\u{4F20}\u{4E2D}…',
+    'file.uploadFailed': '\u{4E0A}\u{4F20}\u{5931}\u{8D25}，\u{70B9}\u{51FB}\u{91CD}\u{8BD5}',
+    'file.label': '\u{6587}\u{4EF6}',
+    'image.pending': '\u{5F85}\u{53D1}\u{9001}\u{56FE}\u{7247}',
+    'image.original': '\u{539F}\u{56FE}',
+    'image.preview': '\u{539F}\u{56FE}\u{9884}\u{89C8}',
+    'image.closePreview': '\u{5173}\u{95ED}\u{539F}\u{56FE}\u{9884}\u{89C8}',
+    'image.openOriginal': '\u{67E5}\u{770B}\u{539F}\u{56FE}',
+    'attachment.dropBlocked': '\u{5F53}\u{524D}\u{65E0}\u{6CD5}\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{56FE}\u{7247}',
+    'attachment.dropTitle': '\u{6587}\u{4EF6}\u{6216}\u{56FE}\u{7247}\u{62D6}\u{52A8}\u{5230}\u{6B64}\u{5904}\u{5373}\u{53EF}\u{6DFB}\u{52A0}',
   }
   if (key === 'file.remove') {
     const name = params?.name
-    return `移除文件 ${typeof name === 'string' ? name : ''}`
+    return `\u{79FB}\u{9664}\u{6587}\u{4EF6} ${typeof name === 'string' ? name : ''}`
   }
   if (key === 'file.retry') {
     const name = params?.name
-    return `重试上传 ${typeof name === 'string' ? name : ''}`
+    return `\u{91CD}\u{8BD5}\u{4E0A}\u{4F20} ${typeof name === 'string' ? name : ''}`
   }
   if (key === 'image.remove') {
     const name = params?.name
-    return `移除图片 ${typeof name === 'string' ? name : ''}`
+    return `\u{79FB}\u{9664}\u{56FE}\u{7247} ${typeof name === 'string' ? name : ''}`
   }
   if (key === 'attachment.dropDesc') {
     const count = params?.count
     const size = params?.size
-    return `图片限制：最多 ${typeof count === 'number' ? String(count) : ''} 张，每张 ${typeof size === 'string' ? size : ''}`
+    return `\u{56FE}\u{7247}\u{9650}\u{5236}：\u{6700}\u{591A} ${typeof count === 'number' ? String(count) : ''} \u{5F20}，\u{6BCF}\u{5F20} ${typeof size === 'string' ? size : ''}`
   }
   return messages[key] ?? key
 }) as ComposerAttachmentsProps['t']
@@ -105,8 +105,8 @@ describe('ComposerAttachments', () => {
     const image = attachment('dropped').file
     const dataTransfer = { types: ['Files'], files: [image], items: [], dropEffect: 'none' }
     expect(fireEvent.dragEnter(document.body, { dataTransfer })).toBe(false)
-    expect(view.getByRole('status').textContent).toContain('文件或图片拖动到此处即可添加')
-    expect(view.getByRole('status').textContent).toContain('图片限制：最多 20 张，每张 5MB')
+    expect(view.getByRole('status').textContent).toContain('\u{6587}\u{4EF6}\u{6216}\u{56FE}\u{7247}\u{62D6}\u{52A8}\u{5230}\u{6B64}\u{5904}\u{5373}\u{53EF}\u{6DFB}\u{52A0}')
+    expect(view.getByRole('status').textContent).toContain('\u{56FE}\u{7247}\u{9650}\u{5236}：\u{6700}\u{591A} 20 \u{5F20}，\u{6BCF}\u{5F20} 5MB')
     expect(fireEvent.dragOver(document.body, { dataTransfer })).toBe(false)
     expect(dataTransfer.dropEffect).toBe('copy')
     expect(fireEvent.drop(document.body, { dataTransfer })).toBe(false)
@@ -175,7 +175,7 @@ describe('ComposerAttachments', () => {
     const image = attachment('blocked').file
     const dataTransfer = { types: ['Files'], files: [image], items: [], dropEffect: 'copy' }
     fireEvent.dragEnter(document.body, { dataTransfer })
-    expect(view.getByRole('status').textContent).toBe('当前无法添加文件或图片')
+    expect(view.getByRole('status').textContent).toBe('\u{5F53}\u{524D}\u{65E0}\u{6CD5}\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{56FE}\u{7247}')
     fireEvent.dragOver(document.body, { dataTransfer })
     expect(dataTransfer.dropEffect).toBe('none')
     fireEvent.drop(document.body, { dataTransfer })
@@ -189,17 +189,17 @@ describe('ComposerAttachments', () => {
     const initial = props({ attachments: [image], onRemoveAttachment })
     const view = render(<ComposerAttachments {...initial} />)
 
-    fireEvent.click(view.getByRole('button', { name: '移除图片 pixel.png' }))
+    fireEvent.click(view.getByRole('button', { name: '\u{79FB}\u{9664}\u{56FE}\u{7247} pixel.png' }))
     expect(onRemoveAttachment).toHaveBeenCalledWith(image.id)
-    fireEvent.click(view.getByTitle('查看原图'))
-    expect(view.getByRole('dialog', { name: '原图预览' })).toBeTruthy()
+    fireEvent.click(view.getByTitle('\u{67E5}\u{770B}\u{539F}\u{56FE}'))
+    expect(view.getByRole('dialog', { name: '\u{539F}\u{56FE}\u{9884}\u{89C8}' })).toBeTruthy()
     view.rerender(<ComposerAttachments {...props({ attachments: [], onRemoveAttachment })} />)
-    expect(view.queryByRole('dialog', { name: '原图预览' })).toBeNull()
+    expect(view.queryByRole('dialog', { name: '\u{539F}\u{56FE}\u{9884}\u{89C8}' })).toBeNull()
 
     view.rerender(<ComposerAttachments {...initial} />)
-    fireEvent.click(view.getByTitle('查看原图'))
+    fireEvent.click(view.getByTitle('\u{67E5}\u{770B}\u{539F}\u{56FE}'))
     fireEvent.keyDown(window, { key: 'Escape' })
-    expect(view.queryByRole('dialog', { name: '原图预览' })).toBeNull()
+    expect(view.queryByRole('dialog', { name: '\u{539F}\u{56FE}\u{9884}\u{89C8}' })).toBeNull()
   })
 
   it('keeps images and files in pick order inside one attachment rail', () => {
@@ -212,20 +212,20 @@ describe('ComposerAttachments', () => {
         },
       },
     })} />)
-    const rail = view.getByRole('group', { name: '待发送附件' })
+    const rail = view.getByRole('group', { name: '\u{5F85}\u{53D1}\u{9001}\u{9644}\u{4EF6}' })
     expect([...rail.children].map((child) => {
       const image = child.querySelector('img')
       return image?.getAttribute('alt') ?? child.querySelector('[title]')?.getAttribute('title')
     })).toEqual(['first.png', 'middle.pdf', 'last.png'])
-    expect(view.queryByRole('group', { name: '待发送文件' })).toBeNull()
+    expect(view.queryByRole('group', { name: '\u{5F85}\u{53D1}\u{9001}\u{6587}\u{4EF6}' })).toBeNull()
   })
 
   it('labels an unnamed attachment and its original-image preview', () => {
     const image = attachment('unnamed', '')
     const view = render(<ComposerAttachments {...props({ attachments: [image] })} />)
-    expect(view.getByAltText('待发送图片')).toBeTruthy()
-    fireEvent.click(view.getByTitle('查看原图'))
-    expect(view.getByAltText('原图')).toBeTruthy()
+    expect(view.getByAltText('\u{5F85}\u{53D1}\u{9001}\u{56FE}\u{7247}')).toBeTruthy()
+    fireEvent.click(view.getByTitle('\u{67E5}\u{770B}\u{539F}\u{56FE}'))
+    expect(view.getByAltText('\u{539F}\u{56FE}')).toBeTruthy()
   })
 })
 
@@ -246,15 +246,15 @@ describe('ComposerAttachments file drafts', () => {
       onRemoveAttachment,
       onRetryFile,
     })} />)
-    const group = view.getByRole('group', { name: '待发送附件' })
-    expect(group.textContent).toContain('上传中…')
+    const group = view.getByRole('group', { name: '\u{5F85}\u{53D1}\u{9001}\u{9644}\u{4EF6}' })
+    expect(group.textContent).toContain('\u{4E0A}\u{4F20}\u{4E2D}…')
     expect(view.container.querySelector('[style="width: 25%;"]')).toBeTruthy()
     expect(group.textContent).toContain('ok.pdf')
     expect(group.textContent).toContain('PDF 3B')
-    expect(group.textContent).toContain('上传失败，点击重试')
-    fireEvent.click(view.getByRole('button', { name: '重试上传 bad.pdf' }))
+    expect(group.textContent).toContain('\u{4E0A}\u{4F20}\u{5931}\u{8D25}，\u{70B9}\u{51FB}\u{91CD}\u{8BD5}')
+    fireEvent.click(view.getByRole('button', { name: '\u{91CD}\u{8BD5}\u{4E0A}\u{4F20} bad.pdf' }))
     expect(onRetryFile).toHaveBeenCalledWith('bad')
-    fireEvent.click(view.getByRole('button', { name: '移除文件 ok.pdf' }))
+    fireEvent.click(view.getByRole('button', { name: '\u{79FB}\u{9664}\u{6587}\u{4EF6} ok.pdf' }))
     expect(onRemoveAttachment).toHaveBeenCalledWith('ok')
   })
 
@@ -267,9 +267,9 @@ describe('ComposerAttachments file drafts', () => {
       onRetryFile,
       onRemoveAttachment,
     })} />)
-    expect(view.getByRole('group', { name: '待发送附件' }).textContent).toContain('上传中…')
-    const retry = view.getByRole('button', { name: '重试上传 bad.pdf' })
-    const remove = view.getByRole('button', { name: '移除文件 bad.pdf' })
+    expect(view.getByRole('group', { name: '\u{5F85}\u{53D1}\u{9001}\u{9644}\u{4EF6}' }).textContent).toContain('\u{4E0A}\u{4F20}\u{4E2D}…')
+    const retry = view.getByRole('button', { name: '\u{91CD}\u{8BD5}\u{4E0A}\u{4F20} bad.pdf' })
+    const remove = view.getByRole('button', { name: '\u{79FB}\u{9664}\u{6587}\u{4EF6} bad.pdf' })
     expect(retry.contains(remove)).toBe(false)
     fireEvent.click(remove)
     expect(onRemoveAttachment).toHaveBeenCalledWith('bad')
@@ -288,8 +288,8 @@ describe('ComposerAttachments file drafts', () => {
         },
       },
     })} />)
-    const group = view.getByRole('group', { name: '待发送附件' })
-    expect(group.textContent).toContain('文件')
+    const group = view.getByRole('group', { name: '\u{5F85}\u{53D1}\u{9001}\u{9644}\u{4EF6}' })
+    expect(group.textContent).toContain('\u{6587}\u{4EF6}')
     expect(group.textContent).toContain('3B')
   })
 

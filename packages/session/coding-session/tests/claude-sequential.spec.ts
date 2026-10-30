@@ -1,7 +1,7 @@
 /** Mock native turns and isolated reads exercise the production sequential writer without a model or profile. */
 import { expect, it, vi } from 'vitest'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { ClaudeSequentialExecutor, ClaudeSequentialTurnReceipt } from '@deepseek-ai/dsh-subagent-claude-code'
+import { brandString } from '@yharness/brand'
+import type { ClaudeSequentialExecutor, ClaudeSequentialTurnReceipt } from '@yharness/subagent-claude-code'
 import { createClaudeSequentialWriter, validateClaudeSequentialReadback } from '../src/claude-sequential.ts'
 import type { ClaudeSequentialHistoryMessage } from '../src/claude-sequential.ts'
 import { codingSessionDigest } from '../src/digest.ts'

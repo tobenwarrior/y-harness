@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopOnboarding } from '../src/client/DesktopOnboarding.tsx'
@@ -57,6 +57,16 @@ it('keeps welcome mandatory and enters credit only through Start', async () => {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingStart })) })
   expect(screen.getByRole('heading', { name: zh.onboardingCredit })).toBeTruthy()
   expect(operations.update).toHaveBeenCalledWith({ step: 'credit' })
+})
+
+it.each([
+  ['welcome', 'onboarding-welcome.png'],
+  ['credit', 'onboarding-recharge.png'],
+] as const)('uses the English %s artwork for a retired locale selection', (step, filename) => {
+  mount(step, 'positive', 'ready', zh)
+  const images = [...document.querySelectorAll('img')].map(image => image.getAttribute('src'))
+  expect(images.some(src => src?.endsWith(`/assets/${filename}`))).toBe(true)
+  expect(images.some(src => src?.includes('-zh'))).toBe(false)
 })
 
 it('covers the application without showing an unfinished step while durable settings load', () => {
@@ -285,7 +295,8 @@ it('traps Tab in confirmation, closes it, and keeps the selected page', async ()
 it('opens recharge directly from a credit warning', async () => {
   const h = mount('credit', 'zero')
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingLater })) })
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: zh.onboardingGoTopUp })) })
+  const warning = screen.getByRole('dialog', { name: zh.onboardingNoCreditTitle })
+  await act(async () => { fireEvent.click(within(warning).getByRole('button', { name: zh.onboardingGoTopUp })) })
   expect(h.openPlatformPage).toHaveBeenCalledWith('top-up', expect.any(Function))
   expect(screen.queryByRole('dialog', { name: zh.onboardingNoCreditTitle })).toBeNull()
 })

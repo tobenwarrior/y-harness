@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import { expect, it } from 'vitest'
-import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-protocol'
+import { JsonRpcResponseError } from '@yharness/sdk-protocol'
 import { boundedCodexInput, codexProcessArguments, codexRequestFailure } from '../src/codex-backend-process.ts'
 it('preserves method-not-found support information without native diagnostic text or data', () => {
   const missing = codexRequestFailure('skills/list', new JsonRpcResponseError(-32601, 'sensitive diagnostic', { secret: 'hidden' }))

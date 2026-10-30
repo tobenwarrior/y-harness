@@ -2,14 +2,14 @@
 
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
-import { Context, Service } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-agent'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionCreateRequest } from '@deepseek-ai/dsh-api-session-controller'
-import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
-import z from '@deepseek-ai/schemastery'
-import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
+import { Context, Service } from '@yharness/cordis'
+import type {} from '@yharness/agent'
+import type { ImageAttachmentRef } from '@yharness/attachment'
+import { SessionId } from '@yharness/session'
+import type { SessionCreateRequest } from '@yharness/api-session-controller'
+import type { Domain, KvTable } from '@yharness/storage-domain'
+import z from '@yharness/schemastery'
+import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type {
   BotAvailability,
@@ -37,7 +37,7 @@ export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Durable user-owned Bot roster and one-Session provisioning service. */
     bots: BotService

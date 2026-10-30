@@ -6,12 +6,12 @@
  * across Loader rebuilds of the declaring chain.
  */
 import { describe, expect, onTestFinished, vi } from 'vitest'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
-import type { SettingsNamespaceView } from '@deepseek-ai/dsh-settings/types'
-import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
-import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
-import { LOCALE_SETTINGS_NAMESPACE, LocaleSettingsSchema } from '@deepseek-ai/dsh-client-locale/src/locale-settings.ts'
+import type {} from '@yharness/client-ui-renderer/client'
+import { ok, type RemoteMock } from '@yharness/remote-mock'
+import type { SettingsNamespaceView } from '@yharness/settings/types'
+import { createClientTest, type TestClient, webApp } from '@yharness/client-test-runtime/src/assembly/index.ts'
+import { resolveSlotLabel } from '@yharness/client-ui-slots'
+import { LOCALE_SETTINGS_NAMESPACE, LocaleSettingsSchema } from '@yharness/client-locale/src/locale-settings.ts'
 import { inject } from '../src/client/index.ts'
 import type { DeveloperToolsRowInjected } from '../src/client/DeveloperToolsRow.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from '../src/client/chrome.tsx'
@@ -19,8 +19,8 @@ import { GeneralSection } from '../src/client/GeneralSection.tsx'
 import { SettingsDocumentAction } from '../src/client/SettingsDocumentAction.tsx'
 import type { SettingsDocumentActionInjected } from '../src/client/SettingsDocumentAction.tsx'
 
-const SELF = '@deepseek-ai/dsh-client-ui-settings-general'
-const SIDEBAR = '@deepseek-ai/dsh-client-ui-sidebar'
+const SELF = '@yharness/client-ui-settings-general'
+const SIDEBAR = '@yharness/client-ui-sidebar'
 const it = createClientTest({ roster: webApp })
 /** The whole roster's first boot pays the cold module transform of every plugin package. */
 const COLD_BOOT_TIMEOUT_MS = 60_000
@@ -94,12 +94,12 @@ describe('ui-settings-general apply', () => {
 
   it('fills the five seats of the shell it declares, with the locale-following General label', async ({ mock, start }) => {
     const { c } = await client(mock, start)
-    expect(c.ctx.locale.getSnapshot().active).toBe('zh')
+    expect(c.ctx.locale.getSnapshot().active).toBe('en')
     expectSeated(c)
     const entry = generalEntry(c)
     expect(entry.options).toMatchObject({ id: 'general', order: 0 })
     // The nav label is a locale-following thunk; owners resolve at read time.
-    expect(generalLabel(c)).toBe('通用设置')
+    expect(generalLabel(c)).toBe('General')
     expect(c.ctx.slots.spec('settings.general.item')).toEqual({ kind: 'list', scope: 'root' })
     // The shared developer-tool control belongs to General; onboarding remains feature-owned.
     expect(c.ctx.slots.entries('settings.general.item').filter(row => row.locale === NS).map(row => row.options.id)).toEqual(['developer-tools', 'current-version', 'desktop-update'])
@@ -120,15 +120,15 @@ describe('ui-settings-general apply', () => {
     }
   }, COLD_BOOT_TIMEOUT_MS)
 
-  it('registers the zh/en settings dictionaries and frees the seats when its row unloads', async ({ mock, start }) => {
+  it('registers the English settings dictionary and frees the seats when its row unloads', async ({ mock, start }) => {
     const { c, settings } = await client(mock, start)
     const english = localeView('en', 1)
     settings.mutate.mockResolvedValueOnce(ok(english))
     const t = c.ctx.locale.bind(NS)
-    expect(t('title')).toBe('设置')
-    expect(t('connection.error')).toBe('连接异常，刷新重试')
-    expect(t('connection.connecting')).toBe('重新连接中')
-    expect(t('connection.connected')).toBe('连接成功')
+    expect(t('title')).toBe('Settings')
+    expect(t('connection.error')).toBe('Disconnected')
+    expect(t('connection.connecting')).toBe('Reconnecting')
+    expect(t('connection.connected')).toBe('Connected')
     c.ctx.locale.setLocale('en')
     expect(t('close')).toBe('Close')
     expect(t('connection.reconnect')).toBe('Disconnected, reconnect now')
@@ -149,14 +149,13 @@ describe('ui-settings-general apply', () => {
   it('the nav label thunk follows the active locale without re-registration', async ({ mock, start }) => {
     const { c, settings } = await client(mock, start)
     const english = localeView('en', 1)
-    const chinese = localeView('zh', 2)
-    settings.mutate.mockResolvedValueOnce(ok(english)).mockResolvedValueOnce(ok(chinese))
-    const zhVersions = SEATS.map(([name]) => c.ctx.slots.getVersion(name))
+    settings.mutate.mockResolvedValueOnce(ok(english)).mockResolvedValueOnce(ok(english))
+    const initialVersions = SEATS.map(([name]) => c.ctx.slots.getVersion(name))
     c.ctx.locale.setLocale('en')
     // No ledger churn: freshness rides the thunk (and the renderer's locale
     // subscription), not re-registration.
     SEATS.forEach(([name], i) => {
-      expect(c.ctx.slots.getVersion(name)).toBe(zhVersions[i]!)
+      expect(c.ctx.slots.getVersion(name)).toBe(initialVersions[i]!)
       expect(ownEntries(c, name)).toHaveLength(1)
     })
     expect(generalLabel(c)).toBe('General')
@@ -164,13 +163,13 @@ describe('ui-settings-general apply', () => {
       expect(c.ctx.configForms.describe().getSnapshot().view?.namespaces).toEqual([english])
     })
     c.ctx.locale.setLocale('zh')
-    expect(generalLabel(c)).toBe('通用设置')
+    expect(generalLabel(c)).toBe('General')
     await vi.waitFor(() => {
       expect(settings.mutate.mock.calls).toEqual([
         [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'en' }], 0],
-        [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'zh' }], 1],
+        [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'en' }], 1],
       ])
-      expect(c.ctx.configForms.describe().getSnapshot().view?.namespaces).toEqual([chinese])
+      expect(c.ctx.configForms.describe().getSnapshot().view?.namespaces).toEqual([english])
     })
   })
 
@@ -216,18 +215,17 @@ describe('ui-settings-general apply', () => {
     expect(c.ctx.slots.entries('settings.general.item').filter(row => row.locale === NS).map(row => row.options.id)).toEqual(['developer-tools', 'current-version', 'desktop-update'])
     // The recovered registrations still ride the locale path.
     const english = localeView('en', 1)
-    const chinese = localeView('zh', 2)
-    settings.mutate.mockResolvedValueOnce(ok(english)).mockResolvedValueOnce(ok(chinese))
+    settings.mutate.mockResolvedValueOnce(ok(english)).mockResolvedValueOnce(ok(english))
     c.ctx.locale.setLocale('en')
     expect(generalLabel(c)).toBe('General')
     c.ctx.locale.setLocale('zh')
-    expect(generalLabel(c)).toBe('通用设置')
+    expect(generalLabel(c)).toBe('General')
     await vi.waitFor(() => {
       expect(settings.mutate.mock.calls).toEqual([
         [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'en' }], 0],
-        [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'zh' }], 1],
+        [LOCALE_SETTINGS_NAMESPACE, [{ op: 'set', path: ['preference'], value: 'en' }], 1],
       ])
-      expect(c.ctx.configForms.describe().getSnapshot().view?.namespaces).toEqual([chinese])
+      expect(c.ctx.configForms.describe().getSnapshot().view?.namespaces).toEqual([english])
     })
   })
 

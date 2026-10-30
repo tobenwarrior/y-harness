@@ -1,6 +1,6 @@
 /** Locale preference stored in the Host user-settings document. */
 
-import z from '@deepseek-ai/schemastery'
+import z from '@yharness/schemastery'
 
 /** Settings namespace owned by the locale plugin. */
 export const LOCALE_SETTINGS_NAMESPACE = 'locale'
@@ -12,7 +12,7 @@ export const LOCALE_PREFERENCE_FIELD = 'preference'
 export const LOCALE_ID_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u
 
 /** Locale identifiers shipped by the browser client. */
-export const LOCALE_IDS = ['zh', 'en'] as const
+export const LOCALE_IDS = ['en'] as const
 
 /** Locale identifier shipped by the browser client. */
 export type BuiltInLocaleId = typeof LOCALE_IDS[number]

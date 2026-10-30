@@ -5,7 +5,7 @@ import NodeModule, { createRequire, registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, toNamespacedPath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { ModuleLoader } from '@deepseek-ai/cordis-plugin-loader'
+import { ModuleLoader } from '@yharness/cordis-plugin-loader'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PackageManifests } from '../src/package-manifest.ts'
 

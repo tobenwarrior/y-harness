@@ -1,11 +1,11 @@
 /** Host-only OpenAI avatar generation backed by the existing credential and attachment seams. */
 
-import { Context } from '@deepseek-ai/cordis'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CredentialRef } from '@deepseek-ai/dsh-credentials/types'
-import type {} from '@deepseek-ai/dsh-settings'
-import z from '@deepseek-ai/schemastery'
-import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { Context } from '@yharness/cordis'
+import { brandString } from '@yharness/brand'
+import type { CredentialRef } from '@yharness/credentials/types'
+import type {} from '@yharness/settings'
+import z from '@yharness/schemastery'
+import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-protocol'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitRequest,
@@ -17,7 +17,7 @@ import type {
 
 export type * from './types.ts'
 
-declare module '@deepseek-ai/cordis' {
+declare module '@yharness/cordis' {
   interface Context {
     /** Host-only image generation for Bot avatar previews. */
     avatarGeneration: AvatarGenerationService

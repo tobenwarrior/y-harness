@@ -3,7 +3,7 @@ description: "Adaptive chooser of the directory-picker seam: resolves the web GU
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-host-directory-picker-auto
+# @yharness/host-directory-picker-auto
 
 ## Summary
 

@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
+import type { SessionListState } from '@yharness/api-session-controller/client'
+import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
+import { createSnapshotStore } from '@yharness/client-store'
+import { bindSnapshotSelector } from '@yharness/client-test-runtime'
 import { LanguageRow } from '../src/client/LanguageRow.tsx'
 import type { LanguageRowComponentProps } from '../src/client/LanguageRow.tsx'
 import { createLanguageRowStore } from '../src/client/settings-store.ts'
@@ -16,7 +16,7 @@ const usePanelInfo: GlobalStandardProps['usePanelInfo'] = selector => selector({
 
 afterEach(cleanup)
 
-const OPTIONS = [{ id: 'zh', label: '中文' }, { id: 'en', label: 'English' }]
+const OPTIONS = [{ id: 'en', label: 'English' }, { id: 'fr', label: 'French' }]
 
 function emptySessions() {
   const store = createSnapshotStore<SessionListState>(
@@ -66,26 +66,26 @@ describe('LanguageRow', () => {
     const trigger = screen.getByRole('button', { name: /English/ })
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(screen.getByRole('menuitem', { name: '中文' }))
-    expect(b.setLocale).toHaveBeenCalledWith('zh')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'French' }))
+    expect(b.setLocale).toHaveBeenCalledWith('fr')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('menuitem', { name: '中文' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'French' })).toBeNull()
   })
 
   it('closes on outside pointerdown without selecting', () => {
     const b = mount('en')
     fireEvent.click(screen.getByRole('button', { name: /English/ }))
-    expect(screen.getByRole('menuitem', { name: '中文' })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: 'French' })).toBeDefined()
     fireEvent.pointerDown(document.body)
-    expect(screen.queryByRole('menuitem', { name: '中文' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'French' })).toBeNull()
     expect(b.setLocale).not.toHaveBeenCalled()
   })
 
   it('follows store changes; an unknown active id falls back to the id itself', () => {
     const b = mount('en')
-    act(() => { b.store.actions.sync('zh', OPTIONS, 1) })
-    expect(screen.getByRole('button', { name: /中文/ })).toBeDefined()
-    act(() => { b.store.actions.sync('fr', OPTIONS, 2) })
-    expect(screen.getByRole('button', { name: /fr/ })).toBeDefined()
+    act(() => { b.store.actions.sync('fr', OPTIONS, 1) })
+    expect(screen.getByRole('button', { name: /French/ })).toBeDefined()
+    act(() => { b.store.actions.sync('de', OPTIONS, 2) })
+    expect(screen.getByRole('button', { name: /de/ })).toBeDefined()
   })
 })

@@ -364,7 +364,7 @@ describe('dsh web keyless CLI smoke', () => {
         /^\/plugins\/\?\?.+\/client\.js,.+\/client\.js&rev=[a-f\d]{12}$/.test(path)
       ))).toHaveLength(2)
       expect(batchPaths).toContainEqual(expect.stringMatching(
-        /^\/plugins\/\?\?@deepseek-ai\/dsh-client-modules\/client\.js&rev=[a-f\d]{12}$/,
+        /^\/plugins\/\?\?@yharness\/client-modules\/client\.js&rev=[a-f\d]{12}$/,
       ))
       const readyOrigin = new URL(readyUrl).origin
       expect([...cacheHeaders.values()]).toEqual([
@@ -801,7 +801,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || notReady.length > 0)('web smoke
   it('bash differential rendering: tool row click leaves the default details column closed', async () => {
     onTestFailed(() => saveFailureShot(page, 'w5-tool-details'))
     const input = page.locator('[data-composer-input]').first()
-    await input.fill('请用 bash 工具运行命令 echo w5marker 然后告诉我结果')
+    await input.fill('\u{8BF7}\u{7528} bash \u{5DE5}\u{5177}\u{8FD0}\u{884C}\u{547D}\u{4EE4} echo w5marker \u{7136}\u{540E}\u{544A}\u{8BC9}\u{6211}\u{7ED3}\u{679C}')
     await input.press('Enter')
     // Wait for the tool ROW, not response text (the reply echoes any marker).
     // Bash renders through the third-party sample registration. Match that

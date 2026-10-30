@@ -3,16 +3,16 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { createScope } from '@deepseek-ai/dsh-scope'
-import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
-import { PluginPackages } from '@deepseek-ai/dsh-app-boot'
-import DeepSeekLlmApiExtensionRegistry from '@deepseek-ai/dsh-deepseek-llm-api-extensions'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import AgentRegistry, { type Agent } from '@yharness/agent'
+import { SessionId } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import { createScope } from '@yharness/scope'
+import AgentPresets from '@yharness/agent-preset-registry'
+import { PluginPackages } from '@yharness/app-boot'
+import DeepSeekLlmApiExtensionRegistry from '@yharness/deepseek-llm-api-extensions'
 import * as PluginInventory from '../src/index.ts'
 
 const contexts: Context[] = []
@@ -40,7 +40,7 @@ async function packagePlugin(
 async function harness(
   enabled?: boolean, packageService = false,
 ): Promise<{ ctx: Context; root: string; disposeInventory: () => Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-plugin-packages-'))
+  const root = await mkdtemp(join(tmpdir(), 'yharness-plugin-packages-'))
   roots.push(root)
   const ctx = new Context()
   contexts.push(ctx)
@@ -98,12 +98,12 @@ describe('DeepSeek plugin package inventory', () => {
     })
   })
 
-  it('fails request preparation for an active package with malformed identity metadata', async () => {
+  it('omits the request field for an active package with malformed identity metadata', async () => {
     const { ctx, root } = await harness()
     const bad = await packagePlugin(root, 'bad', { name: 'bad' })
     await ctx.loader.create({ name: bad })
     await expect(ctx.deepseekLlmApiExtensions.prepare({ body: { messages: [] }, signal: SIGNAL }))
-      .rejects.toThrow(/must declare non-empty name and version/)
+      .resolves.toMatchObject({ fields: {} })
   })
 
   it('omits a loose ESM module whose nearest manifest only marks the module type', async () => {
@@ -162,7 +162,7 @@ describe('DeepSeek plugin package inventory', () => {
     ])
   })
 
-  it('fails when a Loader-resolved bare entry has no package manifest', async () => {
+  it('omits the request field when a Loader-resolved bare entry has no package manifest', async () => {
     const { ctx } = await harness()
     ctx.loader.internal = {
       version: 'v2',
@@ -170,10 +170,10 @@ describe('DeepSeek plugin package inventory', () => {
     } as unknown as NonNullable<typeof ctx.loader.internal>
     await ctx.loader.create({ name: 'missing-package' })
     await expect(ctx.deepseekLlmApiExtensions.prepare({ body: { messages: [] }, signal: SIGNAL }))
-      .rejects.toThrow(/cannot resolve active package/)
+      .resolves.toMatchObject({ fields: {} })
   })
 
-  it('does not bypass the profile package service for a missing bare package', async () => {
+  it('omits the request field when the profile package service cannot resolve a bare package', async () => {
     const { ctx } = await harness(undefined, true)
     ctx.loader.internal = {
       version: 'v2',
@@ -182,7 +182,7 @@ describe('DeepSeek plugin package inventory', () => {
     await ctx.loader.create({ name: 'missing-profile-package' })
 
     await expect(ctx.deepseekLlmApiExtensions.prepare({ body: { messages: [] }, signal: SIGNAL }))
-      .rejects.toThrow(/cannot resolve active package/)
+      .resolves.toMatchObject({ fields: {} })
   })
 
   it('supports a direct embedding whose context has no base URL', async () => {

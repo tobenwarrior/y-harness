@@ -41,7 +41,7 @@
     - id: tool-cordis
       name: '@deepseek-ai/dsh-tool-cordis'
     - id: llm-replay
-      name: '@deepseek-ai/dsh-llm-replay'
+      name: '@yharness/llm-replay'
       config:
         providers:
           - id: deepseek-official

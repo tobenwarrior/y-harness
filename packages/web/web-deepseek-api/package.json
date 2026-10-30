@@ -1,13 +1,13 @@
 {
-  "name": "@deepseek-ai/dsh-web-deepseek-api",
-  "description": "DeepSeek Search and Fetch API providers for the DeepSeek Harness web capability seam (ctx.web)",
+  "name": "@yharness/web-deepseek-api",
+  "description": "DeepSeek Search and Fetch API providers for the Y Harness web capability seam (ctx.web)",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "url": "git+https://github.com/tobenwarrior/y-harness.git",
     "directory": "packages/web/web-deepseek-api"
   },
   "type": "module",
@@ -29,30 +29,30 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
-    "@deepseek-ai/dsh-launch-environment": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-web": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~"
+    "@yharness/agent": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/deepseek-account": "workspace:*",
+    "@yharness/launch-environment": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/web": "workspace:*",
+    "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-agent": "workspace:*",
-    "@deepseek-ai/dsh-credentials": "workspace:*",
-    "@deepseek-ai/dsh-credentials-local": "workspace:*",
-    "@deepseek-ai/dsh-deepseek-account": "workspace:*",
-    "@deepseek-ai/dsh-launch-environment": "workspace:*",
-    "@deepseek-ai/dsh-session": "workspace:*",
-    "@deepseek-ai/dsh-web": "workspace:*",
-    "@deepseek-ai/cordis": "workspace:~",
-    "@deepseek-ai/dsh-http-proxy": "workspace:*"
+    "@yharness/agent": "workspace:*",
+    "@yharness/credentials": "workspace:*",
+    "@yharness/credentials-local": "workspace:*",
+    "@yharness/deepseek-account": "workspace:*",
+    "@yharness/launch-environment": "workspace:*",
+    "@yharness/session": "workspace:*",
+    "@yharness/web": "workspace:*",
+    "@yharness/cordis": "workspace:~",
+    "@yharness/http-proxy": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-deepseek-account": {
+    "@yharness/deepseek-account": {
       "optional": true
     }
   }

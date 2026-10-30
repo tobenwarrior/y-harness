@@ -1,7 +1,7 @@
 import type {
   SessionAssistantSettlementEntry, SessionEventLikeEntry, SessionTransientEventEntry,
-} from '@deepseek-ai/dsh-api-session-controller/client'
-import type { LlmAttemptId } from '@deepseek-ai/dsh-llm/brand'
+} from '@yharness/api-session-controller/client'
+import type { LlmAttemptId } from '@yharness/llm/brand'
 import type {
   ConversationContextReader, ConversationLocationData, ConversationMatch,
   ConversationNodeContext, ConversationNodeDefinition, ConversationPreviousContext,

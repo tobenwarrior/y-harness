@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { agentEvents, installModelSelection, type Agent, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction'
-import LlmRuntime, { createDeveloperMessage, createMessage, createSystemMessage, createToolResultMessage, createUserMessage, LlmError, ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
-import SessionTitleService from '@deepseek-ai/dsh-session-title'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import { Context } from '@yharness/cordis'
+import { agentEvents, installModelSelection, type Agent, type ModelSelectionRef } from '@yharness/agent'
+import { CompactionId, compactCheckpointSource } from '@yharness/compaction'
+import LlmRuntime, { createDeveloperMessage, createMessage, createSystemMessage, createToolResultMessage, createUserMessage, LlmError, ToolCallId } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
+import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
+import SessionQueryEngine from '@yharness/session-query'
+import SessionTitleService from '@yharness/session-title'
+import SystemPrompt from '@yharness/system-prompt'
 import SessionReferenceResolver, {
   decodeSessionReferenceUri,
   encodeSessionReferenceUri,
@@ -16,11 +16,11 @@ import SessionReferenceResolver, {
   parseSessionReferenceText,
   type Config,
   type SessionReferenceErrorCode,
-} from '@deepseek-ai/dsh-session-reference'
+} from '@yharness/session-reference'
 import { stringifyTagSafeJson } from '../src/serialization.ts'
-import { SpillLocator, SpillStore, type SaveTextSpill, type SpillRef } from '@deepseek-ai/dsh-spill'
+import { SpillLocator, SpillStore, type SaveTextSpill, type SpillRef } from '@yharness/spill'
 
-declare module '@deepseek-ai/dsh-llm' {
+declare module '@yharness/llm' {
   interface MessageSourceMap {
     'test': { kind: 'test' } & ContextFormed
     'workspace': { kind: 'workspace' } & ContextFormed
@@ -257,15 +257,15 @@ function promptData(text: string): unknown {
 
 describe('session reference URI and inline mentions', () => {
   it('round-trips arbitrary session ids and replaces mentions with readable labels', () => {
-    const sessionId = SessionId('unicode/引号"/slash\\/line\n')
+    const sessionId = SessionId('unicode/\u{5F15}\u{53F7}"/slash\\/line\n')
     const uri = encodeSessionReferenceUri(sessionId)
     expect(decodeSessionReferenceUri(uri)).toBe(sessionId)
 
-    const mention = formatSessionReferenceMention({ sessionId, label: '源]会话' })
+    const mention = formatSessionReferenceMention({ sessionId, label: '\u{6E90}]\u{4F1A}\u{8BDD}' })
     const parsed = parseSessionReferenceText(`compare ${mention} and ${uri}`)
-    expect(parsed.text).toBe(`compare @源]会话 and @${sessionId}`)
+    expect(parsed.text).toBe(`compare @\u{6E90}]\u{4F1A}\u{8BDD} and @${sessionId}`)
     expect(parsed.references).toEqual([
-      { sessionId, label: '源]会话' },
+      { sessionId, label: '\u{6E90}]\u{4F1A}\u{8BDD}' },
       { sessionId, label: sessionId },
     ])
     expect(formatSessionReferenceMention({ sessionId })).toContain(`@[${sessionId.replaceAll('\\', '\\\\').replaceAll(']', '\\]')}]`)
@@ -334,8 +334,8 @@ describe('session reference spill outcomes', () => {
   })
 
   it.each([
-    ['huge single message', ['head\n' + '界😀'.repeat(10000) + '\ntail'], 360],
-    ['whole dropped messages', ['old ' + '界'.repeat(300), 'new fact'], 180],
+    ['huge single message', ['head\n' + '\u{754C}😀'.repeat(10000) + '\ntail'], 360],
+    ['whole dropped messages', ['old ' + '\u{754C}'.repeat(300), 'new fact'], 180],
     ['tiny preview', ['😀'.repeat(300)], 140],
     ['escaped controls', [String.fromCharCode(0, 10, 13, 9, 34, 92).repeat(300)], 180],
   ] as const)('saves the full captured transcript for %s', async (_name, texts, budget) => {
@@ -436,7 +436,7 @@ describe('session reference spill outcomes', () => {
       }
       const target = ctx.sessions.create(SessionId('target'))
       const source = ctx.sessions.create(SessionId('source'))
-      appendText(source, '界'.repeat(500))
+      appendText(source, '\u{754C}'.repeat(500))
       const result = await ctx.sessionReferenceResolver.prepare(fakeAgent(target), [], [{ sessionId: source.id }])
       const prompt = contextText(result)
       expect(prompt).toContain('"status":"unavailable"')
@@ -1174,7 +1174,7 @@ describe('session reference discovery and preparation', () => {
         step: 1,
         message: createMessage({
           role: 'assistant',
-          content: [{ type: 'text', text: `latest-${'界'.repeat(400)}` }],
+          content: [{ type: 'text', text: `latest-${'\u{754C}'.repeat(400)}` }],
           source: {
             kind: 'model',
             ...{ provider: 'mock', model: 'mock' },
@@ -1204,7 +1204,7 @@ describe('session reference discovery and preparation', () => {
       source.append(
         'user/message',
         createUserMessage({
-          content: [{ type: 'text', text: `${id}-${'界'.repeat(400)}` }],
+          content: [{ type: 'text', text: `${id}-${'\u{754C}'.repeat(400)}` }],
           source: checkpointSource(id),
         }),
         { surfaceOp: 'append' },

@@ -6,9 +6,9 @@ import { chromium, type Browser, type Page } from 'playwright'
 import { unzipSync, strFromU8 } from 'fflate'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { tmpdir, release } from 'node:os'
-import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-tool-present/types'
+import { createLaunchEnvironmentSnapshot } from '@yharness/launch-environment'
+import type { SessionEvent, SessionId } from '@yharness/session'
+import type {} from '@yharness/tool-present/types'
 import {
   acknowledgeReloadConnectionLoss, assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria,
   compareOrRefreshGolden, fixtureUserPrompts, launchWebScaffold, recordFixture,
@@ -20,9 +20,9 @@ const DIR = fileURLToPath(new URL('../../../snapshots/web/present', import.meta.
 const FIXTURE = join(DIR, 'session.v3.jsonl')
 const MODE = webSnapshotMode()
 const PROMPT = 'Use one run_code program to do the following in order. Call present for missing.txt and catch its error without creating that file. '
-  + 'Use bash to run exactly `printf "DELIVERED_REPORT\\n" > report.txt; printf "DELIVERED_NOTE\\n" > 说明.txt`. '
-  + 'Call present for report.txt and 说明.txt. After present succeeds, deliberately throw the string "AFTER_PRESENT" (not an Error object) from that same run_code program. '
-  + 'Do not retry the program or create any other files. Finish by mentioning `report.txt` and `说明.txt` in inline code, and put PRESENT_DONE in a separate paragraph.'
+  + 'Use bash to run exactly `printf "DELIVERED_REPORT\\n" > report.txt; printf "DELIVERED_NOTE\\n" > \u{8BF4}\u{660E}.txt`. '
+  + 'Call present for report.txt and \u{8BF4}\u{660E}.txt. After present succeeds, deliberately throw the string "AFTER_PRESENT" (not an Error object) from that same run_code program. '
+  + 'Do not retry the program or create any other files. Finish by mentioning `report.txt` and `\u{8BF4}\u{660E}.txt` in inline code, and put PRESENT_DONE in a separate paragraph.'
 
 // The recorded Bash scenario and executable opener fixture require a POSIX host outside WSL.
 describe.skipIf(process.platform === 'win32' || release().toLowerCase().includes('microsoft'))('web e2e: explicit file delivery', () => {
@@ -105,12 +105,12 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
     await page.getByText(/^PRESENT_DONE\.?$/).waitFor({ timeout: 30_000 })
     await assertFinalWorkspaceSnapshot(DIR, cwd)
     expect(events.filter(event => event.type === 'deliverables/presented').flatMap(event => event.data.files.map(file => file.path)))
-      .toEqual(['report.txt', '说明.txt'])
+      .toEqual(['report.txt', '\u{8BF4}\u{660E}.txt'])
     for (const event of events) {
       if (event.type === 'deliverables/presented') {
         expect(event.data.files).toEqual([
           { path: 'report.txt', description: 'delivered report' },
-          { path: '说明.txt', description: 'delivered note' },
+          { path: '\u{8BF4}\u{660E}.txt', description: 'delivered note' },
         ])
       }
     }
@@ -120,7 +120,7 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
 
   it('opens current source files after edits and reload, and reports deletion without downloading', async () => {
     await writeFile(join(cwd, 'report.txt'), 'EDITED_REPORT\n')
-    await writeFile(join(cwd, '说明.txt'), 'EDITED_NOTE\n')
+    await writeFile(join(cwd, '\u{8BF4}\u{660E}.txt'), 'EDITED_NOTE\n')
     for (const reload of [false, true]) {
       if (reload) {
         const warningStart = tripwire.warnings.length
@@ -146,7 +146,7 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
       await page.mouse.move(0, 0)
       const beforePreview = (await opened()).length
       const column = page.locator('[data-rightbar-col]')
-      for (const [name, content] of [['report.txt', 'EDITED_REPORT'], ['说明.txt', 'EDITED_NOTE']] as const) {
+      for (const [name, content] of [['report.txt', 'EDITED_REPORT'], ['\u{8BF4}\u{660E}.txt', 'EDITED_NOTE']] as const) {
         const mention = page.locator('code').getByRole('button', { name: `Open ${name} in sidebar`, exact: true })
         await mention.click()
         const preview = column.locator('[data-document-preview]')
@@ -166,7 +166,7 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
       expect((await revealResponse).status()).toBe(204)
       await expect.poll(opened).toHaveLength(beforeReveal + 1)
       expect((await opened()).at(-1)).toEqual({ action: 'reveal', content: null, path: await realpath(process.platform === 'darwin' ? join(cwd, 'report.txt') : cwd) })
-      for (const [name, bytes] of [['report.txt', 'EDITED_REPORT\n'], ['说明.txt', 'EDITED_NOTE\n']] as const) {
+      for (const [name, bytes] of [['report.txt', 'EDITED_REPORT\n'], ['\u{8BF4}\u{660E}.txt', 'EDITED_NOTE\n']] as const) {
         const count = (await opened()).length
         const response = page.waitForResponse(response => response.url().includes('/api/present.open?') && response.request().method() === 'POST')
         await row.locator('[data-presented-file]').filter({ hasText: name }).getByRole('button', { name: 'Open in Test Editor', exact: true }).click()
@@ -188,7 +188,7 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
     expect(declarations).toHaveLength(1)
     expect(declarations[0]!.data.files).toEqual([
       { path: 'report.txt', description: 'delivered report' },
-      { path: '说明.txt', description: 'delivered note' },
+      { path: '\u{8BF4}\u{660E}.txt', description: 'delivered note' },
     ])
     expect(exported).not.toContain('EDITED_REPORT')
     if (MODE !== 'record') {

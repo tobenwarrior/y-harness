@@ -3,11 +3,11 @@ description: "The pi-ai-backed multi-provider adapter for users and maintainers 
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-llm-pi-ai
+# @yharness/llm-pi-ai
 
 ## Summary
 
-`@deepseek-ai/dsh-llm-pi-ai` routes model requests to multiple pi-ai providers, OpenAI-compatible gateways, or self-hosted servers from one configuration. Installed pi-ai providers supply endpoint, protocol, and model-catalog defaults; custom routes can declare those values without code changes. Profiles and credentials are resolved for each request, so settings changes take effect on the next request without a restart. Supported providers can use stored OAuth or interactive-key sign-in with cross-process refresh locking. The package may start with no routes and activate when user settings add them.
+`@yharness/llm-pi-ai` routes model requests to multiple pi-ai providers, OpenAI-compatible gateways, or self-hosted servers from one configuration. Installed pi-ai providers supply endpoint, protocol, and model-catalog defaults; custom routes can declare those values without code changes. Profiles and credentials are resolved for each request, so settings changes take effect on the next request without a restart. Supported providers can use stored OAuth or interactive-key sign-in with cross-process refresh locking. The package may start with no routes and activate when user settings add them.
 
 ## Table of Contents
 
@@ -49,7 +49,7 @@ When the skill library is mounted, its Codex inventory reads metadata only from 
 
 When the coding-session service is mounted, the already connected native peer registers source-labelled history discovery and import under its configured native-home identity. The reader uses supported original-thread APIs without launching another process or changing model/auth settings. Retained mirrors remain readable when the connection is unavailable. The [coding-session package](../../session/coding-session/README.md) owns pagination, reconciliation, limits, and the separate continuation modes.
 
-To read a separately selected original CLI profile without enabling a model, mount `@deepseek-ai/dsh-llm-pi-ai/coding-session-source` beside `codingSessions` and a local `subprocess` provider. Its `sources` defaults to an empty list. Each entry requires an `id`, `label`, absolute original `home`, selected official package `packageManifest`, its `binary` Node wrapper, exact `binarySha256`, pinned `version: '0.160.0'`, and explicit `nodePath`, `shellHome`, and `cwd`; `graceMs` defaults to 2000. No home is inferred or scanned. `cwd` selects the launch directory, while discovery remains scoped to the selected native home. Package metadata is bounded to 64 KiB and the wrapper to 1 MiB during verification.
+To read a separately selected original CLI profile without enabling a model, mount `@yharness/llm-pi-ai/coding-session-source` beside `codingSessions` and a local `subprocess` provider. Its `sources` defaults to an empty list. Each entry requires an `id`, `label`, absolute original `home`, selected official package `packageManifest`, its `binary` Node wrapper, exact `binarySha256`, pinned `version: '0.160.0'`, and explicit `nodePath`, `shellHome`, and `cwd`; `graceMs` defaults to 2000. No home is inferred or scanned. `cwd` selects the launch directory, while discovery remains scoped to the selected native home. Package metadata is bounded to 64 KiB and the wrapper to 1 MiB during verification.
 
 Mounting verifies the selected package and wrapper but starts no process. Explicit discovery or import opens a private managed stdio app-server with child-only `CODEX_HOME` and shell environment, verifies its returned native home and version, and exposes only supported thread-history reads. Full UTF-8 request/reply frames are bounded, native approval requests are refused, and each read awaits process-range quiescence before completing. Parent environment, native authentication, and model controls are not modified. Native supported reads can initialize or migrate their own index. These sources remain readers unless sequential handoff is explicitly enabled. Native-enforced exclusive continuation remains a separate unavailable capability.
 
@@ -70,7 +70,7 @@ Continue preserves the original native ID and rechecks the captured Agent, proje
 Each profile may set a `retryPolicy`; omission uses normal mode with five retries. `apiKeyEnv` is a credential reference resolved per request through the harness credential seam, so no secret enters the configuration file; a reference that resolves to nothing fails the request with `MISSING_CREDENTIAL`. Omitting it leaves the route configured-but-keyless, which for an installed catalog route defers to pi-ai's provider-native ambient discovery.
 
 ```yaml
-- name: '@deepseek-ai/dsh-llm-pi-ai'
+- name: '@yharness/llm-pi-ai'
   config:
     providers:
       openai:
@@ -120,7 +120,7 @@ Each profile may set a `retryPolicy`; omission uses normal mode with five retrie
 | `maxRequestImageBytes` | `20 MiB` | Aggregate base64 image-payload bound; a request whose retained images exceed it fails with `IMAGE_OFFLOAD_REQUIRED` |
 | `retryPolicy` | normal, 5 retries | Provider-owned retry policy executed by `dsh-llm-retry` |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) describes every accepted configuration field of the package-root LLM adapter and its JSDoc. The `coding-session-source` subpath uses the explicit source configuration described above.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessllm-pi-ai) describes every accepted configuration field of the package-root LLM adapter and its JSDoc. The `coding-session-source` subpath uses the explicit source configuration described above.
 
 ### Sign in to a provider
 
@@ -204,7 +204,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [LLM streaming subsystem](../../../docs/subsystems/llm-streaming.md) — the `StreamChunk` protocol and adapter contract.
 - [llm-retry](../llm-retry/README.md) — the retry executor that applies each profile's `retryPolicy`.
 - [Twin LLM adapters](../../../.agents/notes/implemented/architecture/2026-06-13-twin-llm-adapters.md) — why the DeepSeek route ships two structurally different adapters.
-- [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-llm-pi-ai) — every package-root LLM adapter config field and its source declaration.
+- [Generated configuration catalog](../../../docs/config-catalog.md#yharnessllm-pi-ai) — every package-root LLM adapter config field and its source declaration.
 
 -----
 

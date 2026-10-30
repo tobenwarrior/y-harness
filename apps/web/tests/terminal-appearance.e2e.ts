@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
-import { ToolCallId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import { ToolCallId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@yharness/llm'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
 import {
   acknowledgeReloadConnectionLoss, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
@@ -92,9 +92,9 @@ describe('web e2e: terminal appearance', () => {
 
   async function appearanceDialog(target: Page = page, locale: 'en' | 'zh' = 'en'): Promise<Locator> {
     await openSettings(target, locale)
-    const dialog = target.getByRole('dialog', { name: locale === 'en' ? 'Settings' : '设置', exact: true })
-    await dialog.getByRole('button', { name: locale === 'en' ? 'Appearance' : '外观', exact: true }).click()
-    await dialog.getByRole('group', { name: locale === 'en' ? 'Style' : '风格', exact: true }).waitFor()
+    const dialog = target.getByRole('dialog', { name: locale === 'en' ? 'Settings' : '\u{8BBE}\u{7F6E}', exact: true })
+    await dialog.getByRole('button', { name: locale === 'en' ? 'Appearance' : '\u{5916}\u{89C2}', exact: true }).click()
+    await dialog.getByRole('group', { name: locale === 'en' ? 'Style' : '\u{98CE}\u{683C}', exact: true }).waitFor()
     return dialog
   }
 
@@ -338,8 +338,8 @@ describe('web e2e: terminal appearance', () => {
     const localTripwire = watchConsole(target)
     try {
       await target.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
-      const dialog = await appearanceDialog(target, 'zh')
-      expect(await dialog.getByRole('button', { name: '外观', exact: true }).getAttribute('aria-current')).toBe('true')
+      const dialog = await appearanceDialog(target)
+      expect(await dialog.getByRole('button', { name: 'Appearance', exact: true }).getAttribute('aria-current')).toBe('true')
       await compareOrRefreshGolden(join(EXPECTED, 'appearance-zh.expected.md'),
         await captureStableAria(target, '[role="dialog"]', scaffold.workspaceCwd), webSnapshotMode())
       expect(await dialog.evaluate(element => element.getBoundingClientRect().right <= innerWidth + 1)).toBe(true)

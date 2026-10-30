@@ -1,17 +1,16 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { useSyncExternalStore } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { AskUserQuestionAnswerItem } from '@deepseek-ai/dsh-user-questions/types'
+import { ToolCallId } from '@yharness/llm'
+import type { SessionId } from '@yharness/session/types'
+import type { AskUserQuestionAnswerItem } from '@yharness/user-questions/types'
 import { createWaterfallRequest, PendingQuestion, type QuestionCardSnapshot, type QuestionComposerProps } from '../src/client/contract/slots.ts'
 import { createQuestionDraftStore } from '../src/client/draft-store.ts'
 import { QuestionComposer as Composer, parseRecommendedLabel } from '../src/client/QuestionComposer.tsx'
-import { en, zh } from '../src/client/locales.ts'
-import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
-import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { en } from '../src/client/locales.ts'
+import { en as commonEn } from '@yharness/client-locale/src/locales/en.ts'
 
 // Every session-scope fixture carries the resource hook the resources plugin merges into GlobalStandardProps.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined, reload: () => {} })) as GlobalStandardProps['useResource']
@@ -137,7 +136,7 @@ const kitBase: Omit<QuestionComposerProps, 'matched' | 'useStore' | 'useQuestion
     submit: () => { throw new Error('unused') },
   },
   // The seat's key domain is question ∪ common.
-  t: seatOver(zh, commonZh),
+  t: seatOver(en, commonEn),
 }
 
 let kit: Omit<QuestionComposerProps, 'matched' | 'useQuestionCard'>
@@ -166,19 +165,19 @@ beforeEach(() => {
 
 const QUESTIONS: PendingQuestion['questions'] = [
   {
-    id: 'profile', header: '偏好', question: '选择候选人类型',
-    detail: '按当前空缺岗位的优先级选择。',
+    id: 'profile', header: 'Preferences', question: 'Choose candidate type',
+    detail: 'Choose based on the current opening priority.',
     options: [
-      { label: '工程落地型 (Recommended)', description: '优先工程交付。' },
-      { label: '研究潜力型', description: '优先研究能力。' },
+      { label: 'Engineering delivery (Recommended)', description: 'Prioritize engineering delivery.' },
+      { label: 'Research potential', description: 'Prioritize research ability.' },
     ],
   },
   {
-    id: 'detail', question: '补充你的要求',
+    id: 'detail', question: 'Add your requirements',
   },
   {
-    id: 'signals', question: '选择重要信号（可多选）', multiSelect: true,
-    options: [{ label: '系统设计' }, { label: '代码质量' }, { label: '产品判断' }],
+    id: 'signals', question: 'Select important signals (choose multiple)', multiSelect: true,
+    options: [{ label: 'System design' }, { label: 'Code quality' }, { label: 'Product judgment' }],
   },
 ]
 
@@ -204,23 +203,23 @@ describe('QuestionComposer', () => {
     const status = () => view.container.querySelector('[class*="waitStatus"]')
 
     expect(status()).toBeNull()
-    expect(screen.queryByText('会一直等你回答')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: /工程落地型/ }))
+    expect(screen.queryByText('Waiting until you answer')).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: /Engineering delivery/ }))
     expect(carrier.snapshot()).toMatchObject({ waitState: 'editing', countdown: undefined })
     expect(status()).toBeNull()
-    expect(screen.queryByText('会一直等你回答')).toBeNull()
-    expect(screen.queryByRole('button', { name: '慢慢回答' })).toBeNull()
-    expect(screen.getByRole('button', { name: '放弃整组问题' })).toBeTruthy()
+    expect(screen.queryByText('Waiting until you answer')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Take time' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Dismiss all questions' })).toBeTruthy()
   })
 
   it('keeps a recommended default selected without pausing a timed wait', () => {
     const { carrier } = wait(QUESTIONS, Date.now() + 30_000)
     try {
       const view = render(<QuestionComposer matched={carrier} {...kit} />)
-      expect(screen.getByRole('radio', { name: /工程落地型/ }).getAttribute('aria-checked')).toBe('true')
+      expect(screen.getByRole('radio', { name: /Engineering delivery/ }).getAttribute('aria-checked')).toBe('true')
       expect(carrier.snapshot().countdown?.running).toBe(true)
 
-      fireEvent.click(screen.getByLabelText('下一题'))
+      fireEvent.click(screen.getByLabelText('Next question'))
       view.unmount()
       render(<QuestionComposer matched={carrier} {...kit} />)
       expect(carrier.snapshot().countdown?.running).toBe(true)
@@ -238,7 +237,7 @@ describe('QuestionComposer', () => {
     const option = screen.getByRole('radio', { name: 'Alpha' })
     expect(fireEvent.keyDown(option, { key: 'Enter' })).toBe(false)
     expect(option.getAttribute('aria-checked')).toBe('false')
-    expect(screen.getByRole('status').textContent).toBe('请先完成这道问题。')
+    expect(screen.getByRole('status').textContent).toBe('Please complete this question first.')
     expect(answer).not.toHaveBeenCalled()
   })
 
@@ -246,61 +245,61 @@ describe('QuestionComposer', () => {
     const { carrier, answer } = wait()
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByText('偏好')).toBeTruthy()
+    expect(screen.getByText('Preferences')).toBeTruthy()
     expect(screen.getByText('1 / 3')).toBeTruthy()
-    expect(screen.getByText('推荐')).toBeTruthy()
-    expect(screen.getByText('工程落地型')).toBeTruthy()
-    expect(screen.getByRole('radio', { name: /工程落地型/ }).getAttribute('aria-checked')).toBe('true')
-    const detail = screen.getByText('按当前空缺岗位的优先级选择。')
+    expect(screen.getByText('Recommended')).toBeTruthy()
+    expect(screen.getByText('Engineering delivery')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: /Engineering delivery/ }).getAttribute('aria-checked')).toBe('true')
+    const detail = screen.getByText('Choose based on the current opening priority.')
     const scrollRegion = detail.closest('[data-question-scroll]')
     expect(scrollRegion).toBeTruthy()
-    expect(scrollRegion?.contains(screen.getByRole('radio', { name: /工程落地型/ }))).toBe(true)
-    expect(scrollRegion?.contains(screen.getByText('下一题').closest('button'))).toBe(false)
-    fireEvent.click(screen.getByRole('radio', { name: /工程落地型/ }))
+    expect(scrollRegion?.contains(screen.getByRole('radio', { name: /Engineering delivery/ }))).toBe(true)
+    expect(scrollRegion?.contains(screen.getByLabelText(en['nav.next']))).toBe(false)
+    fireEvent.click(screen.getByRole('radio', { name: /Engineering delivery/ }))
 
     expect(screen.getByText('2 / 3')).toBeTruthy()
     // detail is per-question: the second question carries none.
-    expect(screen.queryByText('按当前空缺岗位的优先级选择。')).toBeNull()
-    expect(screen.queryByRole('button', { name: '填写答案' })).toBeNull()
-    const custom = screen.getByPlaceholderText('输入你的答案')
-    fireEvent.change(custom, { target: { value: '要能独立排查线上问题' } })
+    expect(screen.queryByText('Choose based on the current opening priority.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Type your answer' })).toBeNull()
+    const custom = screen.getByPlaceholderText('Type your answer')
+    fireEvent.change(custom, { target: { value: 'Able to independently troubleshoot production issues.' } })
     fireEvent.keyDown(custom, { key: 'Enter' })
 
     expect(screen.getByText('3 / 3')).toBeTruthy()
     // The model's question text renders verbatim — no marker filtering.
-    expect(screen.getByText('选择重要信号（可多选）')).toBeTruthy()
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: '代码质量' }))
-    const multiCustom = screen.getByPlaceholderText('输入你的答案')
-    fireEvent.change(multiCustom, { target: { value: '沟通能力' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: '产品判断' }))
-    expect(screen.getByRole('checkbox', { name: '系统设计' }).getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByRole('checkbox', { name: '代码质量' }).getAttribute('aria-checked')).toBe('true')
-    expect((multiCustom as HTMLInputElement).value).toBe('沟通能力')
+    expect(screen.getByText('Select important signals (choose multiple)')).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Code quality' }))
+    const multiCustom = screen.getByPlaceholderText('Type your answer')
+    fireEvent.change(multiCustom, { target: { value: 'Communication skills' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Product judgment' }))
+    expect(screen.getByRole('checkbox', { name: 'System design' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: 'Code quality' }).getAttribute('aria-checked')).toBe('true')
+    expect((multiCustom as HTMLInputElement).value).toBe('Communication skills')
     fireEvent.keyDown(multiCustom, { key: 'Enter' })
 
     // The domain face encoded the whole batch into one carrier envelope.
     expect(answer).toHaveBeenCalledWith(answerBatch([
-      { id: 'profile', selected: ['工程落地型 (Recommended)'] },
-      { id: 'detail', selected: [], custom: '要能独立排查线上问题' },
-      { id: 'signals', selected: ['系统设计', '代码质量', '产品判断'], custom: '沟通能力' },
+      { id: 'profile', selected: ['Engineering delivery (Recommended)'] },
+      { id: 'detail', selected: [], custom: 'Able to independently troubleshoot production issues.' },
+      { id: 'signals', selected: ['System design', 'Code quality', 'Product judgment'], custom: 'Communication skills' },
     ]))
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '正在提交…' }).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submitting…' }).disabled).toBe(true)
   })
 
   it('renders plan detail through the shared assistant Markdown primitive', () => {
     const { carrier } = wait([{
       id: 'plan',
-      question: '批准这个计划吗？',
-      detail: '# 实施计划\n\n- **先验证**现状\n- 修改 `QuestionComposer`',
-      options: [{ label: '批准' }],
+      question: 'Approve this plan?',
+      detail: '# Implementation plan\n\n- **Verify first** current state\n- edit `QuestionComposer`',
+      options: [{ label: 'Approve' }],
     }])
     const view = render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByRole('heading', { level: 1, name: '实施计划' })).toBeTruthy()
-    expect(view.container.querySelector('strong')?.textContent).toBe('先验证')
+    expect(screen.getByRole('heading', { level: 1, name: 'Implementation plan' })).toBeTruthy()
+    expect(view.container.querySelector('strong')?.textContent).toBe('Verify first')
     expect(view.container.querySelector('code')?.textContent).toBe('QuestionComposer')
     expect(view.container.querySelectorAll('li')).toHaveLength(2)
   })
@@ -309,16 +308,16 @@ describe('QuestionComposer', () => {
     const { carrier, answer } = wait()
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByRole('radio', { name: /工程落地型/ }).getAttribute('aria-checked')).toBe('true')
-    expect((screen.getByText('下一题').closest('button') as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.click(screen.getByRole('radio', { name: '研究潜力型' }))
+    expect(screen.getByRole('radio', { name: /Engineering delivery/ }).getAttribute('aria-checked')).toBe('true')
+    expect((screen.getByLabelText(en['nav.next']) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('radio', { name: 'Research potential' }))
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
     expect(screen.getByText('3 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }))
 
     expect(answer).toHaveBeenCalledWith(answerBatch([
-      { id: 'profile', selected: ['研究潜力型'] },
+      { id: 'profile', selected: ['Research potential'] },
       { id: 'detail', selected: [] },
       { id: 'signals', selected: [] },
     ]))
@@ -328,9 +327,9 @@ describe('QuestionComposer', () => {
     const { carrier, answer } = wait()
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: '研究潜力型' }))
-    const custom = screen.getByPlaceholderText('输入你的答案')
-    fireEvent.change(custom, { target: { value: '中文输入' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Research potential' }))
+    const custom = screen.getByPlaceholderText('Type your answer')
+    fireEvent.change(custom, { target: { value: 'Āā input' } })
 
     fireEvent.keyDown(custom, { key: 'Enter', isComposing: true })
     expect(screen.getByText('2 / 3')).toBeTruthy()
@@ -348,20 +347,20 @@ describe('QuestionComposer', () => {
     const { carrier, answer } = wait()
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByPlaceholderText('输入你的答案')).toBeTruthy()
-    fireEvent.click(screen.getByRole('radio', { name: '工程落地型' }))
-    const emptyCustom = screen.getByPlaceholderText('输入你的答案')
+    expect(screen.getByPlaceholderText('Type your answer')).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: 'Engineering delivery' }))
+    const emptyCustom = screen.getByPlaceholderText('Type your answer')
     fireEvent.keyDown(emptyCustom, { key: 'Enter', shiftKey: true })
     expect(screen.getByText('2 / 3')).toBeTruthy()
     fireEvent.keyDown(emptyCustom, { key: 'Enter' })
-    expect(screen.getByText('请选择一个选项或填写自定义答案。')).toBeTruthy()
+    expect(screen.getByText('Please select an option or enter a custom answer.')).toBeTruthy()
 
-    fireEvent.click(screen.getByLabelText('下一题'))
-    fireEvent.click(screen.getByRole('checkbox', { name: '产品判断' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
-    expect(screen.getByText('请先完成这道问题。')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Next question'))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Product judgment' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(screen.getByText('Please complete this question first.')).toBeTruthy()
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByLabelText('上一题'))
+    fireEvent.click(screen.getByLabelText('Previous question'))
     expect(screen.getByText('1 / 3')).toBeTruthy()
     expect(answer).not.toHaveBeenCalled()
   })
@@ -372,10 +371,10 @@ describe('QuestionComposer', () => {
 
     // Both question shapes answer into a textarea, so the engine soft-wraps a
     // long answer and Shift+Enter breaks the line natively.
-    const inline = screen.getByPlaceholderText('输入你的答案')
+    const inline = screen.getByPlaceholderText('Type your answer')
     expect(inline.tagName).toBe('TEXTAREA')
 
-    const multiline = '第一行\n第二行'
+    const multiline = 'First line\nSecond line'
     fireEvent.change(inline, { target: { value: multiline } })
     // The hidden height ruler carries the draft plus the trailing newline the
     // textarea's own last line needs, so the box is as tall as the answer.
@@ -385,7 +384,7 @@ describe('QuestionComposer', () => {
     expect(screen.getByText('1 / 3')).toBeTruthy()
 
     fireEvent.keyDown(inline, { key: 'Enter' })
-    const optionless = screen.getByPlaceholderText('输入你的答案')
+    const optionless = screen.getByPlaceholderText('Type your answer')
     expect(optionless.tagName).toBe('TEXTAREA')
     fireEvent.change(optionless, { target: { value: multiline } })
     expect(optionless.previousElementSibling?.textContent).toBe(`${multiline}\n`)
@@ -393,64 +392,64 @@ describe('QuestionComposer', () => {
     expect(screen.getByText('2 / 3')).toBeTruthy()
 
     fireEvent.keyDown(optionless, { key: 'Enter' })
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     // Line breaks reach the model verbatim: nothing along the way flattens them.
     expect(answer).toHaveBeenCalledWith(answerBatch([
       { id: 'profile', selected: [], custom: multiline },
       { id: 'detail', selected: [], custom: multiline },
-      { id: 'signals', selected: ['系统设计'] },
+      { id: 'signals', selected: ['System design'] },
     ]))
   })
 
   it('surfaces cancellation failures and re-arms the controls', async () => {
     const { carrier, dismiss } = wait()
     dismiss
-      .mockRejectedValueOnce(new Error('第一次取消失败'))
-      .mockRejectedValueOnce(new Error('第二次取消失败'))
+      .mockRejectedValueOnce(new Error('First cancel failed'))
+      .mockRejectedValueOnce(new Error('Second cancel failed'))
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    fireEvent.click(screen.getByRole('button', { name: '放弃整组问题' }))
-    expect(await screen.findByText('第一次取消失败')).toBeTruthy()
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '跳过' }).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss all questions' }))
+    expect(await screen.findByText('First cancel failed')).toBeTruthy()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Skip' }).disabled).toBe(false)
 
-    fireEvent.click(screen.getByRole('button', { name: '放弃整组问题' }))
-    expect(await screen.findByText('第二次取消失败')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss all questions' }))
+    expect(await screen.findByText('Second cancel failed')).toBeTruthy()
   })
 
   it('surfaces answer rejection and resets local drafts for a different request', async () => {
     const first = wait()
     const view = render(<QuestionComposer matched={first.carrier} {...kit} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: /研究潜力型/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Research potential/ }))
     expect(screen.getByText('2 / 3')).toBeTruthy()
     const second = wait()
     second.answer
-      .mockRejectedValueOnce(new Error('网络中断'))
-      .mockRejectedValueOnce('字符串错误')
+      .mockRejectedValueOnce(new Error('Network interrupted'))
+      .mockRejectedValueOnce('String error')
     view.rerender(<QuestionComposer matched={second.carrier} {...kit} />)
-    expect(screen.getByRole('radio', { name: /研究潜力型/ }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('radio', { name: /Research potential/ }).getAttribute('aria-checked')).toBe('false')
 
-    fireEvent.click(screen.getByRole('radio', { name: /工程落地型/ }))
-    const custom = screen.getByPlaceholderText('输入你的答案')
+    fireEvent.click(screen.getByRole('radio', { name: /Engineering delivery/ }))
+    const custom = screen.getByPlaceholderText('Type your answer')
     fireEvent.change(custom, { target: { value: 'x' } })
     fireEvent.keyDown(custom, { key: 'Enter' })
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     expect(second.answer).toHaveBeenNthCalledWith(1, answerBatch([
-      { id: 'profile', selected: ['工程落地型 (Recommended)'] },
+      { id: 'profile', selected: ['Engineering delivery (Recommended)'] },
       { id: 'detail', selected: [], custom: 'x' },
-      { id: 'signals', selected: ['系统设计'] },
+      { id: 'signals', selected: ['System design'] },
     ]))
-    expect(await screen.findByText('网络中断')).toBeTruthy()
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(false)
+    expect(await screen.findByText('Network interrupted')).toBeTruthy()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(false)
 
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
-    expect(await screen.findByText('字符串错误')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(await screen.findByText('String error')).toBeTruthy()
   })
 
   it('renders chrome copy through the English dictionary', () => {
-    const { carrier } = wait([{ id: 'detail', question: '补充你的要求' }])
+    const { carrier } = wait([{ id: 'detail', question: 'Add your requirements' }])
     render(<QuestionComposer matched={carrier} {...kit} t={seatOver(en, commonEn)} />)
     expect(screen.getByLabelText('Dismiss all questions')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Skip' })).toBeTruthy()
@@ -460,18 +459,18 @@ describe('QuestionComposer', () => {
   it('restores the current page and drafts after the strict Session entry remounts', () => {
     const pending = wait()
     const view = render(<QuestionComposer matched={pending.carrier} {...kit} />)
-    fireEvent.click(screen.getByRole('radio', { name: /研究潜力型/ }))
-    const custom = screen.getByPlaceholderText('输入你的答案')
-    fireEvent.change(custom, { target: { value: '保留这段草稿' } })
+    fireEvent.click(screen.getByRole('radio', { name: /Research potential/ }))
+    const custom = screen.getByPlaceholderText('Type your answer')
+    fireEvent.change(custom, { target: { value: 'Keep this draft' } })
     expect(screen.getByText('2 / 3')).toBeTruthy()
 
     view.unmount()
     render(<QuestionComposer matched={pending.carrier} {...kit} />)
 
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('输入你的答案').value).toBe('保留这段草稿')
-    fireEvent.click(screen.getByLabelText('上一题'))
-    expect(screen.getByRole('radio', { name: /研究潜力型/ }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByPlaceholderText<HTMLTextAreaElement>('Type your answer').value).toBe('Keep this draft')
+    fireEvent.click(screen.getByLabelText('Previous question'))
+    expect(screen.getByRole('radio', { name: /Research potential/ }).getAttribute('aria-checked')).toBe('true')
   })
 })
 
@@ -513,51 +512,56 @@ describe('PendingQuestion domain face', () => {
     // Expanded: the option list is visible.
     expect(screen.getByRole('radiogroup')).toBeTruthy()
     // Collapse: options leave the tree; the title and minimize toggle stay.
-    fireEvent.click(screen.getByLabelText(zh['nav.minimize']))
+    fireEvent.click(screen.getByLabelText(en['nav.minimize']))
     expect(screen.queryByRole('radiogroup')).toBeNull()
-    expect(screen.getByText('选择候选人类型')).toBeTruthy()
+    expect(screen.getByText('Choose candidate type')).toBeTruthy()
     // Expand: the options return (the toggle label flips while collapsed).
-    fireEvent.click(screen.getByLabelText(zh['nav.maximize']))
+    fireEvent.click(screen.getByLabelText(en['nav.maximize']))
     expect(screen.getByRole('radiogroup')).toBeTruthy()
     // Expanded again: the toggle reports expanded and the option list is back.
-    expect(screen.getByLabelText(zh['nav.minimize']).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByLabelText(en['nav.minimize']).getAttribute('aria-expanded')).toBe('true')
   })
 
   it('keeps the collapse toggle out of the cancel path and preserves drafts across collapse', () => {
     const { carrier, answer } = wait()
     render(<QuestionComposer matched={carrier} {...kit} />)
-    fireEvent.click(screen.getByRole('radio', { name: /工程落地型/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Engineering delivery/ }))
     // Single-select auto-advances to the second question; collapse and expand
     // must not lose either the picked option or the current position.
-    fireEvent.click(screen.getByLabelText(zh['nav.minimize']))
-    fireEvent.click(screen.getByLabelText(zh['nav.maximize']))
-    const custom = screen.getByPlaceholderText(zh['custom.placeholder'])
-    fireEvent.change(custom, { target: { value: '要能独立排查线上问题' } })
+    fireEvent.click(screen.getByLabelText(en['nav.minimize']))
+    fireEvent.click(screen.getByLabelText(en['nav.maximize']))
+    const custom = screen.getByPlaceholderText(en['custom.placeholder'])
+    fireEvent.change(custom, { target: { value: 'Able to independently troubleshoot production issues.' } })
     // Re-expanding must not steal focus back into the textarea: it was
     // autofocused on first presentation, so focus stays on the expand toggle.
     expect(document.activeElement).not.toBe(custom)
-    fireEvent.click(screen.getByLabelText('下一题'))
-    fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByLabelText('Next question'))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'System design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     expect(answer).toHaveBeenCalledWith(answerBatch([
-      { id: 'profile', selected: ['工程落地型 (Recommended)'] },
-      { id: 'detail', custom: '要能独立排查线上问题', selected: [] },
-      { id: 'signals', selected: ['系统设计'] },
+      { id: 'profile', selected: ['Engineering delivery (Recommended)'] },
+      { id: 'detail', custom: 'Able to independently troubleshoot production issues.', selected: [] },
+      { id: 'signals', selected: ['System design'] },
     ]))
   })
 })
 
 describe('parseRecommendedLabel', () => {
-  it('recognizes English and Chinese suffixes without changing ordinary labels', () => {
+  it('recognizes English suffixes with both ASCII and fullwidth punctuation', () => {
     expect(parseRecommendedLabel('Fast (Recommended)')).toEqual({ label: 'Fast', recommended: true })
-    expect(parseRecommendedLabel('稳妥（推荐）')).toEqual({ label: '稳妥', recommended: true })
-    expect(parseRecommendedLabel('稳妥 (推荐)')).toEqual({ label: '稳妥', recommended: true })
+    expect(parseRecommendedLabel('Steady（Recommended）')).toEqual({ label: 'Steady', recommended: true })
+    expect(parseRecommendedLabel('Steady (Recommended)')).toEqual({ label: 'Steady', recommended: true })
     expect(parseRecommendedLabel('Plain')).toEqual({ label: 'Plain', recommended: false })
+  })
+
+  it('recognizes the retired locale suffix without embedding its characters in source', () => {
+    expect(parseRecommendedLabel('Steady (\u63a8\u8350)')).toEqual({ label: 'Steady', recommended: true })
+    expect(parseRecommendedLabel('Steady\uFF08\u63a8\u8350\uFF09')).toEqual({ label: 'Steady', recommended: true })
   })
 })
 
 const TIMED: PendingQuestion['questions'] = [{
-  id: 'scope', question: '选择范围', options: [{ label: '仅工具' }, { label: '全部' }],
+  id: 'scope', question: 'Choose scope', options: [{ label: 'Tools only' }, { label: 'Everything' }],
 }]
 
 /** A timed card as the Remote Event listener builds it: waterfall channel with a Client-decided deadline. */
@@ -572,12 +576,12 @@ function timedCard(deadline: number, callId = ToolCallId('ask-timed')) {
 describe('timed card', () => {
   it.each([true, false])('does not autofocus before claiming and respects manual focus until readiness: %s', async (stillFocused) => {
     vi.useFakeTimers()
-    const carrier = new PendingQuestion(SID, [{ id: 'free', question: '补充说明' }], ToolCallId('claiming'))
+    const carrier = new PendingQuestion(SID, [{ id: 'free', question: 'Add details' }], ToolCallId('claiming'))
     const request = createWaterfallRequest(Date.now() + 2_000, undefined,
       (channel) => { carrier.detachWaterfall(channel) })
     try {
       render(<QuestionComposer matched={carrier} {...kit} />)
-      const field = screen.getByPlaceholderText(zh['custom.placeholder'])
+      const field = screen.getByPlaceholderText(en['custom.placeholder'])
       expect(document.activeElement).not.toBe(field)
 
       fireEvent.focus(field)
@@ -606,11 +610,11 @@ describe('timed card', () => {
       let settled = false
       void request.result.then(() => { settled = true }, () => { settled = true })
       render(<QuestionComposer matched={carrier} {...kit} />)
-      const option = screen.getByRole('radio', { name: '仅工具' })
+      const option = screen.getByRole('radio', { name: 'Tools only' })
 
       fireEvent.focus(option)
       expect(carrier.snapshot()).toMatchObject({ waitState: 'focused', countdown: { running: false } })
-      expect(screen.getByText(/已暂停/)).toBeTruthy()
+      expect(screen.getByText(/Paused/)).toBeTruthy()
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
       expect(settled).toBe(false)
 
@@ -631,7 +635,7 @@ describe('timed card', () => {
       void first.request.result.then(() => { firstSettled = true }, () => { firstSettled = true })
       const view = render(<QuestionComposer matched={first.carrier} {...kit} />)
 
-      fireEvent.click(screen.getByRole('radio', { name: '仅工具' }))
+      fireEvent.click(screen.getByRole('radio', { name: 'Tools only' }))
       expect(first.carrier.snapshot()).toMatchObject({ waitState: 'editing', countdown: { running: false } })
       expect(draftInstance.getSnapshot().progressByRequest[first.carrier.key]?.wait).toBe('editing')
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
@@ -644,7 +648,7 @@ describe('timed card', () => {
       render(<QuestionComposer matched={restored.carrier} {...kit} />)
       await act(async () => { await Promise.resolve() })
       expect(restored.carrier.snapshot()).toMatchObject({ waitState: 'editing', countdown: { running: false } })
-      expect(screen.getByText('会一直等你回答')).toBeTruthy()
+      expect(screen.getByText('Waiting until you answer')).toBeTruthy()
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
       expect(restoredSettled).toBe(false)
     } finally {
@@ -658,8 +662,8 @@ describe('timed card', () => {
       const { carrier, request } = timedCard(Date.now() + 1_500)
       const rejection = expect(request.result).rejects.toMatchObject({ name: 'UserQuestionError', code: 'ASK_TIMED_OUT' })
       render(<QuestionComposer matched={carrier} {...kit} />)
-      expect(screen.getByText(/秒后继续工作/)).toBeTruthy()
-      expect(screen.getByRole('button', { name: '慢慢回答' })).toBeTruthy()
+      expect(screen.getByText(/Continuing in/)).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Take time' })).toBeTruthy()
       await act(async () => { await vi.advanceTimersByTimeAsync(2_100) })
 
       await rejection
@@ -667,20 +671,20 @@ describe('timed card', () => {
         state: 'open', waitState: 'counting', countdown: undefined,
         channel: 'none', closed: false,
       })
-      expect(screen.queryByText(/秒后继续工作/)).toBeNull()
-      expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(true)
+      expect(screen.queryByText(/Continuing in/)).toBeNull()
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(true)
 
       const answer = vi.fn(async () => true)
       act(() => {
         carrier.attachRpc({ answer })
         carrier.setState('continued')
       })
-      expect(screen.getByText('已继续工作，仍可回答')).toBeTruthy()
-      fireEvent.click(screen.getByRole('radio', { name: '仅工具' }))
-      expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(false)
-      fireEvent.click(screen.getByRole('button', { name: '提交' }))
+      expect(screen.getByText('Work continued — you can still answer')).toBeTruthy()
+      fireEvent.click(screen.getByRole('radio', { name: 'Tools only' }))
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(false)
+      fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
       await act(async () => { await Promise.resolve() })
-      expect(answer).toHaveBeenCalledWith({ answers: [{ id: 'scope', selected: ['仅工具'] }] })
+      expect(answer).toHaveBeenCalledWith({ answers: [{ id: 'scope', selected: ['Tools only'] }] })
     } finally {
       vi.useRealTimers()
     }
@@ -694,10 +698,10 @@ describe('timed card', () => {
       void request.result.then(() => { settled = true }, () => { settled = true })
       render(<QuestionComposer matched={carrier} {...kit} />)
 
-      fireEvent.click(screen.getByRole('button', { name: '慢慢回答' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Take time' }))
 
-      expect(screen.queryByText(/秒后继续工作/)).toBeNull()
-      expect(screen.queryByRole('button', { name: '慢慢回答' })).toBeNull()
+      expect(screen.queryByText(/Continuing in/)).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Take time' })).toBeNull()
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
       expect(settled).toBe(false)
       expect(carrier.snapshot()).toMatchObject({ channel: 'waterfall', waitState: 'waiting' })
@@ -709,21 +713,21 @@ describe('timed card', () => {
   it('re-arms the controls with a resubmit hint when a sent answer is dropped', async () => {
     const { carrier, request } = timedCard(Date.now() + 60_000)
     render(<QuestionComposer matched={carrier} {...kit} />)
-    fireEvent.click(screen.getByRole('radio', { name: '仅工具' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Tools only' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
 
-    await expect(request.result).resolves.toEqual({ answers: [{ id: 'scope', selected: ['仅工具'] }] })
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '正在提交…' }).disabled).toBe(true)
+    await expect(request.result).resolves.toEqual({ answers: [{ id: 'scope', selected: ['Tools only'] }] })
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submitting…' }).disabled).toBe(true)
     expect(draftInstance.getSnapshot().progressByRequest[carrier.key]).toBeDefined()
 
     act(() => { carrier.setState('continued') })
 
-    expect(screen.getByText('回答未送达，工作已继续，请再提交一次。')).toBeTruthy()
-    expect(screen.getByRole('radio', { name: '仅工具' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByText('The answer did not arrive before work continued; submit it again.')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Tools only' }).getAttribute('aria-checked')).toBe('true')
     const answer = vi.fn(async () => true)
     act(() => { carrier.attachRpc({ answer }) })
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
-    await vi.waitFor(() => { expect(answer).toHaveBeenCalledWith({ answers: [{ id: 'scope', selected: ['仅工具'] }] }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    await vi.waitFor(() => { expect(answer).toHaveBeenCalledWith({ answers: [{ id: 'scope', selected: ['Tools only'] }] }) })
   })
 
   it('steers an RPC reply, hides the panel, and rejects a duplicate before discard', async () => {
@@ -736,19 +740,19 @@ describe('timed card', () => {
     carrier.setState('continued')
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: '仅工具' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Tools only' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     await vi.waitFor(() => { expect(hide).toHaveBeenCalledOnce() })
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(false)
-    expect(screen.queryByText(zh['status.sent'])).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(false)
+    expect(screen.queryByText(en['status.sent'])).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     expect(await screen.findByText('a reply is already queued for this question')).toBeTruthy()
     expect(answer).toHaveBeenCalledTimes(2)
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
     await vi.waitFor(() => { expect(answer).toHaveBeenCalledTimes(3) })
     await vi.waitFor(() => {
-      expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(false)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(false)
     })
   })
 
@@ -763,11 +767,11 @@ describe('timed card', () => {
       selector === undefined ? rendered : selector(rendered)) as QuestionComposerProps['useQuestionCard']
     render(<Composer matched={carrier} {...kit} useQuestionCard={useQuestionCard} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: '仅工具' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Tools only' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
 
     await vi.waitFor(() => { expect(hide).toHaveBeenCalledOnce() })
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '提交' }).disabled).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Submit' }).disabled).toBe(false)
   })
 
   it('closing a continued panel only withdraws it from the seat and sends nothing', async () => {
@@ -779,11 +783,11 @@ describe('timed card', () => {
     carrier.setState('continued')
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByText('已继续工作，仍可回答')).toBeTruthy()
-    expect(screen.queryByText(/秒后继续工作/)).toBeNull()
+    expect(screen.getByText('Work continued — you can still answer')).toBeTruthy()
+    expect(screen.queryByText(/Continuing in/)).toBeNull()
     // The close button names the reopen path, not a dismissal of the question.
-    expect(screen.queryByLabelText('放弃整组问题')).toBeNull()
-    fireEvent.click(screen.getByLabelText('收起问题面板，可从工具调用重新打开'))
+    expect(screen.queryByLabelText('Dismiss all questions')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Close the panel — reopen it from the tool call'))
 
     await vi.waitFor(() => { expect(hide).toHaveBeenCalledOnce() })
     expect(answer).not.toHaveBeenCalled()
@@ -796,10 +800,10 @@ describe('timed card', () => {
     carrier.attachSeat({ hide })
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    fireEvent.click(screen.getByLabelText('收起问题面板，可从工具调用重新打开'))
+    fireEvent.click(screen.getByLabelText('Close the panel — reopen it from the tool call'))
 
     expect(hide).toHaveBeenCalledOnce()
-    expect(screen.queryByText('当前无法提交，请稍候再试。')).toBeNull()
+    expect(screen.queryByText('Cannot submit right now; try again in a moment.')).toBeNull()
   })
 
   it('reports an unavailable channel instead of cancelling into the gap', () => {
@@ -808,9 +812,9 @@ describe('timed card', () => {
     const carrier = new PendingQuestion(SID, TIMED)
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    fireEvent.click(screen.getByLabelText('放弃整组问题'))
+    fireEvent.click(screen.getByLabelText('Dismiss all questions'))
 
-    expect(screen.getByText('当前无法提交，请稍候再试。')).toBeTruthy()
+    expect(screen.getByText('Cannot submit right now; try again in a moment.')).toBeTruthy()
   })
 
   it('prunes drafts no card owns on mount and clears its own draft when the card closes', () => {
@@ -819,8 +823,8 @@ describe('timed card', () => {
     render(<QuestionComposer matched={carrier} {...kit} />)
 
     expect(draftInstance.getSnapshot().progressByRequest['question:stale']).toBeUndefined()
-    fireEvent.click(screen.getByRole('radio', { name: '全部' }))
-    expect(draftInstance.getSnapshot().progressByRequest[carrier.key]?.drafts[0]?.selected).toEqual(['全部'])
+    fireEvent.click(screen.getByRole('radio', { name: 'Everything' }))
+    expect(draftInstance.getSnapshot().progressByRequest[carrier.key]?.drafts[0]?.selected).toEqual(['Everything'])
 
     act(() => { carrier.close() })
 
@@ -832,14 +836,14 @@ const REVIEWED_CALL = 'ask-answered'
 /** One settled call's answers in record order, which is not the question order. */
 const RECORDED: readonly AskUserQuestionAnswerItem[] = [
   { id: 'signals', selected: [] },
-  { id: 'profile', selected: ['工程落地型 (Recommended)'] },
-  { id: 'detail', selected: [], custom: '要能独立排查线上问题' },
+  { id: 'profile', selected: ['Engineering delivery (Recommended)'] },
+  { id: 'detail', selected: [], custom: 'Able to independently troubleshoot production issues.' },
 ]
 /** A record whose multi-select answer used the custom row beside a checked option. */
 const RECORDED_CUSTOM: readonly AskUserQuestionAnswerItem[] = [
-  { id: 'profile', selected: ['研究潜力型'] },
-  { id: 'detail', selected: [], custom: '要能独立排查线上问题' },
-  { id: 'signals', selected: ['系统设计'], custom: '沟通能力' },
+  { id: 'profile', selected: ['Research potential'] },
+  { id: 'detail', selected: [], custom: 'Able to independently troubleshoot production issues.' },
+  { id: 'signals', selected: ['System design'], custom: 'Communication skills' },
 ]
 
 /** A read-only card as the panel provider builds it from a settled call's transcript record. */
@@ -855,40 +859,40 @@ describe('review card', () => {
     const { carrier } = reviewCard()
     render(<QuestionComposer matched={carrier} {...kit} />)
 
-    expect(screen.getByText(zh['review.status'])).toBeTruthy()
+    expect(screen.getByText(en['review.status'])).toBeTruthy()
     // The recorded selection is paired by question id, not by record order.
-    const chosen = screen.getByRole<HTMLButtonElement>('radio', { name: '工程落地型' })
+    const chosen = screen.getByRole<HTMLButtonElement>('radio', { name: 'Engineering delivery' })
     expect(chosen.getAttribute('aria-checked')).toBe('true')
     expect(chosen.disabled).toBe(true)
     // Nothing is left to send, and the unused free-text field would read as
     // somewhere to type.
-    expect(screen.queryByRole('button', { name: '跳过' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '提交' })).toBeNull()
-    expect(screen.queryByPlaceholderText('输入你的答案')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Skip' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+    expect(screen.queryByPlaceholderText('Type your answer')).toBeNull()
 
-    fireEvent.click(screen.getByLabelText('下一题'))
+    fireEvent.click(screen.getByLabelText('Next question'))
 
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    const optionless = screen.getByPlaceholderText<HTMLTextAreaElement>('输入你的答案')
-    expect(optionless.value).toBe('要能独立排查线上问题')
+    const optionless = screen.getByPlaceholderText<HTMLTextAreaElement>('Type your answer')
+    expect(optionless.value).toBe('Able to independently troubleshoot production issues.')
     expect(optionless.disabled).toBe(true)
     expect(document.activeElement).not.toBe(optionless)
 
-    fireEvent.click(screen.getByLabelText('下一题'))
+    fireEvent.click(screen.getByLabelText('Next question'))
 
     expect(screen.getByText('3 / 3')).toBeTruthy()
-    expect(screen.getByText(zh['review.skipped'])).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: '系统设计' }).getAttribute('aria-checked')).toBe('false')
-    expect(screen.queryByPlaceholderText('输入你的答案')).toBeNull()
+    expect(screen.getByText(en['review.skipped'])).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: 'System design' }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByPlaceholderText('Type your answer')).toBeNull()
   })
 
   it('reads the record back instead of a draft the live card left under the same key', () => {
     kit.actions.replace(PendingQuestion.keyOf(SID, REVIEWED_CALL), {
       index: 2,
       drafts: [
-        { selected: [], custom: '没提交的草稿', skipped: false },
+        { selected: [], custom: 'Unsubmitted draft', skipped: false },
         { selected: [], custom: '', skipped: false },
-        { selected: ['代码质量'], custom: '', skipped: false },
+        { selected: ['Code quality'], custom: '', skipped: false },
       ],
     })
     const { carrier } = reviewCard(RECORDED_CUSTOM)
@@ -896,17 +900,17 @@ describe('review card', () => {
 
     // The page the live card was on is restored; its half-typed answers are not.
     expect(screen.getByText('3 / 3')).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: '系统设计' }).getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByRole('checkbox', { name: '代码质量' }).getAttribute('aria-checked')).toBe('false')
-    const custom = screen.getByPlaceholderText<HTMLTextAreaElement>('输入你的答案')
-    expect(custom.value).toBe('沟通能力')
+    expect(screen.getByRole('checkbox', { name: 'System design' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('checkbox', { name: 'Code quality' }).getAttribute('aria-checked')).toBe('false')
+    const custom = screen.getByPlaceholderText<HTMLTextAreaElement>('Type your answer')
+    expect(custom.value).toBe('Communication skills')
     expect(custom.disabled).toBe(true)
 
-    fireEvent.click(screen.getByLabelText('上一题'))
-    fireEvent.click(screen.getByLabelText('上一题'))
+    fireEvent.click(screen.getByLabelText('Previous question'))
+    fireEvent.click(screen.getByLabelText('Previous question'))
 
-    expect(screen.getByRole('radio', { name: '研究潜力型' }).getAttribute('aria-checked')).toBe('true')
-    expect(screen.queryByDisplayValue('没提交的草稿')).toBeNull()
+    expect(screen.getByRole('radio', { name: 'Research potential' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByDisplayValue('Unsubmitted draft')).toBeNull()
   })
 
   it('closing a read-only panel withdraws it and sends nothing', () => {
@@ -914,8 +918,8 @@ describe('review card', () => {
     render(<QuestionComposer matched={carrier} {...kit} />)
 
     // The card is keyed by its tool call, so closing names the reopen path.
-    expect(screen.queryByLabelText(zh['nav.cancel'])).toBeNull()
-    fireEvent.click(screen.getByLabelText(zh['nav.close']))
+    expect(screen.queryByLabelText(en['nav.cancel'])).toBeNull()
+    fireEvent.click(screen.getByLabelText(en['nav.close']))
 
     expect(hide).toHaveBeenCalledOnce()
     expect(carrier.snapshot()).toEqual({

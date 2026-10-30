@@ -1,6 +1,6 @@
 /** Optional Electron status presentation; the native shell owns actions and Web owns visible copy. */
-import { IconDownloadOutlineRegular, IconLoadingOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconDownloadOutlineRegular, IconLoadingOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
+import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import css from './DesktopUpdateIndicator.module.css'
 import type { DesktopUpdateFailureKind, DesktopUpdatePresentation, DesktopUpdateView } from '../types.ts'
 import type { SettingsRootInjected } from './shell-contract.ts'
@@ -76,11 +76,13 @@ type DesktopUpdateControlProps = {
   t: SettingsTranslate
   view: DesktopUpdateView
   onOpen: () => void
-  side: 'right' | 'top'
+  side: 'right' | 'top' | 'bottom'
+  className?: string | undefined
+  dataPart?: string | undefined
 }
 
 /** Render one updater control after its owner has decided that it belongs in the chrome. */
-function DesktopUpdateControl({ t, view, onOpen, side }: DesktopUpdateControlProps) {
+function DesktopUpdateControl({ t, view, onOpen, side, className, dataPart }: DesktopUpdateControlProps) {
   const { presentation: state, failed, opening } = view
   const retryLabel = t('desktop.update.retry')
   const copy = state === undefined ? { label: retryLabel, detail: retryLabel } : updateCopy(state, t)
@@ -90,8 +92,9 @@ function DesktopUpdateControl({ t, view, onOpen, side }: DesktopUpdateControlPro
   const updateAvailable = state?.phase === 'available' || state?.phase === 'ready'
   const tooltip = updateAvailable ? t('desktop.update.availableTooltip') : failed ? retryLabel : copy.detail
   return <Tooltip label={tooltip} side={side}>
-    <button type="button" className={css.indicator}
-      aria-label={label} aria-disabled={busy} onClick={() => { if (!busy) onOpen() }}>
+    <button type="button" className={className === undefined ? css.indicator : `${css.indicator} ${className}`}
+      aria-label={label} aria-disabled={busy} data-yh-part={dataPart}
+      onClick={() => { if (!busy) onOpen() }}>
       <span className={css.icon} aria-hidden="true">
         {error ? <IconWarningTriangleOutlineRegular size={14} />
           : busy ? <IconLoadingOutlineRegular className={css.spinner} size={14} /> : <IconDownloadOutlineRegular size={14} />}
@@ -117,25 +120,22 @@ export function DesktopUpdateFooterAction({ wide, useDesktopUpdate, openDesktopU
 }
 
 type WindowsBadgeProps = PropsRuntime<'sidebar.toggle.badge'> & PropsLocale<'settings'>
-  & Pick<InjectFace<SettingsRootInjected>, 'useDesktopUpdate' | 'useConnectionState'>
+  & Pick<InjectFace<SettingsRootInjected>, 'useDesktopUpdate' | 'useConnectionState' | 'openDesktopUpdate'>
 
 /**
- * Keep the legacy Windows caption marker in the zero-width collapse.
- * The Windows sidebar has no rail footer track; the marker remains inside the
- * fixed caption toggle until a dedicated caption action seat exists.
+ * Keep the Windows update action in the zero-width caption collapse.
+ * The Windows sidebar has no rail footer track, so this action sits beside the
+ * fixed caption controls rather than inside the sidebar toggle.
  * @param props - Framework-bound carrier and connection state.
- * @returns A non-interactive notification marker on Windows, or nothing elsewhere.
+ * @returns An accessible update action on Windows, or nothing elsewhere.
  */
-export function DesktopUpdateBadge({ useDesktopUpdate, useConnectionState, t }: WindowsBadgeProps) {
-  const { presentation: state, failed } = useDesktopUpdate(value => value)
+export function DesktopUpdateBadge({ useDesktopUpdate, useConnectionState, openDesktopUpdate, t }: WindowsBadgeProps) {
+  const view = useDesktopUpdate(value => value)
+  const { presentation: state, failed } = view
   const connection = useConnectionState(value => value)
   if (!document.documentElement.hasAttribute('data-windows-titlebar')) return null
   if (((connection === 'disconnected' || connection === 'connecting') && state?.phase !== 'installing')
     || (!failed && (state === undefined || state.phase === 'idle' || state.phase === 'unavailable'))) return null
-  const retryLabel = t('desktop.update.retry')
-  const copy = state === undefined ? { label: retryLabel, detail: retryLabel } : updateCopy(state, t)
-  const label = failed ? retryLabel : copy.label
-  return <Tooltip label={failed ? label : copy.detail} side="right">
-    <span role="img" aria-label={label} className={css.badge} />
-  </Tooltip>
+  return <DesktopUpdateControl t={t} view={view} onOpen={openDesktopUpdate} side="bottom"
+    className={css.captionIndicator} dataPart="desktop-update-caption" />
 }

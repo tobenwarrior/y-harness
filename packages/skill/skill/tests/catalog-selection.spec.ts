@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
-import { createScope } from '@deepseek-ai/dsh-scope'
-import SkillRegistry, { selectSkillCatalog, type SkillSummary } from '@deepseek-ai/dsh-skill'
+import { Context } from '@yharness/cordis'
+import { createScope } from '@yharness/scope'
+import SkillRegistry, { selectSkillCatalog, type SkillSummary } from '@yharness/skill'
 
 function summary(name: string, description: string, extra: Partial<SkillSummary> = {}): SkillSummary {
   return { name, description, source: 'runtime', provider: 'fixture', invocation: { modelInvocable: true, userInvocable: true }, ...extra }
@@ -54,10 +54,10 @@ describe('metadata catalog selection', () => {
   })
 
   it('counts rendered escaped UTF-8 metadata bytes and skips entries that exceed the budget', () => {
-    const entries = [summary('large', '数据库 & '.repeat(20)), summary('small', '数据库')]
-    const result = selectSkillCatalog(entries, { query: '数据库', limit: 8, maxBytes: 50 })
+    const entries = [summary('large', '\u{6570}\u{636E}\u{5E93} & '.repeat(20)), summary('small', '\u{6570}\u{636E}\u{5E93}')]
+    const result = selectSkillCatalog(entries, { query: '\u{6570}\u{636E}\u{5E93}', limit: 8, maxBytes: 50 })
     expect(result.skills.map(skill => skill.name)).toEqual(['small'])
-    expect(result.metadataBytes).toBe(new TextEncoder().encode('- `small`: 数据库').length)
+    expect(result.metadataBytes).toBe(new TextEncoder().encode('- `small`: \u{6570}\u{636E}\u{5E93}').length)
     expect(result.metadataBytes).toBeLessThanOrEqual(50)
   })
 

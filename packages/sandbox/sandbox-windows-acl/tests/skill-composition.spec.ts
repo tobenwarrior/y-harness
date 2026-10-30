@@ -4,11 +4,11 @@ import { copyFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { Context } from '@deepseek-ai/cordis'
-import Loader from '@deepseek-ai/cordis-plugin-loader'
-import Include from '@deepseek-ai/cordis-plugin-include'
-import * as SkillRegistry from '@deepseek-ai/dsh-skill'
-import * as SandboxLocal from '@deepseek-ai/dsh-sandbox-local'
+import { Context } from '@yharness/cordis'
+import Loader from '@yharness/cordis-plugin-loader'
+import Include from '@yharness/cordis-plugin-include'
+import * as SkillRegistry from '@yharness/skill'
+import * as SandboxLocal from '@yharness/sandbox-local'
 import { expect, it } from 'vitest'
 import { ACL_DIAGNOSIS_SKILL } from '../src/acl-skill.ts'
 
@@ -31,8 +31,8 @@ it.skipIf(process.platform !== 'win32')('loads and unloads the ACL skill through
       resolveSync: unexpectedLoaderOperation,
       load: unexpectedLoaderOperation,
       async import(specifier: string) {
-        if (specifier === '@deepseek-ai/dsh-skill') return SkillRegistry
-        if (specifier === '@deepseek-ai/dsh-sandbox-local') return SandboxLocal
+        if (specifier === '@yharness/skill') return SkillRegistry
+        if (specifier === '@yharness/sandbox-local') return SandboxLocal
         throw new Error(`Unexpected Loader import: ${specifier}`)
       },
     }
@@ -52,7 +52,7 @@ it.skipIf(process.platform !== 'win32')('loads and unloads the ACL skill through
     expect(await ctx.skills.list()).toEqual([])
     expect(existsSync(resources)).toBe(false)
     await ctx.loader.create({
-      name: '@deepseek-ai/dsh-sandbox-local',
+      name: '@yharness/sandbox-local',
       config: { runnerCommand: ['operator-runner'], runnerFailureSignatures: ['operator runner unavailable'] },
     })
     await ctx.loader.await()

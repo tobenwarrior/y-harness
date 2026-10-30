@@ -1,13 +1,13 @@
 /** Host Cordis plugin for the cross-realm Inspector Worker and full fetch capture. */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { fileURLToPath } from 'node:url'
 import { connect } from 'node:net'
 import type { Duplex } from 'node:stream'
 import serveStatic from 'serve-static'
-import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
-import type {} from '@deepseek-ai/dsh-client-connection'
-import type {} from '@deepseek-ai/dsh-cmdline'
+import type { IndexInjection } from '@yharness/host-webserver'
+import type {} from '@yharness/client-connection'
+import type {} from '@yharness/cmdline'
 import open, { apps } from 'open'
 import { resolveInspectorOptions, startInspector, type InspectorOptions } from './bridge/controller.ts'
 import { createInspectorService } from '../shared/service.ts'
@@ -68,7 +68,7 @@ export async function apply(ctx: Context, config: HostPluginConfig): Promise<voi
         })),
       }))
       const assets = serveStatic(fileURLToPath(new URL('./lib/devtools/',
-        import.meta.resolve('@deepseek-ai/dsh-experimental-inspector/package.json'))), {
+        import.meta.resolve('@yharness/experimental-inspector/package.json'))), {
         index: false, redirect: false, fallthrough: true,
         setHeaders: (res) => { res.setHeader('X-Content-Type-Options', 'nosniff') },
       })

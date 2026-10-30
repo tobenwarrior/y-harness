@@ -3,7 +3,7 @@ description: "Bounded model-facing output for tools that must cap how much conte
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-output-retention
+# @yharness/output-retention
 
 ## Summary
 
@@ -28,7 +28,7 @@ Use a retainer wherever a tool must cap how much of its result reaches the model
 ### Bounding a list of items
 
 ```ts
-import { ItemRetainer } from '@deepseek-ai/dsh-output-retention'
+import { ItemRetainer } from '@yharness/output-retention'
 
 declare const globMaxResults: number
 declare const candidates: AsyncIterable<{ path: string }>
@@ -44,7 +44,7 @@ const { items, truncated, omitted } = retainer.finish()
 ### Bounding a text stream
 
 ```text
-import { TextRetainer } from '@deepseek-ai/dsh-output-retention'
+import { TextRetainer } from '@yharness/output-retention'
 
 const out = new TextRetainer({ kind: 'headTail', headBytes: headCap, tailBytes: tailCap })
 child.stdout.on('data', (chunk: Buffer) => { out.push(chunk) })
@@ -56,11 +56,11 @@ const { text, omittedBytes } = out.finish()
 ### Building the omission footer
 
 ```ts
-import { formatRetentionNotice } from '@deepseek-ai/dsh-output-retention'
+import { formatRetentionNotice } from '@yharness/output-retention'
 
 declare const grepMaxMatches: number
 declare const items: { length: number }
-import type { Omitted } from '@deepseek-ai/dsh-output-retention'
+import type { Omitted } from '@yharness/output-retention'
 
 declare const omitted: Omitted
 

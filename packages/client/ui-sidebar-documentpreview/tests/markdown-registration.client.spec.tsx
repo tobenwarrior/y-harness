@@ -2,11 +2,11 @@
 /** Markdown metadata, deferred slot registration, localization, and unload through the real renderer. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { apply as resourcesApply, inject as resourcesInject } from '@deepseek-ai/dsh-client-resources/src/client/index.ts'
-import { SlotTestRuntime } from '@deepseek-ai/dsh-client-test-runtime'
-import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { apply as resourcesApply, inject as resourcesInject } from '@yharness/client-resources/src/client/index.ts'
+import { SlotTestRuntime } from '@yharness/client-test-runtime'
+import { LocaleRuntime } from '@yharness/client-locale/client'
+import type { UseSidebarRightTabInfo } from '@yharness/client-ui-sidebar-right/client'
+import { SessionId } from '@yharness/session/types'
 import { DocumentPreviewRegistry } from '../src/client/document/registry.ts'
 import { documentTabInfoFactory } from '../src/client/document/contract.ts'
 import { apply, MARKDOWN_BODY_ID, markdownDefinition } from '../src/client/markdown/index.ts'
@@ -88,7 +88,7 @@ describe('Markdown implementation registration', () => {
     const t = locale.bind('documentMarkdown')
     await act(async () => { locale.setLocale('zh') })
     expect(locale.bind('documentMarkdown')).toBe(t)
-    expect(view.getByRole('button', { name: '复制' })).toBeDefined()
+    expect(view.getByRole('button', { name: 'Copy' })).toBeDefined()
     expect(useTabInfo).not.toHaveBeenCalled()
 
     await feature.dispose()
@@ -98,6 +98,6 @@ describe('Markdown implementation registration', () => {
     expect(t('code.copy')).toBe('code.copy')
     await runtime.mount({ inject: ['slots', 'locale', 'documentPreviews'], apply })
     expect(previews.getSnapshot()).toHaveLength(1)
-    expect(view.getByRole('button', { name: '复制' })).toBeDefined()
+    expect(view.getByRole('button', { name: 'Copy' })).toBeDefined()
   })
 })

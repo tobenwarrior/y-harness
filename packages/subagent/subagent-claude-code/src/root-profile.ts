@@ -2,7 +2,7 @@
 import * as path from 'node:path'
 import { isAbsolute, join, dirname, basename } from 'node:path'
 import { realpathSync, lstatSync } from 'node:fs'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxExecutionPolicy } from '@yharness/sandbox'
 import type { ClaudeRootProtocolRecord } from './root-types.ts'
 
 /**

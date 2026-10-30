@@ -1,8 +1,8 @@
 /** Read-only coding-session operations over an already connected native Codex peer. */
 import { z } from 'zod'
 import { createHash } from 'node:crypto'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { CodingSessionEvent, CodingSessionProvider, CodingSessionSnapshot, CodingSessionReadRequest, CodingSessionWriterState } from '@deepseek-ai/dsh-coding-session/types'
+import { brandString } from '@yharness/brand'
+import type { CodingSessionEvent, CodingSessionProvider, CodingSessionSnapshot, CodingSessionReadRequest, CodingSessionWriterState } from '@yharness/coding-session/types'
 
 const codingSessionDigest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value, (_key, item: unknown) =>
   item !== null && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item)).digest('hex')

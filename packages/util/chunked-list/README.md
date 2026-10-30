@@ -3,7 +3,7 @@ description: "Immutable append-only lists for projection state, with bounded app
 kind: "package-library"
 ---
 
-# @deepseek-ai/dsh-chunked-list
+# @yharness/chunked-list
 
 ## Summary
 
@@ -26,7 +26,7 @@ kind: "package-library"
 Use this list when an append-only collection needs immutable versions and JSON-compatible storage. An empty list is `undefined`; appending returns a new head without modifying existing nodes. The list shares stored values by reference, so callers must treat them as immutable.
 
 ```ts
-import { appendChunkedList, iterateChunkedList } from '@deepseek-ai/dsh-chunked-list'
+import { appendChunkedList, iterateChunkedList } from '@yharness/chunked-list'
 
 const first = appendChunkedList(undefined, 'first')
 const second = appendChunkedList(first, 'second')

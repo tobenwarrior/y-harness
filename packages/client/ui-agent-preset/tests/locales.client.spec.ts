@@ -21,7 +21,7 @@ describe('preset display copy', () => {
   })
 
   it('keeps declared metadata untranslated for named and unknown presets', () => {
-    const fileCopy = { name: '我的标准', description: '团队自己的 preset。' }
+    const fileCopy = { name: '\u6211\u7684\u6807\u51c6', description: '\u56e2\u961f\u81ea\u5df1\u7684 preset\u3002' }
 
     expect(presetDisplayText({ id: 'standard', ...fileCopy }, translate(en)))
       .toEqual(fileCopy)

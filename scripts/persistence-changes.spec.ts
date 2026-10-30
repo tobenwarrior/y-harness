@@ -35,7 +35,7 @@ function jsonResult(source: string): { ok: boolean; files: readonly string[] } {
 
 const AUTHORED_PROSE = {
   en: { summary: 'Adds optional metadata.', compatibility: 'Readers may omit the metadata.', verification: 'The focused tests passed.' },
-  zh: { summary: '添加可选元数据。', compatibility: '读取方可省略元数据。', verification: '定向测试通过。' },
+  zh: { summary: '\u6dfb\u52a0\u53ef\u9009\u5143\u6570\u636e。', compatibility: '\u8bfb\u53d6\u65b9\u53ef\u7701\u7565\u5143\u6570\u636e。', verification: '\u5b9a\u5411\u6d4b\u8bd5\u901a\u8fc7。' },
 }
 
 function proseFile(root: string): string {
@@ -805,10 +805,10 @@ describe('persistence changes current-tree commands', () => {
     writeFileSync(join(physical, 'format.ts'), "interface HeaderLine { type: 'session'; version: number; id: string; delegationDepth: number }; export {}\n")
     const session = join(root, 'packages/core/session/src')
     mkdirSync(session, { recursive: true })
-    writeFileSync(join(session, '../package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-session' }))
+    writeFileSync(join(session, '../package.json'), JSON.stringify({ name: '@yharness/session' }))
     writeFileSync(join(root, 'tsconfig.host.json'), JSON.stringify({ compilerOptions: {
       target: 'ESNext', module: 'ESNext', moduleResolution: 'Bundler', types: [], skipLibCheck: true,
-      paths: { '@deepseek-ai/dsh-session/types': ['./packages/core/session/src/types.ts'] },
+      paths: { '@yharness/session/types': ['./packages/core/session/src/types.ts'] },
     } }))
     const source = [
       '/** Stored header. */', 'export interface SessionHeader { version: 3; id: string }',

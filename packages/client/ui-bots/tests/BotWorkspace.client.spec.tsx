@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
-import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { AttachmentId } from '@yharness/attachment'
+import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotRoster } from '../src/client/BotWorkspace.tsx'

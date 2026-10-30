@@ -3,7 +3,7 @@ description: "Generate validated OpenAI avatar previews for the Bot workspace an
 kind: "package-reference"
 ---
 
-# @deepseek-ai/dsh-avatar-generation
+# @yharness/avatar-generation
 
 ## Summary
 
@@ -34,7 +34,7 @@ Choose this package when the deployment already exposes OpenAI credentials and d
 The package is mounted by the Host composition and reads the existing credential and attachment services:
 
 ```yaml
-- name: '@deepseek-ai/dsh-avatar-generation'
+- name: '@yharness/avatar-generation'
 ```
 
 | Field | Default | Meaning |

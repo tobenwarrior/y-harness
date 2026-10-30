@@ -1,13 +1,13 @@
 /** Office preview registration backed by authorized Host rendering and the existing PDF body. */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@yharness/cordis'
 import { retainDocumentTabs } from '../document/tab-lifetime.ts'
-import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@deepseek-ai/dsh-office-to-pdf/remote'
-import type {} from '@deepseek-ai/dsh-client-locale/client'
-import type {} from '@deepseek-ai/dsh-api-workspace-files/remote'
+import type {} from '@yharness/client-ui-renderer/client'
+import type {} from '@yharness/office-to-pdf/remote'
+import type {} from '@yharness/client-locale/client'
+import type {} from '@yharness/api-workspace-files/remote'
 import { failureLine } from '../failure-line.ts'
 import { documentTabInfoFactory } from '../document/contract.ts'
-import { en, zh, type OfficePreviewKey } from './locales.ts'
+import { en, type OfficePreviewKey } from './locales.ts'
 import { OfficePreviewCache, type ReadOfficeBytes, type ReadOfficeDocument } from './cache.ts'
 import { pdfBodyRegistration } from '../pdf/index.ts'
 import { LazyPdfBody } from '../pdf/LazyPdfBody.tsx'
@@ -17,7 +17,7 @@ import { officeFace } from './face.ts'
 import { createOfficeStore } from './store.ts'
 import type { Config } from '../../config.ts'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
+declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     sidebarOffice: OfficePreviewKey
   }
@@ -29,9 +29,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
  * @param config - Resolved Office preview cache limits.
  */
 export function apply(ctx: Context, config: Config['office']): void {
-  const id = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/office'
+  const id = '@yharness/client-ui-sidebar-documentpreview/office'
   const extensions = ['doc', 'docx', 'ppt', 'pptx']
-  ctx.effect(() => ctx.locale.register('sidebarOffice', { zh, en }))
+  ctx.effect(() => ctx.locale.register('sidebarOffice', { en }))
   const t = ctx.locale.bind('sidebarOffice')
   const unavailable: ReadOfficeDocument = (_file, signal) => {
     signal.throwIfAborted()
