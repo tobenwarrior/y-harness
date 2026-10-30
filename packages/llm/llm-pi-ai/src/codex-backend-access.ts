@@ -1,6 +1,7 @@
 /** Session-owned native Codex execution policy and human interaction routing. */
 import { isAbsolute } from 'node:path'
 import type { Context } from '@yharness/cordis'
+import { ToolCallId } from '@yharness/llm'
 import type { GenerateOptions } from '@yharness/llm'
 import type {} from '@yharness/agent'
 import type {} from '@yharness/sandbox-policy'
@@ -40,6 +41,8 @@ export interface CodexTurnAccess {
   writableRoots: string[]
   approvalPolicy: 'on-request' | 'never'
   sandboxPolicy: Obj
+  /** Request approval for a provider-owned native side effect. */
+  requestApproval?: (reason: string, callId?: string) => Promise<boolean>
   request: (method: string, params: Obj) => Promise<unknown>
 }
 
@@ -71,6 +74,13 @@ export function resolveCodexAccess(ctx: Context, options: GenerateOptions | Pick
     : policy.mode === 'read-only' ? { type: 'readOnly', networkAccess: true }
       : { type: 'workspaceWrite', writableRoots: roots, networkAccess: true, excludeTmpdirEnvVar: true, excludeSlashTmp: true }
   return { cwd, sandbox: policy.mode, writableRoots: roots, approvalPolicy, sandboxPolicy: nativePolicy,
+    requestApproval: async (reason, callId) => {
+      if (approvalPolicy === 'never' || options.signal?.aborted) return false
+      const outcome = await approval.request({ agent, toolName: 'codex-dynamic-tool', reason,
+        ...(callId === undefined ? {} : { callId: ToolCallId(callId) }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }) })
+      return outcome === 'allowed-once'
+    },
     request: async (method, params) => {
       if (options.signal?.aborted) return declineCodexRequest(method, params)
       if (method === 'item/tool/requestUserInput') {

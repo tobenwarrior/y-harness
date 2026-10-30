@@ -23,7 +23,7 @@ Create a durable Bot roster whose rows keep one stable identity and one persiste
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope also receives provider-neutral `list_bots`, `inspect_bot`, and approval-gated `send_bot_message` tools; a native provider may expose the same actions through its own tool bridge.
 
 ### When to choose it
 
@@ -31,7 +31,7 @@ Choose this package when a Web surface needs named agents with durable visual id
 
 ### Minimal configuration
 
-The plugin has no user configuration fields. Mount it with the storage domain, Session controller, Agent registry, and attachment provider supplied by the composition:
+The plugin has no user configuration fields. Mount it with the storage domain, Session controller, Agent registry, system prompt service, tool runtime, and attachment provider supplied by the composition:
 
 ```yaml
 - name: '@yharness/bots'
@@ -39,7 +39,7 @@ The plugin has no user configuration fields. Mount it with the storage domain, S
 
 | Field | Default | Meaning |
 |---|---|---|
-| none | — | The Bot service takes no configuration; its composition supplies storage and Session dependencies. |
+| none | — | The Bot service takes no configuration; its composition supplies storage, Session, Agent, system prompt, tools, and attachment dependencies. |
 
 ### Durable lifecycle
 
@@ -61,7 +61,10 @@ The service owns one storage-domain table and serializes writes that can allocat
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, and attachment admission. |
+| [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, scoped prompt/tools, and attachment admission. |
+| [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
+| [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
+| [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
 | [`src/types.ts`](src/types.ts) | Browser-safe Bot ids, identities, accents, views, requests, and Remote error details. |
 
@@ -86,15 +89,49 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-The roster adds no prompt, tool schema, or Session event. Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; any model-visible history remains owned by that Session and its composed plugins.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message` is available only as an explicit, approval-gated side effect; merely mentioning or inspecting another Bot never sends anything.
 
 #### Token effect
 
-No direct effect. A selected Session pays the tokens for its own history and current request.
+The collaboration tool descriptions and any returned roster/transcript data consume tokens only when the model uses them. A selected Session pays the tokens for its own history and current request.
 
 #### KV Cache effect
 
-The roster does not modify request prefixes. Cache reuse follows the selected Session's existing model route and history.
+The roster does not modify request prefixes until the scoped collaboration tools are assembled. Cache reuse follows the selected Session's existing model route and history; a changed Bot roster or tool schema may change the provider prefix.
+
+### Bot identity
+
+#### What the model sees
+
+When a Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name and optional role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history.
+
+#### Token effect
+
+Each Bot request pays for the short identity section and optional role description.
+
+#### KV Cache effect
+
+The identity text stays prefix-stable until the Bot name or role description changes. A rename changes the system prompt for later requests while preserving the reusable prefix before the changed section.
+
+### Bot collaboration
+
+#### What the model sees
+
+The service derives the sending identity from the live Bot Agent and rechecks the durable roster for every operation. Inspection excludes reasoning and tool blocks. A delivered message is framed with the sender's current name and persisted in the recipient's existing Session as an `agent-message`, so it becomes ordinary user context on the recipient's next turn. Native Codex actions also persist a required `bot/dynamic-tool` lifecycle record with the exact model-visible result. When a native cursor is lost, the Codex bridge replays a bounded, explicitly disclosed excerpt of those records before the next request; a missing settlement remains an uncertain delivery and is never treated as proof that no message was sent.
+
+##### Native send retry contract
+
+```markdown
+If a native send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. Messaging follows the Session approval policy.
+```
+
+#### Token effect
+
+Tool schemas and bounded inspection results add tokens when used. Peer delivery itself adds the framed message to the recipient's next request, not to the sender's history.
+
+#### KV Cache effect
+
+The collaboration tool set is stable for a Bot scope. A roster or tool-schema change can invalidate a provider's request prefix; delivered peer messages affect only the recipient's later context.
 
 ## Known Limitations and Deferred Work
 

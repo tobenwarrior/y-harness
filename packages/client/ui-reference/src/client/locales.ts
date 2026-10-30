@@ -26,8 +26,12 @@ declare module '@yharness/client-ui-slots' {
 /** English dictionary for this namespace. */
 export const en = {
   'section.files': 'Files & folders',
+  'section.bots': 'Bots',
   'section.subagents': 'Subagents',
   'section.sessions': 'Sessions',
+  'bot.status.running': 'working',
+  'bot.status.idle': 'idle',
+  'bot.status.offline': 'offline',
   'candidate.noCwd': '(no cwd)',
   'crumb.root': 'Workspace',
   'time.now': 'now',

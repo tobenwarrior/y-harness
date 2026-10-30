@@ -27,6 +27,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:approval/policy` | event | `26718e15e7e395bce9642dba5bbe09b3b1a4ce2213d20d566cd9207d7fc5fb78` | [`{ type: "approval/policy" }`](#persistence-type-sha256-26718e15e7e395bce9642dba5bbe09b3b1a4ce2213d20d566cd9207d7fc5fb78) |
 | `event:assistant/attempt` | event | `15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4` | [`{ type: "assistant/attempt" }`](#persistence-type-sha256-15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4) |
 | `event:assistant/message` | event | `1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625` | [`{ type: "assistant/message" }`](#persistence-type-sha256-1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625) |
+| `event:bot/dynamic-tool` | event | `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213` | [`{ type: "bot/dynamic-tool" }`](#persistence-type-sha256-0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213) |
 | `event:claude-code/root-protocol` | event | `77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903` | [`{ type: "claude-code/root-protocol" }`](#persistence-type-sha256-77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903) |
 | `event:coding-session/import-initialization` | event | `3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406` | [`{ type: "coding-session/import-initialization" }`](#persistence-type-sha256-3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406) |
 | `event:command/done` | event | `15196447222782e773eb943c92b18316ce96b9af0f0cfddb6e57ba8274ecc5ff` | [`{ type: "command/done" }`](#persistence-type-sha256-15196447222782e773eb943c92b18316ce96b9af0f0cfddb6e57ba8274ecc5ff) |
@@ -322,6 +323,19 @@ Source: [`packages/core/session/src/types.ts:355`](../packages/core/session/src/
 Types: [TokenUsage](subsystems/llm-streaming.md)
 
 Source: [`packages/core/session/src/types.ts:341`](../packages/core/session/src/types.ts)
+
+### `bot/*`
+
+<a id="botdynamic-tool--log-only"></a>
+
+#### `bot/dynamic-tool` — log-only
+
+```ts persistence-catalog
+/** Native Bot collaboration action lifecycle; log-only but required for native replay. */
+'bot/dynamic-tool': BotDynamicToolEvent
+```
+
+Source: [`packages/agents/bots/src/collaboration.ts:80`](../packages/agents/bots/src/collaboration.ts)
 
 ### `claude-code/*`
 
@@ -1620,6 +1634,14 @@ SHA-256: `254dce209e735f9cb6f6b7aec0354712b1611759ec02af4d35a96f2081e666f6`
 
 `"blocked"`
 
+<a id="persistence-type-sha256-6451ea012cc76f8f63fa8bcf4aec1dda85649e99e51498b7d5037bb84a05e58a"></a>
+
+### `"bot/dynamic-tool"`
+
+SHA-256: `6451ea012cc76f8f63fa8bcf4aec1dda85649e99e51498b7d5037bb84a05e58a`
+
+`"bot/dynamic-tool"`
+
 <a id="persistence-type-sha256-d4e4d575abeb4b72d616dc65c17ac0eaa943cc135609395044c38d5afcb10e31"></a>
 
 ### `"canceled"`
@@ -2201,6 +2223,14 @@ SHA-256: `94c56aeb1564ad735eb773d88636b40761d063efa1610f1308004d32923f5378`
 SHA-256: `e7ce49f12953583fad217bf80fb9f1463acff2c3e9471a823782661675fb124c`
 
 `"initial"`
+
+<a id="persistence-type-sha256-9491e489906e44bfd2f825f4db1ff6a2758d12ff997caee2acd4aecfc90d9790"></a>
+
+### `"inputText"`
+
+SHA-256: `9491e489906e44bfd2f825f4db1ff6a2758d12ff997caee2acd4aecfc90d9790`
+
+`"inputText"`
 
 <a id="persistence-type-sha256-e4cac694f8b6e1d52e48c699464f1c4c26111ef87e558f7931040d00fdc8d486"></a>
 
@@ -3524,6 +3554,46 @@ One of:
 SHA-256: `84bbfdce7d2eab5b0c53e72ff7406db856c8bfd621b965b72fd86598ba493bf7`
 
 Array of [`AssistantStreamRecord`](#persistence-type-sha256-33341aac09312300de5a178e6cc6f6544a4876f7f710cfea55eda473c8d329ef).
+
+<a id="persistence-type-sha256-157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d"></a>
+
+<a id="persistence-type-botdynamictoolevent"></a>
+
+<a id="persistence-type-packagesagentsbotssrccollaborationtsbotdynamictoolevent"></a>
+
+### `BotDynamicToolEvent`
+
+SHA-256: `157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d`
+
+Sources: [`packages/agents/bots/src/collaboration.ts:66`](../packages/agents/bots/src/collaboration.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `arguments` | required | [`{}`](#persistence-type-sha256-0aa62ab51b36c0e64b134bd03ba8725d758744180a1a447da49beaad194f219f) |
+| `callId` | required | `string` |
+| `name` | required | `string` |
+| `phase` | required | [`union (2 variants)`](#persistence-type-sha256-ee56f65f1ce49806039be2ae37ad1ce86c578039b04c69cc86a74946f9d8f92c) |
+| `result` | optional | [`BotDynamicToolEventResult`](#persistence-type-sha256-92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e) |
+| `sessionId` | required | `string` |
+| `threadId` | required | `string` |
+| `turnId` | required | `string` |
+
+<a id="persistence-type-sha256-92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e"></a>
+
+<a id="persistence-type-botdynamictooleventresult"></a>
+
+<a id="persistence-type-packagesagentsbotssrccollaborationtsbotdynamictooleventresult"></a>
+
+### `BotDynamicToolEventResult`
+
+SHA-256: `92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e`
+
+Sources: [`packages/agents/bots/src/collaboration.ts:56`](../packages/agents/bots/src/collaboration.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `contentItems` | required | [`{ type: "inputText" }[]`](#persistence-type-sha256-800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc) |
+| `success` | required | `boolean` |
 
 <a id="persistence-type-sha256-819a42a5c0a87b5a0d11b7dc7d23419bfbb0710f4a036fac6501b99f6ef46a09"></a>
 
@@ -6184,6 +6254,17 @@ SHA-256: `c982e6e23f9e71e8e6c10a5d0c3517aa7d2f6504abbc45ef7754c4ac642bdb38`
 |---|---|---|---|
 | `check` | not declared | `command`: `string` | [`{ kind: "check" }`](#persistence-type-sha256-19c593b6d365eae22cdd648f62e94aece63a0bd6a19074cd55181a5282107f23) |
 | `read` | not declared | `path`: `string` | [`{ kind: "read" }`](#persistence-type-sha256-6c2e2a3ec8a24676befbb1718d0a53a71693fb314e6aafbe8320e7090489aca5) |
+
+<a id="persistence-type-sha256-ee56f65f1ce49806039be2ae37ad1ce86c578039b04c69cc86a74946f9d8f92c"></a>
+
+### `union (2 variants)`
+
+SHA-256: `ee56f65f1ce49806039be2ae37ad1ce86c578039b04c69cc86a74946f9d8f92c`
+
+One of:
+
+- `"settled"`
+- `"started"`
 
 <a id="persistence-type-sha256-fc56673b2a1ae2839f759232a7214695a098a4d1deadd2f88317c5ae167934d8"></a>
 
@@ -8873,6 +8954,22 @@ Sources: [`packages/llm/llm/src/types.ts:485`](../packages/llm/llm/src/types.ts)
 | `index` | required | `number` |
 | `type` | required | `"block-start"` |
 
+<a id="persistence-type-sha256-0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213"></a>
+
+<a id="persistence-type-eventbotdynamic-tool"></a>
+
+### `{ type: "bot/dynamic-tool" }`
+
+SHA-256: `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`BotDynamicToolEvent`](#persistence-type-sha256-157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"bot/dynamic-tool"` |
+
 <a id="persistence-type-sha256-487b65c37bfedb8b72088c4107a0a90a6249701f6b26745f6d98f9b8a22b07c7"></a>
 
 ### `{ type: "chunk" }`
@@ -9186,6 +9283,27 @@ SHA-256: `b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e`
 | `seq` | required | `number` |
 | `time` | required | `number` |
 | `type` | required | `"image/offload"` |
+
+<a id="persistence-type-sha256-11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd"></a>
+
+### `{ type: "inputText" }`
+
+SHA-256: `11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd`
+
+Sources: [`packages/agents/bots/src/collaboration.ts:58`](../packages/agents/bots/src/collaboration.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `text` | required | `string` |
+| `type` | required | `"inputText"` |
+
+<a id="persistence-type-sha256-800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc"></a>
+
+### `{ type: "inputText" }[]`
+
+SHA-256: `800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc`
+
+Array of [`{ type: "inputText" }`](#persistence-type-sha256-11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd).
 
 <a id="persistence-type-sha256-525254db03b1d1e6b74cf55aced52817568331ac1f96c0818728910b6692e336"></a>
 

@@ -53,6 +53,13 @@ describe('automatic ChatGPT catalog refresh', () => {
     expect(() => CodexBackendConnection.Config({ catalogRefreshIntervalMs: 2 ** 31 })).toThrow()
   })
 
+  it('resolves and bounds the native Bot replay budget', () => {
+    expect(CodexBackendConnection.Config({}).dynamicToolReplayMaxBytes).toBe(64 * 1024)
+    expect(CodexBackendConnection.Config({ dynamicToolReplayMaxBytes: 1024 }).dynamicToolReplayMaxBytes).toBe(1024)
+    expect(() => CodexBackendConnection.Config({ dynamicToolReplayMaxBytes: 1023 })).toThrow()
+    expect(() => CodexBackendConnection.Config({ dynamicToolReplayMaxBytes: 4 * 1024 * 1024 + 1 })).toThrow()
+  })
+
   it.each([0, 2 ** 31, 1.5])('rejects an invalid refresh interval (%s)', (interval) => {
     expect(() => fixture({ interval })).toThrow('refresh interval')
   })

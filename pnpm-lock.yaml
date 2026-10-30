@@ -1170,6 +1170,12 @@ importers:
       '@yharness/cordis-plugin-loader':
         specifier: workspace:~
         version: link:../../../vendor/loader
+      '@yharness/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      '@yharness/scope':
+        specifier: workspace:*
+        version: link:../../core/scope
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
@@ -1179,6 +1185,15 @@ importers:
       '@yharness/storage-domain':
         specifier: workspace:*
         version: link:../../storage/storage-domain
+      '@yharness/subagent':
+        specifier: workspace:*
+        version: link:../../subagent/subagent
+      '@yharness/system-prompt':
+        specifier: workspace:*
+        version: link:../../core/system-prompt
+      '@yharness/tools':
+        specifier: workspace:*
+        version: link:../../core/tools
       '@yharness/typert-protocol':
         specifier: workspace:*
         version: link:../../typert/protocol
@@ -4857,6 +4872,9 @@ importers:
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller
+      '@yharness/bots':
+        specifier: workspace:*
+        version: link:../../agents/bots
       '@yharness/client-connection':
         specifier: workspace:*
         version: link:../connection

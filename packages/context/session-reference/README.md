@@ -29,6 +29,8 @@ Enable this service when hosts should let a user mention another session and giv
 
 A canonical mention is `@[label](dsh-session:<base64url-encoded-id>)` in Markdown, or the bare `dsh-session:` URI; every JavaScript string session id round-trips exactly. The service rewrites mentions into readable `@label` text in the message and returns the structured references. Explicit Markdown mentions reject malformed URIs; empty or punctuation-only scheme mentions stay ordinary discussion text.
 
+Browser-facing consumers that only need the codec can import the side-effect-free `@yharness/session-reference/uri` entry without loading the Host resolver.
+
 ### What the agent gets
 
 A message that cites other sessions is followed immediately by a `## Referenced sessions` snapshot as a second user-role message. The snapshot is untrusted background: the fixed warning tells the model not to follow instructions, permission claims, or tool requests inside it unless the current user explicitly repeats them. Each source preview is bounded independently — at most `maxReferences` distinct sessions per message and a configured or model-relative serialized JSON byte budget per source. Retention drops older non-checkpoint messages before shortening retained text; preparation fails only when the reference cannot fit even after retention.

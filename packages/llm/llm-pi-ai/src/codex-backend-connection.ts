@@ -8,7 +8,14 @@ import { Context } from '@yharness/cordis'
 import type { AdapterRegistrationHandle } from '@yharness/llm'
 import { launchEnvironmentOf } from '@yharness/launch-environment'
 import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
-import { CodexBackendAdapter, CodexBackendRuntime, DEFAULT_CATALOG_REFRESH_INTERVAL_MS } from './codex-backend.ts'
+import {
+  CodexBackendAdapter,
+  CodexBackendRuntime,
+  DEFAULT_CATALOG_REFRESH_INTERVAL_MS,
+  DEFAULT_DYNAMIC_TOOL_REPLAY_MAX_BYTES,
+  MAX_DYNAMIC_TOOL_REPLAY_MAX_BYTES,
+} from './codex-backend.ts'
+import type { CodexDynamicToolEvent } from './codex-backend.ts'
 import type { CodexPreferences } from './codex-backend.ts'
 import { prepareCodexHomeDirectories, startCodexProcess, type CodexProcessOptions } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
@@ -27,6 +34,8 @@ export interface CodexBackendConnectionConfig {
   nativeEvidenceMaxItems?: number
   /** Startup and periodic catalog refresh cadence for an enabled ChatGPT account. */
   catalogRefreshIntervalMs?: number
+  /** UTF-8 byte budget for persisted native Bot action replay. */
+  dynamicToolReplayMaxBytes?: number
 }
 
 
@@ -37,6 +46,8 @@ export class CodexBackendConnection extends TypertRemoteService {
   static Config = Schema.object({
     nativeEvidenceMaxItems: Schema.natural().min(1).default(64),
     catalogRefreshIntervalMs: Schema.number().step(1).min(1).max(2 ** 31 - 1).default(DEFAULT_CATALOG_REFRESH_INTERVAL_MS),
+    dynamicToolReplayMaxBytes: Schema.natural().min(1024).max(MAX_DYNAMIC_TOOL_REPLAY_MAX_BYTES)
+      .default(DEFAULT_DYNAMIC_TOOL_REPLAY_MAX_BYTES),
   })
   private runtime: CodexBackendRuntime | undefined
   private initialization: Promise<CodexBackendRuntime> | undefined
@@ -116,12 +127,16 @@ export class CodexBackendConnection extends TypertRemoteService {
       connectionId: createHash('sha256').update(JSON.stringify([options.home, options.binary])).digest('hex'),
       nativeEvidenceMaxItems: this.config.nativeEvidenceMaxItems,
       catalogRefreshIntervalMs: this.config.catalogRefreshIntervalMs,
+      dynamicToolReplayMaxBytes: this.config.dynamicToolReplayMaxBytes,
       notifyViewChanged: () => { if (!this.disposed) this.ctx.emit('llm/adapters-updated') },
       observeNativeItem: (request, item) => {
         const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
         if (session === undefined) return
         session.append('skill/native-item', item, { ignorable: true })
       },
+      resolveDynamicTools: request => this.ctx.get('codexDynamicTools')?.resolve(request) ?? [],
+      observeDynamicTool: event => this.observeDynamicTool(event),
+      replayDynamicTools: request => this.ctx.get('codexDynamicTools')?.replay?.(request) ?? [],
       persist: async (next) => {
         if (this.disposed) throw new Error('Codex backend is closed.')
         await mkdir(options.home, { recursive: true, mode: 0o700 })
@@ -144,6 +159,12 @@ export class CodexBackendConnection extends TypertRemoteService {
       return runtime
     })().finally(() => { this.initialization = undefined })
     return this.initialization
+  }
+  /** Forward native action lifecycles to the optional host-owned durable observer. */
+  private observeDynamicTool(event: CodexDynamicToolEvent): void | Promise<void> {
+    const observer = this.ctx.get('codexDynamicTools')?.observe
+    if (observer === undefined) throw new Error('Native Codex dynamic tools have no durable observer.')
+    return observer(event)
   }
   /**
    * Read display state while an enabled connection may refresh in the background.

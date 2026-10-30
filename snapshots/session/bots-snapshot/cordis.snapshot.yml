@@ -1,0 +1,31 @@
+# Keyless replay composition for the Bot identity and collaboration snapshot owner.
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- id: llm-deepseek
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@yharness/llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+                defaultMaxTokens: 256000
+                reasoningEfforts: [off, low, high, max]
+                defaultReasoningEffort: high
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'
+    - id: bot-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-prereqs.ts'

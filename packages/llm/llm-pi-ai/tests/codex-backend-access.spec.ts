@@ -1,6 +1,7 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import { SessionId } from '@yharness/session'
+import { ToolCallId } from '@yharness/llm'
 import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@yharness/agent-loop-testkit'
 import SandboxPolicy, { setSandboxMode } from '@yharness/sandbox-policy'
 import { writableRoots } from '@yharness/sandbox'
@@ -61,6 +62,20 @@ describe('native Codex session authority', () => {
     expect(audit.at(-1)).toMatchObject({ type: 'approval/decided', data: { outcome: 'allowed-once' } })
     setApprovalPolicy(agent.session, 'never')
     expect(await resolve().request(method, params)).toEqual({ decision: 'decline' })
+    expect(decide).toHaveBeenCalledOnce()
+  })
+
+  it('correlates provider-owned side-effect approval with the native call id and fails closed after policy changes', async () => {
+    const { ctx, agent, resolve } = await fixture()
+    const decide = vi.fn(async (_request: import('@yharness/user-approval').ApprovalRequest) => 'allowed-once' as const)
+    ctx.on('approval/request', decide)
+    await expect(resolve().requestApproval?.('Send a message', 'native-call-1')).resolves.toBe(true)
+    expect(decide.mock.calls[0]?.[0]?.agent).toBe(agent)
+    expect(decide.mock.calls[0]?.[0]).toMatchObject({
+      toolName: 'codex-dynamic-tool', callId: ToolCallId('native-call-1'), reason: 'Send a message',
+    })
+    setApprovalPolicy(agent.session, 'never')
+    await expect(resolve().requestApproval?.('Send another message', 'native-call-2')).resolves.toBe(false)
     expect(decide).toHaveBeenCalledOnce()
   })
 

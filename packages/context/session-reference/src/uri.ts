@@ -14,7 +14,7 @@ export const SESSION_REFERENCE_SCHEME = 'dsh-session:'
  * @returns canonical `dsh-session:` URI.
  */
 export function encodeSessionReferenceUri(sessionId: SessionIdType): string {
-  const payload = Buffer.from(JSON.stringify(sessionId), 'utf8').toString('base64url')
+  const payload = encodeBase64Url(JSON.stringify(sessionId))
   return `${SESSION_REFERENCE_SCHEME}${payload}`
 }
 
@@ -30,7 +30,7 @@ export function decodeSessionReferenceUri(uri: string): SessionIdType {
   const payload = uri.slice(SESSION_REFERENCE_SCHEME.length)
   if (!/^[A-Za-z0-9_-]+$/.test(payload)) throw invalidUri(uri)
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+    const parsed: unknown = JSON.parse(decodeBase64Url(payload))
     if (typeof parsed !== 'string') throw new TypeError('decoded session id is not a string')
     const sessionId = brandString<SessionIdType>(parsed)
     if (encodeSessionReferenceUri(sessionId) !== uri) throw new TypeError('URI is not canonical')
@@ -38,6 +38,21 @@ export function decodeSessionReferenceUri(uri: string): SessionIdType {
   } catch (error: unknown) {
     throw invalidUri(uri, error)
   }
+}
+
+function encodeBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')
+}
+
+function decodeBase64Url(value: string): string {
+  const base64 = value.replaceAll('-', '+').replaceAll('_', '/')
+    + '='.repeat((4 - value.length % 4) % 4)
+  const binary = atob(base64)
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
 }
 
 /**

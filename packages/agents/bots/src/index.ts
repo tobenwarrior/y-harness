@@ -3,7 +3,8 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
-import type {} from '@yharness/agent'
+import type { Agent } from '@yharness/agent'
+import type {} from '@yharness/system-prompt'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
@@ -11,6 +12,10 @@ import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
+import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
+import type { BotCollaborationClient } from './collaboration.ts'
+import { createBotNativeToolProvider } from './native-tools.ts'
+import { installBotCollaborationTools } from './scoped-tools.ts'
 import type {
   BotAvailability,
   BotAccent,
@@ -35,7 +40,29 @@ import { botDomain, imageAttachmentRefSchema } from './storage.ts'
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
+export {
+  BotCollaborationError,
+  BotCollaborationService,
+  BotMessageId,
+  projectBotTranscript,
+} from './collaboration.ts'
+export type {
+  BotCollaborationClient,
+  BotCollaborationAgent,
+  BotCollaborationErrorCode,
+  BotCollaborationHost,
+  BotCollaborationInspection,
+  BotCollaborationInspectionValue,
+  BotCollaborationRosterEntry,
+  BotCollaborationTranscriptEntry,
+  BotDynamicToolEvent,
+  BotDynamicToolEventResult,
+  BotMessageSource,
+  SendBotMessageRequest,
+  SendBotMessageResult,
+} from './collaboration.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
+export { installBotCollaborationTools } from './scoped-tools.ts'
 
 declare module '@yharness/cordis' {
   interface Context {
@@ -161,14 +188,31 @@ function sessionRequest(record: BotRecord): SessionCreateRequest {
   }
 }
 
+/** Stable scoped section name for one Bot's model-visible identity. */
+const BOT_IDENTITY_SECTION = 'bot:identity'
+
+/** Render the Bot identity that every model route, including native Codex, receives. */
+function botIdentityPrompt(record: BotRecord): string {
+  return [
+    'You are a named Bot in Y Harness.',
+    `Your Bot name is ${JSON.stringify(record.name)}.`,
+    'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
+    ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
+  ].join('\n\n')
+}
+
 /** Host service that owns the durable roster and its Session mappings. */
 export class BotService extends TypertRemoteService {
-  static inject = ['agents', 'storageDomain', 'sessionController', 'attachments']
+  static inject = ['agents', 'storageDomain', 'sessionController', 'sessions', 'attachments', 'systemPrompt', 'tools']
 
   static Config = Config
 
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly initialized: PromiseLike<unknown>
+  private readonly recordsBySession = new Map<string, BotRecord>()
+  private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
+  private readonly promptDisposals = new Set<Promise<void>>()
+  private readonly collaboration: BotCollaborationService
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
 
@@ -197,9 +241,54 @@ export class BotService extends TypertRemoteService {
           throw new Error(`bots: Session "${record.sessionId}" is mapped by more than one Bot`)
         }
         seenSessions.add(record.sessionId)
+        this.recordsBySession.set(String(record.sessionId), record)
       }
       return domain
     })
+    this.collaboration = new BotCollaborationService({
+      listBots: async () => (await this.list({})).bots,
+      inspectSession: async (sessionId) => {
+        const inspection = await ctx.sessionController.inspect(sessionId)
+        return { events: inspection.events }
+      },
+      resolveAgent: sessionId => ctx.sessionController.resolveAgent(sessionId),
+      flushSession: async (sessionId) => {
+        let session = ctx.sessions.get(sessionId)
+        if (session === undefined) {
+          const resolved = await ctx.sessionController.resolveAgent(sessionId)
+          if (!('agent' in resolved)) throw resolved.error
+          session = ctx.sessions.get(resolved.agent.id)
+        }
+        if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
+        if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
+      },
+    })
+    ctx.provide('codexDynamicTools', createBotNativeToolProvider({
+      bind: async (sessionId) => {
+        const agent = ctx.get('agents')?.get(sessionId)
+        if (agent === undefined) return undefined
+        try {
+          return await this.collaboration.bind(agent)
+        } catch (error: unknown) {
+          if (error instanceof BotCollaborationError && error.code === 'sender-not-bot') return undefined
+          throw error
+        }
+      },
+      persist: async (event) => {
+        await this.ready
+        const session = ctx.sessions.get(event.sessionId)
+        if (session === undefined) throw new Error(`Bot Session "${event.sessionId}" is not live.`)
+        session.append('bot/dynamic-tool', event)
+        if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
+      },
+      replay: async (sessionId) => {
+        await this.ready
+        const inspection = await ctx.sessionController.inspect(sessionId)
+        return inspection.events.flatMap(event => event.type === 'bot/dynamic-tool' ? [event.data] : [])
+      },
+    }))
+    ctx.on('agent/created', async ({ agent }) => { await this.installPrompt(agent) })
+    ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {
       const domain = await this.ready
       let cleanup: () => Promise<void>
@@ -207,6 +296,12 @@ export class BotService extends TypertRemoteService {
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           await this.chain
+          const promptFibers = [...this.promptFibers.values()]
+          this.promptFibers.clear()
+          await Promise.all([
+            ...promptFibers.map(fiber => fiber.dispose()),
+            ...this.promptDisposals,
+          ])
           await domain.close()
         })
       } catch (error) {
@@ -220,6 +315,20 @@ export class BotService extends TypertRemoteService {
 
   async [Service.init](): Promise<void> {
     await this.initialized
+    await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+  }
+
+  /**
+   * Bind peer-Bot operations to the live Agent that owns the current turn.
+   *
+   * The provider bridge must supply this Agent from its runtime context; the
+   * returned client never accepts a model-supplied sender Session id. Each
+   * operation rechecks that the Session remains owned by a durable Bot.
+   * @param agent - live Agent supplied by the provider bridge or scoped tool.
+   * @returns collaboration operations attributed to that Bot.
+   */
+  collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient> {
+    return this.collaboration.bind(agent)
   }
 
   /**
@@ -291,6 +400,7 @@ export class BotService extends TypertRemoteService {
         updatedAt: now,
       }
       await bots.put(id, record)
+      this.recordsBySession.set(String(record.sessionId), record)
       this.emitChanged()
       const active = await this.provision(record, bots)
       return { bot: this.view(active) }
@@ -315,6 +425,7 @@ export class BotService extends TypertRemoteService {
       }
       const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
       await bots.put(id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -505,8 +616,42 @@ export class BotService extends TypertRemoteService {
         { cause: error },
       )
     }
+    this.recordsBySession.set(String(active.sessionId), active)
     this.emitChanged()
     return active
+  }
+
+  /** Install the Bot identity in the Agent scope before its first model turn. */
+  private async installPrompt(agent: Agent): Promise<void> {
+    await this.ready
+    if (this.recordsBySession.get(String(agent.id)) === undefined || this.promptFibers.has(agent)) return
+    const fiber = agent.ctx.inject(['systemPrompt', 'tools'], (scope) => {
+      scope.systemPrompt.section({
+        name: BOT_IDENTITY_SECTION,
+        order: scope.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX') + 1,
+        text: () => {
+          const record = this.recordsBySession.get(String(agent.id))
+          return record === undefined ? '' : botIdentityPrompt(record)
+        },
+        // Bot names and descriptions are user-authored prose, not variables.
+        interpolate: false,
+      })
+      installBotCollaborationTools(scope, () => this.collaborationFor(agent))
+    })
+    this.promptFibers.set(agent, fiber)
+    await fiber
+  }
+
+  /** Release one Agent's scoped identity registration after its lifecycle ends. */
+  private disposePrompt(agent: Agent): void {
+    const fiber = this.promptFibers.get(agent)
+    if (fiber === undefined) return
+    this.promptFibers.delete(agent)
+    const task = fiber.dispose().catch((error: unknown) => {
+      this.ctx.logger.warn(`bots: prompt cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+    this.promptDisposals.add(task)
+    void task.finally(() => { this.promptDisposals.delete(task) })
   }
 
   private view(record: BotRecord): BotView {

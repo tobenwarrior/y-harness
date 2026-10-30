@@ -27,6 +27,7 @@ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
   'approval/policy',
   'assistant/attempt',
   'assistant/message',
+  'bot/dynamic-tool',
   'claude-code/root-protocol',
   'coding-session/import-initialization',
   'command/done',

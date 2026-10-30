@@ -49,6 +49,7 @@
   "devDependencies": {
     "@yharness/api-remotes": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
+    "@yharness/bots": "workspace:*",
     "@yharness/client-connection": "workspace:*",
     "@yharness/client-locale": "workspace:*",
     "@yharness/client-test-runtime": "workspace:*",

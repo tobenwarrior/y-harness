@@ -51,6 +51,17 @@ Host service that owns the durable roster and its Session mappings.
 
 ```ts cordis-catalog
 /**
+ * Bind peer-Bot operations to the live Agent that owns the current turn.
+ *
+ * The provider bridge must supply this Agent from its runtime context; the
+ * returned client never accepts a model-supplied sender Session id. Each
+ * operation rechecks that the Session remains owned by a durable Bot.
+ * @param agent - live Agent supplied by the provider bridge or scoped tool.
+ * @returns collaboration operations attributed to that Bot.
+ */
+collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
+
+/**
  * List the durable Bot roster without activating cold Sessions.
  * @param _request - Empty list request reserved for future paging.
  * @returns one row per Bot, ordered by creation time and id.
@@ -99,6 +110,8 @@ Host service that owns the durable roster and its Session mappings.
  */
 @Remote('readAvatar') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>
 ```
+
+Types: [Agent](core.md)
 
 Source: [`packages/agents/bots/src/index.ts`](../../packages/agents/bots/src/index.ts)
 

@@ -61,7 +61,7 @@ function styleInjectionModule(
  * Everything else under @yharness/* is either a module-table entry
  * (external) or a leak the purity gate rejects.
  */
-export const INLINE_SAFE = /^(?:@yharness\/(?:file-reference|session|llm|tools|brand|deque|output-retention|typert-protocol|util-crypto|util-values|util-workspace-path)(?:\/|$)|@yharness\/token-meter\/client$|@yharness\/native-command\/types$|@yharness\/host-open-in-app\/shared$|@yharness\/plugin-manager\/registry$|@yharness\/agent-preset-registry\/display$|@yharness\/api-workspace-controller\/default-workspace$|@yharness\/spill-policy\/notice$)/
+export const INLINE_SAFE = /^(?:@yharness\/(?:file-reference|session-reference\/uri|session|llm|tools|brand|deque|output-retention|typert-protocol|util-crypto|util-values|util-workspace-path)(?:\/|$)|@yharness\/token-meter\/client$|@yharness\/native-command\/types$|@yharness\/host-open-in-app\/shared$|@yharness\/plugin-manager\/registry$|@yharness\/agent-preset-registry\/display$|@yharness\/api-workspace-controller\/default-workspace$|@yharness\/spill-policy\/notice$)/
 
 /**
  * Vendored framework libraries: rescoped into @yharness, so the gate below

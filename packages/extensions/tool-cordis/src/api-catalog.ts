@@ -581,6 +581,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Host service that owns the durable roster and its Session mappings.',
     methods: [
       {
+        signature: 'collaborationFor(agent: Pick<Agent, \'id\'>): Promise<BotCollaborationClient>',
+        description: 'Bind peer-Bot operations to the live Agent that owns the current turn.\n\nThe provider bridge must supply this Agent from its runtime context; the returned client never accepts a model-supplied sender Session id. Each operation rechecks that the Session remains owned by a durable Bot.',
+        parameters: [{ name: 'agent', description: 'live Agent supplied by the provider bridge or scoped tool.' }],
+        returns: 'collaboration operations attributed to that Bot.',
+      },
+      {
         signature: '@Remote(\'list\') async list(_request: BotListRequest): Promise<BotListValue>',
         description: 'List the durable Bot roster without activating cold Sessions.',
         parameters: [{ name: '_request', description: 'Empty list request reserved for future paging.' }],
@@ -713,7 +719,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: '@Remote async getState(): Promise<CodexBackendView>',
-        description: 'Read display state without launching Codex or reading its auth file.',
+        description: 'Read display state while an enabled connection may refresh in the background.',
         parameters: [],
         returns: 'the current enablement, connection, and running state.',
       },
@@ -5364,6 +5370,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotAvatarUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotCollaborationClient',
+    declaration: 'export interface BotCollaborationClient {\n    readonly sender: BotCollaborationRosterEntry;\n    readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>;\n    readonly inspect: (botId: BotId) => Promise<BotCollaborationInspectionValue>;\n    readonly send: (request: SendBotMessageRequest) => Promise<SendBotMessageResult>;\n}',
+  },
+  {
+    name: 'BotCollaborationInspectionValue',
+    declaration: 'export interface BotCollaborationInspectionValue {\n    readonly bot: BotCollaborationRosterEntry;\n    readonly recent: readonly BotCollaborationTranscriptEntry[];\n}',
+  },
+  {
+    name: 'BotCollaborationRosterEntry',
+    declaration: 'export interface BotCollaborationRosterEntry {\n    readonly id: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly availability: BotView[\'availability\'];\n    readonly state: BotView[\'state\'];\n}',
+  },
+  {
+    name: 'BotCollaborationTranscriptEntry',
+    declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n}',
+  },
+  {
     name: 'BotCreateRequest',
     declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
   },
@@ -5382,6 +5404,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotListValue',
     declaration: 'export interface BotListValue {\n    readonly bots: readonly BotView[];\n}',
+  },
+  {
+    name: 'BotMessageId',
+    declaration: 'export type BotMessageId = MessageId;',
   },
   {
     name: 'BotProvisioningState',
@@ -7494,6 +7520,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SearchResultView',
     declaration: 'export type SearchResultView = SearchMatchesResultView | SearchPathsResultView;',
+  },
+  {
+    name: 'SendBotMessageRequest',
+    declaration: 'export interface SendBotMessageRequest {\n    readonly targetBotId: BotId;\n    readonly text: string;\n    readonly messageId?: BotMessageId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'SendBotMessageResult',
+    declaration: 'export interface SendBotMessageResult {\n    readonly messageId: BotMessageId;\n    readonly status: \'accepted\' | \'duplicate\';\n    readonly sender: BotCollaborationRosterEntry;\n    readonly target: BotCollaborationRosterEntry;\n}',
   },
   {
     name: 'SendTeamMessageRequest',

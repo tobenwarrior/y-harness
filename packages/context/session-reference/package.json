@@ -30,6 +30,10 @@
       "types": "./lib/typert.remote-client.d.ts",
       "default": "./lib/typert.remote-client.js"
     },
+    "./uri": {
+      "types": "./lib/types/uri.d.ts",
+      "default": "./lib/types/uri.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },

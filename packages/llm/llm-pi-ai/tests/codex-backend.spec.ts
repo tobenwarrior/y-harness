@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AttachmentStore } from '@yharness/attachment'
-import { parseCodexModels, declineCodexRequest, projectCodexHistory, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
+import { parseCodexModels, declineCodexRequest, projectCodexHistory, projectCodexDynamicToolReplay, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
+import type { CodexDynamicTool, CodexDynamicToolEvent, CodexDynamicToolResolver, CodexDynamicToolReplayer } from '../src/codex-backend.ts'
 import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
 import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 import { codexNativeItem } from '../src/codex-native-evidence.ts'
 
 const catalog = { data: [{ id: 'sol-id', model: 'gpt-6.1-sol', displayName: 'Sol', description: 'Native', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'max', description: 'Max' }, { reasoningEffort: 'ultra', description: 'Delegation' }], defaultReasoningEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }] }, { id: 'hidden', model: 'hidden', hidden: true }] }
-function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined, observeNativeItem?: (options: import('@yharness/llm').GenerateOptions, item: SkillLearningNativeItem) => void, nativeEvidenceMaxItems?: number, observationScope: { cwd?: string; projectRoot?: string | null } = {}) {
+function fixture(models: unknown = catalog, resolveAttachments?: () => AttachmentStore | undefined, observeNativeItem?: (options: import('@yharness/llm').GenerateOptions, item: SkillLearningNativeItem) => void, nativeEvidenceMaxItems?: number, observationScope: { cwd?: string; projectRoot?: string | null } = {}, resolveDynamicTools?: CodexDynamicToolResolver, observeDynamicTool?: (event: CodexDynamicToolEvent) => void | Promise<void>, replayDynamicTools?: CodexDynamicToolReplayer) {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
+  let handleRequest: ((method: string, params: Record<string, unknown>) => Promise<unknown>) | undefined
   const request = vi.fn(async (method: string, _params: object): Promise<unknown> => {
     if (method === 'initialize') return { userAgent: 'codex' }
     if (method === 'model/list') return models
@@ -23,14 +25,21 @@ function fixture(models: unknown = catalog, resolveAttachments?: () => Attachmen
     },
     close: vi.fn(),
   }
-  const runtime = new CodexBackendRuntime({ connect: async () => peer,
-    resolveAccess: () => ({ cwd: observationScope.cwd ?? '/session/project', sandbox: 'workspace-write', writableRoots: ['/session/project', '/tmp'], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true }, request: declineCodexRequest }), persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
+  const runtime = new CodexBackendRuntime({ connect: async (handler) => { handleRequest = handler; return peer },
+    resolveAccess: () => ({ cwd: observationScope.cwd ?? '/session/project', sandbox: 'workspace-write', writableRoots: ['/session/project', '/tmp'], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true }, requestApproval: async () => true, request: declineCodexRequest }), persist: async () => {}, preferences: { enabled: false, models: [], tiers: {} },
     ...resolveAttachments === undefined ? {} : { resolveAttachments },
     resolveObservationProjectRoot: () => observationScope.projectRoot === null ? undefined : observationScope.projectRoot ?? '/session/project',
     connectionId: 'fixture-profile', ...observeNativeItem === undefined ? {} : { observeNativeItem },
-    ...nativeEvidenceMaxItems === undefined ? {} : { nativeEvidenceMaxItems } })
+    ...nativeEvidenceMaxItems === undefined ? {} : { nativeEvidenceMaxItems },
+    ...resolveDynamicTools === undefined ? {} : { resolveDynamicTools },
+    ...observeDynamicTool === undefined ? {} : { observeDynamicTool },
+    ...replayDynamicTools === undefined ? {} : { replayDynamicTools } })
   return { runtime, request, peer,
     emit: (method: string, params: Record<string, unknown>) => { for (const cb of listeners) cb(method, params) },
+    invoke: async (method: string, params: Record<string, unknown>) => {
+      if (handleRequest === undefined) throw new Error('fixture native request handler is not connected')
+      return handleRequest(method, params)
+    },
   }
 }
 describe('Codex native backend', () => {
@@ -238,6 +247,132 @@ describe('Codex native backend', () => {
     const chunks = []; for await (const chunk of runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('ultra'), system: 'system', messages: [{ role: 'user', content: [{ type: 'text', text: 'prompt' }] }], tools: [{ name: 'shell', description: 'Harness shell', parameters: {} }] })) chunks.push(chunk)
     const turn = request.mock.calls.find(x => x[0] === 'turn/start')?.[1]
     expect(turn).toMatchObject({ effort: 'ultra', serviceTier: 'fast', approvalPolicy: 'on-request', cwd: '/session/project', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/session/project', '/tmp'], networkAccess: true } }); expect(turn).not.toHaveProperty('tools'); expect(chunks).toContainEqual({ type: 'text-delta', index: 0, text: 'hello' }); expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+  })
+  it('registers only explicit dynamic tools and answers native calls through that allowlist', async () => {
+    const execute = vi.fn(async (arguments_: Record<string, unknown>, context: { callId: string; sessionId: unknown }) => ({
+      success: true as const,
+      contentItems: [{ type: 'inputText' as const, text: JSON.stringify({ accepted: arguments_.target, callId: context.callId }) }],
+    }))
+    const tool: CodexDynamicTool = {
+      name: 'send_bot_message', description: 'Send one explicit message to a named Bot.',
+      inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'], additionalProperties: false },
+      execute,
+    }
+    const observations: CodexDynamicToolEvent[] = []
+    const f = fixture(catalog, undefined, undefined, undefined, {}, () => [tool], (event) => { observations.push(event) })
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => method === 'turn/start' ? { turn: { id: 'turn1' } } : original(method, params))
+    const running = (async () => {
+      const chunks = []
+      for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-alpha' as never, messages: [{ role: 'user', content: [{ type: 'text', text: 'send it' }] }] })) chunks.push(chunk)
+      return chunks
+    })()
+    await vi.waitFor(() => expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true))
+    const threadStart = f.request.mock.calls.find(call => call[0] === 'thread/start')?.[1]
+    expect(threadStart).toMatchObject({ dynamicTools: [{ type: 'function', name: 'send_bot_message', description: tool.description, inputSchema: tool.inputSchema }] })
+    await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'call-1', tool: 'send_bot_message', arguments: '{"target":"bot-beta"}' })).resolves.toEqual({
+      success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ accepted: 'bot-beta', callId: 'call-1' }) }],
+    })
+    expect(execute).toHaveBeenCalledWith({ target: 'bot-beta' }, expect.objectContaining({ callId: 'call-1', turnId: 'turn1', sessionId: 'bot-session-alpha', approvalPolicy: 'on-request' }))
+    expect(observations.map(event => event.phase)).toEqual(['started', 'settled'])
+    expect(observations[1]?.result).toEqual({
+      success: true, contentItems: [{ type: 'inputText', text: JSON.stringify({ accepted: 'bot-beta', callId: 'call-1' }) }],
+    })
+    await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'call-2', tool: 'shell', arguments: '{}' })).resolves.toEqual({
+      success: false, contentItems: [{ type: 'inputText', text: 'The requested native action is unavailable.' }],
+    })
+    f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
+    const chunks = await running
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    f.runtime.close()
+  })
+  it('replays persisted dynamic-tool records after cursor loss without duplicating valid continuation', async () => {
+    const tool: CodexDynamicTool = {
+      name: 'send_bot_message', description: 'Send one explicit message to a named Bot.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      execute: async () => ({ success: true, contentItems: [{ type: 'inputText', text: 'ok' }] }),
+    }
+    let persisted: readonly CodexDynamicToolEvent[] = []
+    const replay = vi.fn(async () => persisted)
+    const f = fixture(catalog, undefined, undefined, undefined, {}, () => [tool], () => {}, replay)
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const collect = async (messages: unknown[]) => {
+      const chunks = []
+      for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-replay' as never, messages: messages as never })) chunks.push(chunk)
+      return chunks
+    }
+    const firstUser = { role: 'user', content: [{ type: 'text', text: 'first' }] } as const
+    const first = await collect([firstUser])
+    const firstFinish = first.at(-1) as { replayState: unknown }
+    persisted = [{
+      phase: 'started', name: 'send_bot_message', callId: 'call-replay', threadId: 'thread1', turnId: 'turn1',
+      sessionId: 'bot-session-replay' as never, arguments: { targetBotId: 'bot-beta', text: 'hello' },
+    }, {
+      phase: 'settled', name: 'send_bot_message', callId: 'call-replay', threadId: 'thread1', turnId: 'turn1',
+      sessionId: 'bot-session-replay' as never, arguments: { targetBotId: 'bot-beta', text: 'hello' },
+      result: { success: true, contentItems: [{ type: 'inputText', text: '{"status":"accepted"}' }] },
+    }]
+    // A closed native peer discards the cursor; the next turn must seed from
+    // Harness history and include the durable action records exactly once.
+    f.emit('__closed', {})
+    const secondUser = { role: 'user', content: [{ type: 'text', text: 'second' }] } as const
+    const second = await collect([firstUser, {
+      role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'codex-backend', model: 'gpt-6.1-sol', replayState: firstFinish.replayState },
+    }, secondUser])
+    const turnInputs = () => f.request.mock.calls.filter(call => call[0] === 'turn/start')
+      .map(call => ((call[1] as { input: { text: string }[] }).input[0]?.text ?? ''))
+    expect(replay).toHaveBeenCalledTimes(2)
+    expect(turnInputs()[1]).toContain(JSON.stringify(persisted))
+    const secondFinish = second.at(-1) as { replayState: unknown }
+    await collect([firstUser, {
+      role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'codex-backend', model: 'gpt-6.1-sol', replayState: firstFinish.replayState },
+    }, secondUser, {
+      role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'codex-backend', model: 'gpt-6.1-sol', replayState: secondFinish.replayState },
+    }, { role: 'user', content: [{ type: 'text', text: 'third' }] }])
+    expect(replay).toHaveBeenCalledTimes(2)
+    expect(turnInputs()[2]).toBe('third')
+    await f.runtime.close()
+  })
+  it('bounds dynamic-tool replay and discloses omitted records', () => {
+    const events: CodexDynamicToolEvent[] = [{
+      phase: 'started', name: 'send_bot_message', callId: 'pending', threadId: 'thread', turnId: 'turn',
+      sessionId: 'bot-session' as never, arguments: { targetBotId: 'bot-beta', text: 'pending' },
+    }]
+    for (let index = 0; index < 32; index++) {
+      events.push({
+        phase: 'started', name: 'list_bots', callId: `call-${String(index)}`, threadId: 'thread', turnId: `turn-${String(index)}`,
+        sessionId: 'bot-session' as never, arguments: {},
+      }, {
+        phase: 'settled', name: 'list_bots', callId: `call-${String(index)}`, threadId: 'thread', turnId: `turn-${String(index)}`,
+        sessionId: 'bot-session' as never, arguments: {},
+        result: { success: true, contentItems: [{ type: 'inputText', text: 'x'.repeat(200) }] },
+      })
+    }
+    const replay = projectCodexDynamicToolReplay(events, 1024)
+    expect(Buffer.byteLength(replay, 'utf8')).toBeLessThanOrEqual(1024)
+    expect(replay).toContain('omittedEventCount')
+    expect(replay).toContain('"callId":"pending"')
+  })
+  it('passes Bot identity through native instructions and starts a fresh thread after a rename', async () => {
+    const { runtime, request } = fixture(); await runtime.refresh(); await runtime.configure(true)
+    const user = [{ role: 'user', content: [{ type: 'text', text: 'What is your name?' }] }] as never
+    const run = async (system: string) => {
+      for await (const _chunk of runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-identity' as never, system, messages: user })) { /* consume */ }
+    }
+    await run('You are a named Bot in Y Harness.\nYour Bot name is "Chief of Staff".')
+    const starts = () => request.mock.calls.filter(call => call[0] === 'thread/start')
+    expect(starts()).toHaveLength(1)
+    expect((starts()[0]?.[1] as { developerInstructions: string }).developerInstructions).toContain('Chief of Staff')
+
+    await run('You are a named Bot in Y Harness.\nYour Bot name is "Research Lead".')
+    expect(starts()).toHaveLength(2)
+    expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).toContain('Research Lead')
+    expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).not.toContain('Chief of Staff')
+    runtime.close()
   })
   it('rejects missing or unadvertised efforts instead of converting Ultra to Max', async () => {
     const { runtime } = fixture(); await runtime.refresh(); await runtime.configure(true); const call = runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('invented'), messages: [] }); await expect(call.next()).rejects.toThrow('effort')

@@ -916,7 +916,7 @@ Independent optional model family.
 
 ```ts cordis-catalog
 /**
- * Read display state without launching Codex or reading its auth file.
+ * Read display state while an enabled connection may refresh in the background.
  * @returns the current enablement, connection, and running state.
  */
 @Remote async getState(): Promise<CodexBackendView>

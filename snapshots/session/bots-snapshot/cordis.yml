@@ -1,0 +1,18 @@
+# Live composition for the Bot identity and collaboration snapshot owner.
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- insert:
+    - id: bot-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-prereqs.ts'
+
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

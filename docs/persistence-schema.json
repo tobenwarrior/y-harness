@@ -5577,6 +5577,184 @@
       }
     },
     {
+      "key": "event:bot/dynamic-tool",
+      "kind": "event",
+      "event": "bot/dynamic-tool",
+      "surface": false,
+      "digest": "0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 13,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 14,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 14,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 15,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "arguments",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "callId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "phase",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "result",
+                "type": 8,
+                "optional": true
+              },
+              {
+                "name": "sessionId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "threadId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "turnId",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [],
+            "indices": [
+              {
+                "key": 3,
+                "value": 4
+              }
+            ]
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "opaque",
+            "reason": "unknown"
+          },
+          {
+            "kind": "union",
+            "types": [
+              6,
+              7
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "settled"
+          },
+          {
+            "kind": "literal",
+            "value": "started"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "contentItems",
+                "type": 9,
+                "optional": false
+              },
+              {
+                "name": "success",
+                "type": 12,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 10
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "text",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 11,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "inputText"
+          },
+          {
+            "kind": "primitive",
+            "type": "boolean"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "bot/dynamic-tool"
+          }
+        ]
+      }
+    },
+    {
       "key": "event:claude-code/root-protocol",
       "kind": "event",
       "event": "claude-code/root-protocol",
@@ -27350,6 +27528,11 @@
       "sources": []
     },
     {
+      "digest": "0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "0c4205180f75b9ee1e0d878bd9a9851628b5dc18448486389d9c5fdc3f1ccda3",
       "schema": {
         "root": 0,
@@ -27477,6 +27660,13 @@
       "sources": []
     },
     {
+      "digest": "11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd",
+      "names": [],
+      "sources": [
+        "packages/agents/bots/src/collaboration.ts:58"
+      ]
+    },
+    {
       "digest": "11f70b595aa76897fc4e25a352bfa718c659f44b799e5aa14e84e5a38fe72912",
       "names": [],
       "sources": [
@@ -27538,6 +27728,15 @@
       "digest": "1571525adc95a24e5d25b5a6440df401cd7cdd881b745178e85f5a333435cd1b",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d",
+      "names": [
+        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEvent"
+      ],
+      "sources": [
+        "packages/agents/bots/src/collaboration.ts:66"
+      ]
     },
     {
       "digest": "15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4",
@@ -28891,6 +29090,11 @@
       "sources": []
     },
     {
+      "digest": "6451ea012cc76f8f63fa8bcf4aec1dda85649e99e51498b7d5037bb84a05e58a",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "6487b10ba7542f3c447b1e41a1c6a590b7bfafe0b9b66b49f34028da85bb970f",
       "names": [
         "packages/subagent/subagent/src/descriptor.ts#ContinuableSubagentDescriptorData"
@@ -29343,6 +29547,11 @@
       ]
     },
     {
+      "digest": "800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "8064c03c87c357fd1575cb9395ce86e6dcbe2d275bf7717864a02cddf01827d5",
       "names": [
         "packages/llm/llm/src/types.ts#ContentBlock"
@@ -29654,6 +29863,15 @@
       "sources": []
     },
     {
+      "digest": "92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e",
+      "names": [
+        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEventResult"
+      ],
+      "sources": [
+        "packages/agents/bots/src/collaboration.ts:56"
+      ]
+    },
+    {
       "digest": "930c1cd289def119d443e19dd90008916bf035f0a4d23e07241e7f050f2b89b7",
       "names": [
         "packages/interaction/user-approval/src/types.ts#ApprovalOutcome"
@@ -29691,6 +29909,11 @@
     },
     {
       "digest": "93d38436347f67c9022aacbc4472e283d722bcab8eb73fc376aaf7b6a6b9fb35",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "9491e489906e44bfd2f825f4db1ff6a2758d12ff997caee2acd4aecfc90d9790",
       "names": [],
       "sources": []
     },
@@ -31073,6 +31296,11 @@
     },
     {
       "digest": "edbbfff1128099fda7b792c56330d2cb04debc9790988e66d1c3f4026e813e0e",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "ee56f65f1ce49806039be2ae37ad1ce86c578039b04c69cc86a74946f9d8f92c",
       "names": [],
       "sources": []
     },

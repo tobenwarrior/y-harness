@@ -1,0 +1,8 @@
+version: 1
+scenario: bots-snapshot
+profile: headless
+composition: bots-snapshot
+recording: authored
+header:
+  class: bots-snapshot
+  pin: true

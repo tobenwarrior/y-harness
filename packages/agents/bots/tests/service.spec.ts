@@ -1,11 +1,18 @@
 import { Context, Service } from '@yharness/cordis'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
+import type { Agent } from '@yharness/agent'
+import { createScope } from '@yharness/scope'
+import { Session, SessionId } from '@yharness/session'
+import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
+import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
+import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 
 async function harness(
@@ -15,9 +22,12 @@ async function harness(
     ref,
     data: Uint8Array.of(1, 2, 3),
   })),
+  existingSessionIds: readonly string[] = [],
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
   const backend: StorageBackend = new MemoryStorageBackend(pool)
   ctx.effect(() => ctx.storage.backend.register('fixture', backend))
   ctx.effect(() => async () => { await backend.close() })
@@ -30,12 +40,55 @@ async function harness(
       unmount()
     }
   })
-  ctx.provide('agents', { get: () => undefined } as never)
+  const followups = existingSessionIds.map(() => vi.fn<(message: UserMessage) => void>())
+  const agents = existingSessionIds.map((sessionId, index) => {
+    const followup = followups[index]
+    if (followup === undefined) throw new Error('test followup was not created')
+    const id = SessionId(sessionId)
+    const agent: Agent = {
+      id,
+      options: {},
+      session: Session.create(id),
+      inbox: {
+        nextTurn: [], nextStep: [], clear() {}, append() {}, prepend() {},
+        replace() { return false }, remove() { return false }, splice() { return [] },
+      },
+      status: 'idle',
+      ctx: new Context(),
+      send() {},
+      followup,
+      steer: () => ({ outcome: Promise.resolve({ status: 'rejected' as const }) }),
+      inject() {},
+      cancel() {},
+      runMaintenance: task => task(new AbortController().signal),
+      whenIdle: () => Promise.resolve(),
+    }
+    const scope = createScope(ctx, agent)
+    Object.defineProperty(agent, 'ctx', { value: scope.ctx })
+    return agent
+  })
+  ctx.provide('agents', {
+    get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
+    list: () => [...agents],
+  } as never)
   ctx.provide('attachments', { readImage } as never)
-  ctx.provide('sessionController', { create } as never)
+  const inspect = vi.fn(async (sessionId: SessionId) => ({
+    events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? [],
+  }))
+  const resolveAgent = vi.fn(async (sessionId: SessionId) => {
+    const agent = agents.find(candidate => candidate.id === sessionId)
+    return agent === undefined ? { error: new Error('session not found') } : { agent }
+  })
+  const flush = vi.fn(async () => true)
+  const sessions = {
+    get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId)?.session,
+    flush,
+  }
+  ctx.provide('sessions', sessions as never)
+  ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
   const service = new BotService(ctx)
   await service[Service.init]()
-  return { ctx, service, pool, create, readImage }
+  return { ctx, service, pool, create, readImage, agents, inspect, resolveAgent, flush, followups }
 }
 
 async function close(ctx: Context): Promise<void> {
@@ -43,6 +96,91 @@ async function close(ctx: Context): Promise<void> {
 }
 
 describe('durable Bot roster', () => {
+  it('mounts native collaboration actions only for Bot-owned Sessions', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Native bridge owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      expect(provider).toBeDefined()
+      const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
+      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message'])
+      await expect(provider!.resolve({ sessionId: SessionId('ordinary-session') })).resolves.toEqual([])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('binds collaboration to a Bot Agent and flushes explicit peer delivery', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    try {
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      const targetFollowup = h.followups[1]
+      if (senderAgent === undefined) throw new Error('sender test Agent was not created')
+      if (targetAgent === undefined) throw new Error('target test Agent was not created')
+      if (targetFollowup === undefined) throw new Error('target test followup was not created')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      expect(collaboration.sender.id).toBe(sender.bot.id)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id,
+        text: 'Please report your status.',
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        sender: { id: sender.bot.id },
+        target: { id: target.bot.id },
+      })
+      expect(targetFollowup).toHaveBeenCalledTimes(1)
+      expect(h.resolveAgent).toHaveBeenCalledWith(target.bot.sessionId)
+      expect(h.flush).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('durably records native collaboration action observations on the Bot Session', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Native owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('native test Agent was not created')
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native action provider was not mounted')
+      const event = {
+        phase: 'settled' as const,
+        name: 'list_bots',
+        callId: 'call-native',
+        threadId: 'thread-native',
+        turnId: 'turn-native',
+        sessionId: agent.id,
+        arguments: {},
+        result: { success: true, contentItems: [{ type: 'inputText' as const, text: '[]' }] },
+      }
+      await provider.observe(event)
+      expect(agent.session.snapshotEvents()).toMatchObject([{
+        type: 'bot/dynamic-tool', data: event,
+      }])
+      await expect(provider.replay({ sessionId: agent.id })).resolves.toEqual([event])
+      expect(h.flush).toHaveBeenCalledWith(agent.session)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('creates one real Session mapping, lists it, and renames it', async () => {
     const h = await harness()
     try {
@@ -126,6 +264,28 @@ describe('durable Bot roster', () => {
       await expect(second.service.create({
         id: created.bot.id, name: 'Different name', identity: 'goal', accent: 'amber', cwd: '/tmp',
       })).rejects.toMatchObject({ code: 'bot/id-conflict' })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('teaches an existing Bot Session its current name and refreshes it after rename', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Persistent identity', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const agent = second.agents[0]
+      if (agent === undefined) throw new Error('test agent was not created')
+      await second.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      const prompt = async () => renderPrompt(await second.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(await prompt()).toContain('Persistent identity')
+      await second.service.rename({ botId: created.bot.id, name: 'Renamed identity' })
+      expect(await prompt()).toContain('Renamed identity')
+      expect(await prompt()).not.toContain('Persistent identity')
     } finally {
       await close(second.ctx)
     }

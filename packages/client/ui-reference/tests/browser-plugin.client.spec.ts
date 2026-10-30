@@ -6,6 +6,7 @@
 import { Context, Service } from '@yharness/cordis'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { LocaleRuntime } from '@yharness/client-locale/client'
+import { BotId, type BotView } from '@yharness/bots/client'
 import type { SessionId } from '@yharness/session/types'
 import { RemoteError, TestSessions } from '@yharness/client-test-runtime'
 import type { SessionFixture } from '@yharness/client-test-runtime'
@@ -26,6 +27,22 @@ const CREATED_AT = 1_700_000_000_000
 const NOW = CREATED_AT + 3 * 86_400_000
 /** The Host session list dates a row; only a session missing from it falls back to createdAt. */
 const UPDATED_AT = NOW - 3_600_000
+
+function botView(id: string, sessionId: string, name: string, patch: Partial<BotView> = {}): BotView {
+  return {
+    id: BotId(id),
+    sessionId: sid(sessionId),
+    name,
+    identity: 'agent',
+    accent: 'violet',
+    cwd: `${HOME}/project`,
+    state: 'active',
+    createdAt: CREATED_AT,
+    updatedAt: UPDATED_AT,
+    availability: 'idle',
+    ...patch,
+  }
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -82,6 +99,7 @@ async function bench(
     projectionValues?: { title?: string | null }
   }> = {},
   opening: Pick<SessionFixture, 'initialOpen' | 'snapshot'> = {},
+  bots: readonly BotView[] = [],
 ) {
   const ctx = new Context()
   ctx.provide('sidebarRight', { openResource: vi.fn() })
@@ -102,6 +120,7 @@ async function bench(
   new RemoteService(ctx)
   ctx.provide('remote.fileReferences', { list: files })
   ctx.provide('remote.sessionReferenceResolver', { candidates: sessions })
+  ctx.provide('remote.bots', { list: vi.fn(() => Promise.resolve({ ok: true as const, value: { bots } })) })
   ctx.provide('locale', new LocaleRuntime(ctx))
   const sessionStore = new TestSessions(async (action) => { await action() }, ctx)
   onTestFinished(async () => {
@@ -294,6 +313,56 @@ describe('candidates', () => {
         section: 'Sessions',
       }),
     ])
+  })
+
+  it('lists other active Bots and inserts a canonical session snapshot mention', async () => {
+    const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [{
+        sessionId: sid('bot-session-grok'),
+        label: 'Grok Bot session',
+        cwd: `${HOME}/project`,
+        sameWorkspace: true,
+        createdAt: CREATED_AT,
+        mention: '@[Grok Bot session](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
+      }],
+    }))
+    const { source } = await bench(files, sessions, {}, {}, [
+      botView('bot-grok', 'bot-session-grok', 'Grok Bot', { description: 'Market research' }),
+      botView('bot-self', session.sessionId, 'Chief of Staff'),
+      botView('bot-provisioning', 'bot-session-new', 'Still setting up', { state: 'provisioning' }),
+    ])
+    const candidates = await source.candidates(session, request('grok'))
+    expect(candidates).toHaveLength(1)
+    const [candidate] = candidates
+    expect(candidate).toMatchObject({
+      name: 'Grok Bot',
+      description: 'Market research · idle',
+      section: 'Bots',
+    })
+    expect(candidate?.icon).toEqual(expect.any(Function))
+    expect(JSON.parse(candidate?.value ?? '{}')).toEqual({
+      kind: 'session',
+      label: 'Grok Bot',
+      mention: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
+    })
+    expect(source.onPick({
+      candidate: candidate!,
+      session,
+      position: 'inline',
+      via: 'menu',
+      action: 'pick',
+      span: { start: 0, end: 4, draftRev: 1 },
+    })).toEqual({
+      insert: {
+        source: 'reference',
+        ref: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
+        label: 'Grok Bot',
+        appearance: 'session',
+        clipboardText: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
+      },
+    })
   })
 
   it('suppresses sessions for an open quoted path and degrades each failed domain independently', async () => {
