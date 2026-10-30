@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { open, readFile } from 'node:fs/promises'
+import { open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -85,6 +86,37 @@ export async function detectCheckoutUpdate(
  */
 export function isCheckoutUpdateActionable(state: CheckoutUpdateState | null): boolean {
   return state !== null && state.available
+}
+
+/**
+ * Persist a one-shot request for the managed launcher to activate a checked update after exit.
+ * @param state - The verified managed update currently shown to the user.
+ * @param env - Environment supplied by the managed launcher.
+ * @returns Whether a restart request was written; unmanaged or unavailable states are ignored.
+ */
+export async function requestManagedGithubRestart(
+  state: CheckoutUpdateState | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const statusPath = env.DSH_DESKTOP_GITHUB_STATUS
+  const path = env.DSH_DESKTOP_GITHUB_RESTART
+    ?? (statusPath === undefined ? undefined : join(dirname(statusPath), 'restart-request.json'))
+  const builtCommit = env.DSH_DESKTOP_GITHUB_BUILD_COMMIT?.toLowerCase()
+  if (env.DSH_DESKTOP_GITHUB_MANAGED !== '1' || path === undefined || !isAbsolute(path)
+    || state?.managed !== true || !state.available || builtCommit === undefined
+    || !/^[0-9a-f]{40}$/u.test(builtCommit) || state.builtCommit !== builtCommit
+    || !/^[0-9a-f]{40}$/u.test(state.headCommit)) return false
+
+  const temporary = join(dirname(path), `.restart-request-${randomUUID()}`)
+  const body = `${JSON.stringify({ phase: 'requested', buildCommit: builtCommit, targetCommit: state.headCommit })}\n`
+  try {
+    await writeFile(temporary, body, { flag: 'wx', mode: 0o600 })
+    await rename(temporary, path)
+    return true
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 /** The fork's build stamp, relative to the checkout root. */

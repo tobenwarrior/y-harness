@@ -4,7 +4,8 @@
  * the explicit disposer contract.
  */
 
-import { homedir } from 'node:os'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
@@ -70,14 +71,20 @@ describe('ShellEnvRegistry', () => {
     })).toThrow(/reserved key "DSH_PROFILE"/)
   })
 
-  it('resolves DSH_HOME from the ambient override or the user-home default', () => {
+  it('resolves DSH_HOME from the ambient override or the user-home default', async () => {
     vi.stubEnv('DSH_HOME', './ambient-dsh-home')
     const fromEnvironment = new ShellEnvRegistry(new Context())
     expect(fromEnvironment.collect(execution()).DSH_HOME).toBe(resolve('./ambient-dsh-home'))
 
+    const root = await mkdtemp(join(tmpdir(), 'yh-shell-env-home-'))
+    vi.stubEnv('HOME', root)
     vi.stubEnv('DSH_HOME', undefined)
-    const fromDefault = new ShellEnvRegistry(new Context())
-    expect(fromDefault.collect(execution()).DSH_HOME).toBe(join(homedir(), '.dsh'))
+    try {
+      const fromDefault = new ShellEnvRegistry(new Context())
+      expect(fromDefault.collect(execution()).DSH_HOME).toBe(join(root, '.yharness'))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('collects declared contributor variables and omits unavailable values', () => {

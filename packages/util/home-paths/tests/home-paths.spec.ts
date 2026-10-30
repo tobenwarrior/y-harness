@@ -51,9 +51,16 @@ describe('dsh path helpers', () => {
     expect(resolveDshHome(undefined, {})).toBe(resolveYhHome(undefined, {}))
   })
 
-  it('treats an empty or whitespace-only DSH_HOME as unset', () => {
-    expect(resolveDshHome(undefined, { DSH_HOME: '' })).toBe(defaultDshHome())
-    expect(resolveDshHome(undefined, { DSH_HOME: '   ' })).toBe(defaultDshHome())
+  it('treats an empty or whitespace-only DSH_HOME as unset', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-empty-home-'))
+    vi.stubEnv('HOME', root)
+    try {
+      expect(resolveDshHome(undefined, { DSH_HOME: '' })).toBe(join(root, '.yharness'))
+      expect(resolveDshHome(undefined, { DSH_HOME: '   ' })).toBe(join(root, '.yharness'))
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('joins child segments onto the resolved DSH_HOME', () => {
@@ -67,21 +74,24 @@ describe('dsh path helpers', () => {
     expect(dshHomeDisplay('/some/other/root')).toBe('$DSH_HOME')
   })
 
-  it.each([
-    [undefined, join(homedir(), '.dsh')],
-    ['', join(homedir(), '.dsh')],
-    ['   ', join(homedir(), '.dsh')],
-    ['~/env-dsh', join(homedir(), 'env-dsh')],
-    ['./relative-dsh', resolve('./relative-dsh')],
-  ] as const)('resolves cache paths with DSH_HOME=%j', (home, expectedHome) => {
-    vi.stubEnv('DSH_HOME', home)
-    try {
-      expect(dshCachePath()).toBe(join(expectedHome, 'cache'))
-      expect(dshCachePath('models', 'index.json')).toBe(join(expectedHome, 'cache', 'models', 'index.json'))
-    } finally {
-      vi.unstubAllEnvs()
-    }
-  })
+  it.each([undefined, '', '   ', '~/env-dsh', './relative-dsh'] as const)(
+    'resolves cache paths with DSH_HOME=%j', async (home) => {
+      const root = await mkdtemp(join(tmpdir(), 'yh-cache-home-'))
+      vi.stubEnv('HOME', root)
+      vi.stubEnv('DSH_HOME', home)
+      try {
+        const expectedHome = home === undefined || home.trim() === ''
+          ? join(root, '.yharness')
+          : home.startsWith('~/')
+            ? join(root, home.slice(2))
+            : resolve(home)
+        expect(dshCachePath()).toBe(join(expectedHome, 'cache'))
+        expect(dshCachePath('models', 'index.json')).toBe(join(expectedHome, 'cache', 'models', 'index.json'))
+      } finally {
+        vi.unstubAllEnvs()
+        await rm(root, { recursive: true, force: true })
+      }
+    })
 
   it('resolves configured cache homes before the environment', () => {
     vi.stubEnv('DSH_HOME', '~/env-dsh')

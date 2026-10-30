@@ -181,6 +181,10 @@ describe('archived Agent Notes', () => {
       retired: { ...retired, 'feature/other.zh.md': 'sha256:' + '4'.repeat(64) },
       rewritten: { 'feature/example.md': 'sha256:' + '1'.repeat(64) },
     }
+    expect(validateArchiveManifestExtension(baseline, {
+      ...current,
+      retired,
+    })).toEqual([])
     expect(validateArchiveManifestExtension(baseline, current)).toContain('retired archive seals changed after the one-time migration')
   })
 

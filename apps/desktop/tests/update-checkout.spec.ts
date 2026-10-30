@@ -3,13 +3,14 @@
  * unknown stays unknown rather than reporting an update that cannot apply.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   detectCheckoutUpdate,
   detectManagedGithubUpdate,
   isCheckoutUpdateActionable,
+  requestManagedGithubRestart,
   type CheckoutUpdateProbe,
   type GitProbeResult,
 } from '../src/update-checkout.ts'
@@ -103,6 +104,41 @@ describe('managed GitHub status', () => {
       expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_STATUS: 'relative' })).toBeNull()
       expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_BUILD_COMMIT: 'abc' })).toBeNull()
       expect(await detectManagedGithubUpdate({ ...env, DSH_DESKTOP_GITHUB_MANAGED: '0' })).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('managed GitHub restart requests', () => {
+  it('writes an atomic request bound to the running and prepared commits', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'desktop-restart-request-'))
+    const path = join(dir, 'restart-request.json')
+    const candidate = 'b'.repeat(40)
+    try {
+      await expect(requestManagedGithubRestart({
+        builtCommit: HEAD, headCommit: candidate, available: true, shortHead: candidate.slice(0, 12), managed: true,
+      }, {
+        DSH_DESKTOP_GITHUB_MANAGED: '1', DSH_DESKTOP_GITHUB_BUILD_COMMIT: HEAD,
+        DSH_DESKTOP_GITHUB_STATUS: join(dir, 'update-status.json'), DSH_DESKTOP_GITHUB_RESTART: path,
+      })).resolves.toBe(true)
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        phase: 'requested', buildCommit: HEAD, targetCommit: candidate,
+      })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not create a request for a non-managed or unavailable state', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'desktop-restart-request-noop-'))
+    const path = join(dir, 'restart-request.json')
+    try {
+      await expect(requestManagedGithubRestart(null, {
+        DSH_DESKTOP_GITHUB_MANAGED: '0', DSH_DESKTOP_GITHUB_BUILD_COMMIT: HEAD,
+        DSH_DESKTOP_GITHUB_RESTART: path,
+      })).resolves.toBe(false)
+      await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

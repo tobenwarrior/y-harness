@@ -34,7 +34,8 @@ import { readDeviceInfo } from './device-info.ts'
 import { desktopUpdateReadyConfirmation, formatDesktopMessage, resolveDesktopLocale, resolveDesktopStartupLocale } from './locale.ts'
 import { claimDesktopSingleInstance } from './single-instance.ts'
 import { DesktopUpdateCoordinator } from './update-coordinator.ts'
-import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, findCheckoutRoot, type CheckoutUpdateState } from './update-checkout.ts'
+import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, findCheckoutRoot,
+  requestManagedGithubRestart, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
@@ -353,6 +354,7 @@ async function main(): Promise<void> {
   let updateStoppedHost = false
   let updateStopFailure: DesktopHostUncleanExitError | undefined
   let updateState: DesktopUpdateState = { phase: 'idle' }
+  let managedGithubRestartRequest: CheckoutUpdateState | undefined
   const systemLanguages = app.getPreferredSystemLanguages()
   let locale = resolveDesktopStartupLocale(null, systemLanguages)
   windowsLanguage = locale.id
@@ -817,6 +819,7 @@ async function main(): Promise<void> {
     // Legacy checkout updates use the displayed state. Managed updates recheck
     // that the displayed commit is still staged before requesting an exit.
     if (updates.state.phase === 'available' && !updates.hasUpdateSource()) {
+      let restartRequest: CheckoutUpdateState | undefined
       if (process.env.DSH_DESKTOP_GITHUB_MANAGED === '1') {
         const displayed = updates.state.version
         const pending = await detectManagedGithubUpdate()
@@ -826,8 +829,10 @@ async function main(): Promise<void> {
           await updateSchedule.check(true)
           return
         }
+        restartRequest = pending
       }
       updateJournal?.action('quit-requested')
+      managedGithubRestartRequest = restartRequest
       app.quit()
       return
     }
@@ -1214,6 +1219,8 @@ async function main(): Promise<void> {
   })
   if (process.platform !== 'win32') powerMonitor.on('shutdown', () => { sessionEnding = true })
   const finishQuit = (): void => {
+    const restartRequest = managedGithubRestartRequest
+    managedGithubRestartRequest = undefined
     quitting = true
     shuttingDown = true
     updateJournal?.action('quit-requested')
@@ -1225,13 +1232,18 @@ async function main(): Promise<void> {
     updateSchedule.dispose()
     updateDialog.dispose()
     mandatoryUI?.dispose()
-    void Promise.all([Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
+    const writeRestartRequest = restartRequest === undefined
+      ? Promise.resolve()
+      : requestManagedGithubRestart(restartRequest).catch((error: unknown) => { console.error(error) })
+    void writeRestartRequest.then(() => Promise.all([
+      Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
       // A Platform cleanup failure is logged without cutting the remaining Host shutdown short.
-      platformView.dispose().catch((error: unknown) => { console.error(error) })])
-      .catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
+      platformView.dispose().catch((error: unknown) => { console.error(error) }),
+    ])).catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
   }
   app.on('before-quit', (event) => {
     if (shellInstallerOwnsQuit) {
+      managedGithubRestartRequest = undefined
       shuttingDown = true
       quitConfirmation.dispose()
       backgroundNotice?.dispose()
@@ -1247,8 +1259,9 @@ async function main(): Promise<void> {
     event.preventDefault()
     if (skipQuitConfirmation || sessionEnding) { finishQuit(); return }
     void quitConfirmation.confirm().then((approved) => {
-      if (quitting || shellInstallerOwnsQuit) return
+      if (quitting || shellInstallerOwnsQuit) { managedGithubRestartRequest = undefined; return }
       if (approved) { finishQuit(); return }
+      managedGithubRestartRequest = undefined
     }).catch((error: unknown) => { console.error(error); if (!quitting && !shellInstallerOwnsQuit) finishQuit() })
   })
 

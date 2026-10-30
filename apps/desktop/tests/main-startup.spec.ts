@@ -529,10 +529,9 @@ describe('desktop main startup', () => {
     harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 })
     ;(about!.click as () => void)()
     await vi.advanceTimersByTimeAsync(0)
-    const legacyLocale = locale === 'zh-CN'
     expect(harness.dialog.showMessageBox).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'info', title: legacyLocale ? 'About Y Harness' : 'About Y Harness', message: 'Y Harness',
-      detail: legacyLocale ? 'Version V1.0.0' : 'Version V1.0.0', buttons: ['OK'], cancelId: 0,
+      type: 'info', title: 'About Y Harness', message: 'Y Harness',
+      detail: 'Version V1.0.0', buttons: ['OK'], cancelId: 0,
     }))
     // A dialog that cannot open is logged, not surfaced as an unhandled rejection.
     harness.dialog.showMessageBox.mockRejectedValueOnce(new Error('overlay unavailable'))
@@ -1130,6 +1129,34 @@ describe('desktop main startup', () => {
     writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
     await invoke(DESKTOP_IPC.updatesOpen, 'app')
     expect(harness.app.quit).toHaveBeenCalledOnce()
+  })
+
+  it('does not leave a managed restart request after quit confirmation is cancelled', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-restart-request-'))
+    onTestFinished(() => { rmSync(directory, { recursive: true, force: true }) })
+    const status = join(directory, 'status.json')
+    const built = 'a'.repeat(40)
+    const candidate = 'b'.repeat(40)
+    writeFileSync(status, JSON.stringify({ phase: 'active', commit: built }))
+    vi.stubEnv('DSH_DESKTOP_GITHUB_MANAGED', '1')
+    vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
+    vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
+    harness.updateSourceAvailable = false
+    const host = await readyForUpdate()
+    harness.updateState = { phase: 'available', version: candidate.slice(0, 12) }
+    writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
+    host.inspectQuit.mockResolvedValue({ activeTasks: true, scheduledTasks: true })
+    harness.dialog.showMessageBox.mockResolvedValue({ response: 1, checkboxChecked: false })
+    await invoke(DESKTOP_IPC.updatesOpen, 'app')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readdirSync(directory)).not.toContain('restart-request.json')
+    host.inspectQuit.mockResolvedValue({ activeTasks: false, scheduledTasks: false })
+    harness.app.quit()
+    await vi.advanceTimersByTimeAsync(0)
+    await host.stopping.promise
+    host.exited.resolve()
+    await harness.quitCompleted.promise
+    expect(readdirSync(directory)).not.toContain('restart-request.json')
   })
 
   it.each([

@@ -19,6 +19,7 @@ _spec.loader.exec_module(_engine)
 
 SUPPORT = Path.home() / 'Library/Application Support/Y Harness GitHub'
 COMMIT = re.compile(r'[0-9a-f]{40}\Z')
+RESTART_REQUEST = 'restart-request.json'
 ACTIVATE_SCRIPT = '''use framework "AppKit"
 on run argv
     set appPid to (item 1 of argv) as integer
@@ -114,6 +115,40 @@ def ready_commit(root):
     return None
 
 
+def consume_restart_request(root, build):
+    path = Path(root) / RESTART_REQUEST
+    status = None
+    fd = -1
+    try:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077 or info.st_size > 4096):
+                return None
+            with os.fdopen(fd, encoding='utf-8') as stream:
+                fd = -1
+                try:
+                    status = json.load(stream)
+                except (ValueError, UnicodeError):
+                    status = None
+        except (FileNotFoundError, OSError):
+            return None
+    finally:
+        if fd != -1:
+            os.close(fd)
+        try:
+            path.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+    if (isinstance(status, dict) and status.get('phase') == 'requested'
+            and status.get('buildCommit') == build
+            and isinstance(status.get('targetCommit'), str)
+            and COMMIT.fullmatch(status['targetCommit'])):
+        return status['targetCommit']
+    return None
+
+
 def log_error(label):
     # Never include exception text: command output and config can contain secrets.
     print(label, file=sys.stderr, flush=True)
@@ -165,6 +200,11 @@ class Supervisor:
                 break
 
     def prepare(self):
+        current, _ = self._prepare()
+        return current
+
+    def _prepare(self):
+        activated = False
         with self.operation:
             current = self.updater.current()
             ready = ready_commit(self.updater.root)
@@ -173,6 +213,7 @@ class Supervisor:
                     if self.updater.check() == ready:
                         self.updater.activate(ready, between_runs=True)
                         current = ready
+                        activated = True
                     elif current is not None:
                         self.updater.mark_current()
                 except Exception:
@@ -187,7 +228,7 @@ class Supervisor:
                 self.updater.stage(commit)
                 self.updater.activate(commit, between_runs=True)
                 current = commit
-            return current
+            return current, activated
 
     def run_once(self, on_started=None):
         commit = self.prepare()
@@ -197,6 +238,7 @@ class Supervisor:
         env.update({'DSH_HOME': str(home),
                     'DSH_DESKTOP_USER_DATA_DIR': str(user_data),
                     'DSH_DESKTOP_GITHUB_STATUS': str(self.updater.root / 'update-status.json'),
+                    'DSH_DESKTOP_GITHUB_RESTART': str(self.updater.root / RESTART_REQUEST),
                     'DSH_DESKTOP_GITHUB_BUILD_COMMIT': commit,
                     'DSH_DESKTOP_GITHUB_MANAGED': '1', 'DSH_DESKTOP_DISABLE_INSPECTORS': '1', 'DSH_DESKTOP_OPEN_DEVTOOLS': '0'})
         with self.updater.run_guard():
@@ -209,28 +251,40 @@ class Supervisor:
 
     def serve(self):
         # Initial bootstrap must complete before the poller can use the updater.
-        self.prepare()
-        worker = threading.Thread(target=self.poll_loop, daemon=True)
-        started = False
+        commit = self.prepare()
+        while True:
+            worker = threading.Thread(target=self.poll_loop, daemon=True)
+            started = False
+            stop_requested = False
 
-        def start_worker():
-            nonlocal started
+            def start_worker():
+                nonlocal started
+                try:
+                    worker.start()
+                    started = True
+                except RuntimeError:
+                    log_error('update polling could not start')
+
             try:
-                worker.start()
-                started = True
-            except RuntimeError:
-                log_error('update polling could not start')
+                result = self.run_once(start_worker)
+            finally:
+                stop_requested = self.stop.is_set()
+                self.stop.set()
+                self.cancel.set()
+                if started:
+                    worker.join()
+                self.cancel.clear()
 
-        try:
-            result = self.run_once(start_worker)
-        finally:
-            self.stop.set()
-            self.cancel.set()
-            if started:
-                worker.join()
-            self.cancel.clear()
-        self.prepare()
-        return result
+            if stop_requested:
+                return result
+            target = consume_restart_request(self.updater.root, commit)
+            if target is None or current_commit(self.updater.root) != commit or ready_commit(self.updater.root) != target:
+                return result
+            next_commit, activated = self._prepare()
+            if not activated or next_commit != target:
+                return result
+            commit = next_commit
+            self.stop = threading.Event()
 
 
 def focus_existing(support, *, owner_finder=None):

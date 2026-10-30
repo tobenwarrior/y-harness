@@ -16,6 +16,12 @@ spec.loader.exec_module(supervisor)
 A, B = 'a' * 40, 'b' * 40
 
 
+def request_restart(root, build, target):
+    path = root / 'restart-request.json'
+    path.write_text(json.dumps({'phase': 'requested', 'buildCommit': build, 'targetCommit': target}))
+    path.chmod(0o600)
+
+
 class FakeUpdater:
     def __init__(self, root):
         self.root = root
@@ -102,6 +108,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_USER_DATA_DIR'], str(self.support / 'data/electron-user-data'))
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_DISABLE_INSPECTORS'], '1')
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_STATUS'], str(self.u.root / 'update-status.json'))
+        self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_RESTART'], str(self.u.root / 'restart-request.json'))
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], A)
         self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_OPEN_DEVTOOLS'], '0')
 
@@ -145,27 +152,84 @@ class Tests(unittest.TestCase):
         path.symlink_to('/etc/passwd')
         with self.assertRaises(OSError):
             supervisor.load_config(self.support)
-    def test_user_quit_applies_ready_update_without_relaunching(self):
+    def test_user_quit_relaunches_after_successful_ready_update(self):
+        calls = []
+        outer = self
+        class Child:
+            def wait(self):
+                if len(calls) == 1:
+                    outer.u.remote = B
+                    outer.u.stage(B)
+                    request_restart(outer.u.root, A, B)
+                return 0
+        class OneRunSupervisor(supervisor.Supervisor):
+            poll_runs = 0
+
+            def poll_loop(self):
+                self.poll_runs += 1
+                self.stop.wait()
+        def popen(*args, **kwargs):
+            calls.append((args, kwargs))
+            return Child()
+        runner = OneRunSupervisor(self.u, self.support, self.config, popen=popen)
+        self.assertEqual(runner.serve(), 0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.u.activations, [A, B])
+        self.assertEqual(supervisor.current_commit(self.u.root), B)
+        self.assertEqual(runner.poll_runs, 2)
+        self.assertEqual(calls[0][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], A)
+        self.assertEqual(calls[1][1]['env']['DSH_DESKTOP_GITHUB_BUILD_COMMIT'], B)
+
+    def test_normal_quit_does_not_relaunch_with_a_staged_update(self):
         calls = []
         outer = self
         class Child:
             def wait(self):
                 outer.u.remote = B
                 outer.u.stage(B)
-                return 0
+                return 17
         class OneRunSupervisor(supervisor.Supervisor):
             def poll_loop(self):
                 self.stop.wait()
         def popen(*args, **kwargs):
             calls.append(args)
-            if len(calls) > 1:
-                runner.stop.set()
             return Child()
         runner = OneRunSupervisor(self.u, self.support, self.config, popen=popen)
-        runner.serve()
+        self.assertEqual(runner.serve(), 17)
         self.assertEqual(len(calls), 1)
-        self.assertEqual(self.u.activations, [A, B])
-        self.assertEqual(supervisor.current_commit(self.u.root), B)
+        self.assertEqual(self.u.activations, [A])
+        self.assertEqual(supervisor.current_commit(self.u.root), A)
+        self.assertEqual(supervisor.ready_commit(self.u.root), B)
+
+    def test_failed_ready_update_activation_does_not_relaunch(self):
+        self.u.stage(A)
+        self.u.activate(A, between_runs=True)
+        calls = []
+        outer = self
+        original_activate = self.u.activate
+        class Child:
+            def wait(self):
+                outer.u.remote = B
+                outer.u.stage(B)
+                request_restart(outer.u.root, A, B)
+                return 0
+        def activate(commit, *, between_runs):
+            if commit == B:
+                raise RuntimeError('activation failed')
+            original_activate(commit, between_runs=between_runs)
+        self.u.activate = activate
+        class OneRunSupervisor(supervisor.Supervisor):
+            def poll_loop(self):
+                self.stop.wait()
+        def popen(*args, **kwargs):
+            calls.append(args)
+            return Child()
+        runner = OneRunSupervisor(self.u, self.support, self.config, popen=popen)
+        self.assertEqual(runner.serve(), 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.u.activations, [A])
+        self.assertEqual(supervisor.current_commit(self.u.root), A)
+        self.assertIsNone(supervisor.ready_commit(self.u.root))
     def test_build_environment_finds_node_and_pnpm_without_gui_path(self):
         config = {"node": "/opt/test-node/bin/node", "pnpm": "/opt/test-pnpm/bin/pnpm"}
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin", "GH_TOKEN": "secret", "DEEPSEEK_API_KEY": "secret"}), mock.patch.object(supervisor._engine, "_run", return_value="") as run:
@@ -300,6 +364,7 @@ class Tests(unittest.TestCase):
         pnpm = shutil.which('pnpm')
         if pnpm is None:
             self.skipTest('pnpm is required for the isolated workspace compatibility check')
+        pnpm = str(Path(pnpm).resolve())
         with tempfile.TemporaryDirectory(dir=self.support) as temporary:
             root = Path(temporary)
             canonical = root / 'apps/desktop'

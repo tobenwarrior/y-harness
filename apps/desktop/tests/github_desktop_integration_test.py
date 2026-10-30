@@ -41,7 +41,7 @@ def create_build_artifacts(root):
 
 
 class DesktopUpdateIntegrationTests(unittest.TestCase):
-    def test_stages_remote_commit_while_running_then_activates_after_quit(self):
+    def test_stages_remote_commit_until_next_launch_after_ordinary_quit(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             remote = root / 'remote'
@@ -104,6 +104,9 @@ class DesktopUpdateIntegrationTests(unittest.TestCase):
             self.assertFalse(worker.is_alive(), 'supervisor did not finish')
             self.assertEqual(outcome, [0])
             self.assertEqual(len(calls), 1)
+            self.assertEqual(updater.current(), first)
+            self.assertEqual(supervisor.ready_commit(updater.root), second)
+            self.assertEqual(app.prepare(), second)
             self.assertEqual(updater.current(), second)
             self.assertEqual((updater.root / 'versions' / first / 'content').read_text(), 'first')
 
