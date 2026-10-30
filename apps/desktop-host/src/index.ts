@@ -1,6 +1,7 @@
 /** Launch the Desktop profile through the Web application and report its URL to Electron. */
 
 import { delimiter, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { inspect } from 'node:util'
 import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@yharness/app-boot'
 import { runProfile } from '@yharness/cli/profile-boot'
@@ -15,11 +16,16 @@ import { installDesktopQuitInspection } from './quit-inspection.ts'
 import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOfficeEngineResolution } from './office-engine.ts'
 
+function installAnchorForRuntime(runtimeDir: string): string {
+  const canonical = join(runtimeDir, 'node_modules', '@yharness', 'cli', 'package.json')
+  return existsSync(canonical) ? canonical : join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+}
+
 async function main(): Promise<void> {
   const runtimeDir = process.argv[2] as string
   const projectDir = process.argv[3] as string
   installOfficeEngineResolution(runtimeDir)
-  const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+  const installAnchor = installAnchorForRuntime(runtimeDir)
   const profile = loadProfileDirectory('dsh', projectDir, installAnchor)
   reportSkippedBundles('dsh', profile)
   const application = runProfile({
