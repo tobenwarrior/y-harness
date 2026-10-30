@@ -1,5 +1,5 @@
 /** User-driven Codex backend controls. Codex owns and reads its own auth file. */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
@@ -8,7 +8,7 @@ import { Context } from '@yharness/cordis'
 import type { AdapterRegistrationHandle } from '@yharness/llm'
 import { launchEnvironmentOf } from '@yharness/launch-environment'
 import { Remote, TypertRemoteService } from '@yharness/typert-protocol'
-import { CodexBackendAdapter, CodexBackendRuntime } from './codex-backend.ts'
+import { CodexBackendAdapter, CodexBackendRuntime, DEFAULT_CATALOG_REFRESH_INTERVAL_MS } from './codex-backend.ts'
 import type { CodexPreferences } from './codex-backend.ts'
 import { prepareCodexHomeDirectories, startCodexProcess, type CodexProcessOptions } from './codex-backend-process.ts'
 import { resolveCodexAccess } from './codex-backend-access.ts'
@@ -25,6 +25,8 @@ import { createCodexCodingSessionProvider } from './codex-coding-sessions.ts'
 export interface CodexBackendConnectionConfig {
   /** Maximum distinct retained native tool identities per turn. */
   nativeEvidenceMaxItems?: number
+  /** Startup and periodic catalog refresh cadence for an enabled ChatGPT account. */
+  catalogRefreshIntervalMs?: number
 }
 
 
@@ -32,13 +34,20 @@ declare module '@yharness/cordis' { interface Context { codexBackendConnection: 
 /** Independent optional model family. */
 export class CodexBackendConnection extends TypertRemoteService {
   static inject = ['llm', 'subprocess']
-  static Config = Schema.object({ nativeEvidenceMaxItems: Schema.natural().min(1).default(64) })
+  static Config = Schema.object({
+    nativeEvidenceMaxItems: Schema.natural().min(1).default(64),
+    catalogRefreshIntervalMs: Schema.number().step(1).min(1).max(2 ** 31 - 1).default(DEFAULT_CATALOG_REFRESH_INTERVAL_MS),
+  })
   private runtime: CodexBackendRuntime | undefined
   private initialization: Promise<CodexBackendRuntime> | undefined
   private disposed = false
   constructor(ctx: Context, private readonly config: Required<CodexBackendConnectionConfig>) {
     super(ctx, 'codexBackendConnection', { namespace: 'codexBackend' })
-    ctx.effect(() => () => { this.disposed = true; this.runtime?.close() })
+    ctx.effect(() => async () => {
+      this.disposed = true
+      await this.initialization?.catch(() => {})
+      await this.runtime?.close()
+    })
     ctx.inject(['skillLibrary'], (child) => {
       child.effect(() => child.skillLibrary.registerNativeProvider(createCodexSkillLibraryProvider(() => this.runtime)))
     })
@@ -106,27 +115,38 @@ export class CodexBackendConnection extends TypertRemoteService {
       },
       connectionId: createHash('sha256').update(JSON.stringify([options.home, options.binary])).digest('hex'),
       nativeEvidenceMaxItems: this.config.nativeEvidenceMaxItems,
+      catalogRefreshIntervalMs: this.config.catalogRefreshIntervalMs,
+      notifyViewChanged: () => { if (!this.disposed) this.ctx.emit('llm/adapters-updated') },
       observeNativeItem: (request, item) => {
         const session = request.sessionId === undefined ? undefined : this.ctx.get('sessions')?.get(request.sessionId)
         if (session === undefined) return
         session.append('skill/native-item', item, { ignorable: true })
       },
       persist: async (next) => {
+        if (this.disposed) throw new Error('Codex backend is closed.')
         await mkdir(options.home, { recursive: true, mode: 0o700 })
         const temporary = `${file}.${randomUUID()}.tmp`
-        await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 }); await rename(temporary, file)
+        try {
+          await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 })
+          if (this.disposed) throw new Error('Codex backend is closed.')
+          await rename(temporary, file)
+        } finally {
+          await rm(temporary, { force: true })
+        }
+        if (this.disposed) return
         register()
         this.ctx.emit('llm/adapters-updated')
       } })
       this.runtime = runtime
       const adapter = new CodexBackendAdapter(runtime)
       register()
+      runtime.startAutomaticRefresh()
       return runtime
     })().finally(() => { this.initialization = undefined })
     return this.initialization
   }
   /**
-   * Read display state without launching Codex or reading its auth file.
+   * Read display state while an enabled connection may refresh in the background.
    * @returns the current enablement, connection, and running state.
    */
   @Remote

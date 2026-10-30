@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /** Exact native package release carried by the LLM adapter. */
-export const DESKTOP_CODEX_VERSION = '0.153.4'
+export const DESKTOP_CODEX_VERSION = '0.166.0'
 
 /** Names the Host passes to the isolated Codex backend. */
 export const DESKTOP_CODEX_ENVIRONMENT_NAMES = [

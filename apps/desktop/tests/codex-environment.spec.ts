@@ -19,7 +19,7 @@ interface FixtureNativeTarget {
 }
 
 const ARM64_NATIVE_TARGET: FixtureNativeTarget = {
-  packageName: '@openai/codex-darwin-arm64', version: '0.153.4-darwin-arm64',
+  packageName: '@openai/codex-darwin-arm64', version: '0.166.0-darwin-arm64',
   triple: 'aarch64-apple-darwin', executable: 'codex',
 }
 
@@ -30,7 +30,7 @@ function temporaryRoot(): string {
 }
 
 function runtimeWithCodex(root: string, manifest: Record<string, unknown> = {
-  name: '@openai/codex', version: '0.153.4', bin: { codex: 'bin/codex.js' },
+  name: '@openai/codex', version: '0.166.0', bin: { codex: 'bin/codex.js' },
 }, nativeTarget: FixtureNativeTarget = ARM64_NATIVE_TARGET): string {
   const runtime = join(root, 'runtime')
   const packageRoot = join(runtime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex')
@@ -53,8 +53,8 @@ function managedDevelopmentRuntime(root: string): { runtime: string; checkout: s
   const checkout = join(root, 'checkout')
   const runtime = join(checkout, 'apps', 'desktop', '.desktop-build', 'development', 'project')
   const llmRoot = join(checkout, 'packages', 'llm', 'llm-pi-ai')
-  const packageRoot = join(checkout, 'node_modules', '.pnpm', '@openai+codex@0.153.4', 'node_modules', '@openai', 'codex')
-  const nativeRoot = join(checkout, 'node_modules', '.pnpm', '@openai+codex@0.153.4-darwin-arm64', 'node_modules', '@openai', 'codex')
+  const packageRoot = join(checkout, 'node_modules', '.pnpm', '@openai+codex@0.166.0', 'node_modules', '@openai', 'codex')
+  const nativeRoot = join(checkout, 'node_modules', '.pnpm', '@openai+codex@0.166.0-darwin-arm64', 'node_modules', '@openai', 'codex')
   mkdirSync(join(runtime, 'node_modules', '@yharness'), { recursive: true })
   mkdirSync(join(llmRoot, 'node_modules', '@openai'), { recursive: true })
   mkdirSync(join(packageRoot, 'bin'), { recursive: true })
@@ -64,11 +64,11 @@ function managedDevelopmentRuntime(root: string): { runtime: string; checkout: s
   writeFileSync(join(checkout, 'package.json'), '{}\n')
   writeFileSync(join(llmRoot, 'package.json'), JSON.stringify({ name: '@yharness/llm-pi-ai', version: '0.2.1-rc.2' }))
   writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
-    name: '@openai/codex', version: '0.153.4', bin: { codex: 'bin/codex.js' },
+    name: '@openai/codex', version: '0.166.0', bin: { codex: 'bin/codex.js' },
   }))
   writeFileSync(join(packageRoot, 'bin', 'codex.js'), '#!/usr/bin/env node\n')
   writeFileSync(join(nativeRoot, 'package.json'), JSON.stringify({
-    name: '@openai/codex', version: '0.153.4-darwin-arm64', os: ['darwin'], cpu: ['arm64'],
+    name: '@openai/codex', version: '0.166.0-darwin-arm64', os: ['darwin'], cpu: ['arm64'],
   }))
   writeFileSync(join(nativeRoot, 'vendor', 'aarch64-apple-darwin', 'bin', 'codex'), '')
   chmodSync(join(packageRoot, 'bin', 'codex.js'), 0o755)
@@ -187,7 +187,7 @@ describe('Desktop Codex environment', () => {
     chmodSync(nodePath, 0o755)
     const result = resolveDesktopCodexEnvironment({
       runtimeDir: runtimeWithCodex(root, {
-        name: '@openai/codex', version: '0.153.4', bin: { codex: '../../outside.js' },
+        name: '@openai/codex', version: '0.166.0', bin: { codex: '../../outside.js' },
       }), dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
       targetPlatform: 'darwin', targetArch: 'arm64',
     })
@@ -220,7 +220,7 @@ describe('Desktop Codex environment', () => {
       targetPlatform: 'darwin', targetArch: 'arm64',
     })
     expect(result.environment).toEqual({})
-    expect(result.reason).toContain('pinned @openai/codex@0.153.4')
+    expect(result.reason).toContain('pinned @openai/codex@0.166.0')
   })
 
   it('does not reuse a native package built for another architecture', () => {
@@ -243,7 +243,7 @@ describe('Desktop Codex environment', () => {
     chmodSync(nodePath, 0o755)
     const result = resolveDesktopCodexEnvironment({
       runtimeDir: runtimeWithCodex(root, undefined, {
-        packageName: '@openai/codex-darwin-x64', version: '0.153.4-darwin-x64',
+        packageName: '@openai/codex-darwin-x64', version: '0.166.0-darwin-x64',
         triple: 'x86_64-apple-darwin', executable: 'codex',
       }),
       dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,

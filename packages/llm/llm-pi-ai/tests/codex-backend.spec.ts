@@ -184,6 +184,10 @@ describe('Codex native backend', () => {
     await runtime.configure(true, 'gpt-6.1-sol', 'priority')
     expect((await adapter.resolveModel('codex-backend', 'gpt-6.1-sol')).serviceTiers?.defaultTier).toBe('priority')
   })
+  it('publishes ChatGPT as the native provider display name', () => {
+    const { runtime } = fixture()
+    expect(new CodexBackendAdapter(runtime).providerInfo('codex-backend')).toEqual({ id: 'codex-backend', name: 'ChatGPT', auxiliaryGeneration: 'native' })
+  })
   it('declines command and patch approvals and grants no permission extensions', async () => {
     expect(await declineCodexRequest('item/commandExecution/requestApproval', {})).toEqual({ decision: 'decline' })
     expect(await declineCodexRequest('item/fileChange/requestApproval', {})).toEqual({ decision: 'decline' })

@@ -29,6 +29,10 @@ const SEAM_MODALITIES = ['text', 'image'] as const
 const DEFAULT_NATIVE_MODALITIES: Array<'text' | 'image'> = ['text', 'image']
 /** Synthetic standard tier the composer offers beside the catalog's own tiers. */
 const STANDARD_TIER: { id: string; name: string } = { id: 'default', name: 'Standard' }
+/** Default cadence for refreshing an enabled, already-authorized ChatGPT catalog. */
+export const DEFAULT_CATALOG_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+/** Largest delay accepted by the Node timer implementation. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 /**
  * Preserve model-owned native effort/tier/modality vocabulary without synthesizing capabilities.
  * @param value - the app-server `model/list` result.
@@ -137,6 +141,10 @@ interface RuntimeOptions {
   connectionId?: string
   /** Maximum distinct retained native tool identities per turn. */
   nativeEvidenceMaxItems?: number
+  /** Refresh cadence for an enabled, already-authorized ChatGPT account. */
+  catalogRefreshIntervalMs?: number
+  /** Notifies the owning connection when display connection state changes. */
+  notifyViewChanged?: () => void
   /** Receives sanitized current-turn item facts without tool authority. */
   observeNativeItem?: (options: GenerateOptions, item: SkillLearningNativeItem) => void
 }
@@ -152,11 +160,21 @@ export class CodexBackendRuntime {
   private running = 0
   private disposed = false
   private signingIn = false
+  private disconnecting = false
+  private changingSettings = false
+  private readonly catalogRefreshIntervalMs: number
+  private automaticRefreshTimer: ReturnType<typeof setInterval> | undefined
+  private automaticAuthorization: 'unknown' | 'authorized' | 'unauthorized' = 'unknown'
+  private refreshing: Promise<CodexBackendView> | undefined
+  private closing: Promise<void> | undefined
   private readonly cursors = new Map<string, ThreadCursor>()
   private activeRequest: { threadId: string; turnId: string | undefined; access: CodexTurnAccess; items: Map<string, Obj> } | undefined
   constructor(private readonly options: RuntimeOptions) {
     if (options.nativeEvidenceMaxItems !== undefined
       && (!Number.isSafeInteger(options.nativeEvidenceMaxItems) || options.nativeEvidenceMaxItems < 1)) throw new Error('Invalid native evidence item bound.')
+    const interval = options.catalogRefreshIntervalMs ?? DEFAULT_CATALOG_REFRESH_INTERVAL_MS
+    if (!Number.isSafeInteger(interval) || interval < 1 || interval > MAX_TIMER_DELAY_MS) throw new Error('Invalid ChatGPT catalog refresh interval.')
+    this.catalogRefreshIntervalMs = interval
   }
   /**
    * Read display state without touching the native process.
@@ -234,11 +252,16 @@ export class CodexBackendRuntime {
         if (this.disposed) { peer.close(); throw new Error('Codex backend is closed.') }
         peer.notify('initialized')
         peer.subscribe((method, params) => {
-          if (method === '__closed') { this.peer = undefined; this.connected = false; this.label = undefined; this.loginId = undefined; this.cursors.clear() }
+          if (method === '__closed') {
+            const changed = this.connected || this.label !== undefined
+            this.peer = undefined; this.connected = false; this.label = undefined; this.loginId = undefined
+            this.automaticAuthorization = 'unknown'; this.cursors.clear()
+            if (changed && !this.disposed) this.options.notifyViewChanged?.()
+          }
           if (method === 'account/login/completed' && params.loginId === this.loginId) {
             this.loginId = undefined
             if (params.success !== true) this.error = 'Codex sign-in did not complete. Try again.'
-            else void this.refresh().catch(() => { this.error = 'Sign-in completed; refresh the Codex backend to read its status.' })
+            else if (!this.disconnecting) void this.refresh().catch(() => { this.error = 'Sign-in completed; refresh the Codex backend to read its status.' })
           }
         })
         this.peer = peer
@@ -249,16 +272,51 @@ export class CodexBackendRuntime {
   }
   private async readAccount(peer: CodexPeer): Promise<void> {
     const account = obj(obj(await peer.request('account/read', { refreshToken: false })).account)
-    this.connected = account.type === 'chatgpt'
-    this.label = this.connected ? [text(account.email), text(account.planType)].filter(Boolean).join(' · ') || 'ChatGPT account' : undefined
+    if (this.disposed || peer !== this.peer) throw new Error('Codex backend is closed.')
+    const connected = account.type === 'chatgpt'
+    const label = connected ? [text(account.email), text(account.planType)].filter(Boolean).join(' · ') || 'ChatGPT account' : undefined
+    const changed = connected !== this.connected || label !== this.label
+    this.connected = connected
+    this.label = label
+    this.automaticAuthorization = connected ? 'authorized' : 'unauthorized'
+    if (changed) this.options.notifyViewChanged?.()
   }
   /**
-   * Read the native account and replace the cached model catalog.
-   * @returns the resulting view.
+   * Start the startup and periodic catalog read for an enabled route. The
+   * first read probes authorization; subsequent reads do nothing until that
+   * probe succeeds, so an absent account never launches a recurring request.
    */
-  async refresh(): Promise<CodexBackendView> {
+  startAutomaticRefresh(): void {
+    if (this.disposed || !this.options.preferences.enabled || this.automaticRefreshTimer !== undefined) return
+    const schedule = (probe: boolean): void => {
+      if (this.disposed || !this.options.preferences.enabled) {
+        this.stopAutomaticRefresh()
+        return
+      }
+      if (!probe && this.automaticAuthorization === 'unauthorized') return
+      if (this.running > 0 || this.signingIn || this.loginId !== undefined || this.disconnecting) return
+      void this.refresh().catch(() => {})
+    }
+    schedule(true)
+    this.automaticRefreshTimer = setInterval(() => { schedule(false) }, this.catalogRefreshIntervalMs)
+  }
+  private stopAutomaticRefresh(): boolean {
+    if (this.automaticRefreshTimer === undefined) return false
+    clearInterval(this.automaticRefreshTimer)
+    this.automaticRefreshTimer = undefined
+    return true
+  }
+  private async waitForRefresh(): Promise<void> {
+    const pending = this.refreshing
+    if (pending !== undefined) await pending.catch(() => {})
+  }
+  private assertOpen(): void {
+    if (this.disposed) throw new Error('Codex backend is closed.')
+  }
+  private async refreshOnce(): Promise<CodexBackendView> {
     const peer = await this.ensure()
     await this.readAccount(peer)
+    if (!this.connected) return this.view()
     const models: CodexBackendModelView[] = []; let cursor: string | undefined
     for (let page = 0; page < 20; page++) {
       const result = obj(await peer.request('model/list', { limit: 100, includeHidden: false, ...(cursor === undefined ? {} : { cursor }) }))
@@ -266,10 +324,34 @@ export class CodexBackendRuntime {
       if (cursor === undefined) break
       if (page === 19) throw new Error('Codex model catalog exceeded the supported page limit.')
     }
-    this.options.preferences.models = [...new Map(models.map(model => [model.id, model])).values()]
-    await this.options.persist(this.options.preferences)
+    if (this.disposed || peer !== this.peer) throw new Error('Codex backend is closed.')
+    const nextModels = [...new Map(models.map(model => [model.id, model])).values()]
+    const previousModels = this.options.preferences.models
+    // Publish the new cache before persistence emits the adapter update. If
+    // the write fails, restore the previous reference so callers keep using it.
+    this.options.preferences.models = nextModels
+    try {
+      await this.options.persist(this.options.preferences)
+      if (this.disposed || peer !== this.peer) throw new Error('Codex backend is closed.')
+    } catch (error) {
+      this.options.preferences.models = previousModels
+      throw error
+    }
     this.error = undefined
     return this.view()
+  }
+  /**
+   * Read the native account and replace the cached model catalog.
+   * @returns the resulting view.
+   */
+  async refresh(): Promise<CodexBackendView> {
+    if (this.disconnecting) throw new Error('ChatGPT is disconnecting. Try refreshing again afterwards.')
+    if (this.changingSettings) throw new Error('ChatGPT settings are changing. Try refreshing again afterwards.')
+    if (this.refreshing !== undefined) return this.refreshing
+    const operation = this.refreshOnce()
+    this.refreshing = operation
+    try { return await operation }
+    finally { if (this.refreshing === operation) this.refreshing = undefined }
   }
   /**
    * Start native device login only after explicit local-file consent.
@@ -277,6 +359,7 @@ export class CodexBackendRuntime {
    * @returns the device verification URL and user code.
    */
   async login(consent: boolean): Promise<{ verificationUrl: string; userCode: string }> {
+    if (this.disconnecting) throw new Error('ChatGPT is disconnecting. Try again afterwards.')
     if (!consent) throw new Error('Give local credential storage consent before Codex sign-in.')
     if (this.signingIn || this.loginId !== undefined || this.running > 0) throw new Error('Finish the active Codex operation first.')
     this.signingIn = true
@@ -308,11 +391,26 @@ export class CodexBackendRuntime {
    * @returns the resulting view; unchanged when the account or catalog is not ready.
    */
   async publish(): Promise<CodexBackendView> {
-    if (this.options.preferences.auto === false || this.options.preferences.enabled) return this.view()
-    if (!this.connected || this.options.preferences.models.length === 0) return this.view()
-    this.options.preferences.enabled = true
-    await this.options.persist(this.options.preferences)
-    return this.view()
+    if (this.disconnecting) throw new Error('ChatGPT is disconnecting. Try again afterwards.')
+    if (this.changingSettings) throw new Error('ChatGPT settings are already changing.')
+    this.changingSettings = true
+    try {
+      await this.waitForRefresh()
+      this.assertOpen()
+      if (this.options.preferences.auto === false || this.options.preferences.enabled) return this.view()
+      if (!this.connected || this.options.preferences.models.length === 0) return this.view()
+      const previousEnabled = this.options.preferences.enabled
+      this.options.preferences.enabled = true
+      try {
+        await this.options.persist(this.options.preferences)
+        this.assertOpen()
+      } catch (error) {
+        this.options.preferences.enabled = previousEnabled
+        throw error
+      }
+      this.startAutomaticRefresh()
+      return this.view()
+    } finally { this.changingSettings = false }
   }
   /**
    * Enable this route or store one catalog-advertised processing tier.
@@ -322,41 +420,107 @@ export class CodexBackendRuntime {
    * @returns the resulting view.
    */
   async configure(enabled: boolean, modelId?: string, tier?: string): Promise<CodexBackendView> {
-    if (this.running > 0) throw new Error('Finish the active Codex turn before changing this backend.')
-    if (enabled && !this.connected) throw new Error('Sign in and refresh this Codex profile before enabling it.')
-    if (modelId !== undefined && tier !== undefined) {
-      const model = this.options.preferences.models.find(candidate => candidate.id === modelId)
-      if (model === undefined || (tier !== 'default' && !model.serviceTiers.some(choice => choice.id === tier))) throw new Error('That processing tier is not in the Codex catalog.')
-      this.options.preferences.tiers[modelId] = tier
-    }
-    this.options.preferences.enabled = enabled
-    // An explicit choice, either way, is the user's; stop publishing on their behalf.
-    this.options.preferences.auto = false
-    await this.options.persist(this.options.preferences)
-    return this.view()
+    if (this.disconnecting) throw new Error('ChatGPT is disconnecting. Try again afterwards.')
+    if (this.changingSettings) throw new Error('ChatGPT settings are already changing.')
+    this.changingSettings = true
+    try {
+      await this.waitForRefresh()
+      this.assertOpen()
+      if (this.running > 0) throw new Error('Finish the active Codex turn before changing this backend.')
+      if (enabled && !this.connected) throw new Error('Sign in and refresh this Codex profile before enabling it.')
+      const previousEnabled = this.options.preferences.enabled
+      const previousAuto = this.options.preferences.auto
+      const previousTiers = { ...this.options.preferences.tiers }
+      const selectedModel = modelId === undefined || tier === undefined
+        ? undefined : this.options.preferences.models.find(candidate => candidate.id === modelId)
+      if (modelId !== undefined && tier !== undefined
+      && (selectedModel === undefined || (tier !== 'default' && !selectedModel.serviceTiers.some(choice => choice.id === tier)))) {
+        throw new Error('That processing tier is not in the Codex catalog.')
+      }
+      const automaticRefreshWasActive = this.stopAutomaticRefresh()
+      if (modelId !== undefined && tier !== undefined) {
+        this.options.preferences.tiers[modelId] = tier
+      }
+      this.options.preferences.enabled = enabled
+      // An explicit choice, either way, is the user's; stop publishing on their behalf.
+      this.options.preferences.auto = false
+      try {
+        await this.options.persist(this.options.preferences)
+        this.assertOpen()
+      } catch (error) {
+        this.options.preferences.enabled = previousEnabled
+        if (previousAuto === undefined) delete this.options.preferences.auto
+        else this.options.preferences.auto = previousAuto
+        this.options.preferences.tiers = previousTiers
+        if (automaticRefreshWasActive && previousEnabled) this.startAutomaticRefresh()
+        throw error
+      }
+      if (enabled) this.startAutomaticRefresh()
+      else this.stopAutomaticRefresh()
+      return this.view()
+    } finally { this.changingSettings = false }
   }
   /**
    * Logout this separate Codex profile and withdraw its selectable models.
    * @returns the resulting view.
    */
   async logout(): Promise<CodexBackendView> {
-    if (this.running > 0) throw new Error('Finish the active Codex turn before disconnecting.')
-    await this.cancel()
-    const peer = await this.ensure()
-    await peer.request('account/logout', {})
-    this.connected = false; this.label = undefined; this.options.preferences.enabled = false; this.cursors.clear()
-    this.options.preferences.auto = false
-    await this.options.persist(this.options.preferences)
-    return this.view()
+    if (this.disconnecting) throw new Error('ChatGPT is already disconnecting.')
+    if (this.changingSettings || this.signingIn) throw new Error('Finish the active ChatGPT operation before disconnecting.')
+    this.disconnecting = true
+    const automaticRefreshWasActive = this.stopAutomaticRefresh()
+    const previousEnabled = this.options.preferences.enabled
+    const previousAuto = this.options.preferences.auto
+    let loggedOut = false
+    try {
+      await this.waitForRefresh()
+      this.assertOpen()
+      if (this.running > 0) throw new Error('Finish the active Codex turn before disconnecting.')
+      await this.cancel()
+      this.assertOpen()
+      const peer = await this.ensure()
+      await peer.request('account/logout', {})
+      this.assertOpen()
+      loggedOut = true
+      const changed = this.connected || this.label !== undefined
+      this.connected = false; this.label = undefined; this.options.preferences.enabled = false; this.cursors.clear()
+      this.options.preferences.auto = false
+      this.automaticAuthorization = 'unauthorized'
+      if (changed) this.options.notifyViewChanged?.()
+      await this.options.persist(this.options.preferences)
+      this.assertOpen()
+      return this.view()
+    } catch (error) {
+      if (!loggedOut) {
+        this.options.preferences.enabled = previousEnabled
+        if (previousAuto === undefined) delete this.options.preferences.auto
+        else this.options.preferences.auto = previousAuto
+        if (automaticRefreshWasActive && previousEnabled) this.startAutomaticRefresh()
+      } else {
+        this.stopAutomaticRefresh()
+      }
+      throw error
+    } finally {
+      this.disconnecting = false
+    }
   }
-  /** Terminate the native child and drop every cached cursor. */
-  close(): void { this.disposed = true; this.peer?.close(); this.peer = undefined; this.connected = false; this.cursors.clear() }
+  /** Terminate the native child and wait for owned startup and refresh work to settle. */
+  async close(): Promise<void> {
+    if (this.closing !== undefined) return this.closing
+    this.disposed = true
+    this.stopAutomaticRefresh()
+    this.peer?.close(); this.peer = undefined; this.connected = false; this.label = undefined; this.cursors.clear()
+    const pending = [this.opening, this.refreshing].filter(operation => operation !== undefined)
+    this.closing = Promise.allSettled(pending).then(() => {})
+    return this.closing
+  }
   /**
    * Run one native turn for the assembled request.
    * @param options - provider, model, effort, tier, messages, and cancellation.
    * @returns the streamed text, usage, and terminal finish chunks.
    */
   async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
+    if (this.disconnecting) throw new Error('ChatGPT is disconnecting. Try again afterwards.')
     if (this.running > 0 || this.signingIn || this.loginId !== undefined) throw new Error('Finish the active Codex operation first.')
     const lifetime = new AbortController()
     const signal = options.signal === undefined ? lifetime.signal : AbortSignal.any([options.signal, lifetime.signal])
@@ -545,7 +709,7 @@ export class CodexBackendRuntime {
 /** Native Codex model routing while Codex, rather than Harness, owns tools. */
 export class CodexBackendAdapter extends LlmAdapter {
   constructor(private readonly runtime: CodexBackendRuntime) { super() }
-  override providerInfo(provider: string): { id: string; name: string; auxiliaryGeneration: 'native' } { return { id: provider, name: 'Codex (native backend)', auxiliaryGeneration: 'native' } }
+  override providerInfo(provider: string): { id: string; name: string; auxiliaryGeneration: 'native' } { return { id: provider, name: 'ChatGPT', auxiliaryGeneration: 'native' } }
   override listModels(provider: string): Promise<LlmModelInfo[]> {
     const models: LlmModelInfo[] = this.runtime.view().enabled
       ? this.runtime.models().map(model => ({

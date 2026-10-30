@@ -9,6 +9,7 @@ import { JsonRpcResponseError } from '@yharness/sdk-protocol'
 import type { SubprocessHandle, SubprocessOutcome } from '@yharness/subprocess'
 import { spawnSubprocess } from '../../../subprocess/subprocess-local/src/spawn.ts'
 import { boundedCodexInput, codexChildPath, codexProcessArguments, codexRequestFailure, prepareCodexHomeDirectories, startCodexProcess } from '../src/codex-backend-process.ts'
+import { parseCodexModels } from '../src/codex-backend.ts'
 it('preserves method-not-found support information without native diagnostic text or data', () => {
   const missing = codexRequestFailure('skills/list', new JsonRpcResponseError(-32601, 'sensitive diagnostic', { secret: 'hidden' }))
   expect(missing).toBeInstanceOf(JsonRpcResponseError)
@@ -182,13 +183,13 @@ if (!supportedCodexTargets.has(codexTarget)) console.info(`Skipping Codex CLI sm
 actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolated empty account', async () => {
   const packageManifest = createRequire(import.meta.url).resolve('@openai/codex/package.json')
   const manifest = JSON.parse(await readFile(packageManifest, 'utf8')) as { version: string; bin: { codex: string } }
-  expect(manifest.version).toBe('0.153.4')
+  expect(manifest.version).toBe('0.166.0')
   const root = await mkdtemp(join(tmpdir(), 'y-harness-codex-cli-'))
   const packageRoot = dirname(packageManifest)
   const nativePackageName = `@openai/codex-${process.platform}-${process.arch}`
   const nativeManifest = createRequire(packageManifest).resolve(`${nativePackageName}/package.json`)
   const physicalPackageRoot = join(root, 'runtime', 'node_modules', '@openai', 'codex')
-  const physicalNativeRoot = join(physicalPackageRoot, 'node_modules', '@openai', nativePackageName)
+  const physicalNativeRoot = join(physicalPackageRoot, 'node_modules', nativePackageName)
   await cp(packageRoot, physicalPackageRoot, { recursive: true, dereference: true })
   await cp(dirname(nativeManifest), physicalNativeRoot, { recursive: true, dereference: true })
   const options = { binary: resolve(physicalPackageRoot, manifest.bin.codex), nodePath: process.execPath, home: join(root, 'native'), shellHome: join(root, 'shell'), cwd: root }
@@ -203,6 +204,9 @@ actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolate
   try {
     const initialized = await peer.request('initialize', { clientInfo: { name: 'y-harness-smoke', title: 'Y Harness smoke', version: '0' }, capabilities: { experimentalApi: false } })
     expect(initialized).toMatchObject({ codexHome: await realpath(options.home) })
+    peer.notify('initialized')
+    const models = parseCodexModels(await peer.request('model/list', { limit: 100, includeHidden: false }))
+    expect(models.map(model => model.id)).toEqual(expect.arrayContaining(['gpt-6.1-sol', 'gpt-6.1-terra']))
     const account = await peer.request('account/read', { refreshToken: false })
     expect(account).toMatchObject({ account: null })
   } finally {
