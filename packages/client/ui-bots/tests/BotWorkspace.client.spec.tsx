@@ -59,6 +59,24 @@ function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, childr
 }
 
 describe('Bot roster and detail', () => {
+  it('renames the selected bot from its conversation header', async () => {
+    const rename = vi.fn(async () => {})
+    render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
+    await waitFor(() => expect(rename).toHaveBeenCalledWith('research', 'Market scout'))
+  })
+
+  it('keeps the rename dialog open when saving fails', async () => {
+    const rename = vi.fn(async () => { throw new Error('offline') })
+    render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('The name could not be saved')
+    expect(screen.getByRole('textbox', { name: 'Bot name' })).toHaveProperty('value', 'Market scout')
+  })
   it('renders the roster as a standalone sidebar surface', () => {
     const onSelectBot = vi.fn()
     render(<BotRoster

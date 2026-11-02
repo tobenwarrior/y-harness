@@ -28,6 +28,7 @@ import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity } from
 export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
+  rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
@@ -54,6 +55,7 @@ export interface BotWorkspaceFace {
   readonly reference: () => SessionReference | undefined
   readonly select: (id: string) => void
   readonly create: (creation: BotCreation) => Promise<void>
+  readonly rename: (id: string, name: string) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
@@ -110,6 +112,15 @@ export class BotWorkspaceController {
       reference: () => this.selectedReference,
       select: (id) => { this.select(id) },
       create: creation => this.create(creation),
+      rename: async (id, name) => {
+        const result = await this.remote.rename({ botId: brandString<BotIdType>(id), name })
+        if (!result.ok) throw new Error(result.error.message)
+        if (this.disposed) return
+        const current = this.source.getSnapshot()
+        this.source.set({ ...current, bots: current.bots.map(bot =>
+          bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot,
+        ) })
+      },
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined

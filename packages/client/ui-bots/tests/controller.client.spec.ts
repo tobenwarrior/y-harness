@@ -72,10 +72,27 @@ function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
   return {
     list: vi.fn(async () => ({ ok: true as const, value: { bots: rows } })),
     create,
+    rename: vi.fn(),
   }
 }
 
 describe('BotWorkspaceController', () => {
+  it('renames a bot while keeping its existing session selected', async () => {
+    const original = bot('bot-one', 'session-one', { name: 'Original' })
+    const updated = { ...original, name: 'Market scout', updatedAt: 2 }
+    const remote = remoteFixture([original])
+    vi.mocked(remote.rename).mockResolvedValue({ ok: true, value: { bot: updated } })
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    await controller.load()
+    const selected = controller.face().reference()
+
+    await controller.face().rename(original.id, updated.name)
+
+    expect(remote.rename).toHaveBeenCalledWith({ botId: original.id, name: updated.name })
+    expect(controller.source.getSnapshot().bots[0]?.name).toBe(updated.name)
+    expect(controller.face().reference()).toBe(selected)
+  })
   it('switches retained Sessions before publishing the new selection and keeps it across refresh', async () => {
     const first = bot('bot-one', 'session-one')
     const second = bot('bot-two', 'session-two')

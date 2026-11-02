@@ -174,14 +174,19 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
+  onRename?: ((id: string, name: string) => Promise<void>) | undefined
   loading: boolean
 }) {
+  const [renameTarget, setRenameTarget] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [renameError, setRenameError] = useState(false)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -211,6 +216,12 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
           </span>
         </span>
         <span className={css.detailActions}>
+          {onRename !== undefined && (
+            <Tooltip label={t('renameBot')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('renameBot')} icon={<IconEditOutlineRegular size={14} />}
+                onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
+            </Tooltip>
+          )}
           {onEditAvatar !== undefined && (
             <Tooltip label={t('editAvatar')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={14} />} onClick={onEditAvatar} />
@@ -233,6 +244,21 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
       <div className={css.thread}>
         {children ?? <div className={css.threadEmpty} role="status"><p>{t(bot.status === 'preparing' ? 'preparingBot' : 'conversationUnavailable')}</p></div>}
       </div>
+      {onRename !== undefined && <Modal open={renameTarget !== null} onClose={() => { if (!saving) setRenameTarget(null) }}
+        title={t('renameBot')} description={t('renameDescription')} closeLabel={t('cancel')}
+        footer={<><Button variant="ghost" onClick={() => { setRenameTarget(null) }} disabled={saving}>{t('cancel')}</Button>
+          <Button variant="primary" disabled={saving || name.trim() === ''} onClick={() => {
+            if (renameTarget === null) return
+            setSaving(true)
+            setRenameError(false)
+            void onRename(renameTarget, name.trim()).then(() => { setRenameTarget(null) }, () => { setRenameError(true) })
+              .finally(() => { setSaving(false) })
+          }}>{t(saving ? 'savingName' : 'saveName')}</Button></>}>
+        {renameError && <div className={css.dialogNotice} role="alert">{t('renameFailed')}</div>}
+        <div className={css.dialogField}><label className={css.dialogLabel} htmlFor="yharness-bot-rename">{t('newBotName')}</label>
+          <Input id="yharness-bot-rename" data-modal-autofocus value={name} disabled={saving}
+            onChange={(event) => { setName(event.currentTarget.value) }} /></div>
+      </Modal>}
     </section>
   )
 }

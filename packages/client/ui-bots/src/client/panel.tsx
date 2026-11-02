@@ -86,7 +86,7 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, loadAvatar, SessionProvider, renderSlot, t,
+  useWorkspace, useSessionStatus, reference, loadAvatar, rename, SessionProvider, renderSlot, t,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -105,6 +105,7 @@ export function BotsPanel({
       children={conversation}
       t={t}
       loadAvatar={loadAvatar}
+      onRename={rename}
       loading={state.phase === 'loading' && bots.length === 0}
     />
   )
