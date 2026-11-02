@@ -64,6 +64,12 @@ export interface BotNativeToolHost {
   readonly replay: (sessionId: SessionId) => Promise<readonly BotDynamicToolEvent[]>
   /** Create or update a Bot owned by this Host. */
   readonly manage?: (action: 'create' | 'edit', args: JsonObject, context: BotNativeToolContext) => Promise<unknown>
+  /** Manage a durable routine owned by the calling Bot Session. */
+  readonly routine?: (
+    action: 'create' | 'list' | 'update' | 'delete',
+    args: JsonObject,
+    context: BotNativeToolContext,
+  ) => Promise<unknown>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -73,7 +79,10 @@ export interface BotNativeToolProvider {
   readonly replay: (options: Pick<GenerateOptions, 'sessionId'>) => Promise<readonly BotDynamicToolEvent[]>
 }
 
-const BOT_TOOL_NAMES = ['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'] as const
+const BOT_TOOL_NAMES = [
+  'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
+  'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
 const MAX_EVENT_KEYS = 64
@@ -387,6 +396,67 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
   }
 }
 
+/** Build one native routine action over the Host Schedule adapter. */
+function routineTool(
+  action: 'create' | 'list' | 'update' | 'delete',
+  routine: NonNullable<BotNativeToolHost['routine']>,
+): BotNativeTool {
+  const name = `schedule_${action}`
+  const mutates = action !== 'list'
+  return {
+    name,
+    description: action === 'list'
+      ? 'List the durable routines owned by this Bot Session.'
+      : action === 'create'
+        ? 'Create a durable routine owned by this Bot Session. This action requires approval.'
+        : action === 'update'
+          ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
+          : 'Delete a durable routine owned by this Bot Session. This action requires approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...(action === 'create' ? {
+          prompt: { type: 'string', description: 'Instruction delivered when the routine runs.' },
+          title: { type: 'string', description: 'Short name for the routine.' },
+          after_seconds: { type: 'number' }, at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
+          daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
+        } : {}),
+        ...(action === 'update' ? {
+          id: { type: 'string', description: 'Routine id returned by schedule_list.' },
+          prompt: { type: 'string' }, title: { type: 'string' },
+          at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
+          daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
+        } : {}),
+        ...(action === 'delete' ? {
+          id: { type: 'string', description: 'Routine id returned by schedule_list.' },
+        } : {}),
+      },
+      ...(action === 'create' ? { required: ['prompt', 'title'] } : {}),
+      ...(action === 'update' || action === 'delete' ? { required: ['id'] } : {}),
+      additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      if (mutates) {
+        if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')
+        let approved: boolean
+        try {
+          approved = await context.requestApproval(`Change a routine for Bot Session "${String(context.sessionId)}".`)
+        } catch (error: unknown) {
+          return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+        }
+        if (!approved) return failure('approval-denied', 'The Bot routine change was not approved.')
+        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      }
+      try {
+        return output(await routine(action, arguments_, context))
+      } catch (error: unknown) {
+        return collaborationFailure(error)
+      }
+    },
+  }
+}
+
 /**
  * Build the native action provider for one Host-owned Bot roster.
  * @param host - Host callbacks for binding, durable observation, and replay.
@@ -441,7 +511,11 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           catch (error: unknown) { return collaborationFailure(error) }
         },
       })
-      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit')]
+      const routine = host.routine
+      const routines = routine === undefined ? [] : [
+        routineTool('create', routine), routineTool('list', routine), routineTool('update', routine), routineTool('delete', routine),
+      ]
+      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },
     observe: async (event) => {
       if (!BOT_TOOL_NAME_SET.has(event.name)) throw new Error('Unknown Bot native action.')

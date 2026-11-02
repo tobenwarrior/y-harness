@@ -437,11 +437,15 @@ export function apply(ctx: Context): void {
 }
 
 /**
- * Register the four reminder tools in the scope that resolved the Schedule
- * service.
- * @param ctx - Scope whose `schedule` service the tools act through.
+ * Register the Schedule tools in an already-resolved scope.
+ *
+ * This lower-level entry point lets an agent-owned scope reuse the exact Host
+ * Schedule implementation while adding a scope-specific policy, such as a
+ * Bot approval gate. Callers must resolve `ctx.schedule` before invoking it.
+ *
+ * @param ctx - Scope whose `tools` registry and resolved `schedule` service are used.
  */
-function registerScheduleTools(ctx: Context): void {
+export function registerScheduleTools(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'schedule_create',
     description: CREATE_DESCRIPTION,

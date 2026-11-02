@@ -1,6 +1,7 @@
 import { SessionId } from '@yharness/session'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  BotCollaborationError,
   BotMessageId,
   type BotCollaborationClient,
   type BotDynamicToolEvent,
@@ -30,6 +31,65 @@ function context(overrides: Partial<BotNativeToolContext> = {}): BotNativeToolCo
 }
 
 describe('native Bot actions', () => {
+  it('offers approved routine actions bound to the Bot Session', async () => {
+    const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], routine,
+    })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+    ]))
+    const list = tools.find(tool => tool.name === 'schedule_list')
+    const create = tools.find(tool => tool.name === 'schedule_create')
+    if (list === undefined || create === undefined) throw new Error('routine tools missing')
+    await expect(list.execute({}, context())).resolves.toMatchObject({ success: true })
+    expect(routine).toHaveBeenCalledWith('list', {}, expect.objectContaining({ sessionId: SessionId('bot-session-alpha') }))
+    await expect(create.execute({ title: 'Daily check' }, context({ requestApproval: async () => false })))
+      .resolves.toMatchObject({ success: false })
+    expect(routine).toHaveBeenCalledTimes(1)
+    await expect(create.execute({ title: 'Daily check' }, context())).resolves.toMatchObject({ success: true })
+    expect(routine).toHaveBeenCalledWith('create', { title: 'Daily check' }, expect.anything())
+  })
+
+  it('handles routine cancellation, approval failures, and adapter errors', async () => {
+    const routine = vi.fn(async (action: string) => ({ action }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], routine,
+    })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const create = tools.find(tool => tool.name === 'schedule_create')
+    const update = tools.find(tool => tool.name === 'schedule_update')
+    const remove = tools.find(tool => tool.name === 'schedule_delete')
+    if (create === undefined || update === undefined || remove === undefined) throw new Error('routine tools missing')
+
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await expect(create.execute({}, context({ signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
+    await expect(create.execute({}, context({ approvalPolicy: 'never' }))).resolves.toMatchObject({ success: false })
+    await expect(create.execute({}, context({ requestApproval: async () => { throw new Error('approval unavailable') } })))
+      .resolves.toMatchObject({ success: false })
+    const approvalThrowCancelled = new AbortController()
+    await expect(create.execute({}, context({
+      signal: approvalThrowCancelled.signal,
+      requestApproval: async () => { approvalThrowCancelled.abort(); throw new Error('approval cancelled') },
+    }))).resolves.toMatchObject({ success: false })
+
+    const approvalCancelled = new AbortController()
+    await expect(create.execute({}, context({
+      signal: approvalCancelled.signal,
+      requestApproval: async () => { approvalCancelled.abort(); return true },
+    }))).resolves.toMatchObject({ success: false })
+
+    await expect(update.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: true })
+    await expect(remove.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: true })
+
+    routine.mockRejectedValueOnce(new BotCollaborationError('message-invalid', 'bad routine'))
+    await expect(update.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: false })
+    routine.mockRejectedValueOnce(new Error('routine unavailable'))
+    await expect(remove.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: false })
+  })
+
   it('offers bot creation and profile editing actions to a bot', async () => {
     const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [] })
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })

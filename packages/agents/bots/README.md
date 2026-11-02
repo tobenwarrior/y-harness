@@ -89,7 +89,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, and `edit_bot_profile` are approval-gated actions. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, `edit_bot_profile`, and routine mutations are approval-gated actions. When the Host Schedule service is mounted, the Bot scope reuses `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`; every routine remains bound to the Bot's one Session and is delivered there after restart. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 
@@ -142,6 +142,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **Routine delivery uses Host Schedule** — Bot routines inherit the Schedule service's recurrence, delivery, and retention behavior; disabling that service removes routine tools without affecting the Bot roster.
 
 <a id="dev-note"></a>
 ### Dev Note

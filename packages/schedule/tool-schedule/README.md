@@ -54,6 +54,8 @@ The package declares no `Config` fields. It injects `ctx.tools` and registers th
 
 The plugin registers four `defineTool` definitions through the context that loads it, so a preset mount decides visibility and Cordis effect ownership disposes them with the mount. Execution reads `exec.agent` for the Session binding and the injected `ctx.schedule` service for storage; the delegation-depth guard runs before selector and identity checks, all before the service call, and any failure the service raises that is not a `ScheduleInputError` collapses to `internal_error` so storage details never reach the model. Model content is the canonical JSON of the returned value, and the Host service owns persistence, scheduling, Session restoration, and delivery.
 
+`registerScheduleTools(ctx)` is also exported for an Agent-owned scope that already resolved both `tools` and `schedule`; this reuses the same definitions while the caller layers a scope-specific policy, such as Bot routine approval.
+
 ### Source map
 
 | File | Role |

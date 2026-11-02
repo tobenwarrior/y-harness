@@ -1182,6 +1182,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/schedule':
+        specifier: workspace:*
+        version: link:../../schedule/schedule
       '@yharness/storage':
         specifier: workspace:*
         version: link:../../storage/storage
@@ -1194,6 +1197,9 @@ importers:
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
+      '@yharness/tool-schedule':
+        specifier: workspace:*
+        version: link:../../schedule/tool-schedule
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools

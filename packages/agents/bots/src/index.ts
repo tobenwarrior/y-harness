@@ -6,6 +6,15 @@ import { Context, Service } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
+import { ScheduleId, ScheduleInputError, scheduleView } from '@yharness/schedule'
+import type {
+  AtInput,
+  CronInput,
+  DailyInput,
+  ScheduleCreateRequest,
+  ScheduleTimingChange,
+  WeeklyInput,
+} from '@yharness/schedule'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
@@ -18,6 +27,7 @@ import type { BotCollaborationClient } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
+import { installBotRoutineTools } from './routine-tools.ts'
 import type {
   BotAvailability,
   BotAccent,
@@ -38,6 +48,8 @@ import type {
   BotView,
 } from './types.ts'
 import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+
+type RoutineArguments = Record<string, unknown>
 
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
@@ -180,6 +192,119 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.accent === request.accent
     && record.cwd === request.cwd
     && record.agentPreset === request.agentPreset
+}
+
+function routineText(args: RoutineArguments, key: string): string | undefined {
+  const value = args[key]
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+function routineRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) record[key] = entry
+  return record
+}
+
+function routineNumber(value: unknown, label: string): number {
+  if (typeof value !== 'number') {
+    throw new BotCollaborationError('message-invalid', `${label} must be a number.`)
+  }
+  return value
+}
+
+function routineWeekdays(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const days = value.filter((item): item is number => typeof item === 'number')
+  return days.length === value.length ? days : undefined
+}
+
+function routineAt(value: unknown): AtInput {
+  if (typeof value === 'string') return value
+  const record = routineRecord(value)
+  if (record === undefined
+    || typeof record.date !== 'string' || typeof record.time !== 'string' || typeof record.time_zone !== 'string') {
+    throw new BotCollaborationError('message-invalid', 'A routine at value must be an RFC 3339 string or a local date, time, and time_zone.')
+  }
+  return { date: record.date, time: record.time, time_zone: record.time_zone }
+}
+
+function routineDaily(value: unknown): DailyInput {
+  const record = routineRecord(value)
+  if (record === undefined || typeof record.time !== 'string' || typeof record.time_zone !== 'string') {
+    throw new BotCollaborationError('message-invalid', 'A daily routine needs time and time_zone.')
+  }
+  return { time: record.time, time_zone: record.time_zone }
+}
+
+function routineWeekly(value: unknown): WeeklyInput {
+  const record = routineRecord(value)
+  const weekdays = record === undefined ? undefined : routineWeekdays(record.weekdays)
+  if (record === undefined || typeof record.time !== 'string' || typeof record.time_zone !== 'string'
+    || weekdays === undefined) {
+    throw new BotCollaborationError('message-invalid', 'A weekly routine needs time, time_zone, and weekdays.')
+  }
+  return { time: record.time, time_zone: record.time_zone, weekdays }
+}
+
+function routineCron(value: unknown): CronInput {
+  const record = routineRecord(value)
+  if (record === undefined || typeof record.expression !== 'string' || typeof record.time_zone !== 'string') {
+    throw new BotCollaborationError('message-invalid', 'A cron routine needs expression and time_zone.')
+  }
+  return { expression: record.expression, time_zone: record.time_zone }
+}
+
+function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
+  const prompt = routineText(args, 'prompt')
+  const title = routineText(args, 'title')
+  if (prompt === undefined || title === undefined) {
+    throw new BotCollaborationError('message-invalid', 'A routine needs non-empty prompt and title.')
+  }
+  const request: ScheduleCreateRequest = { prompt, title }
+  const selectors: Partial<ScheduleCreateRequest> = {}
+  if (args.after_seconds !== undefined) selectors.after_seconds = routineNumber(args.after_seconds, 'after_seconds')
+  if (args.at !== undefined) selectors.at = routineAt(args.at)
+  if (args.every_seconds !== undefined) selectors.every_seconds = routineNumber(args.every_seconds, 'every_seconds')
+  if (args.daily !== undefined) selectors.daily = routineDaily(args.daily)
+  if (args.weekly !== undefined) selectors.weekly = routineWeekly(args.weekly)
+  if (args.cron !== undefined) selectors.cron = routineCron(args.cron)
+  if (Object.keys(selectors).length !== 1) {
+    throw new BotCollaborationError('message-invalid', 'A routine needs exactly one timing selector.')
+  }
+  return { ...request, ...selectors }
+}
+
+function routineUpdateContent(args: RoutineArguments): { readonly title?: string; readonly prompt?: string } {
+  const title = args.title === undefined ? undefined : routineText(args, 'title')
+  const prompt = args.prompt === undefined ? undefined : routineText(args, 'prompt')
+  if (args.title !== undefined && title === undefined) {
+    throw new BotCollaborationError('message-invalid', 'Routine title must be non-empty.')
+  }
+  if (args.prompt !== undefined && prompt === undefined) {
+    throw new BotCollaborationError('message-invalid', 'Routine prompt must be non-empty.')
+  }
+  return { ...(title === undefined ? {} : { title }), ...(prompt === undefined ? {} : { prompt }) }
+}
+
+function routineTimingChange(args: RoutineArguments): ScheduleTimingChange | undefined {
+  const selectors = ['at', 'every_seconds', 'daily', 'weekly', 'cron'].filter(key => args[key] !== undefined)
+  if (selectors.length > 1) throw new BotCollaborationError('message-invalid', 'A routine update accepts at most one timing selector.')
+  const selector = selectors[0]
+  if (selector === undefined) return undefined
+  if (selector === 'at') return { kind: 'at', at: routineAt(args.at) }
+  if (selector === 'every_seconds') return { kind: 'every', every_seconds: routineNumber(args.every_seconds, 'every_seconds') }
+  if (selector === 'daily') return { kind: 'daily', daily: routineDaily(args.daily) }
+  if (selector === 'weekly') return { kind: 'weekly', weekly: routineWeekly(args.weekly) }
+  return { kind: 'cron', cron: routineCron(args.cron) }
+}
+
+function routineId(args: RoutineArguments): string {
+  const value = args.id
+  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value) {
+    throw new BotCollaborationError('message-invalid', 'Routine id must be non-empty without surrounding whitespace.')
+  }
+  return value
 }
 
 function sessionRequest(record: BotRecord): SessionCreateRequest {
@@ -360,6 +485,7 @@ export class BotService extends TypertRemoteService {
         if (description !== undefined) await this.updateBotDescription(botId, description, context.signal)
         return { id: botId, updated: true }
       },
+      routine: (action, args, context) => this.runRoutine(action, args, context),
       persist: async (event) => {
         await this.ready
         const session = ctx.sessions.get(event.sessionId)
@@ -415,6 +541,69 @@ export class BotService extends TypertRemoteService {
    */
   collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient> {
     return this.collaboration.bind(agent)
+  }
+
+  /**
+   * Execute one native routine operation against the calling Bot's Session.
+   *
+   * The native provider performs approval before invoking this adapter. This
+   * method still derives the Session from the provider context and rechecks
+   * Bot ownership, so a stale native thread cannot retarget another Session.
+   *
+   * @param action - Routine operation requested by the native provider.
+   * @param args - JSON arguments from the model boundary.
+   * @param context - Native call identity and cancellation state.
+   * @returns The canonical Schedule result or a structured management result.
+   */
+  private async runRoutine(
+    action: 'create' | 'list' | 'update' | 'delete',
+    args: RoutineArguments,
+    context: Parameters<NonNullable<BotNativeToolHost['routine']>>[2],
+  ): Promise<unknown> {
+    const sessionId = context.sessionId
+    if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
+      throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new Error('Bot routines are unavailable.')
+    context.signal.throwIfAborted()
+    try {
+      if (action === 'create') {
+        return scheduleView(await schedule.create(sessionId, routineCreateRequest(args), context.signal), Date.now())
+      }
+      if (action === 'list') {
+        return (await schedule.list({ sessionId })).map(record => scheduleView(record, Date.now()))
+      }
+      if (action === 'delete') {
+        const id = routineId(args)
+        return await schedule.delete({ sessionId, id: ScheduleId(id) }, context.signal)
+      }
+      const id = routineId(args)
+      const expected = (await schedule.list({ sessionId })).find(record => String(record.id) === id)
+      if (expected === undefined) {
+        const ended = (await schedule.catalog()).some(entry => entry.sessionId === sessionId && String(entry.id) === id)
+        return { id, updated: false, code: ended ? 'schedule_ended' : 'schedule_not_found' }
+      }
+      const content = routineUpdateContent(args)
+      const change = routineTimingChange(args)
+      if (change === undefined && content.title === undefined && content.prompt === undefined) {
+        throw new BotCollaborationError('message-invalid', 'A routine update needs a title, prompt, or timing selector.')
+      }
+      const result = await schedule.update({
+        sessionId,
+        id: ScheduleId(id),
+        expected,
+        ...(change === undefined ? {} : { change }),
+        ...content,
+      }, context.signal)
+      return 'record' in result ? scheduleView(result.record, Date.now()) : result
+    } catch (error: unknown) {
+      if (error instanceof BotCollaborationError) throw error
+      if (error instanceof ScheduleInputError) {
+        throw new BotCollaborationError('message-invalid', error.message, { cause: error })
+      }
+      throw error
+    }
   }
 
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
@@ -756,6 +945,10 @@ export class BotService extends TypertRemoteService {
         interpolate: false,
       })
       installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
+      // Scheduling is optional in minimal compositions. When present, the
+      // injection registers the four Host Schedule tools in this Bot scope so
+      // their existing Agent binding and approval pipeline stay intact.
+      installBotRoutineTools(scope)
     })
     this.promptFibers.set(agent, fiber)
     await fiber

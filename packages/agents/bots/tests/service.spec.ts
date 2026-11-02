@@ -124,7 +124,10 @@ describe('durable Bot roster', () => {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       expect(provider).toBeDefined()
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
-      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
+      expect(tools.map(tool => tool.name)).toEqual([
+        'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
+        'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+      ])
       const context = {
         callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
         signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
