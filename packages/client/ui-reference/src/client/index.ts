@@ -85,7 +85,7 @@ export function apply(ctx: ClientContext): void {
               .then(result => result.ok ? result.value : [])
           const botLookup = quoted === true || botsRemote === undefined
             ? Promise.resolve([] as readonly BotView[])
-            : botsRemote.list({}).then(result => result.ok ? result.value.bots : [])
+            : botsRemote.list({ includeHidden: true }).then(result => result.ok ? result.value.bots : [])
           return Promise.all([fileLookup, sessionLookup, botLookup])
         },
       )
@@ -114,7 +114,7 @@ export function apply(ctx: ClientContext): void {
         }
       })
       const botRows = botItems
-        .filter(bot => bot.state === 'active' && bot.sessionId !== session.sessionId)
+        .filter(bot => bot.state === 'active' && bot.hidden !== true && bot.sessionId !== session.sessionId)
         .filter(bot => matchesBotQuery(bot, query))
         .map(bot => botCandidate(bot, t))
       return [

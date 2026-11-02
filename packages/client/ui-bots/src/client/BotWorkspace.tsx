@@ -1,17 +1,19 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconEditOutlineRegular, IconLinkOutlineRegular,
+  Button, IconArchiveOffOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  IconFolderOpenOutlineRegular, IconLinkOutlineRegular,
+  IconPinFillRegular, IconPinOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
-  Input, Modal, StateDot, Tag, Tooltip,
+  IconUnarchiveOutlineRegular, Input, Menu, Modal, StateDot, Tag, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import css from './BotWorkspace.module.css'
-import type { BotAccent, BotIdentity, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
+import type { BotAccent, BotIdentity, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
 
@@ -62,46 +64,133 @@ function groupBots(bots: readonly BotSummary[], fallback: string): readonly [str
   return [...groups.entries()]
 }
 
+function orderedBots(bots: readonly BotSummary[]): readonly BotSummary[] {
+  return [...bots].sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true))
+}
+
+function sectionItemId(index: number): string {
+  return `section:existing:${String(index)}`
+}
+
 function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
 }
 
-function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
+function BotActionsMenu({ bot, groups, onOrganize, onSetSection, t }: {
+  bot: BotSummary
+  groups: readonly string[]
+  onOrganize: (id: string, patch: BotOrganizationPatch) => Promise<void>
+  onSetSection: () => void
+  t: BotWorkspaceViewProps['t']
+}) {
+  const [open, setOpen] = useState(false)
+  const organize = (patch: BotOrganizationPatch): void => {
+    setOpen(false)
+    void onOrganize(bot.id, patch).catch(() => {})
+  }
+  const sectionChoices = groups.map((group, index) => ({ id: sectionItemId(index), group }))
+  const sectionItems = sectionChoices.map(({ id, group }) => ({
+    id,
+    label: group,
+    icon: <IconFolderOpenOutlineRegular size={14} />,
+  }))
+  const items = [
+    {
+      id: 'pin',
+      label: bot.pinned === true ? t('unpinBot') : t('pinBot'),
+      icon: bot.pinned === true ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
+    },
+    {
+      id: bot.hidden === true ? 'restore' : 'hide',
+      label: bot.hidden === true ? t('restoreBot') : t('hideBot'),
+      icon: bot.hidden === true ? <IconUnarchiveOutlineRegular size={14} /> : <IconArchiveOffOutlineRegular size={14} />,
+    },
+    { type: 'separator' as const, id: 'section-separator' },
+    { id: 'section:none', label: t('noSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
+    ...sectionItems,
+    { id: 'section:custom', label: t('setSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
+  ]
+  return (
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      items={items}
+      selectedId={bot.group === undefined ? 'section:none' : sectionChoices.find(choice => choice.group === bot.group)?.id}
+      onSelect={(id) => {
+        if (id === 'pin') organize({ pinned: bot.pinned !== true })
+        else if (id === 'hide') organize({ hidden: true })
+        else if (id === 'restore') organize({ hidden: false })
+        else if (id === 'section:none') organize({ group: null })
+        else if (id === 'section:custom') { setOpen(false); onSetSection() }
+        else {
+          const section = sectionChoices.find(choice => choice.id === id)
+          if (section !== undefined) organize({ group: section.group })
+        }
+      }}
+      align="end"
+      dense
+      portal
+      anchor={(
+        <Tooltip label={t('botActions', { name: bot.name })} side="bottom" portal>
+          <button
+            type="button"
+            className={css.botActionButton}
+            aria-label={t('botActions', { name: bot.name })}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={(event) => { event.stopPropagation(); setOpen(value => !value) }}
+          >
+            <IconEllipsisOutlineRegular size={15} />
+          </button>
+        </Tooltip>
+      )}
+    />
+  )
+}
+
+function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, onSetSection }: {
   bot: BotSummary
   selected: boolean
   onSelect: () => void
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
+  groups: readonly string[]
+  onOrganize?: BotWorkspaceProps['onOrganizeBot']
+  onSetSection: () => void
 }) {
   const unread = bot.unread !== undefined && bot.unread > 0
   const unreadCount = bot.unread ?? 0
   const summary = bot.preview ?? bot.description
   const status = bot.status
   return (
-    <button
-      type="button"
-      className={clsx(css.botRow, selected && css.botRowSelected)}
-      data-bot-id={bot.id}
-      data-accent={bot.accent ?? 'violet'}
-      aria-current={selected ? 'page' : undefined}
-      aria-label={status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`}
-      onClick={onSelect}
-    >
-      <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
-        botId={bot.id} loadAvatar={loadAvatar} status={bot.status} />
-      <span className={css.botRowCopy}>
-        <span className={css.botRowHeading}>
-          <span className={css.botName}>{bot.name}</span>
-          {unread && <span className={css.unreadDot} aria-label={t('unread', { count: unreadCount })}>{unreadCount}</span>}
+    <div className={clsx(css.botRow, selected && css.botRowSelected)}>
+      <button
+        type="button"
+        className={css.botRowMain}
+        data-bot-id={bot.id}
+        data-accent={bot.accent ?? 'violet'}
+        aria-current={selected ? 'page' : undefined}
+        aria-label={status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`}
+        onClick={onSelect}
+      >
+        <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+          botId={bot.id} loadAvatar={loadAvatar} status={bot.status} />
+        <span className={css.botRowCopy}>
+          <span className={css.botRowHeading}>
+            <span className={css.botName}>{bot.name}</span>
+            {bot.pinned === true && <span className={css.pinIndicator} role="img" aria-label={t('pinnedBot')}><IconPinFillRegular size={12} /></span>}
+            {unread && <span className={css.unreadDot} aria-label={t('unread', { count: unreadCount })}>{unreadCount}</span>}
+          </span>
+          {summary !== undefined && summary !== '' && <span className={css.botPreview}>{summary}</span>}
+          {(status !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
+            {status !== undefined && <><StateDot state={statusState(status)} size={8} /><span>{statusLabel(status, t)}</span></>}
+            {status !== undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
+            {bot.activity !== undefined && <span>{bot.activity}</span>}
+          </span>}
         </span>
-        {summary !== undefined && summary !== '' && <span className={css.botPreview}>{summary}</span>}
-        {(status !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
-          {status !== undefined && <><StateDot state={statusState(status)} size={8} /><span>{statusLabel(status, t)}</span></>}
-          {status !== undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
-          {bot.activity !== undefined && <span>{bot.activity}</span>}
-        </span>}
-      </span>
-    </button>
+      </button>
+      {onOrganize !== undefined && <BotActionsMenu bot={bot} groups={groups} onOrganize={onOrganize} onSetSection={onSetSection} t={t} />}
+    </div>
   )
 }
 function NewBotDialog({ open, onClose, onCreate, error, t }: {
@@ -263,6 +352,69 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   )
 }
 
+function BotSectionDialog({ bot, onClose, onOrganize, t }: {
+  bot: BotSummary | undefined
+  onClose: () => void
+  onOrganize: (id: string, patch: BotOrganizationPatch) => Promise<void>
+  t: BotWorkspaceViewProps['t']
+}) {
+  const [name, setName] = useState(bot?.group ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setName(bot?.group ?? '')
+    setError(null)
+  }, [bot])
+  if (bot === undefined) return null
+  const submit = async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const section = name.trim()
+      await onOrganize(bot.id, { group: section === '' ? null : section })
+      onClose()
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : t('organizationSaveFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={t('sectionDialogTitle')}
+      description={t('sectionDialogDescription')}
+      closeLabel={t('cancel')}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="primary" onClick={() => { void submit() }} disabled={saving}>{saving ? t('saving') : t('save')}</Button>
+        </>
+      )}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      <div className={css.dialogField} aria-busy={saving}>
+        <label className={css.dialogLabel} htmlFor="yharness-bots-section-name">{t('sectionName')}</label>
+        <Input
+          id="yharness-bots-section-name"
+          data-modal-autofocus
+          value={name}
+          placeholder={t('sectionNamePlaceholder')}
+          onChange={(event) => { setName(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void submit()
+            }
+          }}
+        />
+      </div>
+    </Modal>
+  )
+}
+
 /**
  * Render only the bot roster for the shared application sidebar.
  *
@@ -273,18 +425,29 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
  */
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
-  onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
+  onOrganizeBot, onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
+  const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
     return bots.filter(bot => [bot.name, bot.description, bot.group, bot.preview, bot.activity]
       .some(value => value?.toLocaleLowerCase().includes(normalizedQuery)))
   }, [bots, normalizedQuery])
-  const groups = useMemo(() => groupBots(filteredBots, t('defaultGroup')), [filteredBots, t])
+  const visibleBots = useMemo(() => orderedBots(filteredBots.filter(bot => bot.hidden !== true)), [filteredBots])
+  const hiddenBots = useMemo(() => orderedBots(filteredBots.filter(bot => bot.hidden === true)), [filteredBots])
+  const groups = useMemo(() => {
+    const pinned = visibleBots.filter(bot => bot.pinned === true)
+    const unpinned = visibleBots.filter(bot => bot.pinned !== true)
+    return [
+      ...(pinned.length === 0 ? [] : [[t('pinnedGroup'), pinned] as const]),
+      ...groupBots(unpinned, t('defaultGroup')),
+    ]
+  }, [t, visibleBots])
+  const sectionNames = useMemo(() => [...new Set(bots.map(bot => bot.group?.trim()).filter((group): group is string => group !== undefined && group !== ''))], [bots])
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
   const openNewBot = (): void => {
@@ -329,11 +492,34 @@ export function BotRoster({
                   {[0, 1, 2].map(index => <span key={index} className={css.skeletonRow} />)}
                 </div>
               )}
-              {!loading && groups.length > 0 && groups.map(([group, rows]) => (
-                <section className={css.group} key={group} aria-labelledby={`yharness-bots-group-${group}`}>
-                  <h2 id={`yharness-bots-group-${group}`} className={css.groupLabel}>{group}</h2>
+              {!loading && groups.length > 0 && groups.map(([group, rows], index) => {
+                const headingId = `yharness-bots-group-${String(index)}`
+                return (
+                  <section className={css.group} key={`group-${String(index)}`} aria-labelledby={headingId}>
+                    <h2 id={headingId} className={css.groupLabel}>{group}</h2>
+                    <div className={css.groupRows}>
+                      {rows.map(bot => (
+                        <BotRow
+                          key={bot.id}
+                          bot={bot}
+                          selected={bot.id === selectedBotId}
+                          onSelect={() => { onSelectBot(bot.id) }}
+                          t={t}
+                          loadAvatar={loadAvatar}
+                          groups={sectionNames}
+                          onOrganize={onOrganizeBot}
+                          onSetSection={() => { setSectionBot(bot) }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )
+              })}
+              {!loading && hiddenBots.length > 0 && (
+                <section className={css.group} aria-labelledby="yharness-bots-hidden-group">
+                  <h2 id="yharness-bots-hidden-group" className={css.groupLabel}>{t('hiddenGroup')}</h2>
                   <div className={css.groupRows}>
-                    {rows.map(bot => (
+                    {hiddenBots.map(bot => (
                       <BotRow
                         key={bot.id}
                         bot={bot}
@@ -341,12 +527,15 @@ export function BotRoster({
                         onSelect={() => { onSelectBot(bot.id) }}
                         t={t}
                         loadAvatar={loadAvatar}
+                        groups={sectionNames}
+                        onOrganize={onOrganizeBot}
+                        onSetSection={() => { setSectionBot(bot) }}
                       />
                     ))}
                   </div>
                 </section>
-              ))}
-              {!loading && hasRows && groups.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
+              )}
+              {!loading && hasRows && groups.length === 0 && hiddenBots.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
               {!loading && !hasRows && error === null && (
                 <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconSidebarBotsOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconSidebarBotAddOutlineRegular size={14} />}>{t('newBot')}</Button></div>
               )}
@@ -366,7 +555,7 @@ export function BotRoster({
                 onClick={openNewBot}
               />
             </Tooltip>
-            {bots.map((bot) => {
+            {visibleBots.map((bot) => {
               const status = bot.status
               const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
               return (
@@ -398,6 +587,14 @@ export function BotRoster({
           open={avatarEditorOpen}
           onClose={() => { setAvatarEditorOpen(false) }}
           onOpenSettings={onOpenAvatarSettings}
+          t={t}
+        />
+      )}
+      {onOrganizeBot !== undefined && (
+        <BotSectionDialog
+          bot={sectionBot}
+          onClose={() => { setSectionBot(undefined) }}
+          onOrganize={onOrganizeBot}
           t={t}
         />
       )}

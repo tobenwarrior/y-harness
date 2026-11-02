@@ -12,7 +12,7 @@ import { BotId, type BotView } from '../src/types.ts'
 function bot(id: string, sessionId: string, name: string): BotView {
   return {
     id: BotId(id), sessionId: SessionId(sessionId), name, identity: 'agent', accent: 'violet', cwd: '/tmp',
-    state: 'active', createdAt: 1, updatedAt: 1, availability: 'idle',
+    state: 'active', createdAt: 1, updatedAt: 1, availability: 'idle', pinned: false, hidden: false,
   }
 }
 

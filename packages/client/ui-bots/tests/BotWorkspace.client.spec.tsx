@@ -181,6 +181,93 @@ describe('Bot roster and detail', () => {
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
   })
 
+  it('keeps pinned bots first and exposes a recoverable hidden section', async () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={[
+        { ...bots[0]!, pinned: true },
+        { ...bots[1]!, hidden: true },
+      ]}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Pinned' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Release captain' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore bot' }))
+
+    await waitFor(() => {
+      expect(onOrganizeBot).toHaveBeenCalledWith('release', { hidden: false })
+    })
+  })
+
+  it('does not replace an all-hidden roster with a search empty state', () => {
+    render(<BotRoster
+      bots={bots.map(bot => ({ ...bot, hidden: true }))}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    expect(screen.queryByText('No bots match that search')).toBeNull()
+    expect(screen.getByRole('button', { name: /Research partner, Working/ })).toBeTruthy()
+  })
+
+  it('keeps reserved-looking section names distinct from menu actions and headings', () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    const reservedBots = [
+      { ...bots[0]!, group: 'none' },
+      { ...bots[1]!, group: 'custom' },
+      { ...bots[0]!, id: 'pinned-label', name: 'Pinned label', group: 'Pinned' },
+      { ...bots[1]!, id: 'pinned-row', name: 'Pinned row', group: 'none', pinned: true },
+    ]
+    render(<BotRoster
+      bots={reservedBots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    expect(screen.getAllByRole('heading', { name: 'Pinned' })).toHaveLength(2)
+    expect(screen.getAllByRole('heading', { name: 'none' })).toHaveLength(1)
+    expect(screen.getAllByRole('heading', { name: 'custom' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'none' }))
+
+    expect(onOrganizeBot).toHaveBeenCalledWith('research', { group: 'none' })
+  })
+
+  it('lets the roster menu pin a bot and assign a section', async () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pin bot' }))
+    await waitFor(() => { expect(onOrganizeBot).toHaveBeenCalledWith('research', { pinned: true }) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Set section…' }))
+    const dialog = screen.getByRole('dialog', { name: 'Organize bot' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Section name' }), { target: { value: 'Planning' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() => { expect(onOrganizeBot).toHaveBeenCalledWith('research', { group: 'Planning' }) })
+  })
+
   it('filters the roster without changing the selected bot session', () => {
     renderSplitWorkspace()
 

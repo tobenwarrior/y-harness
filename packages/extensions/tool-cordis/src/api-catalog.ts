@@ -587,10 +587,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'collaboration operations attributed to that Bot.',
       },
       {
-        signature: '@Remote(\'list\') async list(_request: BotListRequest): Promise<BotListValue>',
+        signature: '@Remote(\'list\') async list(request: BotListRequest): Promise<BotListValue>',
         description: 'List the durable Bot roster without activating cold Sessions.',
-        parameters: [{ name: '_request', description: 'Empty list request reserved for future paging.' }],
-        returns: 'one row per Bot, ordered by creation time and id.',
+        parameters: [{ name: 'request', description: 'Optional hidden-row inclusion for the restore surface.' }],
+        returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
         signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
@@ -602,6 +602,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
         description: 'Rename one Bot while preserving its one Session mapping and visual identity.',
         parameters: [{ name: 'request', description: 'Bot id and new display name.' }],
+        returns: 'the committed row.',
+      },
+      {
+        signature: '@Remote(\'updateOrganization\') async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue>',
+        description: 'Update a Bot\'s roster placement without changing its Session mapping.',
+        parameters: [{ name: 'request', description: 'Bot id and at least one pin, hidden, or section change.' }],
         returns: 'the committed row.',
       },
       {
@@ -5399,7 +5405,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotListRequest',
-    declaration: 'export interface BotListRequest {\n    readonly cursor?: string;\n}',
+    declaration: 'export interface BotListRequest {\n    readonly cursor?: string;\n    readonly includeHidden?: boolean;\n}',
   },
   {
     name: 'BotListValue',
@@ -5410,12 +5416,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotMessageId = MessageId;',
   },
   {
+    name: 'BotOrganizationUpdateRequest',
+    declaration: 'export interface BotOrganizationUpdateRequest {\n    readonly botId: BotId;\n    readonly pinned?: boolean;\n    readonly hidden?: boolean;\n    readonly group?: string | null;\n}',
+  },
+  {
+    name: 'BotOrganizationUpdateValue',
+    declaration: 'export interface BotOrganizationUpdateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
     name: 'BotProvisioningState',
     declaration: 'export type BotProvisioningState = \'provisioning\' | \'active\';',
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5427,7 +5441,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n};',
+    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',

@@ -157,18 +157,14 @@
 
 .botRow {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 62px;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border: none;
+  gap: 4px;
+  padding: 0 4px 0 10px;
   border-radius: var(--yh-radius-lg);
   background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
 }
 
 .botRow:hover {
@@ -180,9 +176,62 @@
   box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
 }
 
-.botRow:focus-visible {
+.botRowMain {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 62px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.botRowMain:focus-visible {
   outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
   outline-offset: -1px;
+}
+
+.botActionButton {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: var(--yh-alias-label-tertiary);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.botRow:hover .botActionButton,
+.botActionButton:focus-visible,
+.botActionButton[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.botActionButton:hover {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.botActionButton:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.pinIndicator {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--yh-alias-label-tertiary);
 }
 
 .botRowCopy {

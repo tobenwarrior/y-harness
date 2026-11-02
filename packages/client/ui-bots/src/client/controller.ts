@@ -9,6 +9,8 @@ import type {
   BotCreateRequest,
   BotId as BotIdType,
   BotListRequest,
+  BotOrganizationUpdateRequest,
+  BotOrganizationUpdateValue,
   BotView,
 } from '@yharness/bots/client'
 import type {
@@ -22,13 +24,14 @@ import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
-import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity } from './types.ts'
+import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity, BotOrganizationPatch } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
+  updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
@@ -56,6 +59,7 @@ export interface BotWorkspaceFace {
   readonly select: (id: string) => void
   readonly create: (creation: BotCreation) => Promise<void>
   readonly rename: (id: string, name: string) => Promise<void>
+  readonly organize?: (id: string, patch: BotOrganizationPatch) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
@@ -86,6 +90,8 @@ export class BotWorkspaceController {
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private disposed = false
   private selectionGeneration = 0
+  private rosterRevision = 0
+  private refreshAfterPending = false
 
   constructor(
     private readonly remote: BotWorkspaceRemote,
@@ -98,6 +104,7 @@ export class BotWorkspaceController {
   dispose(): void {
     this.disposed = true
     this.selectionGeneration++
+    this.refreshAfterPending = false
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.avatarLoads.clear()
@@ -121,6 +128,9 @@ export class BotWorkspaceController {
           bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot,
         ) })
       },
+      ...(this.remote.updateOrganization === undefined
+        ? {}
+        : { organize: (id: string, patch: BotOrganizationPatch) => this.organize(id, patch) }),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined
@@ -138,7 +148,11 @@ export class BotWorkspaceController {
 
   /** Load or refresh the durable Bot roster. */
   async load(): Promise<void> {
-    if (this.disposed || this.pending !== undefined) return this.pending ?? Promise.resolve()
+    if (this.disposed) return
+    if (this.pending !== undefined) {
+      this.refreshAfterPending = true
+      return this.pending
+    }
     const before = this.source.getSnapshot()
     this.source.set({ ...before, phase: 'loading', error: null })
     const pending = this.read()
@@ -146,14 +160,23 @@ export class BotWorkspaceController {
     try {
       await pending
     } finally {
-      if (this.pending === pending) this.pending = undefined
+      if (this.pending === pending) {
+        this.pending = undefined
+        if (this.refreshAfterPending && !this.disposed) {
+          this.refreshAfterPending = false
+          void this.load().catch((error: unknown) => {
+            this.fail(error instanceof Error ? error.message : String(error))
+          })
+        }
+      }
     }
   }
 
   private async read(): Promise<void> {
+    const rosterRevision = this.rosterRevision
     let result: RemoteResult<{ readonly bots: readonly BotView[] }>
     try {
-      result = await this.remote.list({})
+      result = await this.remote.list({ includeHidden: true })
     } catch (error: unknown) {
       this.fail(error instanceof Error ? error.message : String(error))
       return
@@ -170,6 +193,10 @@ export class BotWorkspaceController {
       return
     }
     if (this.disposed) return
+    if (rosterRevision !== this.rosterRevision) {
+      this.refreshAfterPending = true
+      return
+    }
     const current = this.source.getSnapshot()
     const pendingBot = this.pendingCreation === undefined
       ? undefined
@@ -199,6 +226,10 @@ export class BotWorkspaceController {
       )
     }
     if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    if (rosterRevision !== this.rosterRevision) {
+      this.refreshAfterPending = true
+      return
+    }
     this.source.set({
       phase: 'ready',
       bots: result.value.bots,
@@ -382,6 +413,36 @@ export class BotWorkspaceController {
         },
       }),
     }
+  }
+
+  private async organize(id: string, patch: BotOrganizationPatch): Promise<void> {
+    const updateOrganization = this.remote.updateOrganization
+    if (updateOrganization === undefined) return
+    let result: RemoteResult<BotOrganizationUpdateValue>
+    try {
+      result = await updateOrganization({ botId: brandString<BotIdType>(id), ...patch })
+    } catch (error: unknown) {
+      if (this.disposed) return
+      const message = error instanceof Error ? error.message : String(error)
+      this.fail(message)
+      throw new Error(message)
+    }
+    if (this.disposed) return
+    if (!result.ok) {
+      this.fail(result.error.message)
+      throw new Error(result.error.message)
+    }
+    if (String(result.value.bot.id) !== id) {
+      const message = this.unexpectedResponse()
+      this.fail(message)
+      throw new Error(message)
+    }
+    this.rosterRevision++
+    const current = this.source.getSnapshot()
+    const bots = current.bots.some(bot => bot.id === id)
+      ? current.bots.map(bot => bot.id === id ? result.value.bot : bot)
+      : [...current.bots, result.value.bot]
+    this.source.set({ ...current, bots, error: null })
   }
 
   private create(creation: BotCreation): Promise<void> {

@@ -56,6 +56,11 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  pinned: z.boolean().optional(),
+  hidden: z.boolean().optional(),
+  group: z.string().max(80).refine(value => value.trim() === value, {
+    message: 'Bot sections must be trimmed',
+  }).optional(),
   cwd: z.string().min(1).refine(value => value.trim() === value, {
     message: 'Working directories must not have surrounding whitespace',
   }),
@@ -79,11 +84,11 @@ export const botAppearanceMigrationSchema = z.object({
 /** Current one-time appearance migration applied to existing Bot rows. */
 export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 
-/** Authoritative Bot domain; v1 records remain readable for the appearance migration. */
+/** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 2,
-  compatibleVersions: [1],
+  version: 3,
+  compatibleVersions: [1, 2],
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,

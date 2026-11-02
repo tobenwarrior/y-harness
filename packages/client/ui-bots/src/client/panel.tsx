@@ -47,6 +47,9 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     id: bot.id,
     name: bot.name,
     ...(bot.description === undefined ? {} : { description: bot.description }),
+    ...(bot.group === undefined ? {} : { group: bot.group }),
+    pinned: bot.pinned,
+    hidden: bot.hidden,
     ...(status === undefined ? {} : { status }),
     accent: bot.accent,
     identity: bot.identity,
@@ -61,7 +64,7 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
-  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, retry, loadAvatar, avatarEditor, t,
+  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry, loadAvatar, avatarEditor, t,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -72,6 +75,7 @@ export function BotsRoster({
       selectedBotId={state.selectedBotId}
       onSelectBot={select}
       onCreateBot={create}
+      onOrganizeBot={organize}
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}

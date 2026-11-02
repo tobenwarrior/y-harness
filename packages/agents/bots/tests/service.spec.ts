@@ -171,7 +171,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('binds collaboration to a Bot Agent and flushes explicit peer delivery', async () => {
+  it.each([false, true])('keeps peer delivery working when both Bots are hidden: %s', async (hidden) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const sender = await first.service.create({ name: 'Sender', cwd: '/tmp' })
@@ -182,6 +182,10 @@ describe('durable Bot roster', () => {
       String(sender.bot.sessionId), String(target.bot.sessionId),
     ])
     try {
+      if (hidden) {
+        await h.service.updateOrganization({ botId: sender.bot.id, hidden: true })
+        await h.service.updateOrganization({ botId: target.bot.id, hidden: true })
+      }
       const senderAgent = h.agents[0]
       const targetAgent = h.agents[1]
       const targetFollowup = h.followups[1]
@@ -653,6 +657,92 @@ describe('durable Bot roster', () => {
       })
       expect(changes).toEqual([])
       expect(h.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('organizes Bots without changing their Session bindings and preserves the roster across restarts', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const firstBot = await first.service.create({ name: 'First bot', cwd: '/tmp' })
+    const secondBot = await first.service.create({ name: 'Second bot', cwd: '/tmp' })
+    let firstClosed = false
+    try {
+      await expect(first.service.updateOrganization({
+        botId: secondBot.bot.id,
+        pinned: true,
+        group: 'Research',
+      })).resolves.toMatchObject({
+        bot: {
+          id: secondBot.bot.id,
+          sessionId: secondBot.bot.sessionId,
+          pinned: true,
+          hidden: false,
+          group: 'Research',
+        },
+      })
+      await expect(first.service.updateOrganization({
+        botId: firstBot.bot.id,
+        hidden: true,
+        group: 'Archive',
+      })).resolves.toMatchObject({
+        bot: {
+          id: firstBot.bot.id,
+          sessionId: firstBot.bot.sessionId,
+          pinned: false,
+          hidden: true,
+          group: 'Archive',
+        },
+      })
+
+      await expect(first.service.list({})).resolves.toMatchObject({
+        bots: [{ id: secondBot.bot.id, pinned: true, hidden: false, group: 'Research' }],
+      })
+      await expect(first.service.list({ includeHidden: true })).resolves.toMatchObject({
+        bots: [
+          { id: secondBot.bot.id, pinned: true, hidden: false, group: 'Research' },
+          { id: firstBot.bot.id, pinned: false, hidden: true, group: 'Archive' },
+        ],
+      })
+
+      await first.service.updateOrganization({ botId: firstBot.bot.id, hidden: false, group: null })
+      await close(first.ctx)
+      firstClosed = true
+      const reopened = await harness(pool)
+      try {
+        const reopenedList = await reopened.service.list({ includeHidden: true })
+        expect(reopenedList).toMatchObject({
+          bots: [
+            { id: secondBot.bot.id, sessionId: secondBot.bot.sessionId, pinned: true, hidden: false, group: 'Research' },
+            { id: firstBot.bot.id, sessionId: firstBot.bot.sessionId, pinned: false, hidden: false },
+          ],
+        })
+        expect(reopenedList.bots[1]).not.toHaveProperty('group')
+        expect(reopened.create).not.toHaveBeenCalled()
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('rejects empty organization updates and invalid placement values without changing the row', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Organization guard', cwd: '/tmp' })
+      const changes: number[] = []
+      h.ctx.on('bots/changed', () => { changes.push(changes.length + 1) })
+      await expect(h.service.updateOrganization({ botId: created.bot.id })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateOrganization({ botId: created.bot.id, pinned: 'yes' as never })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateOrganization({ botId: created.bot.id, hidden: 1 as never })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.updateOrganization({ botId: created.bot.id, group: ' x '.repeat(50) })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+
+      await expect(h.service.list({ includeHidden: true })).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, pinned: false, hidden: false }],
+      })
+      expect(changes).toEqual([])
     } finally {
       await close(h.ctx)
     }

@@ -63,10 +63,10 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
  * List the durable Bot roster without activating cold Sessions.
- * @param _request - Empty list request reserved for future paging.
- * @returns one row per Bot, ordered by creation time and id.
+ * @param request - Optional hidden-row inclusion for the restore surface.
+ * @returns visible rows by default, with pinned rows first and creation time as the stable tie-breaker.
  */
-@Remote('list') async list(_request: BotListRequest): Promise<BotListValue>
+@Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
  * Create one durable Bot and its exactly-one ordinary Session.
@@ -86,6 +86,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * @returns the committed row.
  */
 @Remote('rename') async rename(request: BotRenameRequest): Promise<BotRenameValue>
+
+/**
+ * Update a Bot's roster placement without changing its Session mapping.
+ * @param request - Bot id and at least one pin, hidden, or section change.
+ * @returns the committed row.
+ */
+@Remote('updateOrganization') async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue>
 
 /**
  * Update a Bot's semantic identity and/or accent without creating or changing

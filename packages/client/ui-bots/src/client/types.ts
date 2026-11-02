@@ -29,6 +29,10 @@ export interface BotSummary {
   readonly description?: string
   /** Roster section. Empty values are rendered under the default group. */
   readonly group?: string
+  /** Whether this Bot is pinned above other Bots in its section. */
+  readonly pinned?: boolean
+  /** Whether this Bot is currently recoverable from the hidden section. */
+  readonly hidden?: boolean
   /** Latest useful sentence from the linked Session. */
   readonly preview?: string
   /** Relative or localized activity label supplied by the owner. */
@@ -43,6 +47,13 @@ export interface BotSummary {
   readonly identity?: BotIdentity
   /** Optional persisted generated image reference; the semantic avatar remains the fallback while it loads. */
   readonly avatar?: SharedBotAvatar
+}
+
+/** Roster placement fields changed by the organization menu. */
+export interface BotOrganizationPatch {
+  readonly pinned?: boolean
+  readonly hidden?: boolean
+  readonly group?: string | null
 }
 
 /** User choice passed to the owner when creating a bot. */
@@ -80,6 +91,8 @@ export interface BotWorkspaceProps {
   readonly onSelectBot: (id: string) => void
   /** Provision one Bot; rejects while the same request remains retryable. */
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
+  /** Persist a Bot's pinned, hidden, or section placement. */
+  readonly onOrganizeBot?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined
   /** Optional settings deep-link for configuring the avatar provider. */

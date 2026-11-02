@@ -74,6 +74,12 @@ export interface BotRecord {
   readonly accent: BotAccent
   /** Optional generated avatar selected by the user. */
   readonly avatar?: BotAvatar | undefined
+  /** Whether the Bot is kept at the top of its roster view. */
+  readonly pinned?: boolean | undefined
+  /** Whether the Bot is excluded from the default visible roster. */
+  readonly hidden?: boolean | undefined
+  /** Optional user-defined roster section. */
+  readonly group?: string | undefined
   /** Absolute working directory used for the Bot's Session. */
   readonly cwd: string
   /** Optional preset selected when the backing Session is created. */
@@ -90,6 +96,10 @@ export interface BotRecord {
 export type BotView = BotRecord & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
+  /** Whether the Bot is kept at the top of its roster view. */
+  readonly pinned: boolean
+  /** Whether the Bot is excluded from the default visible roster. */
+  readonly hidden: boolean
 }
 
 /** New Bot metadata and optional stable id for retrying provisioning. */
@@ -118,8 +128,10 @@ export interface BotCreateValue {
 
 /** Bot catalog request; cursor is reserved for a future bounded roster. */
 export interface BotListRequest {
-  /** Reserved cursor; version one always returns the complete roster. */
+  /** Reserved cursor; version one returns the complete visible roster. */
   readonly cursor?: string
+  /** Include hidden Bots for the restore surface; the default omits them. */
+  readonly includeHidden?: boolean
 }
 
 /** Bot catalog response. */
@@ -139,6 +151,24 @@ export interface BotRenameRequest {
 /** Bot rename response. */
 export interface BotRenameValue {
   /** The committed renamed row. */
+  readonly bot: BotView
+}
+
+/** Change one Bot's roster placement without changing its Session mapping. */
+export interface BotOrganizationUpdateRequest {
+  /** Bot whose roster placement should change. */
+  readonly botId: BotId
+  /** Keep the Bot at the top of its roster section when true. */
+  readonly pinned?: boolean
+  /** Exclude the Bot from the default roster when true. */
+  readonly hidden?: boolean
+  /** Roster section name, or null to remove the section. */
+  readonly group?: string | null
+}
+
+/** Organization update response. */
+export interface BotOrganizationUpdateValue {
+  /** The committed row. */
   readonly bot: BotView
 }
 

@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation and rename flows, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
+Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation and rename flows, pin/hide/restore organization, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 ### Owner callbacks
 
-`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child.
+`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
 
 ### Visual identity
 

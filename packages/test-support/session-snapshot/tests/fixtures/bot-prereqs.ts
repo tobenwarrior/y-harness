@@ -49,6 +49,7 @@ export async function apply(ctx: Context): Promise<void> {
       description: 'Researches a request and reports concise findings.',
       identity: 'browse' as const,
       accent: 'blue' as const,
+      hidden: true,
       cwd,
       state: 'active' as const,
       createdAt: 0,

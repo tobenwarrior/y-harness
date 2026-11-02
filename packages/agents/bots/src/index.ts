@@ -32,6 +32,8 @@ import type {
   BotIdentity,
   BotListRequest,
   BotListValue,
+  BotOrganizationUpdateRequest,
+  BotOrganizationUpdateValue,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
@@ -115,6 +117,17 @@ function normalizeOptionalText(
   if (trimmed.length === 0) return undefined
   if (textLength(trimmed) > max) return badRequest(`${label} must be at most ${String(max)} characters`)
   return trimmed
+}
+
+function normalizeOptionalBoolean(label: string, value: boolean | undefined): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') return badRequest(`${label} must be a boolean`)
+  return value
+}
+
+function normalizeOrganizationGroup(value: BotOrganizationUpdateRequest['group']): string | undefined {
+  if (value === null) return undefined
+  return normalizeOptionalText('Bot section', value, 80)
 }
 
 function normalizeBotId(value: BotRecord['id'] | undefined): BotRecord['id'] | undefined {
@@ -270,7 +283,7 @@ export class BotService extends TypertRemoteService {
       return domain
     })
     this.collaboration = new BotCollaborationService({
-      listBots: async () => (await this.list({})).bots,
+      listBots: async () => (await this.list({ includeHidden: true })).bots,
       inspectSession: async (sessionId) => {
         const inspection = await ctx.sessionController.inspect(sessionId)
         return { events: inspection.events }
@@ -347,7 +360,7 @@ export class BotService extends TypertRemoteService {
         }
         const current = context.sessionId === undefined ? undefined : this.recordsBySession.get(String(context.sessionId))
         const botId = BotId(text('botId') ?? current?.id ?? '')
-        if (!(await this.list({})).bots.some(bot => bot.id === botId)) throw new Error('Bot not found.')
+        if (!(await this.list({ includeHidden: true })).bots.some(bot => bot.id === botId)) throw new Error('Bot not found.')
         if (name !== undefined) normalizeName(name)
         context.signal.throwIfAborted()
         await setPicture(botId)
@@ -432,16 +445,18 @@ export class BotService extends TypertRemoteService {
 
   /**
    * List the durable Bot roster without activating cold Sessions.
-   * @param _request - Empty list request reserved for future paging.
-   * @returns one row per Bot, ordered by creation time and id.
+   * @param request - Optional hidden-row inclusion for the restore surface.
+   * @returns visible rows by default, with pinned rows first and creation time as the stable tie-breaker.
    */
   @Remote('list')
-  async list(_request: BotListRequest): Promise<BotListValue> {
+  async list(request: BotListRequest): Promise<BotListValue> {
     const bots = (await this.getDomain()).table('bots')
+    const includeHidden = request.includeHidden === true
     return {
       bots: [...bots.entries()]
         .map(([, record]) => this.view(record))
-        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+        .filter(bot => includeHidden || !bot.hidden)
+        .sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
     }
   }
 
@@ -497,6 +512,8 @@ export class BotService extends TypertRemoteService {
         ...(normalized.description === undefined ? {} : { description: normalized.description }),
         identity: normalized.identity,
         accent: normalized.accent,
+        pinned: false,
+        hidden: false,
         cwd: normalized.cwd,
         ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
         state: 'provisioning',
@@ -532,6 +549,55 @@ export class BotService extends TypertRemoteService {
         throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
       }
       const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      signal?.throwIfAborted()
+      await bots.put(id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return { bot: this.view(next) }
+    })
+  }
+
+  /**
+   * Update a Bot's roster placement without changing its Session mapping.
+   * @param request - Bot id and at least one pin, hidden, or section change.
+   * @returns the committed row.
+   */
+  @Remote('updateOrganization')
+  async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue> {
+    return this.updateOrganizationImpl(request)
+  }
+
+  private async updateOrganizationImpl(
+    request: BotOrganizationUpdateRequest,
+    signal?: AbortSignal,
+  ): Promise<BotOrganizationUpdateValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot organization request must be an object')
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const pinned = normalizeOptionalBoolean('Bot pinned', request.pinned)
+      const hidden = normalizeOptionalBoolean('Bot hidden', request.hidden)
+      const hasGroup = request.group !== undefined
+      const group = hasGroup ? normalizeOrganizationGroup(request.group) : undefined
+      if (pinned === undefined && hidden === undefined && !hasGroup) {
+        return badRequest('Bot organization request must change pinned, hidden, or group')
+      }
+
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(id)
+      if (current === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      }
+      const { group: currentGroup, ...currentWithoutGroup } = current
+      const next: BotRecord = {
+        ...(hasGroup ? currentWithoutGroup : current),
+        pinned: pinned ?? current.pinned ?? false,
+        hidden: hidden ?? current.hidden ?? false,
+        ...(hasGroup
+          ? group === undefined ? {} : { group }
+          : currentGroup === undefined ? {} : { group: currentGroup }),
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
       signal?.throwIfAborted()
       await bots.put(id, next)
       this.recordsBySession.set(String(next.sessionId), next)
@@ -778,7 +844,7 @@ export class BotService extends TypertRemoteService {
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
-    return { ...record, availability }
+    return { ...record, pinned: record.pinned ?? false, hidden: record.hidden ?? false, availability }
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {

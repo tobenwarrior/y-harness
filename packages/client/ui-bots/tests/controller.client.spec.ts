@@ -18,6 +18,8 @@ function bot(id: string, sessionId: string, patch: Partial<BotView> = {}): BotVi
     createdAt: 1,
     updatedAt: 1,
     availability: 'idle',
+    pinned: false,
+    hidden: false,
     ...patch,
   }
 }
@@ -337,6 +339,47 @@ describe('BotWorkspaceController', () => {
     expect(editor?.generate).toBeUndefined()
     expect(editor?.commit).toBeUndefined()
     expect(editor?.update).toBeUndefined()
+  })
+
+  it('persists roster placement while keeping the selected Session reference', async () => {
+    const original = bot('bot-organize', 'session-organize')
+    const updated = { ...original, pinned: true, hidden: true, group: 'Research' }
+    const remote = remoteFixture([original])
+    const updateOrganization = vi.fn(async () => ({ ok: true as const, value: { bot: updated } }))
+    remote.updateOrganization = updateOrganization
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    await controller.load()
+    const selectedReference = controller.face().reference()
+
+    await controller.face().organize?.(original.id, { pinned: true, hidden: true, group: 'Research' })
+
+    expect(updateOrganization).toHaveBeenCalledWith({
+      botId: original.id, pinned: true, hidden: true, group: 'Research',
+    })
+    expect(controller.source.getSnapshot().bots[0]).toEqual(updated)
+    expect(controller.face().reference()).toBe(selectedReference)
+  })
+
+  it('does not let an in-flight roster refresh overwrite an organization update', async () => {
+    const original = bot('bot-race', 'session-race')
+    const updated = { ...original, pinned: true, hidden: true, group: 'Research' }
+    const remote = remoteFixture([original])
+    const firstList = Promise.withResolvers<Awaited<ReturnType<BotWorkspaceRemote['list']>>>()
+    remote.list.mockImplementationOnce(() => firstList.promise)
+    remote.list.mockResolvedValue({ ok: true, value: { bots: [updated] } })
+    remote.updateOrganization = vi.fn(async () => ({ ok: true as const, value: { bot: updated } }))
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(remote.list).toHaveBeenCalledOnce() })
+    await controller.face().organize?.(original.id, { pinned: true, hidden: true, group: 'Research' })
+    firstList.resolve({ ok: true, value: { bots: [original] } })
+    await loading
+    await vi.waitFor(() => { expect(remote.list).toHaveBeenCalledTimes(2) })
+
+    expect(controller.source.getSnapshot().bots).toEqual([updated])
   })
 
   it('keeps an ambiguous create retry on one Bot id', async () => {
