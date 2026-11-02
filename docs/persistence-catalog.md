@@ -347,7 +347,7 @@ Source: [`packages/agents/bots/src/collaboration.ts:81`](../packages/agents/bots
 'bot/memory': BotMemoryEvent
 ```
 
-Source: [`packages/agents/bots/src/memory.ts:84`](../packages/agents/bots/src/memory.ts)
+Source: [`packages/agents/bots/src/memory.ts:88`](../packages/agents/bots/src/memory.ts)
 
 ### `claude-code/*`
 
@@ -3641,7 +3641,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:57`](../packages/agents/bot
 
 SHA-256: `bd97b01de25b421a53444925afcb72f756cb9717d95396e1462b590f088fe44f`
 
-Sources: [`packages/agents/bots/src/memory.ts:68`](../packages/agents/bots/src/memory.ts)
+Sources: [`packages/agents/bots/src/memory.ts:72`](../packages/agents/bots/src/memory.ts)
 
 One of:
 
@@ -6571,7 +6571,7 @@ Sources: [`packages/core/session/src/types.ts:361`](../packages/core/session/src
 
 SHA-256: `425db88bfbb792240120b51d81b9c7f1236e6e2c0903c41cb107da41efc4723d`
 
-Sources: [`packages/agents/bots/src/memory.ts:75`](../packages/agents/bots/src/memory.ts)
+Sources: [`packages/agents/bots/src/memory.ts:79`](../packages/agents/bots/src/memory.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6585,7 +6585,7 @@ Sources: [`packages/agents/bots/src/memory.ts:75`](../packages/agents/bots/src/m
 
 SHA-256: `7d8cff4ff7e6e9e7ff3a4ab4c3aab850c12767a1d8849edf42cdef8bd2e2c91b`
 
-Sources: [`packages/agents/bots/src/memory.ts:69`](../packages/agents/bots/src/memory.ts)
+Sources: [`packages/agents/bots/src/memory.ts:73`](../packages/agents/bots/src/memory.ts)
 
 | Property | Presence | Type |
 |---|---|---|

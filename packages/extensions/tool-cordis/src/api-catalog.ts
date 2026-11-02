@@ -5371,7 +5371,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCollaborationClient',
-    declaration: 'export interface BotCollaborationClient {\n    readonly sender: BotCollaborationRosterEntry;\n    readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>;\n    readonly inspect: (botId: BotId) => Promise<BotCollaborationInspectionValue>;\n    readonly send: (request: SendBotMessageRequest) => Promise<SendBotMessageResult>;\n}',
+    declaration: 'export interface BotCollaborationClient {\n    readonly sender: BotCollaborationRosterEntry;\n    readonly memory?: BotMemoryClient;\n    readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>;\n    readonly inspect: (botId: BotId) => Promise<BotCollaborationInspectionValue>;\n    readonly send: (request: SendBotMessageRequest) => Promise<SendBotMessageResult>;\n}',
   },
   {
     name: 'BotCollaborationInspectionValue',
@@ -5404,6 +5404,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotListValue',
     declaration: 'export interface BotListValue {\n    readonly bots: readonly BotView[];\n}',
+  },
+  {
+    name: 'BotMemoryClient',
+    declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
+  },
+  {
+    name: 'BotMemoryForgetRequest',
+    declaration: 'export interface BotMemoryForgetRequest {\n    readonly memoryId: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'BotMemoryId',
+    declaration: 'export type BotMemoryId = Branded<\'BotMemoryId\'>;',
+  },
+  {
+    name: 'BotMemoryRecord',
+    declaration: 'export interface BotMemoryRecord {\n    readonly id: BotMemoryId;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotMemoryRememberRequest',
+    declaration: 'export interface BotMemoryRememberRequest {\n    readonly text: string;\n    readonly memoryId?: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
   },
   {
     name: 'BotMessageId',

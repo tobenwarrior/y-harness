@@ -2,7 +2,7 @@
 
 import { brandString, type Branded } from '@yharness/brand'
 import type { SessionEvent } from '@yharness/session'
-import type { BotId } from './types.ts'
+import { BotId as makeBotId, type BotId } from './types.ts'
 
 /** Stable identity for one durable memory entry. */
 export type BotMemoryId = Branded<'BotMemoryId'>
@@ -15,7 +15,7 @@ export function BotMemoryId(value: string): BotMemoryId {
 export interface BotMemoryRecord {
   /** Stable identity used by `forget_bot_memory`. */
   readonly id: BotMemoryId
-  /** User-authored reference text; it is quoted in the Bot system prompt. */
+  /** User-authored reference text included in later Bot system prompts as untrusted data. */
   readonly text: string
   /** Session-log timestamp of the remember operation. */
   readonly createdAt: number
@@ -27,12 +27,16 @@ export interface BotMemoryRememberRequest {
   readonly text: string
   /** Optional retry identity; repeated writes with the same text are idempotent. */
   readonly memoryId?: BotMemoryId
+  /** Cancellation from the model tool or provider bridge. */
+  readonly signal?: AbortSignal
 }
 
-/** Request to delete one durable Bot memory. */
+/** Request to logically delete one durable Bot memory from future projections. */
 export interface BotMemoryForgetRequest {
   /** Memory identity returned by `remember_bot_memory` or `list_bot_memory`. */
   readonly memoryId: BotMemoryId
+  /** Cancellation from the model tool or provider bridge. */
+  readonly signal?: AbortSignal
 }
 
 /** Provider-facing operations scoped to one trusted Bot Session. */
@@ -40,8 +44,8 @@ export interface BotMemoryClient {
   /** Save or idempotently replay one memory for the current Bot. */
   readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>
   /** List the current Bot's durable memories in creation order. */
-  readonly list: () => Promise<readonly BotMemoryRecord[]>
-  /** Remove one memory by its stable identity. */
+  readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>
+  /** Logically remove one memory by its stable identity; append-only history remains. */
   readonly forget: (request: BotMemoryForgetRequest) => Promise<void>
 }
 
@@ -86,6 +90,7 @@ declare module '@yharness/session/types' {
 }
 
 const MEMORY_ID_PATTERN = /^memory-[A-Za-z0-9][A-Za-z0-9-]*$/
+const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
 /** Maximum text admitted into one model-visible memory entry. */
 export const BOT_MEMORY_TEXT_LIMIT = 2_000
@@ -111,10 +116,50 @@ export function normalizeBotMemoryText(value: string): string {
   return text
 }
 
+function invalidStoredMemory(message: string): BotMemoryError {
+  return new BotMemoryError('durability-failed', `The Bot memory log contains an invalid Bot memory event: ${message}`)
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseStoredMemoryEvent(event: SessionEvent, botId: BotId): BotMemoryEvent | undefined {
+  if (!record(event) || event.type !== 'bot/memory') return undefined
+  if (!Number.isSafeInteger(event.seq) || event.seq < 0) throw invalidStoredMemory('event sequence must be a non-negative safe integer')
+  if (!Number.isSafeInteger(event.time) || event.time < 0) throw invalidStoredMemory('event time must be a non-negative safe integer')
+  if (!record(event.data)) throw invalidStoredMemory('data must be an object')
+  const data = event.data as Record<string, unknown>
+  const operation: unknown = data['operation']
+  if (Object.keys(data).some(key => !['botId', 'memoryId', 'operation', 'text'].includes(key))) {
+    throw invalidStoredMemory('data contains an unknown field')
+  }
+  if (typeof data.botId !== 'string' || !BOT_ID_PATTERN.test(data.botId)) throw invalidStoredMemory('botId is invalid')
+  if (data.botId !== String(botId)) throw invalidStoredMemory(`event belongs to Bot "${data.botId}" instead of "${String(botId)}"`)
+  if (typeof data.memoryId !== 'string' || !MEMORY_ID_PATTERN.test(data.memoryId) || data.memoryId.length > 256) {
+    throw invalidStoredMemory('memoryId is invalid')
+  }
+  if (operation === 'remember') {
+    const rawText: unknown = data['text']
+    if (typeof rawText !== 'string') throw invalidStoredMemory('remember events require text')
+    let text: string
+    try {
+      text = normalizeBotMemoryText(rawText)
+    } catch (error: unknown) {
+      throw invalidStoredMemory(error instanceof BotMemoryError ? error.message : 'remember text is invalid')
+    }
+    return { botId: makeBotId(data.botId), memoryId: BotMemoryId(data.memoryId), operation: 'remember', text }
+  }
+  if (operation !== 'forget') throw invalidStoredMemory('operation must be remember or forget')
+  if (Object.hasOwn(data, 'text')) throw invalidStoredMemory('forget events must not contain text')
+  return { botId: makeBotId(data.botId), memoryId: BotMemoryId(data.memoryId), operation: 'forget' }
+}
+
 /**
  * Reconstruct one Bot's active memory records from its Session log.
- * Invalid payloads are ignored because the Session decoder owns the durable
- * event envelope; a mismatched Bot id can never affect another Bot's prompt.
+ * Required Bot memory records are validated here as well as at the Session
+ * envelope boundary. A malformed or foreign record refuses projection rather
+ * than silently changing the Bot's reconstructed memory.
  * @param events - Events read from the Bot-owned Session.
  * @param botId - Authoritative Bot id bound to that Session.
  * @returns active memory records keyed by their stable id.
@@ -122,20 +167,19 @@ export function normalizeBotMemoryText(value: string): string {
 export function projectBotMemories(events: readonly SessionEvent[], botId: BotId): Map<string, BotMemoryRecord> {
   const memories = new Map<string, BotMemoryRecord>()
   for (const event of events) {
-    if (event.type !== 'bot/memory' || String(event.data.botId) !== String(botId)) continue
-    const id = String(event.data.memoryId)
-    if (!MEMORY_ID_PATTERN.test(id) || id.length > 256) continue
-    if (event.data.operation === 'remember') {
-      let text: string
-      try {
-        text = normalizeBotMemoryText(event.data.text)
-      } catch {
-        continue
+    const memoryEvent = parseStoredMemoryEvent(event, botId)
+    if (memoryEvent === undefined) continue
+    const id = String(memoryEvent.memoryId)
+    if (memoryEvent.operation === 'remember') {
+      const current = memories.get(id)
+      if (current !== undefined && current.text !== memoryEvent.text) {
+        throw invalidStoredMemory(`memory "${id}" was remembered with conflicting text`)
       }
-      memories.set(id, { id: BotMemoryId(id), text, createdAt: event.time })
-    } else {
-      memories.delete(id)
+      if (current === undefined) memories.set(id, {
+        id: memoryEvent.memoryId, text: memoryEvent.text, createdAt: event.time,
+      })
     }
+    else memories.delete(id)
   }
   return memories
 }

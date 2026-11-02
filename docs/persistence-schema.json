@@ -28613,7 +28613,7 @@
       "digest": "425db88bfbb792240120b51d81b9c7f1236e6e2c0903c41cb107da41efc4723d",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/memory.ts:75"
+        "packages/agents/bots/src/memory.ts:79"
       ]
     },
     {
@@ -29631,7 +29631,7 @@
       "digest": "7d8cff4ff7e6e9e7ff3a4ab4c3aab850c12767a1d8849edf42cdef8bd2e2c91b",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/memory.ts:69"
+        "packages/agents/bots/src/memory.ts:73"
       ]
     },
     {
@@ -30866,7 +30866,7 @@
         "packages/agents/bots/src/memory.ts#BotMemoryEvent"
       ],
       "sources": [
-        "packages/agents/bots/src/memory.ts:68"
+        "packages/agents/bots/src/memory.ts:72"
       ]
     },
     {

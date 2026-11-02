@@ -124,6 +124,23 @@ function sendArgumentKey(arguments_: Readonly<Record<string, unknown>>): string 
   ])
 }
 
+function memoryArgumentKey(arguments_: Readonly<Record<string, unknown>>): string {
+  return JSON.stringify([
+    textArgument(arguments_, 'memoryId') ?? '',
+    textArgument(arguments_, 'text') ?? '',
+  ])
+}
+
+function implicitMemoryId(senderId: string, threadId: string, turnId: string, text: string): BotMemoryId {
+  const digest = createHash('sha256')
+    .update(senderId).update('\0')
+    .update(threadId).update('\0')
+    .update(turnId).update('\0')
+    .update(text)
+    .digest('hex')
+  return BotMemoryId(`memory-${digest}`)
+}
+
 function eventErrorCode(event: BotDynamicToolEvent): string | undefined {
   if (event.phase !== 'settled' || event.result?.success !== false) return undefined
   const text = event.result.contentItems[0]?.text
@@ -158,6 +175,53 @@ function pendingSendEvents(
     && event.name === 'send_bot_message'
     && !settled.has(dynamicCallKey(event))
     && textArgument(event.arguments, 'targetBotId') === targetBotId)
+}
+
+const MEMORY_NO_EFFECT_FAILURES = new Set([
+  ...NO_EFFECT_FAILURES,
+  'memory-invalid', 'memory-not-found', 'memory-limit', 'memory-id-conflict',
+])
+
+function pendingMemoryEvents(
+  events: readonly BotDynamicToolEvent[],
+  name: 'remember_bot_memory' | 'forget_bot_memory',
+  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
+    readonly arguments: Readonly<Record<string, unknown>>
+  },
+): readonly BotDynamicToolEvent[] {
+  const settled = new Set(events.filter(event => event.phase === 'settled'
+    && (event.result?.success === true || MEMORY_NO_EFFECT_FAILURES.has(eventErrorCode(event) ?? ''))).map(dynamicCallKey))
+  const currentIndex = events.findLastIndex(event => event.phase === 'started'
+    && event.name === name
+    && event.callId === current.callId
+    && event.threadId === current.threadId
+    && event.turnId === current.turnId
+    && memoryArgumentKey(event.arguments) === memoryArgumentKey(current.arguments))
+  return events.filter((event, index) => index !== currentIndex
+    && event.phase === 'started'
+    && event.name === name
+    && !settled.has(dynamicCallKey(event)))
+}
+
+function memoryIdForEvent(senderId: string, event: BotDynamicToolEvent): string | undefined {
+  const explicit = textArgument(event.arguments, 'memoryId')
+  if (explicit !== undefined) return explicit
+  const text = textArgument(event.arguments, 'text')
+  if (text === undefined) return undefined
+  return String(implicitMemoryId(senderId, event.threadId, event.turnId, text))
+}
+
+function uncertainMemoryFailure(
+  pending: readonly BotDynamicToolEvent[],
+  senderId: string,
+  kind: 'remember' | 'forget',
+): BotNativeToolResult {
+  const ids = [...new Set(pending.flatMap((event) => {
+    const id = memoryIdForEvent(senderId, event)
+    return id === undefined ? [] : [id]
+  }))]
+  const suffix = ids.length === 0 ? '' : ` Retry with one of these memoryId values to make recovery idempotent: ${ids.join(', ')}.`
+  return failure('uncertain-outcome', `A previous Bot memory ${kind} may already have been applied.${suffix}`)
 }
 
 function implicitMessageIdForEvent(
@@ -398,23 +462,32 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
   }
 }
 
+function memoryReceipt(value: { readonly id: BotMemoryId; readonly createdAt: number }): JsonObject {
+  return { id: value.id, createdAt: value.createdAt }
+}
+
 function memoryListTool(client: BotCollaborationClient): BotNativeTool {
   return {
     name: 'list_bot_memory',
-    description: 'List this Bot’s durable memories as quoted reference data.',
+    description: 'List this Bot’s durable memory ids and timestamps. Memory text is not echoed by the tool result.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     execute: async (_arguments, context) => {
       if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
       if (client.memory === undefined) return failure('unavailable', 'Bot memory is unavailable.')
-      try { return output(await client.memory.list()) } catch (error: unknown) { return memoryToolFailure(error) }
+      try {
+        const memories = await client.memory.list(context.signal)
+        return output(memories.map(memoryReceipt))
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
     },
   }
 }
 
-function memoryRememberTool(client: BotCollaborationClient): BotNativeTool {
+function memoryRememberTool(client: BotCollaborationClient, host: BotNativeToolHost, sessionId: SessionId): BotNativeTool {
   return {
     name: 'remember_bot_memory',
-    description: 'Save one durable memory for this Bot when the user asks; future prompts quote it as reference data.',
+    description: 'Save one durable memory for this Bot when the user asks; future prompts use it as untrusted reference data. The result returns only its id and timestamp.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -434,18 +507,47 @@ function memoryRememberTool(client: BotCollaborationClient): BotNativeTool {
       if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
       const text = textArgument(arguments_, 'text')
       if (text === undefined) return failure('invalid-request', 'text is required.')
-      const memoryId = textArgument(arguments_, 'memoryId')
+      const requestedId = textArgument(arguments_, 'memoryId')
+      let replayed: readonly BotDynamicToolEvent[]
       try {
-        return output(await client.memory.remember({ text, ...(memoryId === undefined ? {} : { memoryId: BotMemoryId(memoryId) }) }))
-      } catch (error: unknown) { return memoryToolFailure(error) }
+        replayed = await host.replay(sessionId)
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const current = { callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_ }
+      const pending = pendingMemoryEvents(replayed, 'remember_bot_memory', current)
+      const matchingPending = pending.filter(event => textArgument(event.arguments, 'text') === text)
+      const matching = matchingPending[0]
+      const recoveredId = matchingPending.length === 1 && matching !== undefined
+        ? memoryIdForEvent(String(client.sender.id), matching) : undefined
+      const memoryId = requestedId ?? recoveredId
+        ?? String(implicitMemoryId(String(client.sender.id), context.threadId, context.turnId, text))
+      const pendingIds = pending.flatMap((event) => {
+        const id = memoryIdForEvent(String(client.sender.id), event)
+        return id === undefined ? [] : [id]
+      })
+      const retryMatches = pending.length > 0
+        && pendingIds.length === pending.length
+        && pending.every((event, index) => pendingIds[index] === memoryId
+          && textArgument(event.arguments, 'text') === text)
+      if (pending.length > 0 && !retryMatches) {
+        return uncertainMemoryFailure(pending, String(client.sender.id), 'remember')
+      }
+      try {
+        const result = await client.memory.remember({ text, memoryId: BotMemoryId(memoryId), signal: context.signal })
+        return output(memoryReceipt(result))
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
     },
   }
 }
 
-function memoryForgetTool(client: BotCollaborationClient): BotNativeTool {
+function memoryForgetTool(client: BotCollaborationClient, host: BotNativeToolHost, sessionId: SessionId): BotNativeTool {
   return {
     name: 'forget_bot_memory',
-    description: 'Forget one durable memory from this Bot using the exact id returned by list_bot_memory.',
+    description: 'Logically forget one durable memory from this Bot using its exact id. This removes it from future memory prompts; prior logs or requests are not erased.',
     inputSchema: {
       type: 'object',
       properties: { memoryId: { type: 'string', description: 'Exact memory id to forget.' } },
@@ -462,10 +564,28 @@ function memoryForgetTool(client: BotCollaborationClient): BotNativeTool {
       if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
       const memoryId = textArgument(arguments_, 'memoryId')
       if (memoryId === undefined) return failure('invalid-request', 'memoryId is required.')
+      let replayed: readonly BotDynamicToolEvent[]
       try {
-        await client.memory.forget({ memoryId: BotMemoryId(memoryId) })
+        replayed = await host.replay(sessionId)
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const current = { callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_ }
+      const pending = pendingMemoryEvents(replayed, 'forget_bot_memory', current)
+      const pendingIds = pending.flatMap((event) => {
+        const id = memoryIdForEvent(String(client.sender.id), event)
+        return id === undefined ? [] : [id]
+      })
+      if (pending.length > 0 && (pendingIds.length !== pending.length || !pendingIds.every(id => id === memoryId))) {
+        return uncertainMemoryFailure(pending, String(client.sender.id), 'forget')
+      }
+      try {
+        await client.memory.forget({ memoryId: BotMemoryId(memoryId), signal: context.signal })
         return output({ forgotten: true })
-      } catch (error: unknown) { return memoryToolFailure(error) }
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error)
+      }
     },
   }
 }
@@ -526,7 +646,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       })
       return [
         listTool(client), inspectTool(client), sendTool(client, host, sessionId),
-        memoryListTool(client), memoryRememberTool(client), memoryForgetTool(client),
+        memoryListTool(client), memoryRememberTool(client, host, sessionId), memoryForgetTool(client, host, sessionId),
         managementTool('create'), managementTool('edit'),
       ]
     },

@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Bot-scoped memory is stored as required Session events, survives a cold Session, and is quoted into later Bot prompts.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Bot-scoped memory is stored as required Session events, survives a cold Session, and is included in later Bot prompts as untrusted reference data.
 
 ## Table of Contents
 
@@ -51,7 +51,7 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 
 ### Durable memory
 
-`remember_bot_memory` appends a `bot/memory` Session event and waits for the normal Session flush barrier before returning the memory id. `list_bot_memory` reconstructs active entries from that log, and `forget_bot_memory` appends a deletion event. Memory text is bounded, quoted as reference data in the Bot system prompt, and never treated as prompt instructions. Memory writes and deletions are approval-gated in both ordinary and native tool bridges; repeated writes with the same id and text are idempotent.
+`remember_bot_memory` appends a `bot/memory` Session event and waits for the normal Session flush barrier before returning a memory receipt. `list_bot_memory` returns only active ids and timestamps, while `forget_bot_memory` appends a logical deletion event. Forgetting removes the entry from future memory prompts; the append-only Session log and prompts already sent to a model are not erased. Memory text is bounded and presented as untrusted user-provided reference data, not as an instruction-isolation guarantee. Memory writes and deletions are approval-gated in both ordinary and native tool bridges; native retries use stable memory ids and report uncertain outcomes until the caller retries idempotently.
 
 -----
 
@@ -142,15 +142,15 @@ The collaboration tool set is stable for a Bot scope. A roster or tool-schema ch
 
 #### What the model sees
 
-The memory tools operate only on the Bot that owns the current live Session. The Host stores every remember and forget operation in that Session's append-only log, so a cold Session can reconstruct the same active memory set. A later system prompt includes bounded entries inside an explicit quoted-data section; memory text cannot override the Bot identity or tool policy.
+The memory tools operate only on the Bot that owns the current live Session. The Host stores every remember and forget operation in that Session's append-only log, so a cold Session can reconstruct the same active memory set. A later system prompt includes bounded entries inside an explicit untrusted-reference section. The current system, developer, and user instructions remain authoritative; memory text is not a security boundary and may still require ordinary model judgment.
 
 #### Token effect
 
-The memory tool schemas add a small fixed prefix cost. Each active memory contributes its bounded text to the Bot's next system prompt; listing memory returns the same entries only when requested.
+The memory tool schemas add a small fixed prefix cost. Each active memory contributes its bounded text to the Bot's next system prompt; memory listing returns only ids and timestamps when requested, without echoing the stored text.
 
 #### KV Cache effect
 
-The memory section is stable until a memory mutation. Remembering or forgetting changes the later system-prompt suffix while preserving earlier identity and deployment sections.
+The memory section is stable until a memory mutation. Remembering or logically forgetting changes the later system-prompt suffix while preserving earlier identity and deployment sections; prior persisted prompt events remain unchanged.
 
 ## Known Limitations and Deferred Work
 

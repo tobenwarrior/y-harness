@@ -91,7 +91,6 @@ describe('scoped Bot collaboration tools', () => {
       expect(JSON.parse(text(inspected))).toMatchObject({ bot: { id: 'bot-beta', name: 'Beta' }, recent: [] })
       const memories = await execute(h.ctx, h.agent, 'list_bot_memory', {})
       expect(JSON.parse(text(memories))).toEqual([])
-
       const denied = await execute(h.ctx, h.agent, 'send_bot_message', {
         targetBotId: 'bot-beta', text: 'hello', messageId: 'retry-1',
       })
