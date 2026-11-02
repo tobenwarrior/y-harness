@@ -8,6 +8,7 @@ import { createUserMessage } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import { SessionId } from '@yharness/session'
 import { renderPrompt } from '@yharness/system-prompt'
+import { scopeOf } from '@yharness/scope'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
 import Include from '@yharness/cordis-plugin-include'
@@ -23,6 +24,8 @@ import * as ApprovalModule from '@yharness/user-approval'
 import * as Questions from '@yharness/user-questions'
 import * as StorageModule from '@yharness/storage'
 import * as Typert from '@yharness/typert-registry'
+import AgentPresets from '../../../preset/agent-preset-registry/src/index.ts'
+import * as ToolSchedule from '../../../schedule/tool-schedule/src/index.ts'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
@@ -150,8 +153,16 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   const pool = new MemoryMediaPool()
   const createdAgents = new Map<SessionId, Agent>()
   const sessionController = {
-    create: vi.fn(async (request: { readonly sessionId: SessionId; readonly cwd: string }) => {
-      const agent = await ctx.agentLoop.create(request.sessionId, { provider: 'codex-backend', model: 'fixture-model' }, { cwd: request.cwd })
+    create: vi.fn(async (request: { readonly sessionId: SessionId; readonly cwd: string; readonly agentPreset?: string }) => {
+      const handle = await ctx.agents.create({
+        sessionId: request.sessionId,
+        agentOptions: { provider: 'codex-backend', model: 'fixture-model' },
+        meta: { cwd: request.cwd, ...(request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset }) },
+        ...(request.agentPreset === undefined ? {} : {
+          setup: async (agentCtx: Context) => { await ctx.agentPresets.mount(agentCtx, request.agentPreset) },
+        }),
+      })
+      const agent = handle.agent
       createdAgents.set(request.sessionId, agent)
       return { sessionId: request.sessionId }
     }),
@@ -163,6 +174,12 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   }
   ctx.provide('sessionController', sessionController as never)
   ctx.provide('attachments', { readImage: vi.fn() } as never)
+  ctx.provide('schedule', {
+    create: vi.fn(async () => { throw new Error('schedule create was not expected in this composition test') }),
+    list: vi.fn(async () => []),
+    update: vi.fn(async () => { throw new Error('schedule update was not expected in this composition test') }),
+    delete: vi.fn(async () => { throw new Error('schedule delete was not expected in this composition test') }),
+  } as never)
   ctx.on('session/flush', () => {})
   const approval = vi.fn(async () => 'allowed-once' as const)
   ctx.on('approval/request', approval)
@@ -191,6 +208,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     ['@yharness/user-questions', Questions], ['@yharness/storage', StorageModule], ['@yharness/typert-registry', Typert],
     ['@yharness/fixture-storage-domain', { default: storageDomainPlugin }],
     ['@yharness/bots', { default: BotService }],
+    ['@yharness/tool-schedule', ToolSchedule],
     ['@yharness/fixture-codex-connection', { default: CodexBackendConnection }],
   ])
   const configPath = join(root, 'cordis.json')
@@ -220,10 +238,20 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ctx.loader.internal = internal
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
+  // The shipped `standard` preset mounts this exact plugin row. Registering
+  // the focused preset here keeps the fixture small while exercising the real
+  // preset scope and the Bot child-scope shadowing it must provide.
+  await ctx.plugin(AgentPresets, { default: 'standard' })
+  await ctx.agentPresets.register({ id: 'standard', plugins: [{ name: '@yharness/tool-schedule' }] })
+  expect(ctx.agentPresets.inspectCompositions()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'standard', modules: expect.arrayContaining([
+      expect.objectContaining({ moduleName: expect.stringContaining('tool-schedule') }),
+    ]) }),
+  ]))
   await ctx.codexBackendConnection.getState()
 
-  const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root })
-  const target = await ctx.bots.create({ id: BotId('bot-target'), name: 'Grok bot', cwd: root })
+  const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root, agentPreset: 'standard' })
+  const target = await ctx.bots.create({ id: BotId('bot-target'), name: 'Grok bot', cwd: root, agentPreset: 'standard' })
   expect(ctx.get('codexDynamicTools')).toBeDefined()
   expect(ctx.llm.listProviders()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'codex-backend' })]))
   const senderAgent = createdAgents.get(sender.bot.sessionId)
@@ -231,6 +259,20 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   if (senderAgent === undefined || targetAgent === undefined) throw new Error('Bot Session agents were not created')
   const senderPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: senderAgent }))
   expect(senderPrompt).toContain('Your Bot name is "Chief of staff".')
+  const presetLease = await ctx.agentPresets.acquireScope('standard')
+  try {
+    const presetScheduleCreate = ctx.tools.get('schedule_create', presetLease.key)
+    expect(presetScheduleCreate).toBeDefined()
+    expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(presetScheduleCreate)
+  } finally {
+    await presetLease[Symbol.asyncDispose]()
+  }
+  expect(ctx.tools.schemas(senderAgent).filter(tool => tool.name === 'schedule_create')).toHaveLength(1)
+  expect(ctx.tools.schemas(senderAgent).map(tool => tool.name)).toEqual(expect.arrayContaining([
+    'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+  ]))
+  expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
+  expect(scopeOf(senderAgent.ctx)).toBeDefined()
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
   senderAgent.session.append('turn/start', { turn: 1 })

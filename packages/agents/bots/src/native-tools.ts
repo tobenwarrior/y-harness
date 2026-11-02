@@ -206,6 +206,34 @@ function priorExplicitMessageIds(
   }))]
 }
 
+/**
+ * Detect a schedule creation whose side effect may have completed without a
+ * durable native result. A successful schedule listing is the explicit
+ * recovery checkpoint: after it, a fresh creation is safe to attempt.
+ * @param events - durable native lifecycle records for one Bot Session.
+ * @param current - the native call currently being executed.
+ * @returns true when an earlier schedule creation remains unresolved.
+ */
+function pendingRoutineCreate(
+  events: readonly BotDynamicToolEvent[],
+  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'>,
+): boolean {
+  const currentIndex = events.findLastIndex(event => event.phase === 'started'
+    && event.name === 'schedule_create'
+    && event.callId === current.callId
+    && event.threadId === current.threadId
+    && event.turnId === current.turnId)
+  const previous = events.filter((_event, index) => index !== currentIndex)
+  const completed = new Set(previous.filter(event => event.phase === 'settled'
+    && (event.result?.success === true || NO_EFFECT_FAILURES.has(eventErrorCode(event) ?? ''))).map(dynamicCallKey))
+  const lastRoutineCheck = previous.findLastIndex(event => event.phase === 'settled'
+    && event.name === 'schedule_list' && event.result?.success === true)
+  return previous.some((event, index) => index > lastRoutineCheck
+    && event.phase === 'started'
+    && event.name === 'schedule_create'
+    && !completed.has(dynamicCallKey(event)))
+}
+
 function safeString(value: string): string {
   return value.slice(0, MAX_EVENT_STRING)
 }
@@ -400,6 +428,8 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
 function routineTool(
   action: 'create' | 'list' | 'update' | 'delete',
   routine: NonNullable<BotNativeToolHost['routine']>,
+  replay: BotNativeToolHost['replay'],
+  sessionId: SessionId,
 ): BotNativeTool {
   const name = `schedule_${action}`
   const mutates = action !== 'list'
@@ -447,6 +477,18 @@ function routineTool(
         }
         if (!approved) return failure('approval-denied', 'The Bot routine change was not approved.')
         if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      }
+      if (action === 'create') {
+        let replayed: readonly BotDynamicToolEvent[]
+        try {
+          replayed = await replay(sessionId)
+        } catch (error: unknown) {
+          return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+        }
+        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+        if (pendingRoutineCreate(replayed, context)) {
+          return failure('uncertain-outcome', 'An earlier routine creation may have completed. List routines before trying again.')
+        }
       }
       try {
         return output(await routine(action, arguments_, context))
@@ -513,7 +555,8 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       })
       const routine = host.routine
       const routines = routine === undefined ? [] : [
-        routineTool('create', routine), routineTool('list', routine), routineTool('update', routine), routineTool('delete', routine),
+        routineTool('create', routine, host.replay, sessionId), routineTool('list', routine, host.replay, sessionId),
+        routineTool('update', routine, host.replay, sessionId), routineTool('delete', routine, host.replay, sessionId),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },

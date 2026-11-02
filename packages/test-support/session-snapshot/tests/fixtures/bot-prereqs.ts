@@ -18,6 +18,16 @@ export const inject = ['agentDefaultModel', 'agents', 'storageDomain']
  */
 export async function apply(ctx: Context): Promise<void> {
   const cwd = process.cwd()
+  // The snapshot exercises the Bot-scoped routine registrations without
+  // pulling the live Host scheduler into the headless profile. No routine is
+  // executed in this scenario; the adapter only needs to be present while
+  // each Bot scope assembles its model-visible tools.
+  ctx.provide('schedule', {
+    create: async () => { throw new Error('schedule create is not used by this snapshot') },
+    list: async () => [],
+    update: async () => { throw new Error('schedule update is not used by this snapshot') },
+    delete: async () => { throw new Error('schedule delete is not used by this snapshot') },
+  } as never)
   const selection = ctx.agentDefaultModel.currentSelection()
   const handles: AgentHandle[] = []
   for (const sessionId of ['bot-session-sender', 'bot-session-target']) {

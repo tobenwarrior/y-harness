@@ -52,6 +52,43 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledWith('create', { title: 'Daily check' }, expect.anything())
   })
 
+  it('blocks a routine retry until the Bot lists routines after an uncertain create', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, routine,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+        arguments: { title: 'Daily check' },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    const result = await create.execute({ title: 'Daily check' }, context({ sessionId }))
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(routine).not.toHaveBeenCalled()
+  })
+
+  it('uses a successful routine listing as the recovery checkpoint for a create retry', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, routine,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+        arguments: { title: 'Daily check' },
+      }, {
+        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
+        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: '[]' }] },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    await expect(create.execute({ title: 'Daily check' }, context({ sessionId }))).resolves.toMatchObject({ success: true })
+    expect(routine).toHaveBeenCalledOnce()
+  })
+
   it('handles routine cancellation, approval failures, and adapter errors', async () => {
     const routine = vi.fn(async (action: string) => ({ action }))
     const provider = createBotNativeToolProvider({
