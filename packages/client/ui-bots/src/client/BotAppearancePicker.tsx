@@ -1,5 +1,4 @@
 import type { PropsLocale } from '@yharness/client-ui-slots'
-import { BOT_IDENTITIES } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotAccent, BotIdentity } from './types.ts'
@@ -8,8 +7,18 @@ type Translate = PropsLocale<'bots'>['t']
 type IdentityLabelKey = `identity.${BotIdentity}`
 type AccentLabelKey = 'accent.blue' | 'accent.teal' | 'accent.amber' | 'accent.violet' | 'accent.rose' | 'accent.lime'
 
+/** Keep the browser catalog exhaustive when the shared Bot vocabulary grows. */
+function defineBotIdentityChoices<const Choices extends readonly BotIdentity[]>(
+  choices: Choices & (Exclude<BotIdentity, Choices[number]> extends never ? unknown : never),
+): Choices {
+  return choices
+}
+
 /** The stable character order shared by creation and editing surfaces. */
-export const BOT_IDENTITY_CHOICES: readonly BotIdentity[] = BOT_IDENTITIES
+export const BOT_IDENTITY_CHOICES = defineBotIdentityChoices([
+  'agent', 'sparkle', 'goal', 'browse', 'skill', 'workspace', 'round',
+  'cloud', 'tile', 'clover', 'heart', 'drop', 'oval', 'triangle',
+] as const)
 
 /** The stable accent order shared by creation and editing surfaces. */
 export const BOT_ACCENT_CHOICES: readonly BotAccent[] = ['blue', 'teal', 'amber', 'violet', 'rose', 'lime']

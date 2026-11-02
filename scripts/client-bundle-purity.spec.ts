@@ -117,6 +117,23 @@ function sourceMapPlugin(): SourceMapPlugin {
 describe('client bundle purity gate', () => {
   const resolveId = purityResolveId()
 
+  it('builds the Bot client source without cross-plugin runtime edges', async () => {
+    const packageRoot = fileURLToPath(new URL('../packages/client/ui-bots/', import.meta.url))
+    const config = clientBundle('@yharness/client-ui-bots', ['lib/types/index.js'])({ env: {} })
+      .find(candidate => candidate.platform === 'browser')
+    if (config === undefined) throw new Error('Bot client config missing')
+    let builds: TsdownBundle[] = []
+    try {
+      builds = await build({
+        ...config, cwd: packageRoot, config: false, tsconfig: false,
+        write: false, clean: false, exports: false, report: false, logLevel: 'silent',
+      })
+      expect(builds.flatMap(bundle => bundle.chunks).some(chunk => chunk.type === 'chunk' && chunk.fileName === 'client.js')).toBe(true)
+    } finally {
+      for (const bundle of builds) await bundle[Symbol.asyncDispose]()
+    }
+  })
+
   it('leaves default externals and non-scoped specifiers alone', () => {
     expect(resolveId('@yharness/client-store')).toBeNull()
     expect(resolveId('@yharness/client-ui-slots')).toBeNull()
