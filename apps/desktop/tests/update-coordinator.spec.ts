@@ -243,6 +243,17 @@ describe('desktop update coordinator', () => {
     expect(f.states).toEqual([{ phase: 'unavailable', managed: true }])
   })
 
+  it('exposes a bounded managed supervisor failure without raw diagnostics', async () => {
+    const f = fixture(false, async () => ({
+      builtCommit: 'a'.repeat(40), headCommit: 'a'.repeat(40), available: false, shortHead: 'aaaaaaaaaaaa', managed: true,
+      managedFailure: 'build',
+    } as CheckoutUpdateState))
+    expect(await f.coordinator.check(true)).toEqual({
+      phase: 'error', managed: true, managedFailure: 'build', failedOperation: 'check',
+    })
+    expect(JSON.stringify(f.coordinator.state)).not.toContain('secret')
+  })
+
   it('keeps automatic failures silent and exposes a manual caller joining the same check', async () => {
     const f = fixture()
     f.checkForUpdates.mockRejectedValue(new Error('offline'))

@@ -24,14 +24,6 @@ export function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslat
     error: t('desktop.update.retry'),
   }
   const label = labels[state.phase]
-  if (state.managed === true) {
-    const managed = t('desktop.update.managed')
-    return { label: managed, detail: managed }
-  }
-  if (state.phase === 'unavailable') return { label, detail: label }
-  if (state.phase === 'checking' || state.phase === 'verifying' || state.phase === 'installing') {
-    return { label, detail: state.version ?? label }
-  }
   if (state.phase === 'error') {
     const failures: Readonly<Record<DesktopUpdateFailureKind, string>> = {
       check: t('desktop.update.checkFailed'),
@@ -43,8 +35,18 @@ export function updateCopy(state: DesktopUpdatePresentation, t: SettingsTranslat
       'stop-failed': t('desktop.update.stopFailed'),
       'tasks-changed': t('desktop.update.tasksChanged'),
       'tasks-unavailable': t('desktop.update.tasksUnavailable'),
+      'managed-check': t('desktop.update.managedCheckFailed'),
+      'managed-build': t('desktop.update.managedBuildFailed'),
     }
     return { label, detail: failures[state.failure ?? 'install'] }
+  }
+  if (state.managed === true) {
+    const managed = t('desktop.update.managed')
+    return { label: managed, detail: managed }
+  }
+  if (state.phase === 'unavailable') return { label, detail: label }
+  if (state.phase === 'checking' || state.phase === 'verifying' || state.phase === 'installing') {
+    return { label, detail: state.version ?? label }
   }
   if (state.phase === 'downloading' && state.version !== undefined) {
     return { label, detail: t('desktop.update.downloadDetail', { percent: state.percent ?? 0, version: state.version }) }

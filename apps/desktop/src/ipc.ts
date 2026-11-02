@@ -34,6 +34,8 @@ export const DESKTOP_IPC = {
 
 /** Desktop release update state rendered by desktop-owned UI. */
 export type DesktopUpdatePreparationFailureKind = 'stop-failed' | 'tasks-changed' | 'tasks-unavailable'
+/** Bounded failure reported by the GitHub-managed supervisor. */
+export type DesktopManagedUpdateFailureKind = 'check' | 'build'
 
 export interface DesktopUpdateState {
   readonly phase: 'idle' | 'checking' | 'available' | 'downloading' | 'verifying' | 'installing' | 'ready' | 'unavailable' | 'error'
@@ -45,6 +47,8 @@ export interface DesktopUpdateState {
   readonly technicalDetails?: string
   readonly percent?: number
   readonly failedOperation?: 'check' | 'download' | 'install'
+  /** Bounded failure reported by the managed supervisor; no command output crosses IPC. */
+  readonly managedFailure?: DesktopManagedUpdateFailureKind
   /** Main-owned preparation cause; UI wording is selected by the active locale. */
   readonly preparationFailure?: DesktopUpdatePreparationFailureKind
 }
@@ -60,6 +64,8 @@ export type DesktopUpdateFailureKind =
   | 'stop-failed'
   | 'tasks-changed'
   | 'tasks-unavailable'
+  | 'managed-check'
+  | 'managed-build'
 
 /** Semantic status content; actions open main-process confirmation dialogs only. */
 export interface DesktopUpdatePresentation {

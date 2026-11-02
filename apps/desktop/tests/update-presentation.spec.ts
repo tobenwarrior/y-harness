@@ -13,6 +13,13 @@ it('preserves the managed-updater marker without exposing checkout details', () 
   expect(presentDesktopUpdate({ phase: 'unavailable', managed: true })).toEqual({ phase: 'unavailable', managed: true })
 })
 
+it('presents managed supervisor failures as semantic, non-diagnostic kinds', () => {
+  const state = { phase: 'error', managed: true, managedFailure: 'build', failedOperation: 'check' } as DesktopUpdateState
+  expect(presentDesktopUpdate(state)).toEqual({ phase: 'error', managed: true, failure: 'managed-build' })
+  expect(JSON.stringify(presentDesktopUpdate(state))).not.toContain('secret')
+  expect(desktopUpdateErrorSummary(state, en)).toBe(en.updateManagedBuildFailed)
+})
+
 it('records visible ordinary-update states without authorizing downloads or installation', async () => {
   const phases: DesktopUpdateState['phase'][] = ['idle', 'available', 'downloading', 'verifying', 'ready', 'installing', 'error']
   const states = phases.map(phase => presentDesktopUpdate({ phase, version: '0.1.5-rc.2', percent: 58 }))

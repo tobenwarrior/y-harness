@@ -35,6 +35,7 @@ import { desktopUpdateReadyConfirmation, formatDesktopMessage, resolveDesktopLoc
 import { claimDesktopSingleInstance } from './single-instance.ts'
 import { DesktopUpdateCoordinator } from './update-coordinator.ts'
 import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, findCheckoutRoot,
+  watchManagedGithubStatus,
   requestManagedGithubRestart, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
@@ -663,6 +664,11 @@ async function main(): Promise<void> {
   )
 
   const updateSchedule = new DesktopUpdateSchedule(updates, resolveDesktopUpdateScheduleConfig(process.env))
+  const managedStatusWatcher = process.env.DSH_DESKTOP_GITHUB_MANAGED === '1'
+    ? watchManagedGithubStatus(process.env.DSH_DESKTOP_GITHUB_STATUS, () => {
+      if (!quitting) void updateSchedule.check(false, true).catch((error: unknown) => { console.error(error) })
+    })
+    : undefined
 
   const downloadUpdate = async (version: string): Promise<DesktopUpdateState> => {
     void track('desktop_upgrade_click', {})
@@ -994,6 +1000,7 @@ async function main(): Promise<void> {
   }
   powerMonitor.on('resume', automaticCheck)
   app.on('will-quit', () => {
+    managedStatusWatcher?.close()
     updateSchedule.dispose()
     powerMonitor.off('resume', automaticCheck)
     updates.dispose()
@@ -1248,6 +1255,7 @@ async function main(): Promise<void> {
     managedGithubRestartRequest = undefined
     quitting = true
     shuttingDown = true
+    managedStatusWatcher?.close()
     updateJournal?.action('quit-requested')
     quitConfirmation.dispose()
     backgroundNotice?.dispose()
@@ -1270,6 +1278,7 @@ async function main(): Promise<void> {
     if (shellInstallerOwnsQuit) {
       managedGithubRestartRequest = undefined
       shuttingDown = true
+      managedStatusWatcher?.close()
       quitConfirmation.dispose()
       backgroundNotice?.dispose()
       updateJournal?.action('quit-requested')

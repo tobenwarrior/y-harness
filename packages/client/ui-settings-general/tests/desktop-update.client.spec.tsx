@@ -107,6 +107,18 @@ it('uses the compact blue update control and concise available tooltip', async (
   } finally { f.view.unmount(); f.status.resolve(available) }
 })
 
+it('shows a managed build failure in the existing warning control', async () => {
+  const f = fixture()
+  try {
+    await f.emit({ phase: 'error', managed: true, failure: 'managed-build' })
+    const retry = screen.getByRole('button', { name: 'Retry update' })
+    fireEvent.focus(retry)
+    expect((await screen.findByRole('tooltip')).textContent)
+      .toBe('Update preparation failed. Retrying.')
+    expect(retry.querySelector('svg')).not.toBeNull()
+  } finally { f.view.unmount(); f.status.resolve({ phase: 'idle' }) }
+})
+
 it('keeps bridge failures actionable and ignores status completion after unmount', async () => {
   const f = fixture()
   await act(async () => { f.status.reject(new Error('IPC unavailable')) })

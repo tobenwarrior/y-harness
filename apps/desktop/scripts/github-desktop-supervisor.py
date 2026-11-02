@@ -176,10 +176,18 @@ class Supervisor:
         self.cancel = cancel if cancel is not None else threading.Event()
         self.operation = threading.Lock()
 
+    def _record_failure(self, operation):
+        try:
+            self.updater.record_failure(operation)
+        except Exception:
+            log_error('update failure status could not be published')
+
     def poll_once(self):
+        operation = 'check'
         try:
             with self.operation:
                 commit = self.updater.check()
+                operation = 'build'
                 current = self.updater.current()
                 ready = ready_commit(self.updater.root)
                 if ready is not None and ready != commit and current is not None:
@@ -187,11 +195,16 @@ class Supervisor:
                     ready = None
                 if commit != current and commit != ready:
                     self.updater.stage(commit)
+                elif current is not None:
+                    self.updater.clear_failure()
         except InterruptedError:
             if not self.cancel.is_set():
+                self._record_failure(operation)
                 log_error('update check or stage failed')
         except Exception:
-            log_error('update check or stage failed')
+            if not self.cancel.is_set():
+                self._record_failure(operation)
+                log_error('update check or stage failed')
 
     def poll_loop(self):
         while not self.stop.is_set():
@@ -209,12 +222,15 @@ class Supervisor:
             current = self.updater.current()
             ready = ready_commit(self.updater.root)
             if ready and ready != current:
+                operation = 'check'
                 try:
                     if self.updater.check() == ready:
+                        operation = 'build'
                         self.updater.activate(ready, between_runs=True)
                         current = ready
                         activated = True
                     elif current is not None:
+                        operation = 'build'
                         self.updater.mark_current()
                 except Exception:
                     log_error('staged update activation failed')
@@ -223,6 +239,7 @@ class Supervisor:
                             self.updater.mark_current()
                         except Exception:
                             log_error('stale update status could not be cleared')
+                        self._record_failure(operation)
             if current is None:
                 commit = self.updater.check()
                 self.updater.stage(commit)

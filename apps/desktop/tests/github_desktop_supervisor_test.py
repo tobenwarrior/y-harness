@@ -43,6 +43,21 @@ class FakeUpdater:
         commit = self.current()
         (self.root / 'update-status.json').write_text(json.dumps({'phase': 'active', 'commit': commit}))
 
+    def record_failure(self, operation):
+        status_path = self.root / 'update-status.json'
+        if status_path.exists() and json.loads(status_path.read_text()).get('phase') == 'ready':
+            return
+        commit = self.current()
+        status_path.write_text(json.dumps({
+            'phase': 'active', 'commit': commit, 'lastError': operation,
+        }))
+
+    def clear_failure(self):
+        status_path = self.root / 'update-status.json'
+        status = json.loads(status_path.read_text()) if status_path.exists() else None
+        if isinstance(status, dict) and 'lastError' in status:
+            self.mark_current()
+
     def stage(self, commit):
         if self.fail:
             raise RuntimeError('secret')
@@ -118,13 +133,58 @@ class Tests(unittest.TestCase):
         self.u.fail = True
         s.poll_once()
         self.assertEqual(s.prepare(), A)
+        status = json.loads((self.u.root / 'update-status.json').read_text())
+        self.assertEqual(status, {'phase': 'active', 'commit': A, 'lastError': 'check'})
+        self.assertNotIn('secret', (self.u.root / 'update-status.json').read_text())
         self.u.fail = False
         self.u.remote = B
+        original_stage = self.u.stage
         def fail_stage(commit):
-            raise RuntimeError('build failed')
+            raise RuntimeError('build failed: secret')
         self.u.stage = fail_stage
         s.poll_once()
         self.assertEqual(s.prepare(), A)
+        status = json.loads((self.u.root / 'update-status.json').read_text())
+        self.assertEqual(status, {'phase': 'active', 'commit': A, 'lastError': 'build'})
+        self.assertNotIn('secret', (self.u.root / 'update-status.json').read_text())
+        self.u.stage = original_stage
+        self.u.remote = A
+        s.poll_once()
+        self.assertEqual(json.loads((self.u.root / 'update-status.json').read_text()), {'phase': 'active', 'commit': A})
+
+    def test_check_failure_preserves_ready_candidate(self):
+        s = supervisor.Supervisor(self.u, self.support, self.config)
+        s.prepare()
+        self.u.remote = B
+        self.u.stage(B)
+        self.u.fail = True
+        s.poll_once()
+        self.assertEqual(json.loads((self.u.root / 'update-status.json').read_text()), {
+            'phase': 'ready', 'commit': B,
+        })
+        self.assertNotIn('secret', (self.u.root / 'update-status.json').read_text())
+
+    def test_ready_activation_check_failure_records_check_error(self):
+        s = supervisor.Supervisor(self.u, self.support, self.config)
+        s.prepare()
+        self.u.remote = B
+        self.u.stage(B)
+        self.u.fail = True
+        self.assertEqual(s.prepare(), A)
+        self.assertEqual(json.loads((self.u.root / 'update-status.json').read_text()), {
+            'phase': 'active', 'commit': A, 'lastError': 'check',
+        })
+
+    def test_cancelled_generic_poll_failure_does_not_publish_failure(self):
+        cancel = threading.Event()
+        s = supervisor.Supervisor(self.u, self.support, self.config, cancel=cancel)
+        s.prepare()
+        self.u.fail = True
+        cancel.set()
+        s.poll_once()
+        self.assertEqual(json.loads((self.u.root / 'update-status.json').read_text()), {
+            'phase': 'active', 'commit': A,
+        })
 
     def test_lock_and_links(self):
         with supervisor.supervisor_lock(self.support):
@@ -230,6 +290,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.u.activations, [A])
         self.assertEqual(supervisor.current_commit(self.u.root), A)
         self.assertIsNone(supervisor.ready_commit(self.u.root))
+        self.assertEqual(json.loads((self.u.root / 'update-status.json').read_text()), {
+            'phase': 'active', 'commit': A, 'lastError': 'build',
+        })
     def test_build_environment_finds_node_and_pnpm_without_gui_path(self):
         config = {"node": "/opt/test-node/bin/node", "pnpm": "/opt/test-pnpm/bin/pnpm"}
         with mock.patch.dict(os.environ, {"PATH": "/usr/bin", "GH_TOKEN": "secret", "DEEPSEEK_API_KEY": "secret"}), mock.patch.object(supervisor._engine, "_run", return_value="") as run:

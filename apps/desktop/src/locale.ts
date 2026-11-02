@@ -102,6 +102,8 @@ export const en = {
   restartAppHostMenu: 'Restart App and Host',
   updateCheckFailedTitle: 'Update Check Failed',
   updateCheckFailed: 'Could not check for updates. Please try again later.',
+  updateManagedCheckFailed: 'Update check failed. Retrying.',
+  updateManagedBuildFailed: 'Update preparation failed. Retrying.',
   updateDownloadFailed: 'Could not download the update. Please try again.',
   updateInstallFailed: 'Could not install the update. Please try again later.',
   updateCheckNetworkFailed: 'Could not check for updates. Check your connection and try again.',

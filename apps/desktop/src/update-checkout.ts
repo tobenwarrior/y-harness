@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
+import { constants, unwatchFile, watch, watchFile, type FSWatcher, type Stats } from 'node:fs'
 import { open, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
 /**
@@ -15,6 +15,8 @@ import { promisify } from 'node:util'
  */
 
 /** A checkout state comparison for one running build. */
+export type ManagedGithubUpdateFailureKind = 'check' | 'build'
+
 export interface CheckoutUpdateState {
   /** Commit the running build was compiled from (the stamp). */
   readonly builtCommit: string
@@ -26,6 +28,8 @@ export interface CheckoutUpdateState {
   readonly shortHead: string
   /** Whether this comparison came from the GitHub-managed supervisor. */
   readonly managed?: boolean
+  /** Bounded failure reported by the supervisor while the active commit remains in use. */
+  readonly managedFailure?: ManagedGithubUpdateFailureKind
 }
 
 /** Bounded git fact the detector needs; a nonzero exit is data, not a throw. */
@@ -40,6 +44,91 @@ export interface CheckoutUpdateProbe {
   readStampCommit(): Promise<string | null>
   /** Resolve the checkout's current HEAD commit. */
   readHeadCommit(): Promise<GitProbeResult>
+}
+
+/** The close operation owned by a managed-status filesystem watcher. */
+export interface ManagedGithubStatusWatcher {
+  /** Stop watching the supervisor status directory. */
+  close(): void
+}
+
+type ManagedGithubStatusWatchDirectory = (
+  statusPath: string,
+  listener: (eventType: 'rename' | 'change', filename: string | null) => void,
+  onError: (error: Error) => void,
+) => ManagedGithubStatusWatcher
+
+/** One-second stat polling is only used when the native watcher cannot stay active. */
+const MANAGED_STATUS_POLL_INTERVAL_MS = 1_000
+
+const watchManagedGithubStatusDirectory: ManagedGithubStatusWatchDirectory = (statusPath, listener, onError) => {
+  const directory = dirname(statusPath)
+  const pollingListener = (current: Stats, previous: Stats): void => {
+    if (current.mtimeMs === 0 && previous.mtimeMs === 0) return
+    if (current.mtimeMs === previous.mtimeMs && current.ctimeMs === previous.ctimeMs
+      && current.size === previous.size && current.ino === previous.ino) return
+    listener('change', basename(statusPath))
+  }
+  let polling = false
+  let closed = false
+  const startPollingFallback = (): void => {
+    if (polling || closed) return
+    polling = true
+    try {
+      watchFile(statusPath, { interval: MANAGED_STATUS_POLL_INTERVAL_MS, persistent: false }, pollingListener)
+      listener('change', basename(statusPath))
+    } catch (error: unknown) {
+      onError(error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+  let watcher: FSWatcher | undefined
+  try {
+    watcher = watch(directory, { encoding: 'utf8', persistent: false }, listener)
+    watcher.on('error', (error) => {
+      if (closed) return
+      onError(error)
+      startPollingFallback()
+    })
+  } catch (error: unknown) {
+    onError(error instanceof Error ? error : new Error(String(error)))
+    startPollingFallback()
+  }
+  return {
+    close: () => {
+      if (closed) return
+      closed = true
+      watcher?.close()
+      if (polling) unwatchFile(statusPath, pollingListener)
+    },
+  }
+}
+
+/**
+ * Watch the supervisor's parent directory so atomic status-file replacement is observable.
+ * Native watcher failures fall back to stat polling of the status path.
+ *
+ * @param statusPath - Absolute path to the supervisor status file.
+ * @param onChange - Callback for a replacement or modification of that file.
+ * @param watchDirectory - Filesystem watcher factory, injectable for deterministic tests.
+ * @returns A watcher handle, or undefined when the path cannot be watched.
+ */
+export function watchManagedGithubStatus(
+  statusPath: string | undefined,
+  onChange: () => void,
+  watchDirectory: ManagedGithubStatusWatchDirectory = watchManagedGithubStatusDirectory,
+): ManagedGithubStatusWatcher | undefined {
+  if (statusPath === undefined || !isAbsolute(statusPath)) return undefined
+  const filename = basename(statusPath)
+  try {
+    return watchDirectory(statusPath, (_eventType, changed) => {
+      if (changed === null || changed === filename) onChange()
+    }, (error) => {
+      console.warn('desktop update: managed status watcher stopped; polling fallback and periodic checks remain active', error)
+    })
+  } catch (error: unknown) {
+    console.warn('desktop update: managed status watcher unavailable; periodic checks remain active', error)
+    return undefined
+  }
 }
 
 /** Trim and validate one commit spelling; anything unusable becomes null. */
@@ -214,8 +303,12 @@ export async function detectManagedGithubUpdate(env: NodeJS.ProcessEnv = process
       if (length > limit) return null
       const status: unknown = JSON.parse(buffer.subarray(0, length).toString('utf8'))
       if (typeof status !== 'object' || status === null) return null
-      const { phase, commit } = status as { phase?: unknown; commit?: unknown }
+      const { phase, commit, lastError } = status as { phase?: unknown; commit?: unknown; lastError?: unknown }
       if ((phase !== 'ready' && phase !== 'active') || typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) return null
+      const managedFailure = lastError === undefined
+        ? undefined
+        : lastError === 'check' || lastError === 'build' ? lastError : null
+      if (managedFailure === null || (managedFailure !== undefined && phase !== 'active')) return null
       const built = builtCommit.toLowerCase()
       const head = commit.toLowerCase()
       // An active status is the supervisor's normal steady state. It must name
@@ -227,6 +320,7 @@ export async function detectManagedGithubUpdate(env: NodeJS.ProcessEnv = process
         available: phase === 'ready' && built !== head,
         shortHead: head.slice(0, 12),
         managed: true,
+        ...(managedFailure === undefined ? {} : { managedFailure }),
       }
     } finally {
       await file.close()

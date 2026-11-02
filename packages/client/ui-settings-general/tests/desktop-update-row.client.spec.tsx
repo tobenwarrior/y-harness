@@ -85,6 +85,12 @@ describe('DesktopUpdateRow', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
+  it('keeps managed preparation failures visible in the settings row', () => {
+    show(true, { failed: false, opening: false, presentation: { phase: 'error', managed: true, failure: 'managed-build' } })
+    expect(screen.getByText('Update preparation failed. Retrying.')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
   it('offers a retry after failures', () => {
     const { openDesktopUpdate } = show(true, {
       failed: false, opening: false, presentation: { phase: 'error', version: '1.0.1', failure: 'download' },

@@ -15,7 +15,9 @@ root must be private to the user and never shared with a working checkout. Keep
 app user data outside the version directories. Failed stages and old versions are
 intentionally retained; no cleanup is performed. update-status.json is atomically
 published after successful staging as {"phase":"ready","commit":"<40 hex>"};
-a successful activation publishes phase "active" with the same commit.
+a successful activation publishes phase "active" with the same commit. A failed
+background check or build may publish the active commit with a bounded lastError
+value; command output is never part of the status.
 All operations raise on failure. Runner injection uses runner(argv, cwd, timeout)
 and returns stdout text, raising on error; production calls have bounded time/output.
 """
@@ -27,6 +29,7 @@ import platform
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,6 +42,7 @@ _COMMIT = re.compile(r'[0-9a-f]{40}\Z')
 _REPO = re.compile(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?\Z')
 _BRANCH = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,199}\Z')
 _MARKER = 'github-source-updater-v1\n'
+_LAST_ERRORS = frozenset(('check', 'build'))
 
 
 def _run(argv, cwd, timeout, environment=None, cancel_event=None):
@@ -219,12 +223,42 @@ class SourceUpdater:
             raise RuntimeError('version has modified tracked files')
         _validate_build(path)
 
-    def _status(self, phase, commit):
-        data = json.dumps({'phase': phase, 'commit': commit}, separators=(',', ':')) + '\n'
+    def _status(self, phase, commit, last_error=None):
+        if last_error is not None and (not isinstance(last_error, str) or last_error not in _LAST_ERRORS):
+            raise ValueError('invalid updater failure')
+        status = {'phase': phase, 'commit': commit}
+        if last_error is not None:
+            status['lastError'] = last_error
+        data = json.dumps(status, separators=(',', ':')) + '\n'
         path = self.root / ('.status-' + uuid.uuid4().hex)
         with open(path, 'x', encoding='utf-8') as output:
             output.write(data)
         os.replace(path, self.root / 'update-status.json')
+
+    def _read_status_unlocked(self):
+        path = self.root / 'update-status.json'
+        fd = -1
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                return None
+            with os.fdopen(fd, encoding='utf-8') as stream:
+                fd = -1
+                return json.load(stream)
+        except (FileNotFoundError, OSError, ValueError, UnicodeError):
+            return None
+        finally:
+            if fd != -1:
+                os.close(fd)
+
+    def _status_failure_unlocked(self, commit):
+        status = self._read_status_unlocked()
+        if (isinstance(status, dict) and status.get('phase') == 'active'
+                and status.get('commit') == commit and isinstance(status.get('lastError'), str)
+                and status.get('lastError') in _LAST_ERRORS):
+            return status['lastError']
+        return None
 
     def _current_unlocked(self):
         current = self.root / 'current'
@@ -251,6 +285,30 @@ class SourceUpdater:
             if commit is None:
                 raise RuntimeError('no active version')
             self._status('active', commit)
+
+    def record_failure(self, last_error):
+        """Publish a bounded failure kind while keeping the current version active."""
+        if not isinstance(last_error, str) or last_error not in _LAST_ERRORS:
+            raise ValueError('invalid updater failure')
+        with self._locked():
+            commit = self._current_unlocked()
+            if commit is None:
+                raise RuntimeError('no active version')
+            status = self._read_status_unlocked()
+            if (isinstance(status, dict) and status.get('phase') == 'ready'
+                    and isinstance(status.get('commit'), str) and _COMMIT.fullmatch(status['commit'])):
+                return
+            if self._status_failure_unlocked(commit) != last_error:
+                self._status('active', commit, last_error)
+
+    def clear_failure(self):
+        """Clear a previously published failure without rewriting a clean status."""
+        with self._locked():
+            commit = self._current_unlocked()
+            if commit is None:
+                raise RuntimeError('no active version')
+            if self._status_failure_unlocked(commit) is not None:
+                self._status('active', commit)
 
     def _require_successor(self, path, current, commit):
         if current is not None and current != commit:

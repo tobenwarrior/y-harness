@@ -15,6 +15,22 @@ import { writeCrashReport } from '../src/crash-report.ts'
 
 type InvokeEvent = { sender?: unknown; senderFrame: { url: string } }
 type InvokeHandler = (event: InvokeEvent, ...args: unknown[]) => unknown
+type StatusWatchListener = (eventType: 'rename' | 'change', filename: string | null) => void
+
+const statusWatch = vi.hoisted(() => {
+  const listeners: StatusWatchListener[] = []
+  const watch = vi.fn((_directory: string, _options: { encoding: 'utf8'; persistent: false }, listener: StatusWatchListener) => {
+    listeners.push(listener)
+    return { on: vi.fn(), close: vi.fn() }
+  })
+  return {
+    watch,
+    listeners,
+    reset() { listeners.length = 0; watch.mockClear() },
+  }
+})
+
+vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>(), watch: statusWatch.watch }))
 
 vi.mock('../src/web-document.ts', () => ({ authenticateWebHost: async () => 'test-cookie', serveWebDocument: vi.fn(), forwardWebRequest: vi.fn() }))
 // Report persistence has its own unit tests; here it resolves within microtasks so the fatal
@@ -402,6 +418,7 @@ function applicationMenuItems(): MenuItemConstructorOptions[] {
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  statusWatch.reset()
   harness.dialog.showMessageBox.mockReset()
   harness.dialog.showMessageBox.mockResolvedValue({ response: 1 })
   testAuth.login.mockReset()
@@ -1129,6 +1146,33 @@ describe('desktop main startup', () => {
     writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
     await invoke(DESKTOP_IPC.updatesOpen, 'app')
     expect(harness.app.quit).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes managed update state when the supervisor replaces status after launch', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-update-watch-'))
+    onTestFinished(() => { rmSync(directory, { recursive: true, force: true }) })
+    const status = join(directory, 'status.json')
+    const built = 'a'.repeat(40)
+    writeFileSync(status, JSON.stringify({ phase: 'active', commit: built }))
+    vi.stubEnv('DSH_DESKTOP_GITHUB_MANAGED', '1')
+    vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
+    vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
+    harness.updateSourceAvailable = false
+    await readyForUpdate()
+    const statusListener = statusWatch.listeners.at(-1)
+    expect(statusListener).toBeDefined()
+    const available = { phase: 'available' as const, version: 'bbbbbbbbbbbb' }
+    const publish = harness.publishUpdate
+    harness.updateCheck.mockImplementationOnce(async () => {
+      publish(available)
+      return available
+    })
+    harness.updateCheck.mockClear()
+    const window = harness.windows[0]!
+    window.webContents.send.mockClear()
+    statusListener?.('rename', 'status.json')
+    await vi.waitFor(() => { expect(harness.updateCheck).toHaveBeenCalledWith(false) }, { timeout: 1_000 })
+    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.updatesPresentation, available)
   })
 
   it('does not leave a managed restart request after quit confirmation is cancelled', async () => {

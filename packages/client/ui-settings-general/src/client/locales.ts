@@ -25,6 +25,8 @@ export const en = {
   'desktop.update.versionDetail': '{label}: {version}',
   'desktop.update.downloadDetail': 'Downloading update: {percent}%\nTarget version: {version}',
   'desktop.update.checkFailed': 'Could not check for updates. Please try again later.',
+  'desktop.update.managedCheckFailed': 'Update check failed. Retrying.',
+  'desktop.update.managedBuildFailed': 'Update preparation failed. Retrying.',
   'desktop.update.downloadFailed': 'Could not download the update. Please try again.',
   'desktop.update.installFailed': 'Could not install the update. Please try again later.',
   'desktop.update.checkNetworkFailed': 'Could not check for updates. Check your connection and try again.',

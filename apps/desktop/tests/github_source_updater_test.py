@@ -100,6 +100,34 @@ class UpdaterTests(unittest.TestCase):
         self.assertTrue(any((self.root / 'staging').iterdir()))
         self.assertEqual(json.loads((self.root / 'update-status.json').read_text())['commit'], first)
 
+    def test_failure_status_is_bounded_and_clears_after_success(self):
+        first = self.u.check()
+        self.u.stage(first)
+        self.u.activate(first, between_runs=True)
+        self.u.record_failure('build')
+        status_path = self.root / 'update-status.json'
+        self.assertEqual(json.loads(status_path.read_text()), {
+            'phase': 'active', 'commit': first, 'lastError': 'build',
+        })
+        self.assertNotIn('secret', status_path.read_text())
+        self.u.clear_failure()
+        self.assertEqual(json.loads(status_path.read_text()), {'phase': 'active', 'commit': first})
+        for malformed in ([], {}):
+            status_path.write_text(json.dumps({'phase': 'active', 'commit': first, 'lastError': malformed}))
+            self.u.clear_failure()
+            self.assertEqual(json.loads(status_path.read_text())['lastError'], malformed)
+        self.u.record_failure('check')
+        self.assertEqual(json.loads(status_path.read_text()), {
+            'phase': 'active', 'commit': first, 'lastError': 'check',
+        })
+        status_path.write_text(json.dumps({'phase': 'ready', 'commit': 'b' * 40}))
+        self.u.record_failure('check')
+        self.assertEqual(json.loads(status_path.read_text()), {
+            'phase': 'ready', 'commit': 'b' * 40,
+        })
+        with self.assertRaises(ValueError):
+            self.u.record_failure('secret')
+
     def test_corrupt_and_dirty_versions_rejected(self):
         commit = self.u.check()
         path = self.u.stage(commit)

@@ -91,7 +91,21 @@ describe('managed GitHub status', () => {
       expect(await detectManagedGithubUpdate(env)).toMatchObject({ available: false })
       await writeFile(path, JSON.stringify({ phase: 'active', commit: HEAD }))
       expect(await detectManagedGithubUpdate(env)).toMatchObject({ managed: true, available: false, headCommit: HEAD })
+      await writeFile(path, JSON.stringify({ phase: 'active', commit: HEAD, lastError: 'build' }))
+      expect(await detectManagedGithubUpdate(env)).toMatchObject({
+        managed: true, managedFailure: 'build', available: false, headCommit: HEAD,
+      })
+      await writeFile(path, JSON.stringify({ phase: 'active', commit: HEAD, lastError: 'check' }))
+      expect(await detectManagedGithubUpdate(env)).toMatchObject({ managedFailure: 'check' })
       for (const raw of [JSON.stringify({ phase: 'active', commit: candidate }), JSON.stringify({ phase: 'ready', commit: 'abc' }), '{', ' '.repeat(4097)]) {
+        await writeFile(path, raw)
+        expect(await detectManagedGithubUpdate(env)).toBeNull()
+      }
+      for (const raw of [
+        JSON.stringify({ phase: 'active', commit: HEAD, lastError: 'secret' }),
+        JSON.stringify({ phase: 'active', commit: HEAD, lastError: [] }),
+        JSON.stringify({ phase: 'ready', commit: candidate, lastError: 'build' }),
+      ]) {
         await writeFile(path, raw)
         expect(await detectManagedGithubUpdate(env)).toBeNull()
       }

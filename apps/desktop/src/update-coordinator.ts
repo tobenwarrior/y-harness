@@ -6,11 +6,15 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { gt, prerelease, valid } from 'semver'
-import type { DesktopUpdateState } from './ipc.ts'
+import type { DesktopManagedUpdateFailureKind, DesktopUpdateState } from './ipc.ts'
 import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
 import { DesktopUpdatePreparationError } from './update-error.ts'
 
 const { autoUpdater } = electronUpdater
+
+type ManagedCheckoutUpdateState = CheckoutUpdateState & {
+  readonly managedFailure?: DesktopManagedUpdateFailureKind
+}
 
 /** Updater channel policy derived from the sealed electron-builder config. */
 export interface DesktopUpdaterMode {
@@ -38,7 +42,10 @@ export function resolveDesktopUpdaterMode(configPath?: string, installedVersion?
     return match?.replace(/^(['"])(.*)\\1$/u, '$2')
   }
   if (field('provider') === 'github') {
-    return { channel: null, allowPrerelease: installedVersion !== undefined && valid(installedVersion) !== null && prerelease(installedVersion) !== null }
+    return {
+      channel: null,
+      allowPrerelease: installedVersion !== undefined && valid(installedVersion) !== null && prerelease(installedVersion) !== null,
+    }
   }
   return { channel: field('channel') ?? 'nightly', allowPrerelease: true }
 }
@@ -236,6 +243,13 @@ export class DesktopUpdateCoordinator {
           return this.setState({ phase: 'available', version: checkout.shortHead })
         }
         if (checkout?.managed === true) {
+          const managedCheckout: ManagedCheckoutUpdateState = checkout
+          if (managedCheckout.managedFailure !== undefined) {
+            if (this.current.phase === 'error' && this.current.managed === true
+              && this.current.managedFailure === managedCheckout.managedFailure) return this.current
+            return this.setState({ phase: 'error', managed: true,
+              managedFailure: managedCheckout.managedFailure, failedOperation: 'check' })
+          }
           if (this.current.phase === 'unavailable' && this.current.managed === true) return this.current
           return this.setState({ phase: 'unavailable', managed: true })
         }
