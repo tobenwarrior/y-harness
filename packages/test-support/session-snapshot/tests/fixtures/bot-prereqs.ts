@@ -3,13 +3,14 @@
 import type { Context } from '@yharness/cordis'
 import type { AgentHandle } from '@yharness/agent'
 import type {} from '@yharness/agent-default-model'
+import type { SessionEvent } from '@yharness/session'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
 import { BotId } from '../../../../agents/bots/src/types.ts'
 import { botDomain } from '../../../../agents/bots/src/storage.ts'
 
 export const name = 'snapshot-bot-prereqs'
-export const inject = ['agentDefaultModel', 'agents', 'storageDomain']
+export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain']
 
 /**
  * Keep this fixture focused on Bot-owned Session setup; the full HTTP Session
@@ -26,6 +27,12 @@ export async function apply(ctx: Context): Promise<void> {
       meta: { cwd },
       agentOptions: { provider: selection.provider, model: selection.model },
     }))
+  }
+  const sessionEvents = new Map<string, readonly SessionEvent[]>()
+  for (const handle of handles) {
+    const session = ctx.sessions.get(handle.agent.id)
+    if (session === undefined) throw new Error(`snapshot Bot Session "${handle.agent.id}" is not live`)
+    sessionEvents.set(String(handle.agent.id), session.snapshotEvents())
   }
   const domain = await ctx.storageDomain.open(botDomain)
   const bots = domain.table('bots')
@@ -63,5 +70,6 @@ export async function apply(ctx: Context): Promise<void> {
       if (request.sessionId === undefined) throw new Error('snapshot Bot Session ids must be explicit')
       return { sessionId: request.sessionId }
     },
+    inspect: async (sessionId: SessionId) => ({ events: sessionEvents.get(String(sessionId)) ?? [] }),
   } as never)
 }

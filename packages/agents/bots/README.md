@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Bot-scoped memory is stored as required Session events, survives a cold Session, and is quoted into later Bot prompts.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Create a durable Bot roster whose rows keep one stable identity and one persiste
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, and edit Bots; a native provider may expose the same actions through its own tool bridge.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory; a native provider may expose the same actions through its own tool bridge.
 
 ### When to choose it
 
@@ -49,6 +49,10 @@ Creation writes a `provisioning` row before it asks the Session controller to ac
 
 The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own animated character components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping. The first open after the animated character rollout removes selected image references from existing Bot rows while leaving their attachment data untouched; the durable marker makes this migration run once. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference for future explicit selection, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
 
+### Durable memory
+
+`remember_bot_memory` appends a `bot/memory` Session event and waits for the normal Session flush barrier before returning the memory id. `list_bot_memory` reconstructs active entries from that log, and `forget_bot_memory` appends a deletion event. Memory text is bounded, quoted as reference data in the Bot system prompt, and never treated as prompt instructions. Memory writes and deletions are approval-gated in both ordinary and native tool bridges; repeated writes with the same id and text are idempotent.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -65,6 +69,7 @@ The service owns one storage-domain table and serializes writes that can allocat
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
+| [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
 | [`src/types.ts`](src/types.ts) | Browser-safe Bot ids, identities, accents, views, requests, and Remote error details. |
 
@@ -89,7 +94,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, and `edit_bot_profile` are approval-gated actions. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, `edit_bot_profile`, `remember_bot_memory`, and `forget_bot_memory` are approval-gated actions. `list_bot_memory` is read-only. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 
@@ -132,6 +137,20 @@ Tool schemas and bounded inspection results add tokens when used. Peer delivery 
 #### KV Cache effect
 
 The collaboration tool set is stable for a Bot scope. A roster or tool-schema change can invalidate a provider's request prefix; delivered peer messages affect only the recipient's later context.
+
+### Bot memory
+
+#### What the model sees
+
+The memory tools operate only on the Bot that owns the current live Session. The Host stores every remember and forget operation in that Session's append-only log, so a cold Session can reconstruct the same active memory set. A later system prompt includes bounded entries inside an explicit quoted-data section; memory text cannot override the Bot identity or tool policy.
+
+#### Token effect
+
+The memory tool schemas add a small fixed prefix cost. Each active memory contributes its bounded text to the Bot's next system prompt; listing memory returns the same entries only when requested.
+
+#### KV Cache effect
+
+The memory section is stable until a memory mutation. Remembering or forgetting changes the later system-prompt suffix while preserving earlier identity and deployment sections.
 
 ## Known Limitations and Deferred Work
 

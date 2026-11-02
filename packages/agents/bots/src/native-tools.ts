@@ -11,6 +11,7 @@ import {
   type BotDynamicToolEventResult,
   type SendBotMessageResult,
 } from './collaboration.ts'
+import { BotMemoryError, BotMemoryId } from './memory.ts'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 
 type JsonObject = Record<string, unknown>
@@ -73,7 +74,11 @@ export interface BotNativeToolProvider {
   readonly replay: (options: Pick<GenerateOptions, 'sessionId'>) => Promise<readonly BotDynamicToolEvent[]>
 }
 
-const BOT_TOOL_NAMES = ['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'] as const
+const BOT_TOOL_NAMES = [
+  'list_bots', 'inspect_bot', 'send_bot_message',
+  'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+  'create_bot', 'edit_bot_profile',
+] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
 const MAX_EVENT_KEYS = 64
@@ -275,7 +280,13 @@ function textArgument(arguments_: JsonObject, key: string): string | undefined {
 
 function collaborationFailure(error: unknown): BotNativeToolResult {
   if (error instanceof BotCollaborationError) return failure(error.code, error.message)
+  if (error instanceof BotMemoryError) return failure(error.code, error.message)
   return failure('unavailable', 'Bot collaboration is temporarily unavailable.')
+}
+
+function memoryToolFailure(error: unknown): BotNativeToolResult {
+  if (error instanceof BotMemoryError) return failure(error.code, error.message)
+  return failure('unavailable', 'Bot memory is temporarily unavailable.')
 }
 
 function listTool(client: BotCollaborationClient): BotNativeTool {
@@ -387,6 +398,78 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
   }
 }
 
+function memoryListTool(client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'list_bot_memory',
+    description: 'List this Bot’s durable memories as quoted reference data.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async (_arguments, context) => {
+      if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      if (client.memory === undefined) return failure('unavailable', 'Bot memory is unavailable.')
+      try { return output(await client.memory.list()) } catch (error: unknown) { return memoryToolFailure(error) }
+    },
+  }
+}
+
+function memoryRememberTool(client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'remember_bot_memory',
+    description: 'Save one durable memory for this Bot when the user asks; future prompts quote it as reference data.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Concise fact or preference to remember.' },
+        memoryId: { type: 'string', description: 'Optional retry identity.' },
+      },
+      required: ['text'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot memory changes are disabled by this Session approval policy.')
+      if (client.memory === undefined) return failure('unavailable', 'Bot memory is unavailable.')
+      let approved: boolean
+      try { approved = await context.requestApproval('Save a durable memory for this Bot.') }
+      catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error) }
+      if (!approved) return failure('approval-denied', 'The Bot memory was not saved.')
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const text = textArgument(arguments_, 'text')
+      if (text === undefined) return failure('invalid-request', 'text is required.')
+      const memoryId = textArgument(arguments_, 'memoryId')
+      try {
+        return output(await client.memory.remember({ text, ...(memoryId === undefined ? {} : { memoryId: BotMemoryId(memoryId) }) }))
+      } catch (error: unknown) { return memoryToolFailure(error) }
+    },
+  }
+}
+
+function memoryForgetTool(client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'forget_bot_memory',
+    description: 'Forget one durable memory from this Bot using the exact id returned by list_bot_memory.',
+    inputSchema: {
+      type: 'object',
+      properties: { memoryId: { type: 'string', description: 'Exact memory id to forget.' } },
+      required: ['memoryId'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+      if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot memory changes are disabled by this Session approval policy.')
+      if (client.memory === undefined) return failure('unavailable', 'Bot memory is unavailable.')
+      let approved: boolean
+      try { approved = await context.requestApproval('Forget a durable memory for this Bot.') }
+      catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : memoryToolFailure(error) }
+      if (!approved) return failure('approval-denied', 'The Bot memory was not forgotten.')
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const memoryId = textArgument(arguments_, 'memoryId')
+      if (memoryId === undefined) return failure('invalid-request', 'memoryId is required.')
+      try {
+        await client.memory.forget({ memoryId: BotMemoryId(memoryId) })
+        return output({ forgotten: true })
+      } catch (error: unknown) { return memoryToolFailure(error) }
+    },
+  }
+}
+
 /**
  * Build the native action provider for one Host-owned Bot roster.
  * @param host - Host callbacks for binding, durable observation, and replay.
@@ -441,7 +524,11 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           catch (error: unknown) { return collaborationFailure(error) }
         },
       })
-      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit')]
+      return [
+        listTool(client), inspectTool(client), sendTool(client, host, sessionId),
+        memoryListTool(client), memoryRememberTool(client), memoryForgetTool(client),
+        managementTool('create'), managementTool('edit'),
+      ]
     },
     observe: async (event) => {
       if (!BOT_TOOL_NAME_SET.has(event.name)) throw new Error('Unknown Bot native action.')

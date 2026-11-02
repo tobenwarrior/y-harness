@@ -10,6 +10,8 @@ import {
   BotMessageId,
   type BotCollaborationClient,
 } from '../src/collaboration.ts'
+import { BotMemoryId } from '../src/memory.ts'
+import type { BotMemoryClient } from '../src/memory.ts'
 import { BotId } from '../src/types.ts'
 import { installBotCollaborationTools } from '../src/scoped-tools.ts'
 
@@ -25,6 +27,13 @@ function client(): BotCollaborationClient {
       sender: { id: BotId('bot-alpha'), name: 'Alpha', availability: 'idle', state: 'active' },
       target: { id: request.targetBotId, name: 'Beta', availability: 'idle', state: 'active' },
     })),
+    memory: {
+      list: vi.fn<BotMemoryClient['list']>(async () => []),
+      remember: vi.fn<BotMemoryClient['remember']>(async request => ({
+        id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 1,
+      })),
+      forget: vi.fn<BotMemoryClient['forget']>(async () => {}),
+    },
   }
 }
 
@@ -72,6 +81,7 @@ describe('scoped Bot collaboration tools', () => {
     try {
       expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'send_bot_message',
+        'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       ])
       await expect(execute(h.ctx, h.agent, 'list_bots', {})).resolves.toMatchObject({ isError: false })
       expect(JSON.parse(text(await execute(h.ctx, h.agent, 'list_bots', {})))).toEqual([
@@ -79,6 +89,8 @@ describe('scoped Bot collaboration tools', () => {
       ])
       const inspected = await execute(h.ctx, h.agent, 'inspect_bot', { botId: 'bot-beta' })
       expect(JSON.parse(text(inspected))).toMatchObject({ bot: { id: 'bot-beta', name: 'Beta' }, recent: [] })
+      const memories = await execute(h.ctx, h.agent, 'list_bot_memory', {})
+      expect(JSON.parse(text(memories))).toEqual([])
 
       const denied = await execute(h.ctx, h.agent, 'send_bot_message', {
         targetBotId: 'bot-beta', text: 'hello', messageId: 'retry-1',
