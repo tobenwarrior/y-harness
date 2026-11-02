@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Durable multi-Bot groups keep membership and transcript state while delivering each human message to every real member Session.
 
 ## Table of Contents
 
@@ -57,12 +57,13 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns one storage-domain table and serializes writes that can allocate or update a Bot. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project the stored row without waking a cold Session.
+The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project stored rows without waking a cold Session. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions.
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, scoped prompt/tools, and attachment admission. |
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
+| [`src/group-chat.ts`](src/group-chat.ts) | Durable 2–6-member groups, transcript projection, per-recipient delivery state, and response projection. |
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
@@ -133,6 +134,20 @@ Tool schemas and bounded inspection results add tokens when used. Peer delivery 
 
 The collaboration tool set is stable for a Bot scope. A roster or tool-schema change can invalidate a provider's request prefix; delivered peer messages affect only the recipient's later context.
 
+### Bot groups
+
+#### What the model sees
+
+The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A human group message is delivered as a normal user-role message to every member's existing Session; it never routes all members through one coordinator model. When a member produces a real assistant message, the Host records that response in the group transcript.
+
+#### Token effect
+
+Group membership and transcript rows add tokens only when a Client or model-facing surface reads them. A group send adds the framed user message to each recipient's next request independently.
+
+#### KV Cache effect
+
+Group metadata does not change a Bot's prompt prefix. A delivered group message invalidates only the receiving Bot Session's later request prefix.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -142,6 +157,8 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **Group response attribution is bounded to admitted deliveries** — an assistant response is projected only while that Bot has an accepted, not-yet-responded group delivery. This prevents unrelated historical output from being copied into every group, but a response generated after a process loss may require a new group message to establish a fresh delivery edge.
+- **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 
 <a id="dev-note"></a>
 ### Dev Note

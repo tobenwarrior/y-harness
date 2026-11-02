@@ -3,6 +3,7 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import type { Agent } from '@yharness/agent'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
+import { freezeMessage, MessageId } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
@@ -201,6 +202,164 @@ describe('durable Bot roster', () => {
       expect(targetFollowup).toHaveBeenCalledTimes(1)
       expect(h.resolveAgent).toHaveBeenCalledWith(target.bot.sessionId)
       expect(h.flush).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists a multi-Bot group and delivers one human message to every member', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await first.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const created = await h.service.createGroup({
+        name: 'Launch room',
+        botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id],
+      })
+      expect(created.group).toMatchObject({ name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+
+      await expect(h.service.sendGroupMessage({
+        groupId: created.group.id,
+        text: 'Coordinate the release plan.',
+        messageId: 'bot-group-message-1',
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'accepted' },
+          { botId: beta.bot.id, status: 'accepted' },
+          { botId: gamma.bot.id, status: 'accepted' },
+        ],
+      })
+      expect(h.followups.map(followup => followup.mock.calls[0]?.[0])).toEqual([
+        expect.objectContaining({ role: 'user', source: { kind: 'user' } }),
+        expect.objectContaining({ role: 'user', source: { kind: 'user' } }),
+        expect.objectContaining({ role: 'user', source: { kind: 'user' } }),
+      ])
+      expect(h.followups[0]?.mock.calls[0]?.[0].content).toEqual([
+        { type: 'text', text: 'Message from group "Launch room":\nCoordinate the release plan.' },
+      ])
+      await expect(h.service.sendGroupMessage({
+        groupId: created.group.id,
+        text: 'Coordinate the release plan.',
+        messageId: 'bot-group-message-1',
+      })).resolves.toMatchObject({ status: 'duplicate' })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+
+      const firstAgent = h.agents[0]
+      if (firstAgent === undefined) throw new Error('first group Bot Agent was not created')
+      const responseEvent = firstAgent.session.append('assistant/message', {
+        turn: 1,
+        step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-alpha'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Alpha is ready.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', firstAgent.session, responseEvent)
+      await expect(h.service.inspectGroup({ groupId: created.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Coordinate the release plan.' },
+          { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha is ready.' },
+        ],
+      })
+
+      await close(h.ctx)
+      const reopened = await harness(pool, undefined, undefined, [
+        String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+      ])
+      try {
+        await expect(reopened.service.listGroups({})).resolves.toMatchObject({
+          groups: [{ id: created.group.id, name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] }],
+        })
+        await expect(reopened.service.inspectGroup({ groupId: created.group.id })).resolves.toMatchObject({
+          group: { id: created.group.id },
+          messages: [
+            { sender: { kind: 'user' }, text: 'Coordinate the release plan.' },
+            { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha is ready.' },
+          ],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!h.ctx.disposed) await close(h.ctx)
+    }
+  })
+
+  it('rejects duplicate members and groups with fewer than two Bots', async () => {
+    const h = await harness()
+    try {
+      const alpha = await h.service.create({ name: 'Alpha', cwd: '/tmp' })
+      await expect(h.service.createGroup({ name: 'Invalid', botIds: [alpha.bot.id] })).rejects.toThrow('at least two')
+      await expect(h.service.createGroup({ name: 'Invalid', botIds: [alpha.bot.id, alpha.bot.id] })).rejects.toThrow('unique')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries only the failed member of a partially delivered group message', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const liveAgents = new Map(h.agents.map(agent => [String(agent.id), agent]))
+      let failBeta = true
+      h.resolveAgent.mockImplementation(async (sessionId) => {
+        if (sessionId === beta.bot.sessionId && failBeta) {
+          failBeta = false
+          return { error: new Error('Beta is offline') }
+        }
+        const agent = liveAgents.get(String(sessionId))
+        return agent === undefined ? { error: new Error('Session is missing') } : { agent }
+      })
+      const group = await h.service.createGroup({ name: 'Release room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: 'Prepare the release.',
+        messageId: 'bot-group-message-partial',
+      })).resolves.toMatchObject({
+        status: 'partial',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'accepted' },
+          { botId: beta.bot.id, status: 'failed' },
+          { botId: gamma.bot.id, status: 'accepted' },
+        ],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(h.followups[1]).toHaveBeenCalledTimes(0)
+      expect(h.followups[2]).toHaveBeenCalledTimes(1)
+
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: 'Prepare the release.',
+        messageId: 'bot-group-message-partial',
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'duplicate' },
+          { botId: beta.bot.id, status: 'accepted' },
+          { botId: gamma.bot.id, status: 'duplicate' },
+        ],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(h.followups[1]).toHaveBeenCalledTimes(1)
+      expect(h.followups[2]).toHaveBeenCalledTimes(1)
     } finally {
       await close(h.ctx)
     }

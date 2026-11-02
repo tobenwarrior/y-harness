@@ -13,8 +13,19 @@ import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
-import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
+import { BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
+import { BotGroupService, botGroupDomain } from './group-chat.ts'
+import type {
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+} from './group-chat.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
@@ -62,7 +73,40 @@ export type {
   BotMessageSource,
   SendBotMessageRequest,
   SendBotMessageResult,
+  SendExternalBotMessageRequest,
 } from './collaboration.ts'
+export {
+  BotGroupError,
+  BotGroupId,
+  BotGroupMessageId,
+  BotGroupService,
+  botGroupDomain,
+  botGroupRecordSchema,
+  botGroupMessageRecordSchema,
+  botGroupDeliveryRecordSchema,
+} from './group-chat.ts'
+export type {
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupDeliveryHost,
+  BotGroupDeliveryRecord,
+  BotGroupDeliveryView,
+  BotGroupDomain,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupMemberView,
+  BotGroupMessageRecord,
+  BotGroupMessageSender,
+  BotGroupMessageSenderView,
+  BotGroupMessageView,
+  BotGroupRecord,
+  BotGroupSendRequest,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+  BotGroupView,
+} from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
 
@@ -224,6 +268,8 @@ export class BotService extends TypertRemoteService {
   static Config = Config
 
   private readonly ready: Promise<Domain<typeof botDomain>>
+  private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
+  private readonly groupService: Promise<BotGroupService>
   private readonly initialized: PromiseLike<unknown>
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
@@ -286,6 +332,31 @@ export class BotService extends TypertRemoteService {
         if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
+    })
+    this.groupDomain = ctx.storageDomain.open(botGroupDomain)
+    this.groupService = this.groupDomain.then(domain => new BotGroupService(domain, {
+      listBots: async () => (await this.list({})).bots,
+      deliverToBot: async request => this.collaboration.sendExternal({
+        targetBotId: request.targetBotId,
+        groupName: request.groupName,
+        text: request.text,
+        messageId: BotMessageId(String(request.messageId)),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      }),
+    }))
+    ctx.on('session/event', (session, event) => {
+      if (event.type !== 'assistant/message') return
+      const record = this.recordsBySession.get(String(session.id))
+      if (record === undefined) return
+      const text = event.data.message.content
+        .flatMap(block => block.type === 'text' ? [block.text] : [])
+        .join('\n')
+        .trim()
+      if (text === '') return
+      void this.groupService.then(service => service.recordBotResponse(record.id, text, String(event.data.message.id)))
+        .catch((error: unknown) => {
+          ctx.logger.warn(`bots: group response projection failed: ${error instanceof Error ? error.message : String(error)}`)
+        })
     })
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
@@ -376,23 +447,33 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/created', async ({ agent }) => { await this.installPrompt(agent) })
     ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {
-      const domain = await this.ready
+      let domain: Domain<typeof botDomain> | undefined
+      let groupDomain: Domain<typeof botGroupDomain> | undefined
       let cleanup: () => Promise<void>
       try {
+        domain = await this.ready
+        groupDomain = await this.groupDomain
+        const openedDomain = domain
+        const openedGroupDomain = groupDomain
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
+          await this.groupService.then(service => service.whenIdle())
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
+            openedDomain.close(),
+            openedGroupDomain.close(),
           ])
-          await domain.close()
         })
       } catch (error) {
         this.stopping = true
-        await domain.close()
+        await Promise.all([
+          ...(domain === undefined ? [] : [domain.close()]),
+          ...(groupDomain === undefined ? [] : [groupDomain.close()]),
+        ])
         throw error
       }
       return cleanup
@@ -443,6 +524,30 @@ export class BotService extends TypertRemoteService {
         .map(([, record]) => this.view(record))
         .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
     }
+  }
+
+  /** List durable multi-Bot groups and current member projections. */
+  @Remote('listGroups')
+  async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue> {
+    return (await this.getGroupService()).list(request)
+  }
+
+  /** Create or idempotently reuse one durable multi-Bot group. */
+  @Remote('createGroup')
+  async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
+    return (await this.getGroupService()).create(request)
+  }
+
+  /** Read one durable group transcript. */
+  @Remote('inspectGroup')
+  async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
+    return (await this.getGroupService()).inspect(request)
+  }
+
+  /** Persist and fan out one human group message to every member Bot. */
+  @Remote('sendGroupMessage')
+  async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
+    return (await this.getGroupService()).send(request)
   }
 
   /**
@@ -784,6 +889,11 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  private async getGroupService(): Promise<BotGroupService> {
+    await this.initialized
+    return await this.groupService
   }
 
   private emitChanged(): void {

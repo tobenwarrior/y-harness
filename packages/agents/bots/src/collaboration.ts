@@ -122,6 +122,20 @@ export interface SendBotMessageResult {
   readonly target: BotCollaborationRosterEntry
 }
 
+/** Explicit human/group delivery request that is not attributed to a Bot sender. */
+export interface SendExternalBotMessageRequest {
+  /** Durable recipient identity. */
+  readonly targetBotId: BotId
+  /** Display name of the group that originated the message. */
+  readonly groupName: string
+  /** Message text. */
+  readonly text: string
+  /** Stable retry identity. */
+  readonly messageId: BotMessageId
+  /** Transient caller cancellation. */
+  readonly signal?: AbortSignal
+}
+
 /** Provider-facing operations scoped to one trusted live Bot Agent. */
 export interface BotCollaborationClient {
   /** Sender identity captured from the live Agent, never from model arguments. */
@@ -216,9 +230,8 @@ function pendingInboxMessages(events: readonly SessionEvent[]): UserMessage[] {
 
 function hasMessage(events: readonly SessionEvent[], messageId: BotMessageId): boolean {
   return events.some(event => event.type === 'user/message'
-    && event.data.id === messageId
-    && event.data.source.kind === 'agent-message')
-    || pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === 'agent-message')
+    && event.data.id === messageId)
+    || pendingInboxMessages(events).some(message => message.id === messageId)
 }
 
 function messageText(sender: BotCollaborationRosterEntry, text: string): string {
@@ -255,6 +268,61 @@ export class BotCollaborationService {
       list: () => this.listFor(sender.id),
       inspect: botId => this.inspectFor(sender.id, botId),
       send: request => this.sendFor(sender.id, request),
+    }
+  }
+
+  /**
+   * Deliver a user/group message to one real Bot Session.
+   *
+   * This path intentionally does not manufacture a Bot sender identity. The
+   * recipient sees a normal user-role message with the group name in its text,
+   * while the durable group domain keeps the richer sender and membership data.
+   *
+   * @param request - Target, group label, text, and retry identity.
+   * @returns whether the inbox admission was new or already present.
+   */
+  async sendExternal(request: SendExternalBotMessageRequest): Promise<'accepted' | 'duplicate'> {
+    throwIfCancelled(request.signal)
+    const text = request.text.trim()
+    if (text.length === 0 || text.length > MAX_MESSAGE_LENGTH) {
+      throw new BotCollaborationError('message-invalid', `Bot messages must contain 1-${String(MAX_MESSAGE_LENGTH)} characters`)
+    }
+    if (request.messageId.length === 0 || request.messageId.length > MAX_MESSAGE_ID_LENGTH) {
+      throw new BotCollaborationError('message-invalid', `Bot message ids must contain 1-${String(MAX_MESSAGE_ID_LENGTH)} characters`)
+    }
+    const bots = await this.host.listBots()
+    throwIfCancelled(request.signal)
+    const target = bots.find(bot => bot.id === request.targetBotId)
+    if (target === undefined) throw new BotCollaborationError('target-not-found', `Bot "${request.targetBotId}" was not found`)
+    const prior = this.tails.get(target.sessionId) ?? Promise.resolve()
+    const run = prior.then(async () => {
+      throwIfCancelled(request.signal)
+      const before = await this.host.inspectSession(target.sessionId)
+      throwIfCancelled(request.signal)
+      if (hasMessage(before.events, request.messageId)) {
+        await this.flushTarget(target.sessionId, target.name)
+        return 'duplicate' as const
+      }
+      const resolved = await this.host.resolveAgent(target.sessionId)
+      throwIfCancelled(request.signal)
+      if (!('agent' in resolved)) {
+        throw new BotCollaborationError('target-unavailable', `Bot "${target.name}" could not be resumed`)
+      }
+      resolved.agent.followup(freezeMessage({
+        id: request.messageId,
+        role: 'user',
+        content: [{ type: 'text', text: `Message from group "${request.groupName}":\n${text}` }],
+        source: { kind: 'user' },
+      }))
+      await this.flushTarget(target.sessionId, target.name)
+      return 'accepted' as const
+    })
+    const tail = run.then(() => undefined, () => undefined)
+    this.tails.set(target.sessionId, tail)
+    try {
+      return await run
+    } finally {
+      if (this.tails.get(target.sessionId) === tail) this.tails.delete(target.sessionId)
     }
   }
 

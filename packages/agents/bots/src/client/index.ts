@@ -1,6 +1,22 @@
 /** Browser-safe Bot vocabulary. @module @yharness/bots/client */
 
 export type * from '../types.ts'
+export type {
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupDeliveryView,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupMemberView,
+  BotGroupMessageSenderView,
+  BotGroupMessageView,
+  BotGroupSendRequest,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+  BotGroupView,
+} from '../group-chat.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from '../types.ts'
 
 /** The Host Bot service has no independent Client lifecycle; API remotes own its calls. */
