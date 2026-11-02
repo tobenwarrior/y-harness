@@ -1164,6 +1164,9 @@ importers:
       '@yharness/attachment':
         specifier: workspace:*
         version: link:../../attachment/attachment
+      '@yharness/avatar-generation':
+        specifier: workspace:*
+        version: link:../avatar-generation
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
@@ -12799,12 +12802,12 @@ importers:
       '@yharness/skill-filesystem':
         specifier: workspace:*
         version: link:../skill-filesystem
-      '@yharness/subprocess':
-        specifier: workspace:*
-        version: link:../../subprocess/subprocess
       '@yharness/storage-domain':
         specifier: workspace:*
         version: link:../../storage/storage-domain
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
@@ -18240,6 +18243,7 @@ packages:
   '@smithy/core@3.35.0':
     resolution: {integrity: sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}

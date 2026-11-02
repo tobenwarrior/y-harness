@@ -23,7 +23,7 @@ Create a durable Bot roster whose rows keep one stable identity and one persiste
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope also receives provider-neutral `list_bots`, `inspect_bot`, and approval-gated `send_bot_message` tools; a native provider may expose the same actions through its own tool bridge.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, and edit Bots; a native provider may expose the same actions through its own tool bridge.
 
 ### When to choose it
 
@@ -89,7 +89,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message` is available only as an explicit, approval-gated side effect; merely mentioning or inspecting another Bot never sends anything.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, and `edit_bot_profile` are approval-gated actions. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 

@@ -1,10 +1,11 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
+import type {} from '@yharness/avatar-generation'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
@@ -15,6 +16,7 @@ import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
+import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import type {
   BotAvailability,
@@ -216,6 +218,7 @@ async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<v
 
 /** Host service that owns the durable roster and its Session mappings. */
 export class BotService extends TypertRemoteService {
+  private manageBots!: NonNullable<BotNativeToolHost['manage']>
   static inject = ['agents', 'storageDomain', 'sessionController', 'sessions', 'attachments', 'systemPrompt', 'tools']
 
   static Config = Config
@@ -295,6 +298,68 @@ export class BotService extends TypertRemoteService {
           throw error
         }
       },
+      manage: this.manageBots = async (action, args, context) => {
+        const text = (key: string): string | undefined => {
+          const value = args[key]
+          if (value === undefined) return undefined
+          if (typeof value !== 'string' || value.trim() === '') throw new Error(`Invalid ${key}.`)
+          return value.trim()
+        }
+        const name = text('name')
+        const description = normalizeOptionalText('Bot description', text('description'), 240)
+        const identityText = text('identity')
+        const accentText = text('accent')
+        const pictureDescription = text('pictureDescription')
+        const identity = BOT_IDENTITIES.find(value => value === identityText)
+        const accent = BOT_ACCENTS.find(value => value === accentText)
+        if (identityText !== undefined && identity === undefined) throw new Error('Invalid Bot character.')
+        if (accentText !== undefined && accent === undefined) throw new Error('Invalid Bot color.')
+        if (action === 'edit' && name === undefined && description === undefined && identity === undefined && accent === undefined && pictureDescription === undefined) {
+          throw new Error('Specify a profile change.')
+        }
+        const setPicture = async (botId: BotId): Promise<void> => {
+          if (pictureDescription === undefined) return
+          const generator = ctx.get('avatarGeneration')
+          if (generator === undefined) throw new Error('Avatar generation is unavailable.')
+          const preview = await generator.generate({ description: pictureDescription }, context.signal)
+          context.signal.throwIfAborted()
+          const { attachment } = await generator.commit(preview)
+          context.signal.throwIfAborted()
+          await this.updateAvatarImpl({ botId, avatar: attachment }, context.signal)
+        }
+        context.signal.throwIfAborted()
+        if (action === 'create') {
+          if (name === undefined) throw new Error('Bot name is required.')
+          const sender = context.sessionId === undefined ? undefined : this.recordsBySession.get(String(context.sessionId))
+          if (sender === undefined) throw new Error('Bot management requires a live Bot.')
+          const digest = createHash('sha256').update(`${context.sessionId}:${context.threadId}:${context.turnId}:${context.callId}`).digest('hex')
+          const created = await this.createImpl({ id: BotId(`bot-${digest}`), name,
+            cwd: sender.cwd,
+            ...(description === undefined ? {} : { description }),
+            ...(identity === undefined ? {} : { identity }), ...(accent === undefined ? {} : { accent }) }, context.signal)
+          try {
+            await setPicture(created.bot.id)
+          } catch {
+            return { id: created.bot.id, name: created.bot.name, state: created.bot.state,
+              pictureError: 'The Bot was created, but its picture could not be generated.' }
+          }
+          return { id: created.bot.id, name: created.bot.name, state: created.bot.state }
+        }
+        const current = context.sessionId === undefined ? undefined : this.recordsBySession.get(String(context.sessionId))
+        const botId = BotId(text('botId') ?? current?.id ?? '')
+        if (!(await this.list({})).bots.some(bot => bot.id === botId)) throw new Error('Bot not found.')
+        if (name !== undefined) normalizeName(name)
+        context.signal.throwIfAborted()
+        await setPicture(botId)
+        if (identity !== undefined || accent !== undefined) {
+          await this.updateAppearanceImpl({ botId, ...(identity === undefined ? {} : { identity }),
+            ...(accent === undefined ? {} : { accent }),
+            clearAvatar: identity !== undefined && pictureDescription === undefined }, context.signal)
+        }
+        if (name !== undefined) await this.renameImpl({ botId, name }, context.signal)
+        if (description !== undefined) await this.updateBotDescription(botId, description, context.signal)
+        return { id: botId, updated: true }
+      },
       persist: async (event) => {
         await this.ready
         const session = ctx.sessions.get(event.sessionId)
@@ -352,6 +417,19 @@ export class BotService extends TypertRemoteService {
     return this.collaboration.bind(agent)
   }
 
+  private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
+    return this.serialize(async () => {
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(botId)
+      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      const next = { ...current, description, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      signal?.throwIfAborted()
+      await bots.put(botId, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+    })
+  }
+
   /**
    * List the durable Bot roster without activating cold Sessions.
    * @param _request - Empty list request reserved for future paging.
@@ -379,9 +457,14 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('create')
   async create(request: BotCreateRequest): Promise<BotCreateValue> {
+    return this.createImpl(request)
+  }
+
+  private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
     return this.serialize(async () => {
       const normalized = normalizeCreate(request)
       const bots = (await this.getDomain()).table('bots')
+      signal?.throwIfAborted()
       const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
       const existing = bots.get(id)
       if (existing !== undefined) {
@@ -435,6 +518,10 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('rename')
   async rename(request: BotRenameRequest): Promise<BotRenameValue> {
+    return this.renameImpl(request)
+  }
+
+  private async renameImpl(request: BotRenameRequest, signal?: AbortSignal): Promise<BotRenameValue> {
     return this.serialize(async () => {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
@@ -445,6 +532,7 @@ export class BotService extends TypertRemoteService {
         throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
       }
       const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      signal?.throwIfAborted()
       await bots.put(id, next)
       this.recordsBySession.set(String(next.sessionId), next)
       this.emitChanged()
@@ -461,6 +549,10 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('updateAppearance')
   async updateAppearance(request: BotAppearanceUpdateRequest): Promise<BotAppearanceUpdateValue> {
+    return this.updateAppearanceImpl(request)
+  }
+
+  private async updateAppearanceImpl(request: BotAppearanceUpdateRequest, signal?: AbortSignal): Promise<BotAppearanceUpdateValue> {
     return this.serialize(async () => {
       if (request === null || typeof request !== 'object') return badRequest('Bot appearance request must be an object')
       const id = normalizeBotId(request.botId)
@@ -492,6 +584,7 @@ export class BotService extends TypertRemoteService {
       } else {
         next = withAppearance
       }
+      signal?.throwIfAborted()
       await bots.put(id, next)
       this.emitChanged()
       return { bot: this.view(next) }
@@ -505,6 +598,10 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('updateAvatar')
   async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue> {
+    return this.updateAvatarImpl(request)
+  }
+
+  private async updateAvatarImpl(request: BotAvatarUpdateRequest, signal?: AbortSignal): Promise<BotAvatarUpdateValue> {
     return this.serialize(async () => {
       if (request === null || typeof request !== 'object') return badRequest('Bot avatar request must be an object')
       const id = normalizeBotId(request.botId)
@@ -524,6 +621,7 @@ export class BotService extends TypertRemoteService {
       } else {
         next = { ...current, avatar, updatedAt }
       }
+      signal?.throwIfAborted()
       await bots.put(id, next)
       this.emitChanged()
       return { bot: this.view(next) }
@@ -657,7 +755,7 @@ export class BotService extends TypertRemoteService {
         // Bot names and descriptions are user-authored prose, not variables.
         interpolate: false,
       })
-      installBotCollaborationTools(scope, () => this.collaborationFor(agent))
+      installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
     })
     this.promptFibers.set(agent, fiber)
     await fiber

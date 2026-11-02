@@ -11,7 +11,7 @@ import {
   type BotDynamicToolEventResult,
   type SendBotMessageResult,
 } from './collaboration.ts'
-import { BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 
 type JsonObject = Record<string, unknown>
 type SafeJson = null | boolean | number | string | SafeJson[] | { readonly [key: string]: SafeJson }
@@ -62,6 +62,8 @@ export interface BotNativeToolHost {
   readonly persist: (event: BotDynamicToolEvent) => Promise<void>
   /** Read the persisted lifecycle records for a Bot-owned Session after a native restart. */
   readonly replay: (sessionId: SessionId) => Promise<readonly BotDynamicToolEvent[]>
+  /** Create or update a Bot owned by this Host. */
+  readonly manage?: (action: 'create' | 'edit', args: JsonObject, context: BotNativeToolContext) => Promise<unknown>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -71,7 +73,7 @@ export interface BotNativeToolProvider {
   readonly replay: (options: Pick<GenerateOptions, 'sessionId'>) => Promise<readonly BotDynamicToolEvent[]>
 }
 
-const BOT_TOOL_NAMES = ['list_bots', 'inspect_bot', 'send_bot_message'] as const
+const BOT_TOOL_NAMES = ['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
 const MAX_EVENT_KEYS = 64
@@ -397,7 +399,49 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       if (sessionId === undefined) return []
       const client = await host.bind(sessionId)
       if (client === undefined) return []
-      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId)]
+      const managementTool = (action: 'create' | 'edit'): BotNativeTool => ({
+        name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
+        description: action === 'create'
+          ? 'Create a persistent Bot when the user asks. Supply its name and optional role.'
+          : 'Change a Bot profile when the user asks, including its name, character, color or generated picture.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            botId: { type: 'string', description: 'Bot id to edit; omit to edit yourself.' },
+            name: { type: 'string' }, description: { type: 'string' },
+            identity: { type: 'string', enum: BOT_IDENTITIES }, accent: { type: 'string', enum: BOT_ACCENTS },
+            pictureDescription: { type: 'string', description: 'Generate a profile picture from this description.' },
+          },
+          ...(action === 'create' ? { required: ['name'] } : {}),
+          additionalProperties: false,
+        },
+        execute: async (args, context) => {
+          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          if (context.approvalPolicy === 'never' || !await context.requestApproval(
+            action === 'create' ? 'Create a Bot.' : 'Change a Bot profile.',
+          )) return failure('approval-denied', 'The Bot action was not approved.')
+          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          if (host.manage === undefined) return failure('unavailable', 'Bot management is unavailable.')
+          if (action === 'create' && context.sessionId !== undefined) {
+            const events = await host.replay(context.sessionId)
+            const ownIndex = events.findLastIndex(event => event.phase === 'started' && event.name === 'create_bot'
+              && event.callId === context.callId && event.threadId === context.threadId && event.turnId === context.turnId)
+            const previous = events.filter((_event, index) => index !== ownIndex)
+            const completed = new Set(previous.filter(event => event.phase === 'settled'
+              && (event.result?.success === true || NO_EFFECT_FAILURES.has(eventErrorCode(event) ?? ''))).map(dynamicCallKey))
+            const lastRosterCheck = previous.findLastIndex(event => event.phase === 'settled'
+              && event.name === 'list_bots' && event.result?.success === true)
+            if (previous.some((event, index) => index > lastRosterCheck && event.phase === 'started' && event.name === 'create_bot'
+              && !completed.has(dynamicCallKey(event)))) {
+              return failure('uncertain-outcome', 'An earlier Bot creation may have completed. Check the Bot list before trying again.')
+            }
+            if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          }
+          try { return output(await host.manage(action, args, context)) }
+          catch (error: unknown) { return collaborationFailure(error) }
+        },
+      })
+      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit')]
     },
     observe: async (event) => {
       if (!BOT_TOOL_NAME_SET.has(event.name)) throw new Error('Unknown Bot native action.')

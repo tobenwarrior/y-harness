@@ -124,7 +124,47 @@ describe('durable Bot roster', () => {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       expect(provider).toBeDefined()
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
-      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message'])
+      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
+      const context = {
+        callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const create = tools.find(tool => tool.name === 'create_bot')!
+      expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
+      const bots = (await h.service.list({})).bots
+      const research = bots.find(bot => bot.name === 'Research')!
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
+      expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
+      const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
+      expect((await edit.execute({ botId: research.id, name: 'Scout', identity: 'cloud', description: 'Research markets' }, context)).success).toBe(true)
+      expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({
+        name: 'Scout', identity: 'cloud', description: 'Research markets', sessionId: research.sessionId,
+      })
+      const partial = await create.execute({ name: 'Writer', pictureDescription: 'An owl' }, { ...context, callId: 'create-picture' })
+      expect(partial.success).toBe(true)
+      expect(partial.contentItems[0]?.text).toContain('pictureError')
+      expect((await h.service.list({})).bots.filter(bot => bot.name === 'Writer')).toHaveLength(1)
+      const avatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 64, height: 64,
+      }
+      const generator = {
+        generate: vi.fn(async () => ({ data: 'AQID', mediaType: 'image/png' as const })),
+        commit: vi.fn(async () => ({ attachment: avatar })),
+      }
+      h.ctx.provide('avatarGeneration', generator as never)
+      expect((await edit.execute({ botId: research.id, pictureDescription: 'A friendly fox' }, context)).success).toBe(true)
+      expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({ avatar })
+      const cancelled = new AbortController()
+      generator.generate.mockImplementation(async () => {
+        cancelled.abort()
+        return { data: 'AQID', mediaType: 'image/png' }
+      })
+      expect((await edit.execute({ botId: research.id, pictureDescription: 'A cat' }, {
+        ...context, signal: cancelled.signal,
+      })).success).toBe(false)
+      expect(generator.commit).toHaveBeenCalledOnce()
+      expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({ avatar })
       await expect(provider!.resolve({ sessionId: SessionId('ordinary-session') })).resolves.toEqual([])
     } finally {
       await close(h.ctx)

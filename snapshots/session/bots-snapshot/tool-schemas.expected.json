@@ -46,6 +46,58 @@
       }
     },
     {
+      "name": "create_bot",
+      "description": "Create a persistent Bot when the user requests it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "botId": {
+            "type": "string",
+            "description": "Bot id to edit; omit to edit yourself."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "sparkle",
+              "goal",
+              "browse",
+              "skill",
+              "workspace",
+              "round",
+              "cloud",
+              "tile",
+              "clover",
+              "heart",
+              "drop",
+              "oval",
+              "triangle"
+            ]
+          },
+          "accent": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "teal",
+              "amber",
+              "violet",
+              "rose",
+              "lime"
+            ]
+          },
+          "pictureDescription": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
       "name": "create_goal",
       "description": "Create a persisted goal that keeps this session working across automatic continuation rounds. Use it when the direct human request is a long-running objective, even if the user did not say \"goal\"; not for single-turn work.",
       "parameters": {
@@ -105,6 +157,58 @@
           "old_string",
           "new_string"
         ]
+      }
+    },
+    {
+      "name": "edit_bot_profile",
+      "description": "Edit a Bot name, character, color or generated picture when requested.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "botId": {
+            "type": "string",
+            "description": "Bot id to edit; omit to edit yourself."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "sparkle",
+              "goal",
+              "browse",
+              "skill",
+              "workspace",
+              "round",
+              "cloud",
+              "tile",
+              "clover",
+              "heart",
+              "drop",
+              "oval",
+              "triangle"
+            ]
+          },
+          "accent": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "teal",
+              "amber",
+              "violet",
+              "rose",
+              "lime"
+            ]
+          },
+          "pictureDescription": {
+            "type": "string"
+          }
+        }
       }
     },
     {

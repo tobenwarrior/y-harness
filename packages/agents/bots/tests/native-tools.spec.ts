@@ -30,6 +30,46 @@ function context(overrides: Partial<BotNativeToolContext> = {}): BotNativeToolCo
 }
 
 describe('native Bot actions', () => {
+  it('offers bot creation and profile editing actions to a bot', async () => {
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [] })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['create_bot', 'edit_bot_profile']))
+  })
+  it('passes an approved creation request to the Host and preserves cancellation', async () => {
+    const manage = vi.fn(async () => ({ id: 'bot-created', name: 'Research' }))
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [], manage })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const create = tools.find(tool => tool.name === 'create_bot')
+    if (create === undefined) throw new Error('create_bot missing')
+    await expect(create.execute({ name: 'Research' }, context())).resolves.toMatchObject({ success: true })
+    expect(manage).toHaveBeenCalledOnce()
+    await create.execute({ name: 'Other' }, context({ requestApproval: async () => false }))
+    expect(manage).toHaveBeenCalledOnce()
+  })
+  it('does not create another Bot when an earlier creation has an uncertain outcome', async () => {
+    const manage = vi.fn(async () => ({ id: 'bot-created' }))
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, manage,
+      replay: async () => [{ phase: 'started', name: 'create_bot', callId: 'earlier', threadId: 'old', turnId: 'old',
+        sessionId: SessionId('bot-session-alpha'), arguments: { name: 'Research' } }] })
+    const tool = (await provider.resolve({ sessionId: SessionId('bot-session-alpha') })).find(item => item.name === 'create_bot')!
+    const result = await tool.execute({ name: 'Research' }, context())
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(manage).not.toHaveBeenCalled()
+  })
+  it('allows a new creation after checking the roster following an uncertain creation', async () => {
+    const manage = vi.fn(async () => ({ id: 'bot-created' }))
+    const sessionId = SessionId('bot-session-alpha')
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, manage,
+      replay: async () => [
+        { phase: 'started', name: 'create_bot', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId, arguments: { name: 'Research' } },
+        { phase: 'settled', name: 'list_bots', callId: 'list', threadId: 'new', turnId: 'new', sessionId, arguments: {},
+          result: { success: true, contentItems: [{ type: 'inputText', text: '[]' }] } },
+      ] })
+    const tool = (await provider.resolve({ sessionId })).find(item => item.name === 'create_bot')!
+    expect((await tool.execute({ name: 'Research' }, context())).success).toBe(true)
+    expect(manage).toHaveBeenCalledOnce()
+  })
   it('binds to the live sender, exposes only collaboration actions, and persists bounded lifecycles', async () => {
     const bound = client()
     const persisted: BotDynamicToolEvent[] = []
@@ -37,7 +77,7 @@ describe('native Bot actions', () => {
       bind: vi.fn(async () => bound), persist: async (event) => { persisted.push(event) }, replay: async () => [],
     })
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
-    expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message'])
+    expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
     const send = tools.find(tool => tool.name === 'send_bot_message')
     if (send === undefined) throw new Error('send_bot_message was not registered')
     await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context())).resolves.toMatchObject({ success: true })

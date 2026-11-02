@@ -10,6 +10,7 @@
     { "path": "../../../vendor/schemastery" },
     { "path": "../../../vendor/cordis" },
     { "path": "../../attachment/attachment" },
+    { "path": "../avatar-generation" },
     { "path": "../../util/brand" },
     { "path": "../../core/agent" },
     { "path": "../../llm/llm" },

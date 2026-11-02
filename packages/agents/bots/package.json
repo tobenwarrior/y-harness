@@ -54,6 +54,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@yharness/avatar-generation": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
@@ -67,6 +68,7 @@
     "@yharness/typert-protocol": "workspace:*"
   },
   "devDependencies": {
+    "@yharness/avatar-generation": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",

@@ -28,7 +28,7 @@ function client(): BotCollaborationClient {
   }
 }
 
-async function harness() {
+async function harness(withManagement = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -39,8 +39,9 @@ async function harness() {
     Object.defineProperty(agent, 'ctx', { value: scope.ctx })
   }, { inject: ['tools', 'systemPrompt'] }))
   const bound = client()
-  const dispose = installBotCollaborationTools(agent.ctx, async () => bound)
-  return { ctx, agent, bound, dispose }
+  const manage = vi.fn(async () => ({ id: 'bot-created' }))
+  const dispose = installBotCollaborationTools(agent.ctx, async () => bound, withManagement ? manage : undefined)
+  return { ctx, agent, bound, dispose, manage }
 }
 
 async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown) {
@@ -55,6 +56,17 @@ function text(result: Awaited<ReturnType<typeof execute>>): string {
 }
 
 describe('scoped Bot collaboration tools', () => {
+  it('exposes management tools and denies changes without approval', async () => {
+    const h = await harness(true)
+    try {
+      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual(expect.arrayContaining(['create_bot', 'edit_bot_profile']))
+      expect((await execute(h.ctx, h.agent, 'create_bot', { name: 'Research' })).isError).toBe(true)
+      expect(h.manage).not.toHaveBeenCalled()
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
   it('registers roster tools in one Bot scope and keeps messaging approval-gated', async () => {
     const h = await harness()
     try {
