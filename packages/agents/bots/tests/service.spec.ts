@@ -87,7 +87,12 @@ async function harness(
   ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
   const service = new BotService(ctx)
-  await service[Service.init]()
+  try {
+    await service[Service.init]()
+  } catch (error) {
+    await close(ctx)
+    throw error
+  }
   return { ctx, service, pool, create, readImage, agents, inspect, resolveAgent, flush, followups }
 }
 
@@ -233,9 +238,9 @@ describe('durable Bot roster', () => {
 
   it('does not create a Session when the durable row cannot be written', async () => {
     const pool = new MemoryMediaPool()
-    pool.failNextWrites = 1
     const h = await harness(pool)
     try {
+      pool.failNextWrites = 1
       await expect(h.service.create({ name: 'No orphan', cwd: '/tmp' })).rejects.toThrow('injected write failure')
       expect(h.create).not.toHaveBeenCalled()
       await expect(h.service.list({})).resolves.toEqual({ bots: [] })
@@ -288,6 +293,106 @@ describe('durable Bot roster', () => {
       expect(await prompt()).not.toContain('Persistent identity')
     } finally {
       await close(second.ctx)
+    }
+  })
+
+  it('replaces legacy generated avatars once while retaining the Bot and allowing future selection', async () => {
+    const pool = new MemoryMediaPool()
+    const avatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'ca'.repeat(32)}`),
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 64,
+      height: 64,
+    }
+    const legacy = {
+      id: 'bot-legacy-avatar',
+      sessionId: 'bot-session-legacy-avatar',
+      name: 'Legacy avatar',
+      identity: 'agent',
+      accent: 'violet',
+      avatar,
+      cwd: '/tmp',
+      state: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    pool.versions.set('agent_bots', 1)
+    pool.media.set('agent_bots', {
+      tables: new Map([['bots', new Map([[legacy.id, legacy]])]]),
+      global: null,
+    })
+
+    const second = await harness(pool)
+    try {
+      const migrated = await second.service.list({})
+      expect(migrated.bots).toMatchObject([{
+        id: legacy.id,
+        sessionId: legacy.sessionId,
+        name: 'Legacy avatar',
+      }])
+      expect(migrated.bots[0]).not.toHaveProperty('avatar')
+
+      const replacement: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'cb'.repeat(32)}`),
+        mediaType: 'image/png',
+        bytes: 3,
+        width: 64,
+        height: 64,
+      }
+      await second.service.updateAvatar({ botId: BotId(legacy.id), avatar: replacement })
+      await close(second.ctx)
+
+      const third = await harness(pool)
+      try {
+        await expect(third.service.list({})).resolves.toMatchObject({ bots: [{ id: legacy.id, avatar: replacement }] })
+      } finally {
+        await close(third.ctx)
+      }
+    } catch (error) {
+      await close(second.ctx)
+      throw error
+    }
+  })
+
+  it('retries an incomplete legacy avatar migration after a durable write failure', async () => {
+    const pool = new MemoryMediaPool()
+    const avatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'cc'.repeat(32)}`),
+      mediaType: 'image/png',
+      bytes: 3,
+      width: 64,
+      height: 64,
+    }
+    const legacy = {
+      id: 'bot-retry-avatar',
+      sessionId: 'bot-session-retry-avatar',
+      name: 'Retry avatar migration',
+      identity: 'agent',
+      accent: 'violet',
+      avatar,
+      cwd: '/tmp',
+      state: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    pool.versions.set('agent_bots', 1)
+    pool.media.set('agent_bots', {
+      tables: new Map([['bots', new Map([[legacy.id, legacy]])]]),
+      global: null,
+    })
+    pool.failNextWrites = 1
+
+    await expect(harness(pool)).rejects.toThrow('injected write failure')
+    expect(pool.media.get('agent_bots')?.tables.get('bots')?.get(legacy.id)).toHaveProperty('avatar')
+
+    const retried = await harness(pool)
+    try {
+      const listed = await retried.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('avatar')
+      expect(pool.media.get('agent_bots')?.global).toEqual({ animatedAvatarVersion: 1 })
+    } finally {
+      await close(retried.ctx)
     }
   })
 

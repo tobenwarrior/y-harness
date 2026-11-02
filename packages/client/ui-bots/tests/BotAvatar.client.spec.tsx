@@ -65,7 +65,7 @@ describe('BotAvatar', () => {
       /\.avatar\[data-identity='sparkle'\] \.characterTop \{[\s\S]*?--top-sway-start: 0deg;[\s\S]*?--top-sway-end: 0deg;/u,
     )
     expect(styles).toMatch(
-      /\.avatar\[data-identity='goal'\] \.characterTop \{[\s\S]*?--top-sway-start: 34deg;[\s\S]*?--top-sway-end: 42deg;/u,
+      /\.avatar\[data-identity='browse'\] \.characterTop \{[\s\S]*?--top-sway-start: -27deg;[\s\S]*?--top-sway-end: -37deg;/u,
     )
   })
 })

@@ -71,11 +71,24 @@ export const botRecordSchema = z.object({
   message: 'Bot and Session identities must remain distinct',
 })
 
-/** Authoritative version-one Bot domain. */
+/** Durable marker for the one-time switch from image avatars to animated characters. */
+export const botAppearanceMigrationSchema = z.object({
+  animatedAvatarVersion: z.literal(1).optional(),
+}).strict()
+
+/** Current one-time appearance migration applied to existing Bot rows. */
+export const BOT_APPEARANCE_MIGRATION_VERSION = 1
+
+/** Authoritative Bot domain; v1 records remain readable for the appearance migration. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 1,
+  version: 2,
+  compatibleVersions: [1],
   layout: 'per-record',
+  global: {
+    schema: botAppearanceMigrationSchema,
+    initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
+  },
   tables: {
     bots: domainTable<BotRecord['id'], BotRecord>(botRecordSchema),
   },

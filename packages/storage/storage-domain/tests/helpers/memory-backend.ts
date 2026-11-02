@@ -70,6 +70,11 @@ class MemoryKvUnit implements KvUnit {
     }
   }
 
+  /** Stamp the current descriptor version only after a write succeeds. */
+  private promoteVersion(): void {
+    this.pool.versions.set(this.descriptor.name, this.descriptor.version)
+  }
+
   async loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }> {
     this.assertOpen()
     const tables: Record<string, Record<string, unknown>> = {}
@@ -88,18 +93,21 @@ class MemoryKvUnit implements KvUnit {
       this.medium.tables.set(table, records)
     }
     records.set(key, value)
+    this.promoteVersion()
   }
 
   async deleteRecord(table: string, key: string): Promise<void> {
     this.assertOpen()
     this.pool.consumeInjectedFailure()
     this.medium.tables.get(table)?.delete(key)
+    this.promoteVersion()
   }
 
   async setGlobal(value: unknown): Promise<void> {
     this.assertOpen()
     this.pool.consumeInjectedFailure()
     this.medium.global = value
+    this.promoteVersion()
   }
 
   async close(): Promise<void> {
@@ -136,7 +144,7 @@ export class MemoryStorageBackend implements StorageBackend {
         const stamped = this.pool.versions.get(descriptor.name)
         if (stamped === undefined) {
           this.pool.versions.set(descriptor.name, descriptor.version)
-        } else if (stamped !== descriptor.version) {
+        } else if (![descriptor.version, ...descriptor.compatibleVersions ?? []].includes(stamped)) {
           throw new StorageError(
             'version-mismatch',
             `memory unit '${descriptor.name}' is stamped v${stamped}, descriptor wants v${descriptor.version}`,

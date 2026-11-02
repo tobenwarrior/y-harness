@@ -53,6 +53,7 @@ export function BotAvatar({ name, identity = 'agent', accent = 'violet', avatar,
         ? <span className={css.character} data-character data-identity={identity} data-accent={accent} aria-hidden="true">
           <span className={css.characterBody} data-character-part="body">
             <span className={css.characterTop} data-character-part="top" />
+            <span className={css.characterDetail} data-character-part="detail" aria-hidden="true" />
             <span className={css.characterFace} data-character-part="face">
               <span className={clsx(css.eye, css.eyeLeft)} data-character-part="eye" />
               <span className={clsx(css.eye, css.eyeRight)} data-character-part="eye" />

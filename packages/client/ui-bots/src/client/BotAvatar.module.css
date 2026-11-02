@@ -20,6 +20,7 @@
   display: block;
   transform-origin: 50% 68%;
   animation: bot-character-float 3.8s ease-in-out infinite;
+  filter: drop-shadow(0 2px 1px color-mix(in srgb, var(--yh-alias-label-primary) 15%, transparent));
 }
 
 .characterBody {
@@ -29,18 +30,41 @@
   overflow: visible;
   background: var(--avatar-accent, var(--yh-alias-border-l1));
   border-radius: 48% 52% 45% 55% / 58% 44% 56% 42%;
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--yh-alias-label-primary) 12%, transparent);
 }
 
-.characterBody::after {
+.characterDetail {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  pointer-events: none;
+}
+
+.characterDetail::before,
+.characterDetail::after {
   content: '';
   position: absolute;
-  inset: 7% 12% 52% 13%;
+  display: block;
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 66%, transparent);
+}
+
+.characterDetail::before {
+  width: 8%;
+  height: 8%;
+  top: 18%;
+  right: 19%;
   border-radius: 50%;
-  corner-shape: round;
-  background: color-mix(in srgb, var(--yh-static-neutral-bluish-00) 36%, transparent);
-  opacity: 0.55;
-  pointer-events: none;
+  box-shadow: none;
+}
+
+.characterDetail::after {
+  width: 17%;
+  height: 4%;
+  bottom: 15%;
+  left: 42%;
+  border-radius: 999px;
+  opacity: 0.35;
 }
 
 .characterFace {
@@ -96,6 +120,60 @@
   clip-path: polygon(50% 0%, 61% 36%, 100% 50%, 61% 64%, 50% 100%, 39% 64%, 0% 50%, 39% 36%);
 }
 
+.avatar[data-identity='agent'] .characterBody {
+  inset: 12% 0 12%;
+  border-radius: 34% 34% 45% 45%;
+  clip-path: polygon(12% 22%, 27% 7%, 42% 15%, 58% 15%, 73% 7%, 88% 22%, 100% 70%, 89% 92%, 74% 95%, 62% 70%, 38% 70%, 26% 95%, 11% 92%, 0 70%);
+}
+
+.avatar[data-identity='agent'] .characterTop {
+  top: 42%;
+  left: 46%;
+  width: 8%;
+  height: 8%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 72%, transparent);
+  --top-sway-start: 0deg;
+  --top-sway-end: 0deg;
+}
+
+.avatar[data-identity='agent'] .characterDetail::before {
+  top: 44%;
+  left: 17%;
+  width: 20%;
+  height: 7%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 66%, transparent);
+}
+
+.avatar[data-identity='agent'] .characterDetail::after {
+  top: 38%;
+  left: 23%;
+  width: 7%;
+  height: 20%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 66%, transparent);
+}
+
+.avatar[data-identity='sparkle'] .characterDetail::before {
+  width: 14%;
+  height: 14%;
+  top: 17%;
+  right: 14%;
+  border-radius: 30% 70% 30% 70%;
+  transform: rotate(45deg);
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-00) 72%, transparent);
+  box-shadow: none;
+}
+
+.avatar[data-identity='sparkle'] .characterDetail::after {
+  width: 34%;
+  height: 5%;
+  bottom: 17%;
+  left: 33%;
+  transform: rotate(-12deg);
+}
+
 .avatar[data-identity='sparkle'] .characterTop {
   top: 4%;
   left: 72%;
@@ -109,40 +187,89 @@
 }
 
 .avatar[data-identity='goal'] .characterBody {
-  border-radius: 26% 48% 34% 56% / 42% 28% 62% 38%;
-  clip-path: polygon(18% 8%, 84% 0%, 100% 48%, 72% 96%, 13% 88%, 0% 39%);
-  transform: rotate(-9deg);
+  inset: 4%;
+  border-radius: 50%;
+  clip-path: none;
+}
+
+.avatar[data-identity='goal'] .characterDetail::before {
+  inset: 18%;
+  width: auto;
+  height: auto;
+  border: 3px solid color-mix(in srgb, var(--yh-static-neutral-bluish-950) 30%, transparent);
+  border-radius: 50%;
+  background: transparent;
+  opacity: 1;
+}
+
+.avatar[data-identity='goal'] .characterDetail::after {
+  top: 42%;
+  left: 42%;
+  width: 16%;
+  height: 16%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 52%, transparent);
 }
 
 .avatar[data-identity='goal'] .characterTop {
-  top: -4%;
-  left: 63%;
-  width: 20%;
-  height: 15%;
-  border-radius: 70% 30% 70% 30%;
-  --top-sway-start: 34deg;
-  --top-sway-end: 42deg;
+  display: none;
 }
 
 .avatar[data-identity='browse'] .characterBody {
-  border-radius: 66% 34% 42% 58% / 50% 50% 50% 50%;
-  corner-shape: round;
-  transform: rotate(10deg) scaleX(1.12) scaleY(.86);
+  inset: 4% 23% 24% 4%;
+  border-radius: 50%;
+  transform: rotate(-12deg);
+}
+
+.avatar[data-identity='browse'] .characterDetail::before {
+  width: 48%;
+  height: 48%;
+  top: 26%;
+  left: 26%;
+  border: 3px solid color-mix(in srgb, var(--yh-static-neutral-bluish-950) 34%, transparent);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.avatar[data-identity='browse'] .characterDetail::after {
+  left: 70%;
+  bottom: 6%;
+  width: 12%;
+  height: 40%;
+  transform: rotate(-45deg);
+  transform-origin: left center;
+  border-radius: 999px;
 }
 
 .avatar[data-identity='browse'] .characterTop {
-  top: 9%;
-  left: 4%;
-  width: 23%;
-  height: 15%;
-  border-radius: 70% 30% 30% 70%;
+  top: 62%;
+  left: 73%;
+  width: 14%;
+  height: 42%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--avatar-accent, var(--yh-alias-border-l1)) 72%, var(--yh-static-neutral-bluish-950));
   --top-sway-start: -27deg;
-  --top-sway-end: -20deg;
+  --top-sway-end: -37deg;
 }
 
 .avatar[data-identity='skill'] .characterBody {
+  inset: 4%;
   border-radius: 36%;
-  clip-path: polygon(50% 0%, 61% 15%, 78% 7%, 79% 28%, 98% 25%, 86% 45%, 100% 59%, 81% 67%, 88% 90%, 67% 79%, 54% 100%, 42% 81%, 21% 93%, 25% 70%, 3% 76%, 15% 56%, 0% 43%, 19% 34%, 11% 12%, 34% 22%);
+  clip-path: polygon(50% 0%, 62% 14%, 79% 7%, 79% 27%, 99% 24%, 87% 45%, 100% 59%, 81% 68%, 88% 91%, 67% 80%, 54% 100%, 42% 82%, 21% 94%, 25% 71%, 2% 77%, 15% 56%, 0 43%, 19% 34%, 10% 12%, 34% 22%);
+}
+
+.avatar[data-identity='skill'] .characterDetail::before {
+  width: 28%;
+  height: 28%;
+  top: 36%;
+  left: 36%;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--yh-static-neutral-bluish-950) 48%, transparent);
+  background: transparent;
+}
+
+.avatar[data-identity='skill'] .characterDetail::after {
+  display: none;
 }
 
 .avatar[data-identity='skill'] .characterTop {
@@ -158,9 +285,29 @@
 }
 
 .avatar[data-identity='workspace'] .characterBody {
-  border-radius: 30% 30% 48% 48% / 25% 25% 63% 63%;
-  clip-path: polygon(11% 0%, 89% 0%, 100% 18%, 90% 80%, 50% 100%, 10% 80%, 0% 18%);
-  transform: rotate(-4deg);
+  inset: 6% 2% 10%;
+  border-radius: 18%;
+  clip-path: polygon(8% 0%, 92% 0%, 100% 13%, 96% 88%, 84% 100%, 16% 100%, 4% 88%, 0 13%);
+}
+
+.avatar[data-identity='workspace'] .characterDetail::before {
+  top: 18%;
+  left: 20%;
+  right: auto;
+  width: 60%;
+  height: 4%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 34%, transparent);
+  box-shadow: none;
+}
+
+.avatar[data-identity='workspace'] .characterDetail::after {
+  left: 30%;
+  bottom: 18%;
+  width: 30%;
+  height: 4%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yh-static-neutral-bluish-950) 42%, transparent);
 }
 
 .avatar[data-identity='workspace'] .characterTop {
@@ -201,6 +348,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .character,
+  .characterBody,
   .characterFace,
   .characterTop {
     animation: none;

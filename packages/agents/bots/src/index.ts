@@ -35,7 +35,7 @@ import type {
   BotRenameValue,
   BotView,
 } from './types.ts'
-import { botDomain, imageAttachmentRefSchema } from './storage.ts'
+import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
 
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
@@ -201,6 +201,19 @@ function botIdentityPrompt(record: BotRecord): string {
   ].join('\n\n')
 }
 
+/** Replace legacy avatar selections without deleting their attachments. */
+async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
+  if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
+  const bots = domain.table('bots')
+  for (const [key, record] of bots.entries()) {
+    if (record.avatar === undefined) continue
+    const { avatar: legacyAvatar, ...withoutAvatar } = record
+    void legacyAvatar
+    await bots.put(key, withoutAvatar)
+  }
+  await domain.global.set({ animatedAvatarVersion: BOT_APPEARANCE_MIGRATION_VERSION })
+}
+
 /** Host service that owns the durable roster and its Session mappings. */
 export class BotService extends TypertRemoteService {
   static inject = ['agents', 'storageDomain', 'sessionController', 'sessions', 'attachments', 'systemPrompt', 'tools']
@@ -241,8 +254,16 @@ export class BotService extends TypertRemoteService {
           throw new Error(`bots: Session "${record.sessionId}" is mapped by more than one Bot`)
         }
         seenSessions.add(record.sessionId)
-        this.recordsBySession.set(String(record.sessionId), record)
       }
+      try {
+        await migrateLegacyAvatars(domain)
+      } catch (error) {
+        try { await domain.close() } catch (closeError: unknown) {
+          ctx.logger.warn(`bots: closing after startup failed: ${String(closeError)}`)
+        }
+        throw error
+      }
+      for (const [, record] of domain.table('bots').entries()) this.recordsBySession.set(String(record.sessionId), record)
       return domain
     })
     this.collaboration = new BotCollaborationService({

@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Generated images can be assigned through verified attachment references; clearing one restores the semantic identity mark.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected.
 
 ## Table of Contents
 
@@ -47,7 +47,7 @@ Creation writes a `provisioning` row before it asks the Session controller to ac
 
 ### Visual identity and avatars
 
-The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own icon components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping; generated avatars stay selected unless the request explicitly sets `clearAvatar: true`. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
+The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own animated character components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping. The first open after the animated character rollout removes selected image references from existing Bot rows while leaving their attachment data untouched; the durable marker makes this migration run once. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference for future explicit selection, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
 
 -----
 
