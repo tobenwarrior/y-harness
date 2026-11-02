@@ -7,6 +7,7 @@ import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
 import type { ImageAttachmentRef } from '@yharness/attachment'
+import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import type { Domain, KvTable } from '@yharness/storage-domain'
@@ -19,6 +20,7 @@ import { BotGroupService, botGroupDomain } from './group-chat.ts'
 import type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
+  BotGroupDeliveryClaimInput,
   BotGroupInspectRequest,
   BotGroupInspectValue,
   BotGroupListRequest,
@@ -70,6 +72,7 @@ export type {
   BotCollaborationTranscriptEntry,
   BotDynamicToolEvent,
   BotDynamicToolEventResult,
+  BotGroupMessageSource,
   BotMessageSource,
   SendBotMessageRequest,
   SendBotMessageResult,
@@ -88,6 +91,8 @@ export {
 export type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
+  BotGroupDeliveryClaim,
+  BotGroupDeliveryClaimInput,
   BotGroupDeliveryHost,
   BotGroupDeliveryRecord,
   BotGroupDeliveryView,
@@ -128,6 +133,13 @@ interface NormalizedCreate {
   readonly accent: BotAccent
   readonly cwd: string
   readonly agentPreset?: string
+}
+
+function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
+  return messages.flatMap((message): BotGroupDeliveryClaimInput[] => {
+    if (message.source.kind !== 'bot-group-message') return []
+    return [{ groupId: message.source.groupId, messageId: message.source.messageId }]
+  })
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
@@ -338,6 +350,7 @@ export class BotService extends TypertRemoteService {
       listBots: async () => (await this.list({})).bots,
       deliverToBot: async request => this.collaboration.sendExternal({
         targetBotId: request.targetBotId,
+        groupId: request.groupId,
         groupName: request.groupName,
         text: request.text,
         messageId: BotMessageId(String(request.messageId)),
@@ -353,10 +366,27 @@ export class BotService extends TypertRemoteService {
         .join('\n')
         .trim()
       if (text === '') return
-      void this.groupService.then(service => service.recordBotResponse(record.id, text, String(event.data.message.id)))
+      void this.groupService.then(service => service.recordBotResponse(
+        record.id,
+        event.data.turn,
+        event.data.step,
+        text,
+        String(event.data.message.id),
+      ))
         .catch((error: unknown) => {
           ctx.logger.warn(`bots: group response projection failed: ${error instanceof Error ? error.message : String(error)}`)
         })
+    })
+    ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
+      const decision = await next()
+      const record = this.recordsBySession.get(String(agent.id))
+      const claims = groupDeliveryClaims(messages)
+      if (record !== undefined && decision.kind === 'enter' && claims.length > 0) {
+        await this.groupService.then(service => service.recordBotMessageClaims(
+          record.id, claims, turn, step, messages.length === 1 && claims.length === 1,
+        ))
+      }
+      return decision
     })
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
@@ -444,7 +474,10 @@ export class BotService extends TypertRemoteService {
         return inspection.events.flatMap(event => event.type === 'bot/dynamic-tool' ? [event.data] : [])
       },
     }))
-    ctx.on('agent/created', async ({ agent }) => { await this.installPrompt(agent) })
+    ctx.on('agent/created', async ({ agent }) => {
+      await this.installPrompt(agent)
+      await this.reconcileGroupSession(agent)
+    })
     ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
@@ -864,6 +897,55 @@ export class BotService extends TypertRemoteService {
     })
     this.promptFibers.set(agent, fiber)
     await fiber
+  }
+
+  /** Rebuild group delivery claims and response projections from a resumed Bot Session. */
+  private async reconcileGroupSession(agent: Agent): Promise<void> {
+    const record = this.recordsBySession.get(String(agent.id))
+    if (record === undefined) return
+    const inputs = new Map<string, { readonly turn: number; readonly step: number; readonly messages: UserMessage[] }>()
+    let turn = 0
+    let step = 0
+    const inspection = await this.ctx.sessionController.inspect(agent.id)
+    for (const event of inspection.events) {
+      if (event.type === 'turn/start') {
+        turn = event.data.turn
+        step = 0
+        continue
+      }
+      if (event.type === 'step/start') {
+        turn = event.data.turn
+        step = event.data.step
+        inputs.set(`${String(turn)}:${String(step)}`, { turn, step, messages: [] })
+        continue
+      }
+      if (event.type === 'user/message') {
+        const current = inputs.get(`${String(turn)}:${String(step)}`)
+        if (current !== undefined) current.messages.push(event.data)
+        continue
+      }
+      if (event.type !== 'assistant/message') continue
+      const current = inputs.get(`${String(event.data.turn)}:${String(event.data.step)}`)
+      if (current === undefined) continue
+      const claims = groupDeliveryClaims(current.messages)
+      if (claims.length === 0) continue
+      await this.groupService.then(async (service) => {
+        await service.recordBotMessageClaims(
+          record.id,
+          claims,
+          event.data.turn,
+          event.data.step,
+          current.messages.length === 1 && claims.length === 1,
+        )
+        const text = event.data.message.content
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')
+          .trim()
+        if (text !== '') {
+          await service.recordBotResponse(record.id, event.data.turn, event.data.step, text, String(event.data.message.id))
+        }
+      })
+    }
   }
 
   /** Release one Agent's scoped identity registration after its lifecycle ends. */

@@ -6,6 +6,8 @@ import type { AgentMessageSource } from '@yharness/subagent'
 import { freezeMessage, MessageId } from '@yharness/llm'
 import type { ContentBlock, MessageSourceMap, UserMessage } from '@yharness/llm'
 import type { SessionEvent, SessionId } from '@yharness/session'
+import { BotGroupMessageId } from './group-chat.ts'
+import type { BotGroupId } from './group-chat.ts'
 import type { BotId, BotView } from './types.ts'
 
 /** Stable identity for one durable Bot-to-Bot delivery. */
@@ -29,7 +31,15 @@ export type BotMessageSource = AgentMessageSource
 declare module '@yharness/llm' {
   interface MessageSourceMap {
     'agent-message': AgentMessageSource
+    'bot-group-message': BotGroupMessageSource
   }
+}
+
+/** Source retained by a Bot Session for one durable group delivery. */
+export interface BotGroupMessageSource {
+  readonly kind: 'bot-group-message'
+  readonly groupId: BotGroupId
+  readonly messageId: BotGroupMessageId
 }
 
 /** Minimal Session event reader required by the collaboration service. */
@@ -126,6 +136,8 @@ export interface SendBotMessageResult {
 export interface SendExternalBotMessageRequest {
   /** Durable recipient identity. */
   readonly targetBotId: BotId
+  /** Durable group identity that originated the message. */
+  readonly groupId: BotGroupId
   /** Display name of the group that originated the message. */
   readonly groupName: string
   /** Message text. */
@@ -228,10 +240,15 @@ function pendingInboxMessages(events: readonly SessionEvent[]): UserMessage[] {
   return [...pending['next-turn'], ...pending['next-step']]
 }
 
-function hasMessage(events: readonly SessionEvent[], messageId: BotMessageId): boolean {
+function hasMessage(
+  events: readonly SessionEvent[],
+  messageId: BotMessageId,
+  sourceKind: 'agent-message' | 'bot-group-message',
+): boolean {
   return events.some(event => event.type === 'user/message'
-    && event.data.id === messageId)
-    || pendingInboxMessages(events).some(message => message.id === messageId)
+    && event.data.id === messageId
+    && event.data.source.kind === sourceKind)
+    || pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === sourceKind)
 }
 
 function messageText(sender: BotCollaborationRosterEntry, text: string): string {
@@ -299,7 +316,7 @@ export class BotCollaborationService {
       throwIfCancelled(request.signal)
       const before = await this.host.inspectSession(target.sessionId)
       throwIfCancelled(request.signal)
-      if (hasMessage(before.events, request.messageId)) {
+      if (hasMessage(before.events, request.messageId, 'bot-group-message')) {
         await this.flushTarget(target.sessionId, target.name)
         return 'duplicate' as const
       }
@@ -312,7 +329,7 @@ export class BotCollaborationService {
         id: request.messageId,
         role: 'user',
         content: [{ type: 'text', text: `Message from group "${request.groupName}":\n${text}` }],
-        source: { kind: 'user' },
+        source: { kind: 'bot-group-message', groupId: request.groupId, messageId: BotGroupMessageId(String(request.messageId)) },
       }))
       await this.flushTarget(target.sessionId, target.name)
       return 'accepted' as const
@@ -388,7 +405,7 @@ export class BotCollaborationService {
       throwIfCancelled(request.signal)
       const before = await this.host.inspectSession(target.sessionId)
       throwIfCancelled(request.signal)
-      if (hasMessage(before.events, messageId)) {
+      if (hasMessage(before.events, messageId, 'agent-message')) {
         // A prior attempt may have admitted the inbox event but failed its
         // durability barrier. Re-run the barrier before acknowledging the
         // retry as a duplicate.

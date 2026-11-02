@@ -138,7 +138,7 @@ The collaboration tool set is stable for a Bot scope. A roster or tool-schema ch
 
 #### What the model sees
 
-The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A human group message is delivered as a normal user-role message to every member's existing Session; it never routes all members through one coordinator model. When a member produces a real assistant message, the Host records that response in the group transcript.
+The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A human group message is delivered as a normal user-role message to every member's existing Session; it never routes all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn and step, and only when that delivery is the sole user input in the step.
 
 #### Token effect
 
@@ -157,7 +157,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
-- **Group response attribution is bounded to admitted deliveries** — an assistant response is projected only while that Bot has an accepted, not-yet-responded group delivery. This prevents unrelated historical output from being copied into every group, but a response generated after a process loss may require a new group message to establish a fresh delivery edge.
+- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn and step match the assistant event. Mixed private/group inputs and concurrent group deliveries are left unprojected rather than guessed. Claims are rebuilt from the persisted Session inspection after restart, so a process loss does not make the Host attribute the next unrelated response to an old group message.
 - **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 
 <a id="dev-note"></a>
