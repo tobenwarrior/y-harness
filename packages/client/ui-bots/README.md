@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation flow, status and unread indicators, and token-backed expressive avatars. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
+Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation flow, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
 
 ## Table of Contents
 

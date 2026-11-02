@@ -101,6 +101,18 @@ async function close(ctx: Context): Promise<void> {
 }
 
 describe('durable Bot roster', () => {
+  it('persists an additional character shape across restarts', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Heart bot', identity: 'heart', cwd: '/tmp' })
+    await close(first.ctx)
+    const reopened = await harness(pool)
+    try {
+      await expect(reopened.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id, identity: 'heart', sessionId: created.bot.sessionId }] })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
   it('mounts native collaboration actions only for Bot-owned Sessions', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

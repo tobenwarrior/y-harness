@@ -87,7 +87,8 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
       aria-label={status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`}
       onClick={onSelect}
     >
-      <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} />
+      <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+        botId={bot.id} loadAvatar={loadAvatar} status={bot.status} />
       <span className={css.botRowCopy}>
         <span className={css.botRowHeading}>
           <span className={css.botName}>{bot.name}</span>
@@ -203,7 +204,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
     <section className={css.detail} aria-label={bot.name}>
       <header className={css.detailHeader}>
         <span className={css.detailIdentity}>
-          <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="large" />
+          <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} status={bot.status} size="large" />
           <span className={css.detailIdentityCopy}>
             <span className={css.detailName}>{bot.name}</span>
             {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}

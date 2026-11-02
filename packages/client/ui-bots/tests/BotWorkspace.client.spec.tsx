@@ -193,7 +193,7 @@ describe('Bot roster and detail', () => {
     const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Docs guide' } })
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Teal' }))
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'Blink' }))
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Mug character' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create bot' }))
 
     expect(onCreateBot).toHaveBeenCalledWith({ name: 'Docs guide', identity: 'browse', accent: 'teal' })
@@ -211,7 +211,7 @@ describe('Bot roster and detail', () => {
       expect(option.getAttribute('data-accent')).toBe('amber')
       expect(option.querySelector('[data-identity]')?.getAttribute('data-accent')).toBe('amber')
     }
-    fireEvent.click(within(characters).getByRole('radio', { name: 'Blink' }))
+    fireEvent.click(within(characters).getByRole('radio', { name: 'Mug character' }))
     expect(within(dialog).getByRole('radio', { name: 'Amber' }).getAttribute('aria-checked')).toBe('true')
   })
 
@@ -220,14 +220,14 @@ describe('Bot roster and detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     const dialog = screen.getByRole('dialog', { name: 'Create a bot' })
 
-    for (const label of ['Bean', 'Spark', 'Orbit', 'Blink', 'Sprout', 'Buddy']) {
+    for (const label of ['Controller character', 'Star character', 'Barbell character', 'Mug character', 'Flower character', 'Folder character', 'Round character', 'Cloud character', 'Square character', 'Clover character', 'Heart character', 'Drop character', 'Oval character', 'Triangle character']) {
       fireEvent.click(within(dialog).getByRole('radio', { name: label }))
     }
     for (const label of ['Blue', 'Teal', 'Amber', 'Violet', 'Rose', 'Lime']) {
       fireEvent.click(within(dialog).getByRole('radio', { name: label }))
     }
 
-    expect(within(dialog).getByRole('radio', { name: 'Buddy' }).getAttribute('aria-checked')).toBe('true')
+    expect(within(dialog).getByRole('radio', { name: 'Triangle character' }).getAttribute('aria-checked')).toBe('true')
     expect(within(dialog).getByRole('radio', { name: 'Lime' }).getAttribute('aria-checked')).toBe('true')
   })
 

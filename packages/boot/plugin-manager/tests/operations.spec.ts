@@ -42,6 +42,23 @@ interface FakePnpm {
 }
 
 const command = vi.hoisted(() => ({ run: vi.fn<(...args: unknown[]) => Promise<FakeOutcome> & FakeChild>() }))
+const logHandle = vi.hoisted(() => ({ close: vi.fn() }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args)
+      if (typeof args[0] !== 'string' || !args[0].endsWith('/pnpm.log')) return handle
+      return new Proxy(handle, {
+        get(target, property, receiver) {
+          if (property === 'close') return async () => { logHandle.close(); return target.close() }
+          return Reflect.get(target, property, receiver)
+        },
+      })
+    },
+  }
+})
 vi.mock('execa', () => ({ execa: (...args: unknown[]) => command.run(...args) }))
 
 /** Whether the bounded wait for a recorded run returns at once; the wait itself is measured in run-tree.spec.ts. */
@@ -554,8 +571,10 @@ it('checks scoped components in nested groups while leaving unresolved and local
 
 it('reports unreadable snapshot files before invoking pnpm', async () => {
   const { dir, context } = fixture()
+  logHandle.close.mockClear()
   mkdirSync(join(dir, 'pnpm-lock.yaml'))
   await expect(runProfilePnpm(context, ['install'], { execution: 'service', outputBytes: 100 })).rejects.toThrow()
+  expect(logHandle.close).toHaveBeenCalledOnce()
   expect(command.run).not.toHaveBeenCalled()
 })
 

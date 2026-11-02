@@ -112,7 +112,8 @@ describe('BotAvatarEditor appearance controls', () => {
       expect(choice.getAttribute('data-accent')).toBe('amber')
       expect(choice.querySelector('[data-character]')?.getAttribute('data-accent')).toBe('amber')
     }
-    fireEvent.click(within(characters).getByRole('radio', { name: 'Spark' }))
+    fireEvent.click(within(characters).getByRole('radio', { name: 'Star character' }))
+    expect(within(dialog).queryByText('Star character')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save character' }))
 
     await waitFor(() => {
@@ -162,7 +163,7 @@ describe('BotAvatarEditor appearance controls', () => {
     const view = renderEditor(actions, onClose)
 
     const dialog = await screen.findByRole('dialog', { name: 'Customize avatar' })
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'Spark' }))
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Star character' }))
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Amber' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save character' }))
     await waitFor(() => { expect(updateAppearance).toHaveBeenCalledOnce() })

@@ -12799,6 +12799,9 @@ importers:
       '@yharness/skill-filesystem':
         specifier: workspace:*
         version: link:../skill-filesystem
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/storage-domain':
         specifier: workspace:*
         version: link:../../storage/storage-domain

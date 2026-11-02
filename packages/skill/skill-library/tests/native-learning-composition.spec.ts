@@ -23,6 +23,14 @@ import * as Domain from '@yharness/storage-domain'
 import * as Jsonl from '@yharness/session-persistence-jsonl'
 import * as Workspace from '@yharness/workspace'
 import * as Typert from '@yharness/typert-registry'
+import { SubprocessRuntime } from '@yharness/subprocess'
+import type {
+  SubprocessHandle,
+  SubprocessSpawnSpec,
+  SubprocessTerminalEnvironment,
+  SubprocessTerminalHandle,
+  SubprocessTerminalSpawnSpec,
+} from '@yharness/subprocess'
 import { createLaunchEnvironmentSnapshot, DSH_LAUNCH_ENVIRONMENT_KEY } from '@yharness/launch-environment'
 import * as Library from '../src/index.ts'
 import { CodexBackendConnection } from '../../../llm/llm-pi-ai/src/codex-backend-connection.ts'
@@ -30,15 +38,24 @@ import type { CodexPeer } from '../../../llm/llm-pi-ai/src/codex-backend.ts'
 
 const native = vi.hoisted(() => ({ peer: undefined as CodexPeer | undefined }))
 vi.mock('../../../llm/llm-pi-ai/src/codex-backend-process.ts', () => ({
+  prepareCodexHomeDirectories: vi.fn(async () => {}),
   startCodexProcess: () => {
     if (native.peer === undefined) throw new Error('native fixture peer was not configured')
     return native.peer
   },
 }))
 
+class FixtureSubprocessRuntime extends SubprocessRuntime {
+  resolveExecutable(): Promise<string> { throw new Error('fixture subprocess does not resolve executables') }
+  terminalEnvironment(): Promise<SubprocessTerminalEnvironment> { throw new Error('fixture subprocess has no terminal') }
+  spawn(_spec: SubprocessSpawnSpec): SubprocessHandle { throw new Error('fixture subprocess does not spawn processes') }
+  spawnTerminal(_spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> { throw new Error('fixture subprocess has no terminal') }
+}
+
 it('automatically creates only a newly managed project procedure and updates it before creating another', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-native-learning-'))
   const ctx = new Context()
+  await ctx.plugin(FixtureSubprocessRuntime)
   onTestFinished(async () => { await ctx.fiber.dispose(); await rm(root, { recursive: true, force: true }) })
   const projectPath = join(root, 'project'); await mkdir(join(projectPath, '.git'), { recursive: true })
   const nativeHome = join(root, 'native-home'); await mkdir(nativeHome)

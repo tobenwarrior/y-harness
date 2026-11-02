@@ -23,6 +23,14 @@ export const BOT_IDENTITIES = [
   'browse',
   'skill',
   'workspace',
+  'round',
+  'cloud',
+  'tile',
+  'clover',
+  'heart',
+  'drop',
+  'oval',
+  'triangle',
 ] as const
 
 /** Existing product accent families used by the Bot avatar. */

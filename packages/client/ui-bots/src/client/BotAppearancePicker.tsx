@@ -1,14 +1,15 @@
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import { BOT_IDENTITIES } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotAccent, BotIdentity } from './types.ts'
 
 type Translate = PropsLocale<'bots'>['t']
-type IdentityLabelKey = 'identity.agent' | 'identity.sparkle' | 'identity.goal' | 'identity.browse' | 'identity.skill' | 'identity.workspace'
+type IdentityLabelKey = `identity.${BotIdentity}`
 type AccentLabelKey = 'accent.blue' | 'accent.teal' | 'accent.amber' | 'accent.violet' | 'accent.rose' | 'accent.lime'
 
 /** The stable character order shared by creation and editing surfaces. */
-export const BOT_IDENTITY_CHOICES: readonly BotIdentity[] = ['agent', 'sparkle', 'goal', 'browse', 'skill', 'workspace']
+export const BOT_IDENTITY_CHOICES: readonly BotIdentity[] = BOT_IDENTITIES
 
 /** The stable accent order shared by creation and editing surfaces. */
 export const BOT_ACCENT_CHOICES: readonly BotAccent[] = ['blue', 'teal', 'amber', 'violet', 'rose', 'lime']
@@ -20,6 +21,14 @@ const identityLabels: Readonly<Record<BotIdentity, IdentityLabelKey>> = {
   browse: 'identity.browse',
   skill: 'identity.skill',
   workspace: 'identity.workspace',
+  round: 'identity.round',
+  cloud: 'identity.cloud',
+  tile: 'identity.tile',
+  clover: 'identity.clover',
+  heart: 'identity.heart',
+  drop: 'identity.drop',
+  oval: 'identity.oval',
+  triangle: 'identity.triangle',
 }
 
 const accentLabels: Readonly<Record<BotAccent, AccentLabelKey>> = {

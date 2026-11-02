@@ -15,6 +15,14 @@ interface CdpMessage {
   readonly error?: { message: string }
 }
 
+// Real Worker/CDP calls can share a host with the full test lane. Keep this
+// bound above Vitest's five-second default, while honoring the lane budget in
+// CI when it is provided.
+const cdpCallTimeoutMs = (() => {
+  const configured = Number.parseInt(process.env.DSH_COVERAGE_TEST_TIMEOUT_MS ?? '', 10)
+  return Number.isInteger(configured) && configured > 0 ? configured : 90_000
+})()
+
 class TestCdpClient {
   private nextId = 0
   private readonly pending = new Map<number, (message: CdpMessage) => void>()
@@ -43,7 +51,7 @@ class TestCdpClient {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`CDP call timed out: ${method}`))
-      }, 5_000)
+      }, cdpCallTimeoutMs)
       this.pending.set(id, (message) => {
         clearTimeout(timer)
         this.pending.delete(id)
@@ -425,7 +433,7 @@ describe('experimental Inspector real Worker', () => {
     expect(runtimeContexts(cdp).map(candidate => candidate.name)).toEqual(['Host'])
   })
 
-  it('uses the same Runtime value model for Host and Client realms', async () => {
+  it('uses the same Runtime value model for Host and Client realms', { timeout: cdpCallTimeoutMs }, async () => {
     inspector = await startInspector({ port: 0, captureFetch: false })
     client = await InspectorClientFixture.start(inspector.endpoint.client, { label: 'Compatibility Client' })
     cdp = await TestCdpClient.connect(inspector.endpoint.webSocketDebuggerUrl)

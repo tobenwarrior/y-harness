@@ -300,251 +300,262 @@ export async function runProfilePnpm(
   const logDir = await mkdtemp(join(logRoot, 'operation-'))
   const logPath = join(logDir, 'pnpm.log')
   const log = await open(logPath, 'wx', 0o600)
-  if (active !== undefined) {
-    await log.write(active)
+  let logClosed = false
+  const closeLog = async (): Promise<void> => {
+    if (logClosed) return
+    logClosed = true
     await log.close()
-    options.onOutput?.(active, 'stderr')
-    const bytes = Buffer.from(active)
-    return { exitCode: 1, output: bytes.subarray(Math.max(0, bytes.length - options.outputBytes)).toString('utf8'), truncated: bytes.length > options.outputBytes, logPath }
   }
-  const before = readProfileManifest('dsh', dir)
-  const savedFiles = ['package.json', 'pnpm-lock.yaml'].map(name => ({ path: join(dir, name), text: optionalFile(join(dir, name)) }))
-  const beforeDependencies = directDependencies(before)
-  const installedBefore = new Map(Object.keys(beforeDependencies).map(name => {
-    const packageDir = installedProfilePackageDir(dir, name)
-    return [name, packageDir === undefined ? undefined : optionalFile(join(packageDir, 'package.json'))]
-  }))
-  let output = Buffer.alloc(0)
-  let truncated = false
-  const append = (bytes: Buffer): void => {
-    output = Buffer.concat([output, bytes])
-    if (output.length > options.outputBytes) {
-      truncated = true
-      output = output.subarray(output.length - options.outputBytes)
-    }
-  }
-  const environment = { ...(options.execution === 'cli' ? process.env : scrubbedParentEnv()), ...options.env }
-  const restore = async (): Promise<void> => {
-    for (const file of savedFiles) {
-      if (file.text === undefined) await rm(file.path, { force: true })
-      else await writeFileAtomic(file.path, file.text, { mode: 0o600 })
-    }
-  }
-  /** Packages a compatibility check refused; callers render them for their own surface. */
-  const incompatible: IncompatiblePlugin[] = []
-  const rejected = async (warnings: readonly string[], restoration: string): Promise<PackageResult> => {
-    const diagnostic = `\ndsh: installation rejected: ${warnings.join('\n')}\ndsh: ${restoration}.\n`
-    await log.write(diagnostic)
-    options.onOutput?.(diagnostic, 'stderr')
-    append(Buffer.from(diagnostic))
-    await log.close()
-    return { exitCode: 1, output: output.toString('utf8'), truncated, logPath, incompatible }
-  }
-  // An install command names the packages it adds, so their manifests are read and checked before
-  // pnpm runs: an incompatible version is never installed, and the one already in use keeps working.
-  const preflight: string[] = []
-  const exemptions = readProfileVersionExemptions(dir)
-  // The run's own registry flags, so the lookup asks the registry the installation will use.
-  const registryFlags = args.filter(argument => argument.startsWith('--registry='))
-  for (const raw of namedSpecs(args)) {
-    // A spec whose manifest cannot be read or validated is left to the run itself and to the check
-    // after installation, which reports what it could not validate.
-    try {
-      const manifest = await namedSpecManifest(dir, anchorPathSpec(raw, context.cwd), options, environment, registryFlags)
-      if (manifest === undefined) continue
-      const issue = evaluatePluginCompatibility(manifest, exemptions)
-      if (issue !== undefined && !issue.exempted) {
-        preflight.push(pluginCompatibilityWarning(issue))
-        incompatible.push(incompatiblePlugin(issue))
-      }
-    } catch (error) { void error; continue }
-  }
-  if (preflight.length > 0) return rejected(preflight, 'nothing was installed')
-  const cancellation = new AbortController()
-  // A service run captures output, so execa terminates the tree it leads when the
-  // run is killed: a lifecycle script outlives the pnpm process that started it.
-  // The CLI keeps the caller's process group, so an interrupt still reaches it.
-  const grouped = leadsOwnGroup(options.execution)
-  const child = execa(options.command ?? 'pnpm', [...options.args ?? [], ...args.map(arg => anchorPathSpec(arg, context.cwd))], {
-    cwd: dir, env: environment, extendEnv: false, reject: false,
-    stdout: options.execution === 'cli' ? 'inherit' : 'pipe',
-    stderr: options.execution === 'cli' ? 'inherit' : 'pipe',
-    killDescendants: options.execution === 'service',
-    buffer: false, stdin: options.execution === 'cli' ? 'inherit' : 'ignore', cancelSignal: options.signal === undefined
-      ? cancellation.signal : AbortSignal.any([cancellation.signal, options.signal]),
-  })
-  // Listened for before the record is written, so an exit during that write is not missed.
-  const exited = once(child.nodeChildProcess, 'exit').catch(() => undefined)
-  let writes = Promise.resolve()
-  /** `settled` records that the process outcome is known; `stalled` that the silence bound stopped the run. */
-  const control = { settled: false, stalled: false }
-  /** Set once this call cuts the reading short itself, so the close it causes is not read as a run failure. */
-  let cut = false
-  /** The first failure a reading hit before that cut, which the run still reports. */
-  let failure: Error | undefined
-  let idleTimer: NodeJS.Timeout | undefined
-  /** The silence bound: a captured run that stops printing without exiting is terminated, never awaited. */
-  const armIdle = (): void => {
-    if (control.settled || options.idleTimeoutMs === undefined) return
-    clearTimeout(idleTimer)
-    idleTimer = setTimeout(() => {
-      control.stalled = true
-      // execa's kill reaches the whole tree of a service run, and escalates on its own.
-      child.kill()
-    }, options.idleTimeoutMs)
-  }
-  const collect = async (stream: AsyncIterable<Buffer | string>, kind: 'stdout' | 'stderr') => {
-    try {
-      for await (const chunk of stream) {
-        armIdle()
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-        writes = writes.then(async () => { await log.write(bytes) })
-        await writes
-        options.onOutput?.(bytes.toString('utf8'), kind)
-        append(bytes)
-      }
-    } catch (error) {
-      // A reading this call cut short is not a failure the run hit, and the run has
-      // already exited, so there is nothing left for the cancellation to stop.
-      if (!cut) {
-        failure ??= error instanceof Error ? error : new Error(String(error))
-        cancellation.abort()
-      }
-      throw error
-    }
-  }
-  const collectors = [
-    ...child.stdout === null ? [] : [collect(child.stdout, 'stdout')],
-    ...child.stderr === null ? [] : [collect(child.stderr, 'stderr')],
-  ]
-  // The drain decides whether a failure surfaces, so each reading is claimed now:
-  // an unclaimed rejection would be reported as unhandled while the pipes drain.
-  for (const collector of collectors) void collector.catch(() => { /* reported through `failure` and the settled readings */ })
-  // Inherited descriptors hand pnpm the terminal, so there is no captured output
-  // for a silence bound to observe: it would fire on a healthy run.
-  if (collectors.length > 0) armIdle()
-  let exitCode: number
   try {
-    await recordRun(dir, { pid: child.pid, grouped })
-    // execa resolves its promise only once the piped stdio has ended, so the
-    // process's own exit — the run's completion — is read from the raw child. A
-    // spawn failure settles without one.
-    const settled = Promise.allSettled([child])
-    await Promise.race([exited, settled])
-    control.settled = true
-    clearTimeout(idleTimer)
-    // A stalled run stops its whole tree first, so the caller's rollback and lock
-    // release happen only after the scripts it started stopped writing.
-    if (control.stalled) await awaitTreeGone({ pid: child.pid, grouped })
-    // A descendant that inherited the pipes can hold them open past the process;
-    // the tail drains under a bound instead of being awaited forever.
-    const drained = await drainWithin(collectors, DRAIN_AFTER_EXIT_MS)
-    if (drained) {
-      for (const stream of await Promise.allSettled(collectors)) if (stream.status === 'rejected') throw stream.reason
-    } else {
-      // Cutting the tail short is this call's own end, not a failure the run hit;
-      // a failure from before the cut still surfaces, and the cut leaves a notice
-      // in the log because a classification may read an incomplete tail.
-      cut = true
-      child.stdout?.destroy()
-      child.stderr?.destroy()
-      const notice = 'dsh: pnpm output was cut short after its process exited\n'
-      await log.write(notice)
-      // A failure from before the cut is the run's own and replaces the notice a
-      // caller would otherwise read; a rejection the cut itself causes is its end.
-      if (failure !== undefined) throw failure
-      options.onOutput?.(notice, 'stderr')
-      append(Buffer.from(notice))
+    if (active !== undefined) {
+      await log.write(active)
+      await closeLog()
+      options.onOutput?.(active, 'stderr')
+      const bytes = Buffer.from(active)
+      return { exitCode: 1, output: bytes.subarray(Math.max(0, bytes.length - options.outputBytes)).toString('utf8'), truncated: bytes.length > options.outputBytes, logPath }
     }
-    const [completion] = await settled
-    if (completion.status === 'rejected') throw completion.reason
-    const result = completion.value
-    exitCode = result.exitCode ?? (result.code === 'ENOENT' ? 127 : 1)
-    if (control.stalled) {
-      const notice = `dsh: pnpm printed nothing for ${String(options.idleTimeoutMs)}ms and was terminated\n`
-      await log.write(notice)
-      options.onOutput?.(notice, 'stderr')
-      append(Buffer.from(notice))
+    const before = readProfileManifest('dsh', dir)
+    const savedFiles = ['package.json', 'pnpm-lock.yaml'].map(name => ({ path: join(dir, name), text: optionalFile(join(dir, name)) }))
+    const beforeDependencies = directDependencies(before)
+    const installedBefore = new Map(Object.keys(beforeDependencies).map((name) => {
+      const packageDir = installedProfilePackageDir(dir, name)
+      return [name, packageDir === undefined ? undefined : optionalFile(join(packageDir, 'package.json'))]
+    }))
+    let output = Buffer.alloc(0)
+    let truncated = false
+    const append = (bytes: Buffer): void => {
+      output = Buffer.concat([output, bytes])
+      if (output.length > options.outputBytes) {
+        truncated = true
+        output = output.subarray(output.length - options.outputBytes)
+      }
     }
-    if (result.failed && output.length === 0) {
-      const diagnostic = result.shortMessage ?? 'pnpm failed'
+    const environment = { ...(options.execution === 'cli' ? process.env : scrubbedParentEnv()), ...options.env }
+    const restore = async (): Promise<void> => {
+      for (const file of savedFiles) {
+        if (file.text === undefined) await rm(file.path, { force: true })
+        else await writeFileAtomic(file.path, file.text, { mode: 0o600 })
+      }
+    }
+    /** Packages a compatibility check refused; callers render them for their own surface. */
+    const incompatible: IncompatiblePlugin[] = []
+    const rejected = async (warnings: readonly string[], restoration: string): Promise<PackageResult> => {
+      const diagnostic = `\ndsh: installation rejected: ${warnings.join('\n')}\ndsh: ${restoration}.\n`
       await log.write(diagnostic)
-      truncated = Buffer.byteLength(diagnostic) > options.outputBytes
-      output = Buffer.from(diagnostic).subarray(0, options.outputBytes)
+      options.onOutput?.(diagnostic, 'stderr')
+      append(Buffer.from(diagnostic))
+      await closeLog()
+      return { exitCode: 1, output: output.toString('utf8'), truncated, logPath, incompatible }
     }
-    // A terminated run's exit status says nothing about what it wrote, so it never reconciles the selection.
-    if (exitCode === 0 && !control.stalled) {
-      const after = readProfileManifest('dsh', dir)
-      const warnings: string[] = []
-      for (const [name, spec] of Object.entries(directDependencies(after))) {
-        const packageDir = installedProfilePackageDir(dir, name)
-        if (packageDir === undefined) continue
-        const installed = optionalFile(join(packageDir, 'package.json'))
-        if (installed === undefined) continue
-        // A dependency this run did not touch never blocks an unrelated operation; profile startup denies it.
-        const beforeName = Object.keys(beforeDependencies).find(candidate => samePackageName(candidate, name))
-        const untouched = beforeName !== undefined && beforeDependencies[beforeName] === spec && installedBefore.get(beforeName) === installed
-        const found: string[] = []
-        const issues: IncompatiblePlugin[] = []
-        try {
-          const manifest = readProfileManifest('dsh', packageDir)
-          for (const candidate of [manifest, ...bundleComponentManifests(manifest, packageDir, context.installAnchor)]) {
-            const issue = evaluatePluginCompatibility(candidate, readProfileVersionExemptions(dir))
-            if (issue !== undefined && !issue.exempted) {
-              found.push(pluginCompatibilityWarning(issue))
-              issues.push(incompatiblePlugin(issue))
-            }
-          }
-        } catch (error) {
-          found.push(`Cannot validate installed package ${name}: ${String(error)}`)
+    // An install command names the packages it adds, so their manifests are read and checked before
+    // pnpm runs: an incompatible version is never installed, and the one already in use keeps working.
+    const preflight: string[] = []
+    const exemptions = readProfileVersionExemptions(dir)
+    // The run's own registry flags, so the lookup asks the registry the installation will use.
+    const registryFlags = args.filter(argument => argument.startsWith('--registry='))
+    for (const raw of namedSpecs(args)) {
+      // A spec whose manifest cannot be read or validated is left to the run itself and to the check
+      // after installation, which reports what it could not validate.
+      try {
+        const manifest = await namedSpecManifest(dir, anchorPathSpec(raw, context.cwd), options, environment, registryFlags)
+        if (manifest === undefined) continue
+        const issue = evaluatePluginCompatibility(manifest, exemptions)
+        if (issue !== undefined && !issue.exempted) {
+          preflight.push(pluginCompatibilityWarning(issue))
+          incompatible.push(incompatiblePlugin(issue))
         }
-        if (found.length === 0) continue
-        if (!untouched) {
-          warnings.push(...found)
-          incompatible.push(...issues)
+      } catch (error) { void error; continue }
+    }
+    if (preflight.length > 0) return rejected(preflight, 'nothing was installed')
+    const cancellation = new AbortController()
+    // A service run captures output, so execa terminates the tree it leads when the
+    // run is killed: a lifecycle script outlives the pnpm process that started it.
+    // The CLI keeps the caller's process group, so an interrupt still reaches it.
+    const grouped = leadsOwnGroup(options.execution)
+    const child = execa(options.command ?? 'pnpm', [...options.args ?? [], ...args.map(arg => anchorPathSpec(arg, context.cwd))], {
+      cwd: dir, env: environment, extendEnv: false, reject: false,
+      stdout: options.execution === 'cli' ? 'inherit' : 'pipe',
+      stderr: options.execution === 'cli' ? 'inherit' : 'pipe',
+      killDescendants: options.execution === 'service',
+      buffer: false, stdin: options.execution === 'cli' ? 'inherit' : 'ignore', cancelSignal: options.signal === undefined
+        ? cancellation.signal : AbortSignal.any([cancellation.signal, options.signal]),
+    })
+    // Listened for before the record is written, so an exit during that write is not missed.
+    const exited = once(child.nodeChildProcess, 'exit').catch(() => undefined)
+    let writes = Promise.resolve()
+    /** `settled` records that the process outcome is known; `stalled` that the silence bound stopped the run. */
+    const control = { settled: false, stalled: false }
+    /** Set once this call cuts the reading short itself, so the close it causes is not read as a run failure. */
+    let cut = false
+    /** The first failure a reading hit before that cut, which the run still reports. */
+    let failure: Error | undefined
+    let idleTimer: NodeJS.Timeout | undefined
+    /** The silence bound: a captured run that stops printing without exiting is terminated, never awaited. */
+    const armIdle = (): void => {
+      if (control.settled || options.idleTimeoutMs === undefined) return
+      clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        control.stalled = true
+        // execa's kill reaches the whole tree of a service run, and escalates on its own.
+        child.kill()
+      }, options.idleTimeoutMs)
+    }
+    const collect = async (stream: AsyncIterable<Buffer | string>, kind: 'stdout' | 'stderr') => {
+      try {
+        for await (const chunk of stream) {
+          armIdle()
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+          writes = writes.then(async () => { await log.write(bytes) })
+          await writes
+          options.onOutput?.(bytes.toString('utf8'), kind)
+          append(bytes)
         }
-        else {
-          const notice = `\ndsh: warning: ${found.join('\n')}\ndsh: it stays installed but profile startup denies it until you grant an exemption for those exact versions.\n`
-          await log.write(notice)
-          options.onOutput?.(notice, 'stderr')
+      } catch (error) {
+        // A reading this call cut short is not a failure the run hit, and the run has
+        // already exited, so there is nothing left for the cancellation to stop.
+        if (!cut) {
+          failure ??= error instanceof Error ? error : new Error(String(error))
+          cancellation.abort()
         }
+        throw error
       }
-      if (warnings.length > 0) {
-        // A bundle component's peers need installed contents, so this rejection lands after pnpm
-        // replaced the tree: restore the files, then reinstall the restored lockfile so the version
-        // that worked before this run keeps loading. A profile that had no lockfile is reinstalled
-        // from its restored manifest without creating one, which removes what this run added.
-        await restore()
-        const hadLockfile = savedFiles.some(file => file.path.endsWith('pnpm-lock.yaml') && file.text !== undefined)
-        const repair = ['install', hadLockfile ? '--frozen-lockfile' : '--config.lockfile=false']
-        const repairing = execa(options.command ?? 'pnpm', [...options.args ?? [], ...repair], {
-          cwd: dir, env: environment, extendEnv: false, reject: false, stdin: 'ignore',
-          ...options.idleTimeoutMs === undefined ? {} : { timeout: options.idleTimeoutMs },
-        })
-        await recordRun(dir, { pid: repairing.pid, grouped: false })
-        const repaired = await repairing
-        exitCode = 1
-        const restoration = repaired.exitCode === 0
-          ? 'restored package.json, pnpm-lock.yaml, and node_modules'
-          : "restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'"
-        const diagnostic = `\ndsh: installation rejected: ${warnings.join('\n')}\ndsh: ${restoration}.\n`
+    }
+    const collectors = [
+      ...child.stdout === null ? [] : [collect(child.stdout, 'stdout')],
+      ...child.stderr === null ? [] : [collect(child.stderr, 'stderr')],
+    ]
+    // The drain decides whether a failure surfaces, so each reading is claimed now:
+    // an unclaimed rejection would be reported as unhandled while the pipes drain.
+    for (const collector of collectors) void collector.catch(() => { /* reported through `failure` and the settled readings */ })
+    // Inherited descriptors hand pnpm the terminal, so there is no captured output
+    // for a silence bound to observe: it would fire on a healthy run.
+    if (collectors.length > 0) armIdle()
+    let exitCode: number
+    try {
+      await recordRun(dir, { pid: child.pid, grouped })
+      // execa resolves its promise only once the piped stdio has ended, so the
+      // process's own exit — the run's completion — is read from the raw child. A
+      // spawn failure settles without one.
+      const settled = Promise.allSettled([child])
+      await Promise.race([exited, settled])
+      control.settled = true
+      clearTimeout(idleTimer)
+      // A stalled run stops its whole tree first, so the caller's rollback and lock
+      // release happen only after the scripts it started stopped writing.
+      if (control.stalled) await awaitTreeGone({ pid: child.pid, grouped })
+      // A descendant that inherited the pipes can hold them open past the process;
+      // the tail drains under a bound instead of being awaited forever.
+      const drained = await drainWithin(collectors, DRAIN_AFTER_EXIT_MS)
+      if (drained) {
+        for (const stream of await Promise.allSettled(collectors)) if (stream.status === 'rejected') throw stream.reason
+      } else {
+        // Cutting the tail short is this call's own end, not a failure the run hit;
+        // a failure from before the cut still surfaces, and the cut leaves a notice
+        // in the log because a classification may read an incomplete tail.
+        cut = true
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        const notice = 'dsh: pnpm output was cut short after its process exited\n'
+        await log.write(notice)
+        // A failure from before the cut is the run's own and replaces the notice a
+        // caller would otherwise read; a rejection the cut itself causes is its end.
+        if (failure !== undefined) throw failure
+        options.onOutput?.(notice, 'stderr')
+        append(Buffer.from(notice))
+      }
+      const [completion] = await settled
+      if (completion.status === 'rejected') throw completion.reason
+      const result = completion.value
+      exitCode = result.exitCode ?? (result.code === 'ENOENT' ? 127 : 1)
+      if (control.stalled) {
+        const notice = `dsh: pnpm printed nothing for ${String(options.idleTimeoutMs)}ms and was terminated\n`
+        await log.write(notice)
+        options.onOutput?.(notice, 'stderr')
+        append(Buffer.from(notice))
+      }
+      if (result.failed && output.length === 0) {
+        const diagnostic = result.shortMessage ?? 'pnpm failed'
         await log.write(diagnostic)
-        options.onOutput?.(diagnostic, 'stderr')
-        append(Buffer.from(diagnostic))
-      } else if (options.activateNewBundles !== false) {
-        await reconcile(before, dir, context.installAnchor, options)
+        truncated = Buffer.byteLength(diagnostic) > options.outputBytes
+        output = Buffer.from(diagnostic).subarray(0, options.outputBytes)
       }
+      // A terminated run's exit status says nothing about what it wrote, so it never reconciles the selection.
+      if (exitCode === 0 && !control.stalled) {
+        const after = readProfileManifest('dsh', dir)
+        const warnings: string[] = []
+        for (const [name, spec] of Object.entries(directDependencies(after))) {
+          const packageDir = installedProfilePackageDir(dir, name)
+          if (packageDir === undefined) continue
+          const installed = optionalFile(join(packageDir, 'package.json'))
+          if (installed === undefined) continue
+          // A dependency this run did not touch never blocks an unrelated operation; profile startup denies it.
+          const beforeName = Object.keys(beforeDependencies).find(candidate => samePackageName(candidate, name))
+          const untouched = beforeName !== undefined && beforeDependencies[beforeName] === spec
+            && installedBefore.get(beforeName) === installed
+          const found: string[] = []
+          const issues: IncompatiblePlugin[] = []
+          try {
+            const manifest = readProfileManifest('dsh', packageDir)
+            for (const candidate of [manifest, ...bundleComponentManifests(manifest, packageDir, context.installAnchor)]) {
+              const issue = evaluatePluginCompatibility(candidate, readProfileVersionExemptions(dir))
+              if (issue !== undefined && !issue.exempted) {
+                found.push(pluginCompatibilityWarning(issue))
+                issues.push(incompatiblePlugin(issue))
+              }
+            }
+          } catch (error) {
+            found.push(`Cannot validate installed package ${name}: ${String(error)}`)
+          }
+          if (found.length === 0) continue
+          if (!untouched) {
+            warnings.push(...found)
+            incompatible.push(...issues)
+          }
+          else {
+            const notice = `\ndsh: warning: ${found.join('\n')}\ndsh: it stays installed but profile startup denies it until you grant an exemption for those exact versions.\n`
+            await log.write(notice)
+            options.onOutput?.(notice, 'stderr')
+          }
+        }
+        if (warnings.length > 0) {
+          // A bundle component's peers need installed contents, so this rejection lands after pnpm
+          // replaced the tree: restore the files, then reinstall the restored lockfile so the version
+          // that worked before this run keeps loading. A profile that had no lockfile is reinstalled
+          // from its restored manifest without creating one, which removes what this run added.
+          await restore()
+          const hadLockfile = savedFiles.some(file => file.path.endsWith('pnpm-lock.yaml') && file.text !== undefined)
+          const repair = ['install', hadLockfile ? '--frozen-lockfile' : '--config.lockfile=false']
+          const repairing = execa(options.command ?? 'pnpm', [...options.args ?? [], ...repair], {
+            cwd: dir, env: environment, extendEnv: false, reject: false, stdin: 'ignore',
+            ...options.idleTimeoutMs === undefined ? {} : { timeout: options.idleTimeoutMs },
+          })
+          await recordRun(dir, { pid: repairing.pid, grouped: false })
+          const repaired = await repairing
+          exitCode = 1
+          const restoration = repaired.exitCode === 0
+            ? 'restored package.json, pnpm-lock.yaml, and node_modules'
+            : "restored package.json and pnpm-lock.yaml, but node_modules could not be reinstalled; run 'dsh plugin install'"
+          const diagnostic = `\ndsh: installation rejected: ${warnings.join('\n')}\ndsh: ${restoration}.\n`
+          await log.write(diagnostic)
+          options.onOutput?.(diagnostic, 'stderr')
+          append(Buffer.from(diagnostic))
+        } else if (options.activateNewBundles !== false) {
+          await reconcile(before, dir, context.installAnchor, options)
+        }
+      }
+    } finally {
+      control.settled = true
+      clearTimeout(idleTimer)
+      // This process saw the run end, so no successor has to wait for it.
+      await rm(runRecordPath(dir), { force: true })
+      await closeLog()
+    }
+    return {
+      exitCode, output: output.toString('utf8'), truncated, logPath,
+      ...control.stalled ? { timedOut: true } : {}, ...incompatible.length > 0 ? { incompatible } : {},
     }
   } finally {
-    control.settled = true
-    clearTimeout(idleTimer)
-    // This process saw the run end, so no successor has to wait for it.
-    await rm(runRecordPath(dir), { force: true })
-    await log.close()
-  }
-  return {
-    exitCode, output: output.toString('utf8'), truncated, logPath,
-    ...control.stalled ? { timedOut: true } : {}, ...incompatible.length > 0 ? { incompatible } : {},
+    await closeLog()
   }
 }
 

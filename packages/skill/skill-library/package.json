@@ -73,6 +73,7 @@
     "@yharness/home-paths": "workspace:*",
     "@yharness/skill": "workspace:*",
     "@yharness/skill-filesystem": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
     "@yharness/storage-domain": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/workspace": "workspace:*",

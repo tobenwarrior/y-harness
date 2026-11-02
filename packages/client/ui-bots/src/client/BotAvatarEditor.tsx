@@ -8,7 +8,7 @@ import type {
   AvatarGenerationStatus,
   AvatarGenerationValue,
 } from '@yharness/avatar-generation/types'
-import { BotAppearancePicker, botIdentityLabelKey } from './BotAppearancePicker.tsx'
+import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotAccent, BotAvatarEditorActions, BotIdentity, BotSummary, BotWorkspaceProps } from './types.ts'
@@ -299,7 +299,6 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
             <span className={css.avatarEditorLabel}>{t('avatarCharacterPreviewLabel')}</span>
             <div className={css.avatarPreviewCard} data-preview="character">
               <BotAvatar name={bot.name} identity={identity} accent={accent} size="large" />
-              <span className={css.avatarPreviewName}>{t(botIdentityLabelKey(identity))}</span>
             </div>
           </div>
           <div className={css.avatarEditorForm}>

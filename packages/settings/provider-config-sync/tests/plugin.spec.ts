@@ -104,6 +104,10 @@ it('cancels its own import when preflight reconciliation observes an externally 
     writeFileSync(b.profile.patchPath, disabledPatch)
   })
   await b.ctx.hmr.runExclusive(async () => {})
+  await vi.waitFor(() => {
+    expect(b.ctx.get('providerConfigSync')).toBeUndefined()
+    expect(existsSync(`${shared}.lock`)).toBe(false)
+  })
   expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(disabledPatch)
   expect(b.values()?.providers?.example).toMatchObject({ displayName: 'Original' })
   expect(b.ctx.get('providerConfigSync')).toBeUndefined()
