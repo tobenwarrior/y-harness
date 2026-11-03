@@ -9,6 +9,15 @@ import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'
 import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 
+/** Durable marker for a memory edit that was interrupted before its log write completed. */
+export type BotStoredRecord = BotRecord & {
+  /** Memory identity being recovered on the next Bot service startup. */
+  readonly pendingMemoryUpdate?: {
+    readonly memoryId: string
+    readonly text: string
+  } | undefined
+}
+
 /** Durable image reference admitted by the attachment store. */
 export const imageAttachmentRefSchema = z.object({
   attachmentId: z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(value => brandString<AttachmentId>(value)),
@@ -89,7 +98,7 @@ export const botRecordSchema = z.object({
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {
   message: 'Bot and Session identities must remain distinct',
-})
+}).transform((record): BotStoredRecord => record)
 
 /** Durable marker for the one-time switch from image avatars to animated characters. */
 export const botAppearanceMigrationSchema = z.object({
@@ -110,9 +119,6 @@ export const botDomain = defineDomain({
     initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
   },
   tables: {
-    bots: domainTable<BotRecord['id'], z.infer<typeof botRecordSchema>>(botRecordSchema),
+    bots: domainTable<BotRecord['id'], BotStoredRecord>(botRecordSchema),
   },
 })
-
-/** Parsed durable Bot row returned by the storage-domain schema. */
-export type BotStoredRecord = z.infer<typeof botRecordSchema>

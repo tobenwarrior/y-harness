@@ -82,7 +82,7 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
-  BotMemoryForgetRequest as BotMemoryForgetRemoteRequest,
+  BotMemoryForgetRemoteRequest,
   BotMemoryForgetValue,
   BotMemoryListRequest,
   BotMemoryListValue,
