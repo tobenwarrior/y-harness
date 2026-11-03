@@ -4,7 +4,7 @@ import { SessionPersistenceCorruptionError } from '@yharness/session-persistence
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { generationLogPath } from '../src/format.ts'
 import { compressZstdFrame } from '../src/zstd.ts'
@@ -76,5 +76,28 @@ describe.each(modes)('native message-source admission ($compression, $access)', 
       await handle.close()
     }
     expect(await readFile(path)).toEqual(bytes)
+  })
+
+  it('refuses a malformed V5 group source after a corrupt V4 row without publishing a successor', async () => {
+    const header = { type: 'session', version: 4, id, createdAt: 1, delegationDepth: 0, isSeeded: false }
+    const event = { type: 'user/message', seq: 0, time: 1, surfaceOp: 'append', data: {
+      id: 'group-message', role: 'user',
+      source: { kind: 'bot-group-message', groupId: 'group-1' },
+      content: [{ type: 'text', text: 'queued' }],
+    } }
+    const lines = [JSON.stringify(header) + '\n', '{invalid json}\n', JSON.stringify(event) + '\n']
+    const bytes = compression === 'none' ? Buffer.from(lines.join('')) : Buffer.concat(await Promise.all(lines.map(compressZstdFrame)))
+    const path = generationLogPath(root, undefined, id, 4, compression)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, bytes)
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(JsonlSessionPersistence, { root, compression })
+
+    const opened = ctx.sessionPersistence.open(id, access).then(async (handle) => { await handle.close() })
+    await expect(opened).rejects.toBeInstanceOf(SessionPersistenceCorruptionError)
+    await expect(opened).rejects.toThrow('format v5 bot-group-message source requires string groupId and messageId')
+    expect(await readFile(path)).toEqual(bytes)
+    expect((await readdir(dirname(path))).filter(name => name !== 'session.lock')).toEqual([basename(path)])
   })
 })
