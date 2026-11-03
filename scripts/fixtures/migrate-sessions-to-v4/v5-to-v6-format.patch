@@ -1,0 +1,59 @@
+diff --git a/packages/core/session/src/types.ts b/packages/core/session/src/types.ts
+index a9f8e4f8..60132eac 100644
+--- a/packages/core/session/src/types.ts
++++ b/packages/core/session/src/types.ts
+@@ -89 +89 @@ export type OptionalSessionSeq = SessionSeq | null
+-export const SESSION_FORMAT_VERSION = 5
++export const SESSION_FORMAT_VERSION = 6
+diff --git a/packages/session/session-format-catalog/src/generated.ts b/packages/session/session-format-catalog/src/generated.ts
+index f0a1bab5..ecb2bd1d 100644
+--- a/packages/session/session-format-catalog/src/generated.ts
++++ b/packages/session/session-format-catalog/src/generated.ts
+@@ -14 +14,2 @@ import { releasedV4SessionFormatCodec, sessionFormatV3ToV4 } from '@yharness/session-format-v3-to-v4'
+-import { assertReleasedV5Header, releasedV5SessionFormatCodec, restoreReleasedV5Artifact, sessionFormatV4ToV5 } from '@yharness/session-format-v4-to-v5'
++import { releasedV5SessionFormatCodec, sessionFormatV4ToV5 } from '@yharness/session-format-v4-to-v5'
++import { assertReleasedV6Header, releasedV6SessionFormatCodec, restoreReleasedV6Artifact, sessionFormatV5ToV6 } from '@yharness/session-format-v5-to-v6'
+@@ -18 +19 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-  currentVersion: 5,
++  currentVersion: 6,
+@@ -25,0 +27 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
++    releasedV6SessionFormatCodec,
+@@ -27 +29 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-  currentEncoder: releasedV5SessionFormatCodec,
++  currentEncoder: releasedV6SessionFormatCodec,
+@@ -33,0 +36 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
++    sessionFormatV5ToV6,
+@@ -36 +39 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    const restored = restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++    const restored = restoreReleasedV6Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+@@ -41 +44 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    return restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++    return restoreReleasedV6Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+@@ -44 +47 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    assertReleasedV5Header(header)
++    assertReleasedV6Header(header)
+diff --git a/packages/session/session-persistence-jsonl/src/format.ts b/packages/session/session-persistence-jsonl/src/format.ts
+index 9f6a7af0..07e2bb8e 100644
+--- a/packages/session/session-persistence-jsonl/src/format.ts
++++ b/packages/session/session-persistence-jsonl/src/format.ts
+@@ -27 +27 @@ import { sessionFormatCatalog } from '@yharness/session-format-catalog'
+-import { assertV5RowAdmission, restoreReleasedV5Artifact } from '@yharness/session-format-v4-to-v5'
++import { assertV6RowAdmission, restoreReleasedV6Artifact } from '@yharness/session-format-v5-to-v6'
+@@ -469 +469 @@ export class SessionLogScanner {
+-      restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++      restoreReleasedV6Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+@@ -500 +500 @@ export class SessionLogScanner {
+-      assertV5RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
++      assertV6RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
+diff --git a/packages/session/session-persistence-jsonl/src/index.ts b/packages/session/session-persistence-jsonl/src/index.ts
+index a597edcf..b0de9fa9 100644
+--- a/packages/session/session-persistence-jsonl/src/index.ts
++++ b/packages/session/session-persistence-jsonl/src/index.ts
+@@ -16 +16 @@ import {
+-import { assertV5RowAdmission } from '@yharness/session-format-v4-to-v5'
++import { assertV6RowAdmission } from '@yharness/session-format-v5-to-v6'
+@@ -286,2 +286,2 @@ class JsonlSessionPersistence extends SessionPersistence {
+-        if (sourceVersion !== 4) return
+-        assertV5RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
++        if (sourceVersion !== 4 && sourceVersion !== 5) return
++        assertV6RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
