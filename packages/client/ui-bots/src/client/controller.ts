@@ -33,6 +33,7 @@ export interface BotWorkspaceRemote {
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
+  uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
 }
@@ -134,6 +135,7 @@ export class BotWorkspaceController {
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined
+        || this.remote.uploadAvatar !== undefined
         || (this.avatarGeneration !== undefined && this.remote.updateAvatar !== undefined)
           ? { avatarEditor: this.avatarEditor() }
           : {}
@@ -363,6 +365,7 @@ export class BotWorkspaceController {
     const generation = this.avatarGeneration
     const updateAvatar = this.remote.updateAvatar
     const updateAppearance = this.remote.updateAppearance
+    const uploadAvatar = this.remote.uploadAvatar
     const generationActions: BotAvatarEditorActions = generation === undefined || updateAvatar === undefined
       ? {}
       : {
@@ -395,6 +398,16 @@ export class BotWorkspaceController {
         },
       }
     return {
+      ...(uploadAvatar === undefined ? {} : { upload: async (botId: string, preview: AvatarGenerationValue) => {
+        const result = await uploadAvatar({ botId: brandString<BotIdType>(botId), ...preview })
+        if (!result.ok) throw new Error(result.error.message)
+        if (String(result.value.bot.id) !== botId) throw new Error(this.unexpectedResponse())
+        if (this.disposed) return
+        const current = this.source.getSnapshot()
+        this.source.set({ ...current, bots: current.bots.map(bot =>
+          bot.id === botId && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot,
+        ) })
+      } }),
       ...generationActions,
       ...(updateAppearance === undefined ? {} : {
         updateAppearance: async (botId: string, appearance: {

@@ -111,6 +111,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('updateAvatar') async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue>
 
 /**
+ * Admit and assign a user-selected PNG without requiring image generation.
+ * @param request - Bot identity and canonical base64 PNG bytes.
+ * @returns The Bot with its newly assigned avatar.
+ */
+@Remote('uploadAvatar') async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue>
+
+/**
  * Read the current Bot avatar through the Host attachment store.
  * @param request - Bot id whose selected avatar should be returned.
  * @returns canonical reference and bytes for a Client preview.

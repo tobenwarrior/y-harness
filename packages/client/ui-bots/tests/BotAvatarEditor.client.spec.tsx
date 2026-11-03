@@ -23,6 +23,92 @@ function renderEditor(actions: BotAvatarEditorActions, onClose = vi.fn()) {
 }
 
 describe('BotAvatarEditor appearance controls', () => {
+  it('uploads a selected image without requiring an image generation provider', async () => {
+    const bitmap = { width: 400, height: 300, close: vi.fn() }
+    vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(bitmap))
+    const context: CanvasRenderingContext2D = Object.create(null)
+    context.drawImage = vi.fn()
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
+    const upload = vi.fn().mockResolvedValue(undefined)
+    try {
+      renderEditor({ upload, updateAppearance: vi.fn() })
+      fireEvent.click(screen.getByRole('tab', { name: 'Upload' }))
+      const file = new File(['image'], 'portrait.jpg', { type: 'image/jpeg' })
+      fireEvent.change(screen.getByLabelText('Choose an image'), { target: { files: [file] } })
+      await screen.findByAltText('Uploaded avatar preview')
+      expect(context.drawImage).toHaveBeenLastCalledWith(bitmap, 50, 0, 300, 300, 0, 0, 512, 512)
+      fireEvent.change(screen.getByRole('slider', { name: 'Horizontal position' }), { target: { value: '0' } })
+      await waitFor(() => { expect(context.drawImage).toHaveBeenLastCalledWith(bitmap, 0, 0, 300, 300, 0, 0, 512, 512) })
+      fireEvent.click(screen.getByRole('button', { name: 'Use this avatar' }))
+      await waitFor(() => { expect(upload).toHaveBeenCalledWith('bot-1', { data: 'AQID', mediaType: 'image/png' }) })
+    } finally {
+      getContext.mockRestore()
+      toDataURL.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('rejects unsupported images before saving', async () => {
+    const upload = vi.fn()
+    renderEditor({ upload, updateAppearance: vi.fn() })
+    fireEvent.click(screen.getByRole('tab', { name: 'Upload' }))
+    fireEvent.change(screen.getByLabelText('Choose an image'), {
+      target: { files: [new File(['text'], 'notes.txt', { type: 'text/plain' })] },
+    })
+    expect((await screen.findByRole('alert')).textContent).toContain('could not be opened')
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  it('keeps the latest crop when image decoding completes out of order', async () => {
+    let finishFirst!: (value: { width: number; height: number; close: () => void }) => void
+    const first = { width: 400, height: 300, close: vi.fn() }
+    const second = { width: 400, height: 300, close: vi.fn() }
+    const decode = vi.fn().mockReturnValueOnce(new Promise((resolve) => { finishFirst = resolve })).mockResolvedValueOnce(second)
+    vi.stubGlobal('createImageBitmap', decode)
+    const context: CanvasRenderingContext2D = Object.create(null)
+    context.drawImage = vi.fn()
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
+    const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
+    try {
+      renderEditor({ upload: vi.fn(), updateAppearance: vi.fn() })
+      fireEvent.click(screen.getByRole('tab', { name: 'Upload' }))
+      fireEvent.change(screen.getByLabelText('Choose an image'), {
+        target: { files: [new File(['image'], 'portrait.jpg', { type: 'image/jpeg' })] },
+      })
+      fireEvent.change(screen.getByRole('slider', { name: 'Horizontal position' }), { target: { value: '0' } })
+      await screen.findByAltText('Uploaded avatar preview')
+      finishFirst(first)
+      await waitFor(() => { expect(first.close).toHaveBeenCalledOnce() })
+      expect(context.drawImage).toHaveBeenCalledOnce()
+      expect(context.drawImage).toHaveBeenCalledWith(second, 0, 0, 300, 300, 0, 0, 512, 512)
+    } finally {
+      getContext.mockRestore()
+      toDataURL.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('discards a decoded upload when the editor closes', async () => {
+    let finish!: (value: { width: number; height: number; close: () => void }) => void
+    const closeBitmap = vi.fn()
+    vi.stubGlobal('createImageBitmap', vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve })))
+    const onClose = vi.fn()
+    try {
+      renderEditor({ upload: vi.fn(), updateAppearance: vi.fn() }, onClose)
+      fireEvent.click(screen.getByRole('tab', { name: 'Upload' }))
+      fireEvent.change(screen.getByLabelText('Choose an image'), {
+        target: { files: [new File(['image'], 'portrait.jpg', { type: 'image/jpeg' })] },
+      })
+      fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!)
+      finish({ width: 200, height: 200, close: closeBitmap })
+      await waitFor(() => { expect(closeBitmap).toHaveBeenCalledOnce() })
+      expect(onClose).toHaveBeenCalledOnce()
+      expect(screen.queryByAltText('Uploaded avatar preview')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   it('defaults to the character tab and keeps generation content inside Generate', async () => {
     const status = vi.fn().mockResolvedValue({ available: false, provider: 'openai', model: 'gpt-image-2.5-flare', reason: 'openai-provider-not-configured' })
     const actions: BotAvatarEditorActions = {

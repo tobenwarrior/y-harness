@@ -623,6 +623,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the updated Bot row.',
       },
       {
+        signature: '@Remote(\'uploadAvatar\') async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue>',
+        description: 'Admit and assign a user-selected PNG without requiring image generation.',
+        parameters: [{ name: 'request', description: 'Bot identity and canonical base64 PNG bytes.' }],
+        returns: 'The Bot with its newly assigned avatar.',
+      },
+      {
         signature: '@Remote(\'readAvatar\') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>',
         description: 'Read the current Bot avatar through the Host attachment store.',
         parameters: [{ name: 'request', description: 'Bot id whose selected avatar should be returned.' }],
@@ -5374,6 +5380,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotAvatarUpdateValue',
     declaration: 'export interface BotAvatarUpdateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotAvatarUploadRequest',
+    declaration: 'export interface BotAvatarUploadRequest {\n    readonly botId: BotId;\n    readonly data: string;\n    readonly mediaType: \'image/png\';\n}',
   },
   {
     name: 'BotCollaborationClient',

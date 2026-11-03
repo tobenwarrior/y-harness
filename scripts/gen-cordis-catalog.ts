@@ -946,6 +946,7 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotOrganizationUpdateRequest: 'Bot roster organization input is owned by packages/agents/bots/README.md and src/types.ts',
   BotOrganizationUpdateValue: 'Bot roster organization result is owned by packages/agents/bots/README.md and src/types.ts',
   BotAppearanceUpdateRequest: 'Bot appearance update input is owned by packages/agents/bots/README.md and src/types.ts',
+  BotAvatarUploadRequest: 'Bot avatar upload input is owned by packages/agents/bots/README.md and src/types.ts',
   BotAppearanceUpdateValue: 'Bot appearance update result is owned by packages/agents/bots/README.md and src/types.ts',
   BotAvatarUpdateRequest: 'Bot avatar update input is owned by packages/agents/bots/README.md and src/types.ts',
   BotAvatarUpdateValue: 'Bot avatar update result is owned by packages/agents/bots/README.md and src/types.ts',

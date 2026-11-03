@@ -79,6 +79,20 @@ function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
 }
 
 describe('BotWorkspaceController', () => {
+  it('exposes avatar uploads without an image generation service', async () => {
+    const original = bot('bot-one', 'session-one')
+    const remote = remoteFixture([original])
+    const uploadAvatar = vi.fn().mockResolvedValue({ ok: true, value: { bot: { ...original, updatedAt: 2 } } })
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController({ ...remote, uploadAvatar }, sessions, () => 'unexpected response')
+    await controller.load()
+
+    const upload = controller.face().avatarEditor?.upload
+    expect(upload).toBeDefined()
+    await upload!(original.id, { data: 'AQID', mediaType: 'image/png' })
+    expect(uploadAvatar).toHaveBeenCalledWith({ botId: original.id, data: 'AQID', mediaType: 'image/png' })
+    expect(controller.source.getSnapshot().bots[0]?.updatedAt).toBe(2)
+  })
   it('renames a bot while keeping its existing session selected', async () => {
     const original = bot('bot-one', 'session-one', { name: 'Original' })
     const updated = { ...original, name: 'Market scout', updatedAt: 2 }

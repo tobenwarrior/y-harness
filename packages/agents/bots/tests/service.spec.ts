@@ -71,7 +71,10 @@ async function harness(
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
     list: () => [...agents],
   } as never)
-  ctx.provide('attachments', { readImage } as never)
+  const saveImages = vi.fn(async () => [{
+    attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png' as const, bytes: 3, width: 512, height: 512,
+  }])
+  ctx.provide('attachments', { readImage, saveImages } as never)
   const inspect = vi.fn(async (sessionId: SessionId) => ({
     events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? [],
   }))
@@ -93,7 +96,7 @@ async function harness(
     await close(ctx)
     throw error
   }
-  return { ctx, service, pool, create, readImage, agents, inspect, resolveAgent, flush, followups }
+  return { ctx, service, pool, create, readImage, saveImages, agents, inspect, resolveAgent, flush, followups }
 }
 
 async function close(ctx: Context): Promise<void> {
@@ -101,6 +104,22 @@ async function close(ctx: Context): Promise<void> {
 }
 
 describe('durable Bot roster', () => {
+  it('stores an uploaded avatar without an image generation service', async () => {
+    const h = await harness()
+    try {
+      const { bot } = await h.service.create({ name: 'Photo bot', cwd: '/tmp' })
+      await expect(h.service.uploadAvatar({ botId: BotId('bot-missing'), data: 'AQID', mediaType: 'image/png' }))
+        .rejects.toMatchObject({ code: 'bot/not-found' })
+      expect(h.saveImages).not.toHaveBeenCalled()
+      const result = await h.service.uploadAvatar({ botId: bot.id, data: 'AQID', mediaType: 'image/png' })
+      expect(result.bot.avatar).toMatchObject({ mediaType: 'image/png', width: 512, height: 512 })
+      expect(h.saveImages).toHaveBeenCalledOnce()
+      await expect(h.service.uploadAvatar({ botId: bot.id, data: 'not base64', mediaType: 'image/png' })).rejects.toThrow()
+      expect(h.saveImages).toHaveBeenCalledOnce()
+    } finally {
+      await close(h.ctx)
+    }
+  })
   it('persists an additional character shape across restarts', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

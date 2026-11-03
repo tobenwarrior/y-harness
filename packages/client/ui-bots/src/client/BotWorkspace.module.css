@@ -697,6 +697,24 @@
   object-fit: cover;
 }
 
+.avatarUploadInput {
+  max-width: 100%;
+  color: var(--yh-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.avatarUploadInput::file-selector-button {
+  margin-right: 10px;
+  padding: 6px 10px;
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
 .avatarPrompt {
   box-sizing: border-box;
   max-width: 100%;

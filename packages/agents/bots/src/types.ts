@@ -204,6 +204,16 @@ export interface BotAvatarUpdateValue {
   readonly bot: BotView
 }
 
+/** Upload and assign one browser-encoded PNG avatar. */
+export interface BotAvatarUploadRequest {
+  /** Bot whose avatar should change. */
+  readonly botId: BotId
+  /** Canonical base64-encoded PNG bytes. */
+  readonly data: string
+  /** Media type of the encoded image. */
+  readonly mediaType: 'image/png'
+}
+
 /** Read one Bot-owned generated avatar from Host attachment storage. */
 export interface BotAvatarReadRequest {
   /** Bot whose current avatar should be read. */

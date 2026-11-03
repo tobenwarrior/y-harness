@@ -73,6 +73,8 @@ export interface BotAvatarEditorActions {
   readonly commit?: (preview: AvatarGenerationValue) => Promise<AvatarGenerationCommitValue>
   /** Persist the generated image, or clear it to restore the semantic avatar. */
   readonly update?: (botId: string, avatar: SharedBotAvatar | null) => Promise<void>
+  /** Admit and assign a user-selected PNG without image generation. */
+  readonly upload?: (botId: string, preview: AvatarGenerationValue) => Promise<void>
   /** Persist a semantic character choice and optionally clear a generated image in the same update. */
   readonly updateAppearance?: (botId: string, appearance: {
     readonly identity: BotIdentity

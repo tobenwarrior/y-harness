@@ -7,6 +7,7 @@ import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
 import type { ImageAttachmentRef } from '@yharness/attachment'
+import { admitEncodedImages } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import type { Domain, KvTable } from '@yharness/storage-domain'
@@ -25,6 +26,7 @@ import type {
   BotAppearanceUpdateValue,
   BotAvatarUpdateRequest,
   BotAvatarUpdateValue,
+  BotAvatarUploadRequest,
   BotAvatarReadRequest,
   BotAvatarReadValue,
   BotCreateRequest,
@@ -665,6 +667,25 @@ export class BotService extends TypertRemoteService {
   @Remote('updateAvatar')
   async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue> {
     return this.updateAvatarImpl(request)
+  }
+
+  /**
+   * Admit and assign a user-selected PNG without requiring image generation.
+   * @param request - Bot identity and canonical base64 PNG bytes.
+   * @returns The Bot with its newly assigned avatar.
+   */
+  @Remote('uploadAvatar')
+  async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue> {
+    if (request === null || typeof request !== 'object' || typeof request.data !== 'string' || request.mediaType !== 'image/png') {
+      return badRequest('A PNG avatar is required')
+    }
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    if (bots.get(id) === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const [avatar] = await admitEncodedImages(this.ctx.attachments, [{ data: request.data, mediaType: request.mediaType }])
+    if (avatar === undefined) throw new Error('Avatar attachment was not stored')
+    return this.updateAvatarImpl({ botId: id, avatar })
   }
 
   private async updateAvatarImpl(request: BotAvatarUpdateRequest, signal?: AbortSignal): Promise<BotAvatarUpdateValue> {

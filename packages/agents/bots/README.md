@@ -47,7 +47,7 @@ Creation writes a `provisioning` row before it asks the Session controller to ac
 
 ### Visual identity and avatars
 
-The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own animated character components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping. The first open after the animated character rollout removes selected image references from existing Bot rows while leaving their attachment data untouched; the durable marker makes this migration run once. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference for future explicit selection, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
+The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so the Client can map them to its own animated character components and design tokens. `updateAppearance` changes either family in place and keeps the one Session mapping. The first open after the animated character rollout removes selected image references from existing Bot rows while leaving their attachment data untouched; the durable marker makes this migration run once. A generated avatar is a verified `ImageAttachmentRef`; `updateAvatar` persists its canonical reference for future explicit selection, `uploadAvatar` validates and stores a user-selected PNG without an image-generation provider, `readAvatar` returns verified bytes for a preview, and `avatar: null` restores the semantic identity avatar.
 
 -----
 

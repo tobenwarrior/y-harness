@@ -50,7 +50,9 @@ function previewURL(value: AvatarGenerationValue): string {
   return `data:${value.mediaType};base64,${value.data}`
 }
 
-type AvatarEditorTab = 'character' | 'generate'
+type AvatarEditorTab = 'character' | 'generate' | 'upload'
+type AvatarCrop = { readonly x: number; readonly y: number; readonly zoom: number }
+const DEFAULT_CROP: AvatarCrop = { x: 50, y: 50, zoom: 1 }
 
 /** Render semantic character controls and the optional generated-avatar flow for one Bot. */
 export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpenSettings, t }: BotAvatarEditorProps) {
@@ -59,26 +61,33 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
     && actions.generate !== undefined
     && actions.commit !== undefined
     && actions.update !== undefined
-  const [tab, setTab] = useState<AvatarEditorTab>(() => appearanceEditingAvailable ? 'character' : 'generate')
+  const uploadAvailable = actions.upload !== undefined
+  const [tab, setTab] = useState<AvatarEditorTab>(() => appearanceEditingAvailable ? 'character' : generationAvailable ? 'generate' : 'upload')
   const [description, setDescription] = useState('')
   const [status, setStatus] = useState<AvatarGenerationStatus | null>(null)
   const [statusError, setStatusError] = useState(false)
   const [statusAttempt, setStatusAttempt] = useState(0)
   const [generated, setGenerated] = useState<AvatarGenerationValue | null>(null)
-  const [committed, setCommitted] = useState<SharedBotAvatar | null>(null)
+  const [uploaded, setUploaded] = useState<AvatarGenerationValue | null>(null)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [crop, setCrop] = useState<AvatarCrop>(DEFAULT_CROP)
+  const [committed, setCommitted] = useState<{ readonly preview: AvatarGenerationValue; readonly avatar: SharedBotAvatar } | null>(null)
   const [identity, setIdentity] = useState<BotIdentity>(bot.identity ?? 'agent')
   const [accent, setAccent] = useState<BotAccent>(bot.accent ?? 'violet')
-  const [working, setWorking] = useState<'status' | 'generate' | 'update' | 'appearance' | null>(null)
-  const [error, setError] = useState<'generate' | 'update' | 'appearance' | null>(null)
+  const [working, setWorking] = useState<'status' | 'generate' | 'update' | 'appearance' | 'upload' | null>(null)
+  const [error, setError] = useState<'generate' | 'update' | 'appearance' | 'upload' | null>(null)
   const request = useRef<AbortController | null>(null)
 
   useEffect(() => {
     if (!open) return
-    setTab(appearanceEditingAvailable ? 'character' : 'generate')
+    setTab(appearanceEditingAvailable ? 'character' : generationAvailable ? 'generate' : 'upload')
     setDescription('')
     setStatus(null)
     setStatusError(false)
     setGenerated(null)
+    setUploaded(null)
+    setUploadFile(null)
+    setCrop(DEFAULT_CROP)
     setCommitted(null)
     setIdentity(bot.identity ?? 'agent')
     setAccent(bot.accent ?? 'violet')
@@ -88,7 +97,7 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
       request.current?.abort()
       request.current = null
     }
-  }, [appearanceEditingAvailable, bot.id, open])
+  }, [appearanceEditingAvailable, generationAvailable, bot.id, open])
 
   useEffect(() => {
     const checkStatus = actions.status
@@ -157,15 +166,15 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
     }
   }
 
-  const commitGenerated = async () => {
+  const commitPreview = async (preview: AvatarGenerationValue | null) => {
     const commitPreview = actions.commit
     const updateAvatar = actions.update
-    if (commitPreview === undefined || updateAvatar === undefined || generated === null || working !== null) return
+    if (commitPreview === undefined || updateAvatar === undefined || preview === null || working !== null) return
     setWorking('update')
     setError(null)
     try {
-      const avatar = committed ?? (await commitPreview(generated)).attachment
-      setCommitted(avatar)
+      const avatar = committed?.preview === preview ? committed.avatar : (await commitPreview(preview)).attachment
+      setCommitted({ preview, avatar })
       await updateAvatar(bot.id, avatar)
       onClose()
     } catch {
@@ -175,8 +184,71 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
     }
   }
 
+  const saveUpload = async () => {
+    if (actions.upload === undefined || uploaded === null || working !== null) return
+    setWorking('update')
+    setError(null)
+    try {
+      await actions.upload(bot.id, uploaded)
+      onClose()
+    } catch {
+      setError('update')
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const upload = async (file: File | undefined, nextCrop: AvatarCrop) => {
+    if (file === undefined || (working !== null && working !== 'upload')) return
+    request.current?.abort()
+    setCommitted(null)
+    setError(null)
+    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 25 * 1024 * 1024) {
+      setUploaded(null)
+      setUploadFile(null)
+      setError('upload')
+      return
+    }
+    setUploadFile(file)
+    const controller = new AbortController()
+    request.current = controller
+    setWorking('upload')
+    try {
+      const bitmap = await createImageBitmap(file)
+      try {
+        if (controller.signal.aborted) return
+        const canvas = document.createElement('canvas')
+        canvas.width = 512
+        canvas.height = 512
+        const context = canvas.getContext('2d')
+        if (context === null || bitmap.width < 1 || bitmap.height < 1) throw new Error('Image is unavailable')
+        const side = Math.min(bitmap.width, bitmap.height) / nextCrop.zoom
+        const left = (bitmap.width - side) * nextCrop.x / 100
+        const top = (bitmap.height - side) * nextCrop.y / 100
+        context.drawImage(bitmap, left, top, side, side, 0, 0, 512, 512)
+        const data = canvas.toDataURL('image/png').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/)?.[1]
+        if (data === undefined) throw new Error('Image encoding failed')
+        setUploaded({ data, mediaType: 'image/png' })
+      } finally {
+        bitmap.close()
+      }
+    } catch {
+      if (!controller.signal.aborted) { setUploaded(null); setError('upload') }
+    } finally {
+      if (request.current === controller) {
+        request.current = null
+        setWorking(null)
+      }
+    }
+  }
+
+  const changeCrop = (next: AvatarCrop) => {
+    setCrop(next)
+    if (uploadFile !== null) void upload(uploadFile, next)
+  }
+
   const saveAppearance = async () => {
-    if (actions.updateAppearance === undefined || working === 'appearance' || working === 'generate' || working === 'update') return
+    if (actions.updateAppearance === undefined || (working !== null && working !== 'status')) return
     setWorking('appearance')
     setError(null)
     try {
@@ -201,28 +273,22 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
   const appearanceChanged = identity !== currentIdentity || accent !== currentAccent || bot.avatar !== undefined
   const canSaveAppearance = actions.updateAppearance !== undefined
     && appearanceChanged
-    && working !== 'appearance'
-    && working !== 'generate'
-    && working !== 'update'
+    && (working === null || working === 'status')
   const showLegacyCharacterAction = !appearanceEditingAvailable
     && generationAvailable
     && bot.avatar !== undefined
     && generated === null
-  const editorTabs = appearanceEditingAvailable && generationAvailable
-    ? [
-      { value: 'character' as const, label: t('avatarCharacterTab'), id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel' },
-      { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'yharness-bots-avatar-generate-tab', panelId: 'yharness-bots-avatar-generate-panel' },
-    ] as const
-    : appearanceEditingAvailable
-      ? [
-        { value: 'character' as const, label: t('avatarCharacterTab'), id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel' },
-      ] as const
-      : [
-        { value: 'generate' as const, label: t('avatarGenerateTab'), id: 'yharness-bots-avatar-generate-tab', panelId: 'yharness-bots-avatar-generate-panel' },
-      ] as const
-  const activeTab: AvatarEditorTab = appearanceEditingAvailable
-    ? tab === 'generate' && generationAvailable ? 'generate' : 'character'
-    : 'generate'
+  const editorTabs = [
+    ...(appearanceEditingAvailable ? [{ value: 'character' as const, label: t('avatarCharacterTab'), id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel' }] : []),
+    ...(generationAvailable ? [{ value: 'generate' as const, label: t('avatarGenerateTab'), id: 'yharness-bots-avatar-generate-tab', panelId: 'yharness-bots-avatar-generate-panel' }] : []),
+    ...(uploadAvailable ? [{ value: 'upload' as const, label: t('avatarUploadTab'), id: 'yharness-bots-avatar-upload-tab', panelId: 'yharness-bots-avatar-upload-panel' }] : []),
+  ]
+  const firstTab = editorTabs[0] ?? {
+    value: 'character' as const, label: t('avatarCharacterTab'),
+    id: 'yharness-bots-avatar-character-tab', panelId: 'yharness-bots-avatar-character-panel',
+  }
+  const availableTabs: [typeof firstTab, ...typeof firstTab[]] = [firstTab, ...editorTabs.slice(1)]
+  const activeTab: AvatarEditorTab = availableTabs.some(item => item.value === tab) ? tab : firstTab.value
 
   return (
     <Modal
@@ -258,9 +324,14 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
           {activeTab === 'generate' && generated !== null && (
             <Button
               variant="primary"
-              onClick={() => { void commitGenerated() }}
+              onClick={() => { void commitPreview(generated) }}
               disabled={working !== null}
             >
+              {working === 'update' ? t('avatarSaving') : t('avatarUse')}
+            </Button>
+          )}
+          {activeTab === 'upload' && uploaded !== null && (
+            <Button variant="primary" onClick={() => { void saveUpload() }} disabled={working !== null}>
               {working === 'update' ? t('avatarSaving') : t('avatarUse')}
             </Button>
           )}
@@ -268,7 +339,7 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
       )}
     >
       <SegmentedTabs<AvatarEditorTab>
-        items={editorTabs}
+        items={availableTabs}
         value={activeTab}
         onChange={(next) => { setTab(next); setError(null) }}
         label={t('avatarModeLabel')}
@@ -308,12 +379,51 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
               onIdentityChange={setIdentity}
               onAccentChange={setAccent}
               onAppearanceChange={() => { setError(null) }}
-              disabled={working === 'appearance' || working === 'generate' || working === 'update'}
+              disabled={working !== null && working !== 'status'}
               t={t}
             />
             {error !== null && <div className={css.avatarNotice} role="alert">
               {error === 'appearance' ? t('avatarAppearanceSaveFailed') : t('avatarSaveFailed')}
             </div>}
+          </div>
+        </div>
+      </div>
+      <div
+        id="yharness-bots-avatar-upload-panel"
+        role="tabpanel"
+        aria-labelledby="yharness-bots-avatar-upload-tab"
+        hidden={activeTab !== 'upload'}
+        tabIndex={0}
+      >
+        <div className={css.avatarEditorLayout}>
+          <div className={css.avatarEditorPreviewColumn}>
+            {uploaded !== null && <div className={css.avatarPreviewCard}>
+              <img className={css.avatarGeneratedPreview} src={previewURL(uploaded)} alt={t('avatarUploadPreviewAlt')} />
+            </div>}
+          </div>
+          <div className={css.avatarEditorForm}>
+            <label className={css.avatarEditorLabel} htmlFor="yharness-bots-avatar-upload">{t('avatarUploadLabel')}</label>
+            <input id="yharness-bots-avatar-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+              className={css.avatarUploadInput}
+              onClick={(event) => { if (error === 'upload') event.currentTarget.value = '' }}
+              disabled={working !== null} onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                setCrop(DEFAULT_CROP)
+                void upload(file, DEFAULT_CROP)
+              }} />
+            <span className={css.avatarEditorLabel}>{t('avatarUploadHelp')}</span>
+            {uploadFile !== null && <>
+              <label className={css.avatarEditorLabel} htmlFor="yharness-avatar-crop-zoom">{t('avatarCropZoom')}</label>
+              <input id="yharness-avatar-crop-zoom" type="range" min="1" max="3" step="0.1" value={crop.zoom}
+                disabled={working !== null && working !== 'upload'} onChange={(event) => { changeCrop({ ...crop, zoom: Number(event.currentTarget.value) }) }} />
+              <label className={css.avatarEditorLabel} htmlFor="yharness-avatar-crop-x">{t('avatarCropHorizontal')}</label>
+              <input id="yharness-avatar-crop-x" type="range" min="0" max="100" value={crop.x}
+                disabled={working !== null && working !== 'upload'} onChange={(event) => { changeCrop({ ...crop, x: Number(event.currentTarget.value) }) }} />
+              <label className={css.avatarEditorLabel} htmlFor="yharness-avatar-crop-y">{t('avatarCropVertical')}</label>
+              <input id="yharness-avatar-crop-y" type="range" min="0" max="100" value={crop.y}
+                disabled={working !== null && working !== 'upload'} onChange={(event) => { changeCrop({ ...crop, y: Number(event.currentTarget.value) }) }} />
+            </>}
+            {error !== null && <div className={css.avatarNotice} role="alert">{t(error === 'upload' ? 'avatarUploadFailed' : 'avatarSaveFailed')}</div>}
           </div>
         </div>
       </div>
