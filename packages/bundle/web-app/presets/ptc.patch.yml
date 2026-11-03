@@ -27,6 +27,8 @@
             disabled: !!js process.platform !== 'win32'
           - id: tool-fs
             name: '@yharness/tool-fs'
+            config:
+              applyPatch: true
           - id: tool-fs-search
             name: '@yharness/tool-fs-search'
             config:

@@ -768,7 +768,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     implementations: ['fs-local', 'fs-sandbox', 'fs-ssh'],
     consumers: ['tool-fs'],
     companions: ['fs-observation-policy'],
-    note: 'tool-fs executes read/write/edit through ctx.fs; fs-sandbox fences mutations by the shared sandbox mode; fs-observation-policy contributes observed-state checks through the fs/* event gate.',
+    note: 'tool-fs executes read/write/edit/apply_patch through ctx.fs, including file create/update/delete/move; fs-sandbox fences mutations by the shared sandbox mode; fs-observation-policy contributes observed-state checks through the fs/* event gate.',
   },
   {
     key: 'compaction',
@@ -1655,7 +1655,7 @@ function renderToolPipeline(): string {
     `  approval["${mermaidCode('ctx.approval')} one-shot prompt<br/>absent or unanswerable: deny"]`,
     `  around["${mermaidCode('tools/execute')} waterfall<br/>timeout, retry, metrics (around dispatch)"]`,
     '  toolBody["Registered tool execute() body"]',
-    `  fsGate["${mermaidCode('fs/write-intent')} or ${mermaidCode('fs/edit-intent')}<br/>tool-fs mutations only"]`,
+    `  fsGate["${mermaidCode('fs/write-intent')}, ${mermaidCode('fs/edit-intent')}, or ${mermaidCode('fs/delete-intent')}<br/>tool-fs mutations only"]`,
     `  owned["Tool-owned session events<br/>${mermaidCode('todo/write')}, ${mermaidCode('fs/observed')}, ${mermaidCode('hook/invoked')}, ${mermaidCode('hook/result')}, ${mermaidCode('tool/ptc-dispatch')}"]`,
     '  project["ToolDefinition.projectContent<br/>execution-prepared text and images"]',
     `  post["${mermaidCode('tools/post-execute')} waterfall<br/>accept, block, replace, add context"]`,

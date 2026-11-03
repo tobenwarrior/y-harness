@@ -187,7 +187,13 @@ function rawCall(
   )
 }
 
-function result(seq: number, callId: string, isError = false, turn = 1): SessionLiveEventEntry {
+function result(
+  seq: number,
+  callId: string,
+  isError = false,
+  turn = 1,
+  meta?: Record<string, unknown>,
+): SessionLiveEventEntry {
   return at(seq, 'tool/result', {
     turn,
     step: 1,
@@ -199,6 +205,7 @@ function result(seq: number, callId: string, isError = false, turn = 1): Session
       content: [],
       isError,
     },
+    ...(meta === undefined ? {} : { meta }),
   })
 }
 
@@ -265,6 +272,40 @@ describe('produced-file Turn data', () => {
       'notes/existing.md',
       'notes/deleted-text.md',
       'notes/inserted.md',
+    ])
+  })
+
+  it('folds apply_patch writes and move destinations, excludes deletions, and ignores failed calls', () => {
+    const value = assembler([
+      at(1, 'turn/start', { turn: 1 }),
+      call(2, 'patch', 'apply_patch', { input: '*** Begin Patch\n*** End Patch' }),
+      result(3, 'patch', false, 1, {
+        stopped: true,
+        locations: [
+          { path: 'created.txt' },
+          { path: 'updated.txt' },
+          { path: 'deleted.txt' },
+          { path: 'move-source.txt' },
+          { path: 'move-destination.txt' },
+          { path: 'partial-source.txt' },
+          { path: 'partial-destination.txt' },
+        ],
+        produced: [
+          { path: 'created.txt' },
+          { path: 'updated.txt' },
+          { path: 'move-destination.txt' },
+          { path: 'partial-destination.txt' },
+        ],
+      }),
+      call(4, 'failed-patch', 'apply_patch', { input: 'invalid' }),
+      result(5, 'failed-patch', true, 1, {
+        locations: [{ path: 'error.txt' }],
+        produced: [{ path: 'error.txt' }],
+      }),
+    ])
+
+    expect(producedForClosing(deliverablesOf(value))).toEqual([
+      'created.txt', 'updated.txt', 'move-destination.txt', 'partial-destination.txt',
     ])
   })
 

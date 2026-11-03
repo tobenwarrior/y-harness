@@ -16,7 +16,7 @@ flowchart TD
   approval["<code>ctx.approval</code> one-shot prompt<br/>absent or unanswerable: deny"]
   around["<code>tools/execute</code> waterfall<br/>timeout, retry, metrics (around dispatch)"]
   toolBody["Registered tool execute() body"]
-  fsGate["<code>fs/write-intent</code> or <code>fs/edit-intent</code><br/>tool-fs mutations only"]
+  fsGate["<code>fs/write-intent</code>, <code>fs/edit-intent</code>, or <code>fs/delete-intent</code><br/>tool-fs mutations only"]
   owned["Tool-owned session events<br/><code>todo/write</code>, <code>fs/observed</code>, <code>hook/invoked</code>, <code>hook/result</code>, <code>tool/ptc-dispatch</code>"]
   project["ToolDefinition.projectContent<br/>execution-prepared text and images"]
   post["<code>tools/post-execute</code> waterfall<br/>accept, block, replace, add context"]

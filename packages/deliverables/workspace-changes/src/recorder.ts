@@ -156,6 +156,17 @@ export class TurnRecorder {
   capture(name: string, args: unknown): void {
     const path = mutationPath(name, args)
     if (path === undefined) return
+    this.capturePath(path)
+  }
+
+  /**
+   * Queue the capture of a canonical provider path before a filesystem
+   * mutation. Provider-backed tools use this path-based entry point because
+   * one patch call can mutate several files without exposing a model-facing
+   * tool argument for each operation.
+   * @param path - absolute path in the filesystem execution world.
+   */
+  capturePath(path: string): void {
     const state = this.state
     void this.enqueue(async () => {
       const paths = this.paths

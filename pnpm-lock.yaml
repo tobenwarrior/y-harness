@@ -7032,6 +7032,9 @@ importers:
 
   packages/context/agent-instructions:
     dependencies:
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../../fs/fs-patch
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -7672,6 +7675,9 @@ importers:
       '@yharness/cordis-plugin-loader':
         specifier: workspace:~
         version: link:../../../vendor/loader
+      '@yharness/fs':
+        specifier: workspace:*
+        version: link:../../fs/fs
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
@@ -8895,6 +8901,12 @@ importers:
       buffer:
         specifier: ^6.0.3
         version: 6.0.3
+      eslint-scope:
+        specifier: ^9.1.2
+        version: 9.1.2
+      eslint-visitor-keys:
+        specifier: ^5.0.1
+        version: 5.0.1
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
@@ -8902,6 +8914,9 @@ importers:
         specifier: ^4.7.0
         version: 4.7.0
     devDependencies:
+      '@types/estree':
+        specifier: ^1.0.9
+        version: 1.0.9
       '@types/picomatch':
         specifier: ^3.0.2
         version: 3.0.2
@@ -9192,6 +9207,10 @@ importers:
         version: link:../../typert/protocol
 
   packages/fs/fs:
+    dependencies:
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../fs-patch
     devDependencies:
       '@yharness/brand':
         specifier: workspace:*
@@ -9208,6 +9227,9 @@ importers:
 
   packages/fs/fs-local:
     dependencies:
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../fs-patch
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -9240,6 +9262,12 @@ importers:
         specifier: workspace:*
         version: link:../../llm/llm
 
+  packages/fs/fs-patch:
+    devDependencies:
+      '@yharness/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+
   packages/fs/fs-sandbox:
     devDependencies:
       '@yharness/cordis':
@@ -9263,12 +9291,18 @@ importers:
 
   packages/fs/tool-fs:
     dependencies:
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../fs-patch
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
       '@yharness/util-code-language':
         specifier: workspace:*
         version: link:../../util/code-language
+      '@yharness/util-values':
+        specifier: workspace:*
+        version: link:../../util/values
       diff:
         specifier: ^9.0.0
         version: 9.0.0

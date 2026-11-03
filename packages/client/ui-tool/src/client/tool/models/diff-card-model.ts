@@ -18,6 +18,13 @@ export interface DiffCardModel {
    * neighbouring field into it.
    */
   card: Pick<DiffBlockProps, 'diffs'>
+  /** File locations affected by a mutation even when no bounded diff text exists. */
+  locations?: readonly DiffLocation[]
+}
+
+/** A file location surfaced by a mutation card. */
+export interface DiffLocation {
+  path: string
 }
 
 /**
@@ -37,6 +44,153 @@ function narrowDiffs(diffs: unknown): DiffHunk[] | null {
     out.push({ path, oldText, newText })
   }
   return out
+}
+
+/** Narrow a patch result's diff array while preserving an empty, valid array. */
+function narrowPatchDiffs(diffs: unknown): DiffHunk[] | null {
+  if (!Array.isArray(diffs)) return null
+  if (diffs.length === 0) return []
+  return narrowDiffs(diffs)
+}
+
+/** Narrow patch locations retained for effects without a bounded before-image. */
+function narrowLocations(locations: unknown): DiffLocation[] | null {
+  if (!Array.isArray(locations)) return null
+  if (!locations.every((location) => {
+    if (typeof location !== 'object' || location === null || Array.isArray(location)) return false
+    const { path } = location as Record<string, unknown>
+    return typeof path === 'string' && path.trim() !== ''
+  })) return null
+  return locations as DiffLocation[]
+}
+
+function locationsFromDiffs(diffs: readonly DiffHunk[]): DiffLocation[] {
+  const paths = new Set<string>()
+  const locations: DiffLocation[] = []
+  for (const diff of diffs) {
+    if (paths.has(diff.path)) continue
+    paths.add(diff.path)
+    locations.push({ path: diff.path })
+  }
+  return locations
+}
+
+interface PatchPreview {
+  diffs: DiffHunk[]
+  locations: DiffLocation[]
+}
+
+interface PatchOperationPreview {
+  kind: 'add' | 'update' | 'delete'
+  path: string
+  destination?: string
+  oldLines: string[]
+  newLines: string[]
+}
+
+/**
+ * Parse the small presentation subset of Codex patch syntax needed by the
+ * browser card. The filesystem tool remains authoritative for validation and
+ * execution; this parser only builds a best-effort preview from call text.
+ * @param input - raw apply_patch input.
+ * @returns preview diffs and affected locations, or null for malformed input.
+ */
+function patchPreview(input: string): PatchPreview | null {
+  const lines = input.split(/\r?\n/u)
+  if (lines[0] !== '*** Begin Patch' || !lines.includes('*** End Patch')) return null
+  const operations: PatchOperationPreview[] = []
+  let current: PatchOperationPreview | undefined
+  const finish = () => {
+    if (current !== undefined) operations.push(current)
+    current = undefined
+  }
+  for (const line of lines.slice(1)) {
+    if (line === '*** End Patch') break
+    const add = /^\*\*\* Add File: (.+)$/u.exec(line)
+    if (add !== null) {
+      finish()
+      const path = add[1]
+      if (path === undefined) return null
+      current = { kind: 'add', path, oldLines: [], newLines: [] }
+      continue
+    }
+    const update = /^\*\*\* Update File: (.+)$/u.exec(line)
+    if (update !== null) {
+      finish()
+      const path = update[1]
+      if (path === undefined) return null
+      current = { kind: 'update', path, oldLines: [], newLines: [] }
+      continue
+    }
+    const remove = /^\*\*\* Delete File: (.+)$/u.exec(line)
+    if (remove !== null) {
+      finish()
+      const path = remove[1]
+      if (path === undefined) return null
+      current = { kind: 'delete', path, oldLines: [], newLines: [] }
+      continue
+    }
+    const move = /^\*\*\* Move to: (.+)$/u.exec(line)
+    if (move !== null) {
+      if (current?.kind !== 'update') return null
+      const destination = move[1]
+      if (destination === undefined) return null
+      current.destination = destination
+      continue
+    }
+    if (current === undefined || current.kind === 'delete' || line.startsWith('@@') || line === '*** End of File') continue
+    if (current.kind === 'add') {
+      if (!line.startsWith('+')) return null
+      current.newLines.push(line.slice(1))
+      continue
+    }
+    if (line.startsWith('-')) current.oldLines.push(line.slice(1))
+    else if (line.startsWith('+')) current.newLines.push(line.slice(1))
+    else if (line.startsWith(' ')) {
+      const context = line.slice(1)
+      current.oldLines.push(context)
+      current.newLines.push(context)
+    }
+    else return null
+  }
+  finish()
+  if (operations.length === 0) return null
+  const locations: DiffLocation[] = []
+  const seen = new Set<string>()
+  const addLocation = (path: string) => {
+    if (!seen.has(path)) {
+      seen.add(path)
+      locations.push({ path })
+    }
+  }
+  const diffs = operations.flatMap((operation): DiffHunk[] => {
+    addLocation(operation.path)
+    if (operation.destination !== undefined) addLocation(operation.destination)
+    if (operation.kind === 'delete') return []
+    if (operation.kind === 'add') return [{ path: operation.path, oldText: null, newText: `${operation.newLines.join('\n')}\n` }]
+    return [{ path: operation.path, oldText: operation.oldLines.length === 0 ? null : operation.oldLines.join('\n'), newText: operation.newLines.join('\n') }]
+  })
+  return { diffs, locations }
+}
+
+function applyPatchResult(meta: unknown): PatchPreview | null {
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return null
+  const record = meta as Record<string, unknown>
+  const diffs = narrowPatchDiffs(record.diffs)
+  if (diffs === null) return null
+  const locations = record.locations === undefined ? locationsFromDiffs(diffs) : narrowLocations(record.locations)
+  if (locations === null || (diffs.length === 0 && locations.length === 0)) return null
+  return { diffs, locations }
+}
+
+/**
+ * Return a compact path summary for a mutation's affected locations.
+ * @param model - derived diff card.
+ * @returns comma-separated paths, or undefined when no locations were retained.
+ */
+export function diffLocationsSummary(model: DiffCardModel | null): string | undefined {
+  const locations = model?.locations
+  return locations === undefined || locations.length === 0 ? undefined : locations.map(location => location.path).join(', ')
 }
 
 type IntendedDiff = { tool: 'write' | 'edit' | 'str_replace_editor'; diff: DiffHunk }
@@ -98,6 +252,18 @@ function appliedDiffs(meta: unknown): DiffHunk[] | 'empty' | null {
  */
 export function diffCardModel(block: ToolCallBlock): DiffCardModel | null {
   if (block.parentCallId !== undefined) return null
+  const parsed = parsedToolCall(block)
+  if (parsed?.name === 'apply_patch') {
+    const input = parsed.args.input
+    if (typeof input !== 'string') return null
+    if (!('kind' in block)) {
+      const preview = patchPreview(input)
+      return preview === null ? null : { card: { diffs: preview.diffs }, locations: preview.locations }
+    }
+    if (block.isError) return null
+    const applied = applyPatchResult(block.meta)
+    return applied === null ? null : { card: { diffs: applied.diffs }, locations: applied.locations }
+  }
   const intended = intendedDiff(block)
   if (intended === null) return null
   if (!('kind' in block)) return { card: { diffs: [intended.diff] } }
