@@ -64,6 +64,8 @@ export interface BotRecord {
   readonly id: BotId
   /** The only Session owned by this Bot. */
   readonly sessionId: SessionId
+  /** Deployment-local owner scope used for template publication authorization. */
+  readonly ownerId: string
   /** User-visible display name. */
   readonly name: string
   /** Optional user-facing routing description. */
@@ -74,6 +76,10 @@ export interface BotRecord {
   readonly accent: BotAccent
   /** Optional generated avatar selected by the user. */
   readonly avatar?: BotAvatar | undefined
+  /** Optional model-facing persona text. */
+  readonly persona?: string | undefined
+  /** Safe capability declarations retained by the Bot. */
+  readonly capabilities?: readonly string[] | undefined
   /** Connected MCP app ids this Bot may use; absent means legacy rows retain all available apps. */
   readonly connectedAppIds?: readonly string[] | undefined
   /** Connected MCP app ids explicitly denied for a legacy allow-all Bot. */
@@ -97,7 +103,7 @@ export interface BotRecord {
 }
 
 /** Browser-facing Bot row enriched with live availability. */
-export type BotView = BotRecord & {
+export type BotView = Omit<BotRecord, 'ownerId'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
   /** Whether the Bot is kept at the top of its roster view. */
@@ -122,6 +128,10 @@ export interface BotCreateRequest {
   readonly cwd?: string
   /** Optional Agent preset passed to Session creation. */
   readonly agentPreset?: string
+  /** Optional model-facing persona text. */
+  readonly persona?: string
+  /** Safe capability declarations retained as declarations, not permissions. */
+  readonly capabilities?: readonly string[]
 }
 
 /** Bot create response. */

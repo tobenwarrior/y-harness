@@ -3,6 +3,9 @@ import type {
   BotAvatar as SharedBotAvatar,
   BotConnectedAppAccess as SharedBotConnectedAppAccess,
   BotIdentity as SharedBotIdentity,
+  BotTemplateAvatar,
+  BotTemplateCapability,
+  BotTemplateProfile,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
@@ -137,6 +140,78 @@ export interface BotCreation {
   readonly accent: BotAccent
 }
 
+/** Safe reusable Bot configuration shown in the Client workspace. */
+export interface BotTemplateSummary {
+  /** Durable template identity. */
+  readonly id: string
+  /** Opaque code used to preview and import the template. */
+  readonly shareCode: string
+  /** User-facing template name. */
+  readonly name: string
+  /** Optional role description. */
+  readonly description?: string
+  /** Semantic character family. */
+  readonly identity: BotIdentity
+  /** Accent family. */
+  readonly accent: BotAccent
+  /** Optional Agent preset identifier. */
+  readonly agentPreset?: string
+  /** Optional model-facing persona text. */
+  readonly persona?: string
+  /** Safe capability declarations retained as data, not target permissions. */
+  readonly capabilities?: readonly BotTemplateCapability[]
+  /** Structured display profile carried by the signed artifact. */
+  readonly profile?: BotTemplateProfile
+  /** Portable avatar bytes, without a Host attachment id. */
+  readonly avatar?: BotTemplateAvatar
+  /** Stable signed-artifact fingerprint. */
+  readonly fingerprint?: string
+  /** SHA-256 fingerprint of the public key that signed the artifact. */
+  readonly issuerFingerprint?: string
+  /** Portable code format version. */
+  readonly portableVersion?: number
+  /** Whether this Host has explicitly approved the signed artifact. */
+  readonly approved?: boolean
+  /** Publication time in Unix milliseconds. */
+  readonly createdAt: number
+  /** Revocation time, when the code is no longer usable. */
+  readonly revokedAt?: number
+}
+
+/** Browser state for the reusable Bot template catalog and import flow. */
+export interface BotTemplateState {
+  /** Catalog loading phase. */
+  readonly phase: 'idle' | 'loading' | 'ready' | 'error'
+  /** Published templates, including revoked rows retained for status display. */
+  readonly templates: readonly BotTemplateSummary[]
+  /** Current pasted or generated share code. */
+  readonly code: string
+  /** Safe preview for the current code, when one was resolved. */
+  readonly preview: BotTemplateSummary | null
+  /** Last template-specific failure. */
+  readonly error: string | null
+  /** Whether a publish, revoke, preview, or import request is running. */
+  readonly busy: boolean
+}
+
+/** Actions exposed by the controller for reusable Bot templates. */
+export interface BotTemplateActions {
+  /** Keep the current code in the workspace while the user edits it. */
+  readonly setTemplateCode: (code: string) => void
+  /** Publish the safe configuration of an existing Bot. */
+  readonly publishTemplate: (request: {
+    readonly botId: string
+    readonly name?: string
+    readonly description?: string
+  }) => Promise<void>
+  /** Revoke one published template without deleting its audit row. */
+  readonly revokeTemplate: (templateId: string) => Promise<void>
+  /** Resolve a share code into a safe preview. */
+  readonly previewTemplate: (code?: string) => Promise<void>
+  /** Import the current preview into a distinct Bot and Session. */
+  readonly importTemplate: (name?: string) => Promise<void>
+}
+
 /** Async avatar capabilities owned by the Client composition. */
 export interface BotAvatarEditorActions {
   /** Read whether the configured provider can generate an avatar now. */
@@ -203,4 +278,8 @@ export interface BotWorkspaceProps {
   readonly loadAvatar?: ((botId: string, avatar: SharedBotAvatar) => Promise<string>) | undefined
   /** Optional generated-avatar editor; absent when the deployment does not mount it. */
   readonly avatarEditor?: BotAvatarEditorActions | undefined
+  /** Reusable Bot templates, when the Host mounts the template capability. */
+  readonly templates?: BotTemplateState | undefined
+  /** Publish, revoke, preview, and import actions for reusable Bot templates. */
+  readonly templateActions?: BotTemplateActions | undefined
 }

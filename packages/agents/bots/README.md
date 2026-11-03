@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization and untrusted memory, collaborate in durable groups, and use per-Bot grants to control access to connected apps. Retried creation reuses the requested Bot identity and Session.
+Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization and untrusted memory, collaborate in durable groups, and use per-Bot grants to control access to connected apps. Retried creation reuses the requested Bot identity and Session. Signed portable templates share profile, persona, declared capabilities, avatar bytes, and preset without Sessions, paths, transcripts, or credentials; target Hosts create local Sessions and attachments.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Choose this package when a Web surface needs named agents with durable visual id
 
 ### Minimal configuration
 
-The plugin has no user configuration fields. Mount it with the storage domain, Session controller, Agent registry, system prompt service, tool runtime, and attachment provider supplied by the composition:
+The plugin accepts an optional deployment-local template owner key. Mount it with the storage domain, Session controller, Agent registry, system prompt service, tool runtime, and attachment provider supplied by the composition:
 
 ```yaml
 - name: '@yharness/bots'
@@ -41,7 +41,9 @@ The plugin has no user configuration fields. Mount it with the storage domain, S
 
 | Field | Default | Meaning |
 |---|---|---|
-| none | — | The Bot service takes no configuration; its composition supplies storage, Session, Agent, system prompt, tools, and attachment dependencies. |
+| `ownerId` | `local-owner` | Scope for publishing, listing, and revoking locally owned template rows; it is never embedded in a portable code. |
+
+The Bot Remote also exposes `listTemplates`, `publishTemplate`, `revokeTemplate`, `previewTemplate`, `approveTemplate`, and `importTemplate`. Publication signs the Bot name, description, character, accent, persona, declared capabilities, portable avatar bytes, and optional Agent preset without including local runtime identities, and is allowed only for a Bot owned by the configured `ownerId`. A target Host verifies the signature and requires an explicit approval of the exact preview fingerprint before a copied code can create a Bot; the preview exposes the signing-key fingerprint, profile, persona, declared capabilities, and preset so the user can make that trust decision. The target then resolves its own Session, working directory, preset, and attachment reference. Supplying `importId` makes import idempotent for a caller operation: retries return the original Bot even after it is renamed or the source row is revoked, while different code or name metadata is rejected. Revocation is owner-scoped and Host-local: it blocks new preview/import requests that reach that Host, but it cannot revoke a copied artifact or an already imported Bot on another Host.
 
 ### Durable lifecycle
 
@@ -71,6 +73,9 @@ The service owns the Bot roster and a separate additive group domain. It seriali
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
 | [`src/group-chat.ts`](src/group-chat.ts) | Durable 2–6-member groups, transcript projection, per-recipient delivery state, and response projection. |
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration, group, and connected-app tool schemas plus approval policy. |
+| [`src/template-types.ts`](src/template-types.ts) | Browser-safe template requests, safe configuration views, share-code brands, and Remote errors. |
+| [`src/template-codec.ts`](src/template-codec.ts) | Signed portable code encoding, Ed25519 verification, bounded payload validation, and content fingerprints. |
+| [`src/template-storage.ts`](src/template-storage.ts) | Owner-scoped durable template rows and Host-local signing-key storage. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
@@ -111,11 +116,11 @@ The roster does not modify request prefixes until the scoped collaboration tools
 
 #### What the model sees
 
-When a Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name and optional role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history. The scoped MCP tool runtime exposes `list_connected_apps` so a Bot can explain why an app is unavailable; the native Codex action bridge does not expose that catalog because its actions cannot dispatch MCP app tools.
+When a Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name, optional role description, persona, and declared capabilities. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history. The scoped MCP tool runtime exposes `list_connected_apps` so a Bot can explain why an app is unavailable; the native Codex action bridge does not expose that catalog because its actions cannot dispatch MCP app tools.
 
 #### Token effect
 
-Each Bot request pays for the short identity section and optional role description.
+Each Bot request pays for the short identity section and optional role description, persona, and capability declaration.
 
 #### KV Cache effect
 
@@ -193,10 +198,13 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Sections are user-defined labels** — the roster supports one optional section name per Bot, plus pin, hide, and restore; it does not provide nested folders or cross-user shared roster state.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **Portable template approval and revocation are Host-local** — a copied signed code needs explicit approval on each recipient Host, and a copied code or already imported Bot remains usable after the publishing Host revokes its local row; target Hosts make their own permission and preset decisions.
+- **Declared capabilities are not permissions** — capability labels travel in the signed profile for presentation and application policy, but importing a template does not grant target-Host tools or credentials.
 - **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs, synthetic context, and concurrent group deliveries are left unprojected rather than guessed. Tool-call intermediate messages stay open until the final assistant response. Claims are rebuilt from raw durable inbox splices after restart, so surface replacements or later synthetic notices cannot make the Host attribute the next unrelated response to an old group message. Legacy logs without inbox splices retain their append-only compatibility fallback.
 - **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 - **MCP source metadata identifies connected apps** — this feature covers ordinary app tools and shared resource operations registered by the MCP bridge. The scoped model runtime and connected-app dialog can inspect and change this policy; native provider actions, browser integrations, and other non-MCP tools are not included, and native actions do not expose a misleading `list_connected_apps` action. The public `mcp__...` name is only a model-facing identifier and is never used to recover ownership. Registered server identifiers remain exact opaque strings, including empty, long, brace-bearing, and punctuation-prefixed values; each durable allow or deny list is capped at 128 ids.
 - **Revocation applies at the tool-body boundary** — a revoke blocks the next MCP operation, including a call paused in an async `tools/execute` wrapper, before its provider body starts. It cannot interrupt provider work that has already begun.
+- **Bot roster permissions remain Host-wide** — `ownerId` scopes template publication, listing, and revocation, while Bot rows and groups still require the application identity layer for cross-account access control.
 
 <a id="dev-note"></a>
 ### Dev Note

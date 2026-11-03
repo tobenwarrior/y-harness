@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
-  IconPinFillRegular, IconPinOutlineRegular,
+  IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
@@ -12,6 +12,7 @@ import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
+import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
@@ -1074,11 +1075,13 @@ export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: sharedGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
   onLoadConnectedApps, onSetConnectedAppAccess,
-  onOrganizeBot, onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
+  onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor,
+  error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [newGroupOpen, setNewGroupOpen] = useState(false)
+  const [templatesOpen, setTemplatesOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
@@ -1143,6 +1146,11 @@ export function BotRoster({
                 {selectedBot !== undefined && avatarEditor !== undefined && (
                   <Tooltip label={t('editAvatar')} side="bottom" portal>
                     <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={15} />} onClick={openAvatarEditor} />
+                  </Tooltip>
+                )}
+                {templates !== undefined && templateActions !== undefined && (
+                  <Tooltip label={t('templates')} side="bottom" portal>
+                    <Button variant="ghost" size="sm" aria-label={t('templates')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setTemplatesOpen(true) }} />
                   </Tooltip>
                 )}
                 <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
@@ -1255,6 +1263,11 @@ export function BotRoster({
                 onClick={openNewBot}
               />
             </Tooltip>
+            {templates !== undefined && templateActions !== undefined && (
+              <Tooltip label={t('templates')} side="right" delayMs={500}>
+                <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('templates')} icon={<IconShareOutlineRegular size={17} />} onClick={() => { setTemplatesOpen(true) }} />
+              </Tooltip>
+            )}
             {visibleBots.map((bot) => {
               const status = bot.status
               const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
@@ -1324,6 +1337,16 @@ export function BotRoster({
           onLoad={onLoadConnectedApps}
           onSet={onSetConnectedAppAccess}
           t={t}
+        />
+      )}
+      {templates !== undefined && templateActions !== undefined && (
+        <BotTemplatesPanel
+          bots={bots}
+          state={templates}
+          actions={templateActions}
+          t={t}
+          open={templatesOpen}
+          onClose={() => { setTemplatesOpen(false) }}
         />
       )}
     </aside>

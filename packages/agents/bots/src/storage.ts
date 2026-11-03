@@ -41,14 +41,21 @@ const sessionIdSchema = z.string()
   })
   .transform(SessionId)
 
+const ownerIdSchema = z.string().min(1).max(128).refine(value => value.trim() === value, {
+  message: 'Bot owner ids must not have surrounding whitespace',
+})
+
 const boundedText = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value, {
   message: 'Text values must be trimmed',
 })
+
+const capability = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)
 
 /** Stored Bot row; malformed authoritative records reject domain opening. */
 export const botRecordSchema = z.object({
   id: botIdSchema,
   sessionId: sessionIdSchema,
+  ownerId: ownerIdSchema.optional(),
   name: boundedText(80),
   description: z.string().max(240).refine(value => value.trim() === value, {
     message: 'Descriptions must be trimmed',
@@ -56,6 +63,10 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  persona: z.string().max(4000).refine(value => value.trim() === value, {
+    message: 'Personas must be trimmed',
+  }).optional(),
+  capabilities: z.array(capability).max(32).refine(values => new Set(values).size === values.length).optional(),
   connectedAppIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app ids must be unique' },
@@ -82,7 +93,10 @@ export const botRecordSchema = z.object({
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {
   message: 'Bot and Session identities must remain distinct',
-})
+}).transform((value): BotRecord => ({
+  ...value,
+  ownerId: value.ownerId ?? 'local-owner',
+}))
 
 /** Durable marker for the one-time switch from image avatars to animated characters. */
 export const botAppearanceMigrationSchema = z.object({

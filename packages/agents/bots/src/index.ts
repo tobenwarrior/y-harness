@@ -1,6 +1,6 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, type KeyObject } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
@@ -88,6 +88,45 @@ import type {
   BotView,
 } from './types.ts'
 import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+import {
+  BotTemplateId,
+  BotTemplateShareCode,
+} from './template-types.ts'
+import type {
+  BotTemplateAvatar,
+  BotTemplateApproveRequest,
+  BotTemplateApproveValue,
+  BotTemplateImportRequest,
+  BotTemplateImportValue,
+  BotTemplateListRequest,
+  BotTemplateListValue,
+  BotTemplatePreviewRequest,
+  BotTemplatePreviewValue,
+  BotTemplatePublishRequest,
+  BotTemplatePublishValue,
+  BotTemplateRevokeRequest,
+  BotTemplateRevokeValue,
+  BotTemplateView,
+} from './template-types.ts'
+import {
+  BOT_TEMPLATE_AVATAR_MAX_BYTES,
+  BOT_TEMPLATE_CODE_MAX_LENGTH,
+  BOT_TEMPLATE_CODE_PREFIX,
+  BOT_TEMPLATE_FORMAT_VERSION,
+  createBotTemplateSigningKeys,
+  decodeBotTemplateCode,
+  encodeBotTemplateCode,
+  restoreBotTemplatePrivateKey,
+  serializeBotTemplatePrivateKey,
+} from './template-codec.ts'
+import {
+  BOT_TEMPLATE_IMPORT_BINDING_LIMIT,
+  BOT_TEMPLATE_APPROVAL_LIMIT,
+  botTemplateDomain,
+  normalizeBotTemplateShareCode,
+} from './template-storage.ts'
+import type { BotTemplateArtifactPayload } from './template-codec.ts'
+import type { BotTemplateStoredRecord } from './template-storage.ts'
 
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
@@ -170,6 +209,12 @@ export type {
 } from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
+export {
+  BotTemplateId,
+  BotTemplateShareCode,
+} from './template-types.ts'
+export type * from './template-types.ts'
+export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.ts'
 
 declare module '@yharness/cordis' {
   interface Context {
@@ -178,8 +223,16 @@ declare module '@yharness/cordis' {
   }
 }
 
-/** Empty Bot service configuration. */
-export const Config = z.object({})
+/** Deployment-local owner scope for published template rows. */
+export interface BotServiceConfig {
+  /** Stable owner key selected by the Host composition. */
+  readonly ownerId?: string
+}
+
+/** Bot service configuration schema. */
+export const Config = z.object({
+  ownerId: z.string().min(1).max(128).default('local-owner'),
+})
 
 interface NormalizedCreate {
   readonly id?: BotRecord['id']
@@ -189,6 +242,15 @@ interface NormalizedCreate {
   readonly accent: BotAccent
   readonly cwd: string
   readonly agentPreset?: string
+  readonly persona?: string
+  readonly capabilities?: readonly string[]
+}
+
+interface ActiveBotTemplate {
+  readonly template: BotTemplateView
+  readonly payload: BotTemplateArtifactPayload
+  readonly fingerprint: string
+  readonly approved: boolean
 }
 
 function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
@@ -229,6 +291,9 @@ const SYNTHETIC_GROUP_CONTEXT_SOURCES: ReadonlySet<string> = new Set([
 function isSyntheticGroupContext(message: UserMessage): boolean {
   return SYNTHETIC_GROUP_CONTEXT_SOURCES.has(message.source.kind)
 }
+const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
+const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -306,6 +371,103 @@ function normalizeBotId(value: BotRecord['id'] | undefined): BotRecord['id'] | u
   return BotId(value)
 }
 
+function normalizeOwnerId(value: string | undefined): string {
+  if (value === undefined) return 'local-owner'
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || value.length > 128) {
+    throw new Error('Bot template ownerId must be a non-empty trimmed string of at most 128 characters')
+  }
+  return value
+}
+
+function normalizeTemplateId(value: BotTemplateId): BotTemplateId {
+  if (typeof value !== 'string' || !BOT_TEMPLATE_ID_PATTERN.test(value)) {
+    throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(value) })
+  }
+  return BotTemplateId(value)
+}
+
+function normalizeTemplateShareCode(value: BotTemplateShareCode): BotTemplateShareCode {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new RemoteError('bot-template/invalid', 'Enter a Bot template share code.', { reason: 'empty-code' })
+  }
+  const code = value.trim()
+  if (code.length > BOT_TEMPLATE_CODE_MAX_LENGTH || (!code.startsWith(BOT_TEMPLATE_CODE_PREFIX) && !BOT_TEMPLATE_ID_PATTERN.test(code))) {
+    throw new RemoteError('bot-template/invalid', 'The Bot template share code is malformed.', { reason: 'malformed-code' })
+  }
+  try {
+    return normalizeBotTemplateShareCode(BotTemplateShareCode(code))
+  } catch (error: unknown) {
+    throw new RemoteError('bot-template/invalid', 'The Bot template share code is malformed.', { reason: 'malformed-code' }, { cause: error })
+  }
+}
+
+function normalizeTemplateImportId(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !BOT_TEMPLATE_IMPORT_ID_PATTERN.test(value)) {
+    return badRequest('Bot template importId must be a non-empty URL-safe operation identity')
+  }
+  return value
+}
+
+function templateImportDigest(ownerId: string, importId: string): string {
+  return createHash('sha256').update(`${ownerId}\0${importId}`).digest('hex')
+}
+
+function templateView(record: BotTemplateStoredRecord, approved = true): BotTemplateView {
+  const { ownerId: ignoredOwnerId, ...view } = record
+  void ignoredOwnerId
+  return { ...view, approved }
+}
+
+function signedTemplateView(
+  payload: BotTemplateArtifactPayload,
+  shareCode: BotTemplateShareCode,
+  fingerprint: string,
+  issuerFingerprint: string,
+  id: BotTemplateId,
+  createdAt: number,
+  revokedAt: number | undefined,
+  approved: boolean,
+): BotTemplateView {
+  return {
+    id,
+    shareCode,
+    name: payload.profile.name,
+    ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
+    identity: payload.profile.identity,
+    accent: payload.profile.accent,
+    ...(payload.persona === undefined ? {} : { persona: payload.persona }),
+    capabilities: payload.capabilities,
+    profile: payload.profile,
+    ...(payload.avatar === undefined ? {} : { avatar: payload.avatar }),
+    ...(payload.agentPreset === undefined ? {} : { agentPreset: payload.agentPreset }),
+    fingerprint,
+    issuerFingerprint,
+    portableVersion: BOT_TEMPLATE_FORMAT_VERSION,
+    createdAt,
+    ...(revokedAt === undefined ? {} : { revokedAt }),
+    approved,
+  }
+}
+
+function storedTemplateView(record: BotTemplateStoredRecord): BotTemplateView {
+  try {
+    const decoded = decodeBotTemplateCode(record.shareCode)
+    return signedTemplateView(
+      decoded.payload,
+      record.shareCode,
+      decoded.fingerprint,
+      decoded.issuerFingerprint,
+      record.id,
+      record.createdAt,
+      record.revokedAt,
+      true,
+    )
+  } catch {
+    return templateView(record, false)
+  }
+}
+
 function normalizeIdentity(value: BotCreateRequest['identity']): BotIdentity {
   const identity = value ?? 'agent'
   if (!BOT_IDENTITIES.includes(identity)) return badRequest(`Unknown Bot identity '${String(identity)}'`)
@@ -316,6 +478,20 @@ function normalizeAccent(value: BotCreateRequest['accent']): BotAccent {
   const accent = value ?? 'violet'
   if (!BOT_ACCENTS.includes(accent)) return badRequest(`Unknown Bot accent '${String(accent)}'`)
   return accent
+}
+
+function normalizeCapabilities(value: BotCreateRequest['capabilities']): readonly string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return badRequest('Bot capabilities must be an array')
+  if (value.length > 32) return badRequest('Bot capabilities must contain at most 32 entries')
+  const capabilities = value.map((candidate, index) => {
+    if (typeof candidate !== 'string' || !BOT_CAPABILITY_PATTERN.test(candidate)) {
+      return badRequest(`Bot capability at index ${String(index)} is invalid`)
+    }
+    return candidate
+  })
+  if (new Set(capabilities).size !== capabilities.length) return badRequest('Bot capabilities must be unique')
+  return capabilities
 }
 
 function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
@@ -343,6 +519,8 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
   const description = normalizeOptionalText('Bot description', request.description, 240)
   const cwdInput = normalizeOptionalText('Bot working directory', request.cwd, 4096)
   const agentPreset = normalizeOptionalText('Bot agent preset', request.agentPreset, 160)
+  const persona = normalizeOptionalText('Bot persona', request.persona, 4000)
+  const capabilities = normalizeCapabilities(request.capabilities)
   return {
     ...(id === undefined ? {} : { id }),
     name,
@@ -351,6 +529,8 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
     accent: normalizeAccent(request.accent),
     cwd: resolve(cwdInput ?? process.cwd()),
     ...(agentPreset === undefined ? {} : { agentPreset }),
+    ...(persona === undefined ? {} : { persona }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   }
 }
 
@@ -361,6 +541,8 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.accent === request.accent
     && record.cwd === request.cwd
     && record.agentPreset === request.agentPreset
+    && record.persona === request.persona
+    && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
 
 function sessionRequest(record: BotRecord): SessionCreateRequest {
@@ -385,6 +567,10 @@ function botIdentityPrompt(record: BotRecord): string {
     `Your Bot id is ${JSON.stringify(record.id)}.`,
     'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
     ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
+    ...(record.persona === undefined ? [] : [`Your persona is: ${record.persona}`]),
+    ...(record.capabilities === undefined || record.capabilities.length === 0
+      ? []
+      : [`Declared capabilities: ${record.capabilities.join(', ')}.`]),
   ].join('\n\n')
 }
 
@@ -448,6 +634,9 @@ export class BotService extends TypertRemoteService {
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
+  private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
+  private readonly templateSigningKey: Promise<KeyObject>
+  private readonly ownerId: string
   private readonly initialized: PromiseLike<unknown>
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
@@ -463,8 +652,9 @@ export class BotService extends TypertRemoteService {
   /**
    * @param ctx - Host context carrying storage and explicit Session creation.
    */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: BotServiceConfig = {}) {
     super(ctx, 'bots', { namespace: 'bots' })
+    this.ownerId = normalizeOwnerId(config.ownerId)
     this.ready = ctx.storageDomain.open(botDomain).then(async (domain) => {
       const seenSessions = new Set<string>()
       for (const [key, record] of domain.table('bots').entries()) {
@@ -529,6 +719,14 @@ export class BotService extends TypertRemoteService {
       }),
       changed: () => this.emitChanged(),
     }))
+    this.templateDomain = ctx.storageDomain.open(botTemplateDomain)
+    this.templateSigningKey = this.templateDomain.then(async (domain) => {
+      const current = domain.global.get()
+      if (current.signingKey !== undefined) return restoreBotTemplatePrivateKey(current.signingKey)
+      const keys = createBotTemplateSigningKeys()
+      await domain.global.set({ ...current, signingKey: serializeBotTemplatePrivateKey(keys.privateKey) })
+      return keys.privateKey
+    })
     ctx.on('session/event', (session, event) => {
       const record = this.recordsBySession.get(String(session.id))
       if (record === undefined) return
@@ -682,12 +880,16 @@ export class BotService extends TypertRemoteService {
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
       let groupDomain: Domain<typeof botGroupDomain> | undefined
+      let templateDomain: Domain<typeof botTemplateDomain> | undefined
       let cleanup: () => Promise<void>
       try {
         domain = await this.ready
         groupDomain = await this.groupDomain
+        templateDomain = await this.templateDomain
+        await this.templateSigningKey
         const openedDomain = domain
         const openedGroupDomain = groupDomain
+        const openedTemplateDomain = templateDomain
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           await this.chain
@@ -699,6 +901,7 @@ export class BotService extends TypertRemoteService {
             ...this.promptDisposals,
             openedDomain.close(),
             openedGroupDomain.close(),
+            openedTemplateDomain.close(),
           ])
         })
       } catch (error) {
@@ -706,6 +909,7 @@ export class BotService extends TypertRemoteService {
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
+          ...(templateDomain === undefined ? [] : [templateDomain.close()]),
         ])
         throw error
       }
@@ -1110,9 +1314,269 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * List published Bot configuration snapshots, including revoked rows.
+   * @param _request - Empty list request reserved for future cursor paging.
+   * @returns Published template rows in stable creation order.
+   */
+  @Remote('listTemplates')
+  async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue> {
+    const templates = (await this.templateDomain).table('templates')
+    return {
+      templates: [...templates.entries()]
+        .map(([, template]) => template)
+        .filter(template => template.ownerId === this.ownerId)
+        .map(template => storedTemplateView(template))
+        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+    }
+  }
+
+  /**
+   * Publish a safe Bot configuration snapshot without runtime or credential fields.
+   * @param request - Source Bot and optional display overrides.
+   * @returns Newly persisted safe template row.
+   */
+  @Remote('publishTemplate')
+  async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template publish request must be an object')
+      const botId = normalizeBotId(request.botId)
+      if (botId === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const source = bots.get(botId)
+      if (source === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      if (source.ownerId !== this.ownerId) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      const name = request.name === undefined ? source.name : normalizeName(request.name)
+      const description = request.description === undefined
+        ? source.description
+        : normalizeOptionalText('Bot template description', request.description, 240)
+      const persona = request.persona === undefined
+        ? source.persona
+        : normalizeOptionalText('Bot template persona', request.persona, 4000)
+      const capabilities = request.capabilities === undefined
+        ? source.capabilities ?? ['chat']
+        : normalizeCapabilities(request.capabilities) ?? []
+      const avatar = source.avatar === undefined ? undefined : await this.exportTemplateAvatar(source.id, source.avatar)
+      const profile = {
+        name,
+        ...(description === undefined ? {} : { description }),
+        identity: source.identity,
+        accent: source.accent,
+      }
+      const payload: BotTemplateArtifactPayload = {
+        profile,
+        ...(persona === undefined ? {} : { persona }),
+        capabilities,
+        ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
+        ...(avatar === undefined ? {} : { avatar }),
+        issuedAt: Date.now(),
+      }
+      const shareCode = encodeBotTemplateCode(payload, await this.templateSigningKey)
+      const decoded = decodeBotTemplateCode(shareCode)
+      const id = BotTemplateId(`bot-template-${randomUUID()}`)
+      const template: BotTemplateStoredRecord = {
+        id,
+        shareCode,
+        ownerId: this.ownerId,
+        name,
+        ...(description === undefined ? {} : { description }),
+        identity: source.identity,
+        accent: source.accent,
+        ...(persona === undefined ? {} : { persona }),
+        capabilities,
+        profile,
+        ...(avatar === undefined ? {} : { avatar }),
+        ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
+        fingerprint: decoded.fingerprint,
+        portableVersion: BOT_TEMPLATE_FORMAT_VERSION,
+        createdAt: payload.issuedAt,
+      }
+      await (await this.templateDomain).table('templates').put(id, template)
+      this.emitChanged()
+      return { template: storedTemplateView(template) }
+    })
+  }
+
+  /**
+   * Revoke one published Bot template while retaining its row for the owner.
+   * @param request - Template identity to revoke.
+   * @returns The retained template row with its revocation timestamp.
+   */
+  @Remote('revokeTemplate')
+  async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template revoke request must be an object')
+      const id = normalizeTemplateId(request.templateId)
+      const templates = (await this.templateDomain).table('templates')
+      const current = templates.get(id)
+      if (current === undefined) {
+        throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(id) })
+      }
+      if (current.ownerId !== this.ownerId) {
+        throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(id) })
+      }
+      const revokedAt = Math.max(Date.now(), current.createdAt)
+      const matching = [...templates.entries()]
+        .map(([, template]) => template)
+        .filter(template => template.ownerId === this.ownerId && template.shareCode === current.shareCode)
+      let template: BotTemplateStoredRecord = current
+      for (const candidate of matching) {
+        const next = candidate.revokedAt === undefined ? { ...candidate, revokedAt } : candidate
+        await templates.put(candidate.id, next)
+        if (candidate.id === current.id) template = next
+      }
+      this.emitChanged()
+      return { template: storedTemplateView(template) }
+    })
+  }
+
+  /**
+   * Preview one active Bot template by exact opaque share code.
+   * @param request - Opaque share code to resolve.
+   * @returns Safe template configuration used by import.
+   */
+  @Remote('previewTemplate')
+  async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue> {
+    return this.serialize(async () => {
+      const active = await this.activeTemplate(request)
+      return { template: active.template }
+    })
+  }
+
+  /**
+   * Approve one exact verified portable artifact before it can provision a Bot.
+   * @param request - Signed code inspected by the recipient.
+   * @returns The verified template marked approved on this Host.
+   */
+  @Remote('approveTemplate')
+  async approveTemplate(request: BotTemplateApproveRequest): Promise<BotTemplateApproveValue> {
+    return this.serialize(async () => {
+      const active = await this.activeTemplate(request)
+      if (request.fingerprint !== active.fingerprint) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const templateDomain = await this.templateDomain
+      const current = templateDomain.global.get()
+      const approvals = current.approvals ?? {}
+      if (approvals[active.fingerprint] === undefined && Object.keys(approvals).length >= BOT_TEMPLATE_APPROVAL_LIMIT) {
+        throw new RemoteError('gateway/bad-request', 'This Host has reached its template approval limit.', {})
+      }
+      if (approvals[active.fingerprint] === undefined) {
+        await templateDomain.global.set({
+          ...current,
+          approvals: { ...approvals, [active.fingerprint]: Date.now() },
+        })
+      }
+      return { template: { ...active.template, approved: true } }
+    })
+  }
+
+  /**
+   * Import an active template as a new Bot with a newly allocated Session.
+   * @param request - Opaque share code and optional replacement Bot name.
+   * @returns Newly provisioned Bot and the source template row.
+   */
+  @Remote('importTemplate')
+  async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template import request must be an object')
+      const importId = normalizeTemplateImportId(request.importId)
+      const importDigest = importId === undefined ? undefined : templateImportDigest(this.ownerId, importId)
+      const templateDomain = await this.templateDomain
+      const bindings = templateDomain.global.get().imports
+      const previousBinding = importDigest === undefined ? undefined : bindings?.[importDigest]
+      const active = await this.activeTemplate(request, { allowRevoked: previousBinding !== undefined })
+      const { template, payload } = active
+      const name = request.name === undefined ? template.name : normalizeName(request.name)
+      if (previousBinding !== undefined && importId !== undefined && previousBinding.fingerprint !== active.fingerprint) {
+        throw new RemoteError(
+          'bot-template/import-conflict',
+          'This import identity was already used with different template data.',
+          { importId },
+        )
+      }
+      if (previousBinding !== undefined && importId !== undefined
+        && previousBinding.name !== undefined && previousBinding.name !== name) {
+        throw new RemoteError(
+          'bot-template/import-conflict',
+          'This import identity was already used with a different Bot name.',
+          { importId },
+        )
+      }
+      if (previousBinding !== undefined && importId !== undefined) {
+        const existing = (await this.getDomain()).table('bots').get(BotId(previousBinding.botId))
+        if (existing === undefined || existing.ownerId !== this.ownerId) {
+          throw new RemoteError(
+            'bot-template/import-conflict',
+            'The previous template import no longer has its Bot row.',
+            { importId },
+          )
+        }
+        return { bot: this.view(existing), template }
+      }
+      if (!active.approved) {
+        throw new RemoteError(
+          'bot-template/untrusted',
+          'Approve this signed Bot template before importing it on this Host.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const id = importId === undefined
+        ? undefined
+        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
+      if (importDigest !== undefined && previousBinding === undefined
+        && Object.keys(bindings ?? {}).length >= BOT_TEMPLATE_IMPORT_BINDING_LIMIT) {
+        throw new RemoteError('gateway/bad-request', 'This Host has reached its template import retry limit.', {})
+      }
+      let created: BotCreateValue
+      try {
+        created = await this.createRecord({
+          ...(id === undefined ? {} : { id }),
+          name,
+          ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
+          identity: payload.profile.identity,
+          accent: payload.profile.accent,
+          ...(payload.persona === undefined ? {} : { persona: payload.persona }),
+          capabilities: payload.capabilities,
+          ...(payload.agentPreset === undefined ? {} : { agentPreset: payload.agentPreset }),
+        })
+      } catch (error: unknown) {
+        const errorCode = remoteErrorOf(error)?.code
+        if (importId !== undefined && (errorCode === 'bot/id-conflict' || errorCode === 'bot/provisioning-conflict')) {
+          throw new RemoteError(
+            'bot-template/import-conflict',
+            'This import identity was already used with different Bot metadata.',
+            { importId },
+            { cause: error },
+          )
+        }
+        throw error
+      }
+      let bot = created.bot
+      if (payload.avatar !== undefined && bot.avatar === undefined) {
+        bot = await this.attachImportedAvatar(bot.id, payload.avatar)
+      }
+      if (importDigest !== undefined && importId !== undefined) {
+        const currentGlobal = templateDomain.global.get()
+        await templateDomain.global.set({
+          ...currentGlobal,
+          imports: {
+            ...(currentGlobal.imports ?? {}),
+            [importDigest]: { fingerprint: active.fingerprint, botId: String(bot.id), name },
+          },
+        })
+      }
+      return { bot, template }
+    })
+  }
+
+  /**
    * List durable multi-Bot groups and current member projections.
-   * @param request - Group list request.
-   * @returns The available groups and their members.
+   * @param request - Group list filters and paging request.
+   * @returns Durable group rows with current member projections.
    */
   @Remote('listGroups')
   async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue> {
@@ -1121,8 +1585,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Create or idempotently reuse one durable multi-Bot group.
-   * @param request - Group identity, name, and members.
-   * @returns The created or existing group.
+   * @param request - Group name and requested Bot membership.
+   * @returns The created or reused durable group.
    */
   @Remote('createGroup')
   async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
@@ -1131,8 +1595,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Update a durable multi-Bot group from the human workspace.
-   * @param request - Group identity, name, and members.
-   * @returns The updated group.
+   * @param request - Group identity and requested changes.
+   * @returns The updated durable group.
    */
   @Remote('updateGroup')
   async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
@@ -1141,8 +1605,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Read one durable group transcript.
-   * @param request - Group identity.
-   * @returns The group and its transcript.
+   * @param request - Group identity and transcript query.
+   * @returns The group and bounded transcript projection.
    */
   @Remote('inspectGroup')
   async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
@@ -1154,8 +1618,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Persist and fan out one human group message to every member Bot.
-   * @param request - Group identity, message identity, and text.
-   * @returns The updated group transcript.
+   * @param request - Group message and optional caller-provided operation id.
+   * @returns Per-recipient delivery outcomes.
    */
   @Remote('sendGroupMessage')
   async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
@@ -1178,57 +1642,65 @@ export class BotService extends TypertRemoteService {
   }
 
   private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
-    return this.serialize(async () => {
-      const normalized = normalizeCreate(request)
-      const bots = (await this.getDomain()).table('bots')
-      signal?.throwIfAborted()
-      const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
-      const existing = bots.get(id)
-      if (existing !== undefined) {
-        if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
-          return { bot: this.view(existing) }
-        }
-        if (existing.state !== 'provisioning') {
-          throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
-        }
-        if (!matchesMetadata(existing, normalized)) {
-          throw new RemoteError(
-            'bot/provisioning-conflict',
-            `Bot "${id}" is provisioning with different metadata`,
-            { botId: id },
-          )
-        }
-        const active = await this.provision(existing, bots)
-        return { bot: this.view(active) }
-      }
+    return this.serialize(() => this.createRecord(request, signal))
+  }
 
-      const now = Date.now()
-      // Keep the Session id independent from a caller-supplied Bot id. A Bot
-      // id is user-facing and must never accidentally adopt an unrelated
-      // ordinary Session with a matching derived name.
-      const sessionId = SessionId(`bot-session-${randomUUID()}`)
-      const record: BotRecord = {
-        id,
-        sessionId,
-        name: normalized.name,
-        ...(normalized.description === undefined ? {} : { description: normalized.description }),
-        identity: normalized.identity,
-        accent: normalized.accent,
-        connectedAppIds: [],
-        pinned: false,
-        hidden: false,
-        cwd: normalized.cwd,
-        ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
-        state: 'provisioning',
-        createdAt: now,
-        updatedAt: now,
+  private async createRecord(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
+    const normalized = normalizeCreate(request)
+    const bots = (await this.getDomain()).table('bots')
+    signal?.throwIfAborted()
+    const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
+    const existing = bots.get(id)
+    if (existing !== undefined) {
+      if (existing.ownerId !== this.ownerId) {
+        throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
       }
-      await bots.put(id, record)
-      this.recordsBySession.set(String(record.sessionId), record)
-      this.emitChanged()
-      const active = await this.provision(record, bots)
+      if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
+        return { bot: this.view(existing) }
+      }
+      if (existing.state !== 'provisioning') {
+        throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
+      }
+      if (!matchesMetadata(existing, normalized)) {
+        throw new RemoteError(
+          'bot/provisioning-conflict',
+          `Bot "${id}" is provisioning with different metadata`,
+          { botId: id },
+        )
+      }
+      const active = await this.provision(existing, bots)
       return { bot: this.view(active) }
-    })
+    }
+
+    const now = Date.now()
+    // Keep the Session id independent from a caller-supplied Bot id. A Bot
+    // id is user-facing and must never accidentally adopt an unrelated
+    // ordinary Session with a matching derived name.
+    const sessionId = SessionId(`bot-session-${randomUUID()}`)
+    const record: BotRecord = {
+      id,
+      sessionId,
+      ownerId: this.ownerId,
+      name: normalized.name,
+      ...(normalized.description === undefined ? {} : { description: normalized.description }),
+      identity: normalized.identity,
+      accent: normalized.accent,
+      connectedAppIds: [],
+      pinned: false,
+      hidden: false,
+      cwd: normalized.cwd,
+      ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
+      ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
+      ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
+      state: 'provisioning',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await bots.put(id, record)
+    this.recordsBySession.set(String(record.sessionId), record)
+    this.emitChanged()
+    const active = await this.provision(record, bots)
+    return { bot: this.view(active) }
   }
 
   /**
@@ -1744,16 +2216,150 @@ export class BotService extends TypertRemoteService {
   }
 
   private view(record: BotRecord): BotView {
+    const { ownerId: ignoredOwnerId, ...withoutOwner } = record
     const agent = this.ctx.agents.get(record.sessionId)
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
-    return { ...record, pinned: record.pinned ?? false, hidden: record.hidden ?? false, availability }
+    void ignoredOwnerId
+    return {
+      ...withoutOwner,
+      pinned: record.pinned ?? false,
+      hidden: record.hidden ?? false,
+      availability,
+    }
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  private async activeTemplate(
+    request: BotTemplatePreviewRequest | BotTemplateApproveRequest | BotTemplateImportRequest,
+    options: { readonly allowRevoked?: boolean } = {},
+  ): Promise<ActiveBotTemplate> {
+    if (request === null || typeof request !== 'object') return badRequest('Bot template request must be an object')
+    const shareCode = normalizeTemplateShareCode(request.shareCode)
+    let decoded: ReturnType<typeof decodeBotTemplateCode>
+    try {
+      decoded = decodeBotTemplateCode(shareCode)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      const reason = /signature/i.test(message)
+        ? 'invalid-signature'
+        : /version/i.test(message)
+          ? 'unsupported-version'
+          : 'invalid-payload'
+      throw new RemoteError(
+        'bot-template/invalid',
+        'The Bot template share code could not be verified.',
+        { reason },
+        { cause: error },
+      )
+    }
+    const templateDomain = await this.templateDomain
+    const templates = templateDomain.table('templates')
+    const localTemplates = [...templates.entries()]
+      .map(([, value]) => value)
+      .filter(value => value.ownerId === this.ownerId && value.shareCode === shareCode)
+    const localTemplate = localTemplates.find(value => value.revokedAt === undefined) ?? localTemplates[0]
+    if (localTemplate?.revokedAt !== undefined && !options.allowRevoked) {
+      throw new RemoteError('bot-template/revoked', 'This Bot template has been revoked.', { templateId: localTemplate.id })
+    }
+    if (localTemplate?.fingerprint !== undefined && localTemplate.fingerprint !== decoded.fingerprint) {
+      throw new RemoteError('bot-template/invalid', 'The Bot template share code does not match its local record.', { reason: 'invalid-payload' })
+    }
+    const approved = localTemplate !== undefined
+      ? true
+      : templateDomain.global.get().approvals?.[decoded.fingerprint] !== undefined
+    const template = signedTemplateView(
+      decoded.payload,
+      shareCode,
+      decoded.fingerprint,
+      decoded.issuerFingerprint,
+      localTemplate?.id ?? BotTemplateId(`bot-template-${decoded.fingerprint.slice(0, 32)}`),
+      localTemplate?.createdAt ?? decoded.payload.issuedAt,
+      localTemplate?.revokedAt,
+      approved,
+    )
+    return { template, payload: decoded.payload, fingerprint: decoded.fingerprint, approved }
+  }
+
+  private async exportTemplateAvatar(botId: BotRecord['id'], avatar: ImageAttachmentRef): Promise<BotTemplateAvatar> {
+    try {
+      const stored = await this.ctx.attachments.readImage(avatar)
+      const canonical = imageAttachmentRefSchema.safeParse(stored.ref)
+      if (!canonical.success
+        || String(canonical.data.attachmentId) !== String(avatar.attachmentId)
+        || canonical.data.mediaType !== avatar.mediaType
+        || canonical.data.bytes !== avatar.bytes
+        || canonical.data.width !== avatar.width
+        || canonical.data.height !== avatar.height) {
+        throw new Error('Attachment storage returned a different image reference')
+      }
+      if (stored.data.byteLength !== canonical.data.bytes || stored.data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
+        throw new Error('Avatar bytes exceed the portable template limit')
+      }
+      return {
+        mediaType: canonical.data.mediaType,
+        data: Buffer.from(stored.data).toString('base64url'),
+        bytes: stored.data.byteLength,
+        width: canonical.data.width,
+        height: canonical.data.height,
+        ...(canonical.data.name === undefined || !/^[^\\/\0]{1,255}$/u.test(canonical.data.name)
+          ? {}
+          : { name: canonical.data.name }),
+      }
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'bot-template/avatar-invalid',
+        `Bot "${botId}" avatar could not be included in the portable template.`,
+        { reason: 'unavailable' },
+        { cause: error },
+      )
+    }
+  }
+
+  private async attachImportedAvatar(botId: BotRecord['id'], avatar: BotTemplateAvatar): Promise<BotView> {
+    let reference: ImageAttachmentRef
+    try {
+      const data = Buffer.from(avatar.data, 'base64url')
+      if (data.toString('base64url') !== avatar.data || data.byteLength !== avatar.bytes || data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
+        throw new Error('Portable avatar bytes failed validation')
+      }
+      reference = await this.ctx.attachments.saveImage({
+        data,
+        mediaType: avatar.mediaType,
+        ...(avatar.name === undefined ? {} : { name: avatar.name }),
+      })
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'bot-template/avatar-invalid',
+        'The portable template avatar could not be saved on this Host.',
+        { reason: 'unavailable' },
+        { cause: error },
+      )
+    }
+    try {
+      const admitted = await this.admitAvatar(botId, reference)
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(botId)
+      if (current === undefined) throw new Error(`Bot "${botId}" was not found after template import`)
+      const next: BotRecord = { ...current, avatar: admitted, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      await bots.put(botId, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return this.view(next)
+    } catch (error: unknown) {
+      if (error instanceof RemoteError && error.code === 'bot-template/avatar-invalid') throw error
+      throw new RemoteError(
+        'bot-template/avatar-invalid',
+        'The portable template avatar could not be admitted on this Host.',
+        { reason: 'unavailable' },
+        { cause: error },
+      )
+    }
   }
 
   private async getGroupService(): Promise<BotGroupService> {

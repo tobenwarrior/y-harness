@@ -47,6 +47,11 @@ async function harness(
   existingSessionIds: readonly string[] = [],
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
   existingSessionSeeds: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
+  config: { readonly ownerId?: string } = {},
+  saveImage = vi.fn(async (): Promise<ImageAttachmentRef> => ({
+    attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`),
+    mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+  })),
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -104,7 +109,12 @@ async function harness(
   const saveImages = vi.fn(async () => [{
     attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png' as const, bytes: 3, width: 512, height: 512,
   }])
-  ctx.provide('attachments', { readImage, saveImages } as never)
+  ctx.provide('attachments', {
+    readImage,
+    saveImages,
+    saveImage,
+    validateImage: vi.fn(async () => undefined),
+  } as never)
   const inspect = vi.fn(async (sessionId: SessionId) => ({
     events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
       ?? existingSessionSeeds.get(String(sessionId))
@@ -121,7 +131,7 @@ async function harness(
   }
   ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
-  const service = new BotService(ctx)
+  const service = new BotService(ctx, config)
   try {
     await service[Service.init]()
   } catch (error) {
@@ -2980,6 +2990,310 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(h.ctx)
+    }
+  })
+  it('publishes only safe Bot configuration and lists the durable template', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Template source', description: 'Research configuration', identity: 'cloud', accent: 'rose',
+        cwd: '/private/template-source', agentPreset: 'research-preset',
+      })
+      const avatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'de'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 64, height: 64,
+      }
+      await h.service.updateAvatar({ botId: created.bot.id, avatar })
+
+      const published = await h.service.publishTemplate({
+        botId: created.bot.id, name: 'Research configuration', description: 'Reusable research setup',
+      })
+      expect(published.template).toMatchObject({
+        name: 'Research configuration', description: 'Reusable research setup', identity: 'cloud', accent: 'rose',
+        agentPreset: 'research-preset', avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 64, height: 64 },
+      })
+      for (const field of ['sessionId', 'cwd', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(published.template).not.toHaveProperty(field)
+      }
+      const listed = await h.service.listTemplates({})
+      await expect(h.service.listTemplates({})).resolves.toMatchObject({
+        templates: [expect.objectContaining({ id: published.template.id, shareCode: published.template.shareCode })],
+      })
+      const listedTemplate = listed.templates.find(template => template.id === published.template.id)
+      for (const field of ['sessionId', 'cwd', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(listedTemplate).not.toHaveProperty(field)
+      }
+      expect(listedTemplate).toMatchObject({ avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3 } })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('previews an active code without exposing runtime or private Bot fields', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Preview source', identity: 'heart', accent: 'teal', cwd: '/private/preview-source', agentPreset: 'preview-preset',
+      })
+      const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Preview template' })
+      const preview = await h.service.previewTemplate({ shareCode: published.template.shareCode })
+
+      expect(preview.template).toMatchObject({ name: 'Preview template', identity: 'heart', accent: 'teal', agentPreset: 'preview-preset' })
+      for (const field of ['sessionId', 'cwd', 'avatar', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(preview.template).not.toHaveProperty(field)
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('revokes a template and rejects later preview and import', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Revocation source', cwd: '/private/revocation-source' })
+      const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Revocable template' })
+      await expect(h.service.revokeTemplate({ templateId: published.template.id })).resolves.toMatchObject({
+        template: { id: published.template.id, revokedAt: expect.any(Number) },
+      })
+      await expect(h.service.previewTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
+      await expect(h.service.previewTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
+      await expect(h.service.importTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
+      await expect(h.service.listTemplates({})).resolves.toMatchObject({
+        templates: [expect.objectContaining({ id: published.template.id, revokedAt: expect.any(Number) })],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('imports the same template twice as distinct Bots and Sessions', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({
+        name: 'Import source', description: 'Imported role', identity: 'goal', accent: 'amber',
+        cwd: '/private/import-source', agentPreset: 'import-preset',
+      })
+      const published = await h.service.publishTemplate({ botId: source.bot.id, name: 'Import template' })
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported one' })
+      const second = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported two' })
+
+      expect(first.bot).toMatchObject({ name: 'Imported one', description: 'Imported role', identity: 'goal', accent: 'amber', agentPreset: 'import-preset' })
+      expect(second.bot).toMatchObject({ name: 'Imported two', description: 'Imported role', identity: 'goal', accent: 'amber', agentPreset: 'import-preset' })
+      expect(first.bot.id).not.toBe(second.bot.id)
+      expect(first.bot.sessionId).not.toBe(second.bot.sessionId)
+      expect(first.bot.id).not.toBe(source.bot.id)
+      expect(first.bot.sessionId).not.toBe(source.bot.sessionId)
+      expect(first.bot.cwd).not.toBe(source.bot.cwd)
+      expect(first.bot).not.toHaveProperty('avatar')
+      expect(second.bot).not.toHaveProperty('avatar')
+      expect(h.create).toHaveBeenCalledTimes(3)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('imports a signed template on another Host with portable profile data and keyed retry identity', async () => {
+    const sourcePool = new MemoryMediaPool()
+    const source = await harness(sourcePool)
+    const sourceBot = await source.service.create({
+      name: 'Portable source', description: 'A portable role', identity: 'cloud', accent: 'rose',
+      cwd: '/private/never-share', agentPreset: 'portable-preset',
+      persona: 'Prefer concise evidence-backed answers.', capabilities: ['chat', 'collaboration'],
+    } as never)
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'aa'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id, name: 'Portable partner' })
+    expect(published.template.shareCode).toMatch(/^yhbot-template-v2\./)
+    expect(published.template.shareCode).not.toContain(String(sourceBot.bot.id))
+    expect(published.template.shareCode).not.toContain('/private/never-share')
+    expect(published.template.shareCode).not.toContain('attachmentId')
+    expect(published.template).toMatchObject({
+      name: 'Portable partner', identity: 'cloud', accent: 'rose',
+      persona: 'Prefer concise evidence-backed answers.', capabilities: ['chat', 'collaboration'],
+      avatar: { mediaType: 'image/png', bytes: 3, width: 1, height: 1, data: 'AQID' },
+    })
+    await close(source.ctx)
+
+    const target = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), { ownerId: 'recipient-owner' })
+    try {
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.template).toMatchObject({
+        name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
+        capabilities: ['chat', 'collaboration'], agentPreset: 'portable-preset', avatar: { data: 'AQID' },
+        fingerprint: published.template.fingerprint,
+        issuerFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      })
+      await target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      })
+      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      expect(second.bot.id).toBe(first.bot.id)
+      expect(second.bot.sessionId).toBe(first.bot.sessionId)
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'retry-1', name: 'Different retry metadata',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
+      expect(first.bot).toMatchObject({
+        name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
+        capabilities: ['chat', 'collaboration'], avatar: { mediaType: 'image/png' },
+      })
+      expect(target.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(target.ctx)
+    }
+
+    const owner = await harness(sourcePool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'different-owner' })
+    try {
+      await expect(owner.service.listTemplates({})).resolves.toEqual({ templates: [] })
+      await expect(owner.service.revokeTemplate({ templateId: published.template.id })).rejects.toMatchObject({ code: 'bot-template/not-found' })
+    } finally {
+      await close(owner.ctx)
+    }
+
+    const revoked = await harness(sourcePool)
+    try {
+      await revoked.service.revokeTemplate({ templateId: published.template.id })
+    } finally {
+      await close(revoked.ctx)
+    }
+    const importedAfterRevocation = await harness(new MemoryMediaPool())
+    try {
+      await importedAfterRevocation.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      })
+      await expect(importedAfterRevocation.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'after-revocation',
+      } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
+    } finally {
+      await close(importedAfterRevocation.ctx)
+    }
+  })
+
+  it('requires explicit recipient approval before importing a copied signed code', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({
+      name: 'Untrusted source', cwd: '/private/untrusted-source', agentPreset: 'dangerous-preset',
+    })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'untrusted-import',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: '0'.repeat(64),
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      })).resolves.toMatchObject({
+        template: { fingerprint: published.template.fingerprint, approved: true },
+      })
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'untrusted-import',
+      } as never)).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('publishes only Bots owned by the configured template owner', async () => {
+    const pool = new MemoryMediaPool()
+    const owner = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'source-owner' })
+    const source = await owner.service.create({ name: 'Owned Bot', cwd: '/tmp' })
+    await close(owner.ctx)
+
+    const otherOwner = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'other-owner' })
+    try {
+      await expect(otherOwner.service.publishTemplate({ botId: source.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+    } finally {
+      await close(otherOwner.ctx)
+    }
+  })
+
+  it('returns the same imported Bot after a caller edits its profile', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({ name: 'Retry source', cwd: '/tmp' })
+      const published = await h.service.publishTemplate({ botId: source.bot.id })
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)
+      await h.service.rename({ botId: first.bot.id, name: 'Edited imported Bot' })
+
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)).resolves.toMatchObject({
+        bot: { id: first.bot.id, sessionId: first.bot.sessionId, name: 'Edited imported Bot' },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('returns the same imported Bot after its source template is revoked', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({ name: 'Revoked retry source', cwd: '/tmp' })
+      const published = await h.service.publishTemplate({ botId: source.bot.id })
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)
+      await h.service.revokeTemplate({ templateId: published.template.id })
+
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)).resolves.toMatchObject({
+        bot: { id: first.bot.id, sessionId: first.bot.sessionId },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not publish duplicate codes when two publications share a timestamp', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1234))
+    try {
+      const h = await harness()
+      try {
+        const source = await h.service.create({ name: 'Duplicate source', cwd: '/tmp' })
+        const first = await h.service.publishTemplate({ botId: source.bot.id })
+        const second = await h.service.publishTemplate({ botId: source.bot.id })
+        expect(second.template.shareCode).not.toBe(first.template.shareCode)
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses signed fields when a durable local row is stale', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    const source = await h.service.create({ name: 'Signed name', cwd: '/tmp', agentPreset: 'signed-preset' })
+    const published = await h.service.publishTemplate({ botId: source.bot.id })
+    await close(h.ctx)
+
+    const medium = pool.media.get('agent_bot_templates')
+    const rows = medium?.tables.get('templates')
+    const stored = rows?.get(String(published.template.id))
+    if (stored === undefined || typeof stored !== 'object' || stored === null) throw new Error('template row was not persisted')
+    const mutable = stored as { name?: string; agentPreset?: string }
+    mutable.name = 'Unsigned name'
+    mutable.agentPreset = 'attacker-preset'
+
+    const reopened = await harness(pool)
+    try {
+      await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
+        templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
+      })
+      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode } as never)).resolves.toMatchObject({
+        bot: { name: 'Signed name', agentPreset: 'signed-preset' },
+      })
+    } finally {
+      await close(reopened.ctx)
     }
   })
 })

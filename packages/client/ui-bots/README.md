@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation and rename flows, pin/hide/restore organization, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
+Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation and rename flows, pin/hide/restore organization, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. The template panel publishes signed portable profiles, previews codes with the issuer fingerprint and signed configuration, requires an explicit matching approval before import, copies or revokes local rows, and imports a distinct Bot with a retry-stable operation id. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 ### Owner callbacks
 
-`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
+`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. Template state and actions are optional; when mounted, the existing Bot sidebar opens the share/import surface without adding another navigation column. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
 
 ### Visual identity
 
@@ -55,13 +55,14 @@ Animated characters use the selected accent color throughout their bodies. The p
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client registration creates one controller for the Bot Remote, Session store, locale translator, and optional avatar-generation Remote. It injects the main panel, its selected-session conversation slot, and the sidebar entry as one effect; disposing the effect removes each registration and the change listener. Group create/send retry ids are persisted in the browser store before the Remote call, restored when the controller is recreated, and removed only after a complete result. Only a durable pending operation is reconciled, using its exact id; a new operation receives a new id, while an explicit id supports an intentional repeat. An unavailable persistence or reconciliation surface fails closed before an uncertain retry. Group transcripts render persisted per-recipient delivery states, show safe model-turn failures beside the source message, and retry only user-authored messages with their original message id. Presentational components receive plain props, so Host persistence and Session navigation remain outside the UI package.
+The Client registration creates one controller for the Bot Remote, Session store, locale translator, and optional avatar-generation Remote. It injects the main panel, its selected-session conversation slot, and the sidebar entry as one effect; disposing the effect removes each registration and the change listener. Group create/send retry ids are persisted in the browser store before the Remote call, restored when the controller is recreated, and removed only after a complete result. Template imports explicitly approve the pasted signed artifact before provisioning, then retain an operation id while the controller retries the same code and name, so the Host can return one Bot after an uncertain response. Group transcripts render persisted per-recipient delivery states, show safe model-turn failures beside the source message, and retry only user-authored messages with their original message id. Presentational components receive plain props, so Host persistence and Session navigation remain outside the UI package.
 
 | File | Role |
 |---|---|
 | [`src/client/apply.ts`](src/client/apply.ts) | Client injections, locale registration, panel slots, sidebar entry, and controller lifecycle. |
 | [`src/client/controller.ts`](src/client/controller.ts) | Bot roster loading, selection, Session binding, avatar loading, and owner-facing callbacks. |
 | [`src/client/BotWorkspace.tsx`](src/client/BotWorkspace.tsx) | `BotRoster` sidebar and `BotDetail` main-panel surfaces with loading, error, empty, and creation states. |
+| [`src/client/BotTemplatesPanel.tsx`](src/client/BotTemplatesPanel.tsx) | Safe template publishing, share-code preview/import, copy, and revocation controls. |
 | [`src/client/BotAvatarEditor.tsx`](src/client/BotAvatarEditor.tsx) | Provider availability, description, preview, commit, and assignment flow. |
 
 </details>
@@ -105,6 +106,7 @@ These limits define the current Bot workspace. They are package constraints, not
 - **Owner-supplied data and callbacks** — the component does not fetch Bots, create Sessions, or persist selection without the supplied owner functions.
 - **Generated avatars require a mounted capability** — when the avatar-generation Remote or generated-avatar update route is absent, the editor keeps its Character mode and omits Generate; generation also stays unavailable when the Host reports missing provider configuration.
 - **Selected conversation is composed by the owner** — the panel provides a slot and scope but does not implement transcript loading or Session lifecycle policy.
+- **Template operation ids are controller-local** — a full browser reload before a failed import is reconciled loses the in-memory retry key; callers that need recovery across reloads can submit their own stable `importId` through the Host Remote.
 
 <a id="dev-note"></a>
 ### Dev Note

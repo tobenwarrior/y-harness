@@ -7,7 +7,9 @@ import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotGroupDetailData, BotGroupSummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type {
+  BotGroupDetailData, BotGroupSummary, BotSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+} from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -49,6 +51,18 @@ const groupDetail: BotGroupDetailData = {
     { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
     { id: 'message-2', sender: { kind: 'bot', botId: 'research', name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
   ],
+}
+
+const templateState: BotTemplateState = {
+  phase: 'ready',
+  templates: [{
+    id: 'template-release', shareCode: 'bot-template-release', name: 'Release partner', description: 'Keeps releases moving.',
+    identity: 'goal', accent: 'amber', createdAt: 1,
+  }],
+  code: 'bot-template-release',
+  preview: null,
+  error: null,
+  busy: false,
 }
 
 function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
@@ -104,6 +118,72 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('complementary', { name: 'Bot workspace' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Research partner, Working/ }).getAttribute('aria-current')).toBe('page')
     expect(screen.queryByText('Persistent session surface')).toBeNull()
+  })
+
+  it('opens the template share surface from the existing Bot sidebar', async () => {
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={templateState}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
+    expect(screen.getByText('Release partner')).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
+    await waitFor(() => { expect(actions.publishTemplate).toHaveBeenCalledWith({ botId: 'research' }) })
+
+    const code = screen.getByRole('textbox', { name: 'Template share code' })
+    fireEvent.change(code, { target: { value: 'bot-template-release-2' } })
+    expect(actions.setTemplateCode).toHaveBeenCalledWith('bot-template-release-2')
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await waitFor(() => { expect(actions.previewTemplate).toHaveBeenCalledOnce() })
+  })
+
+  it('shows signed issuer and configuration details before approval', async () => {
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-123',
+      fingerprint: 'artifact-fingerprint-456',
+      persona: 'Summarize evidence before recommending action.',
+      capabilities: ['chat', 'collaboration'],
+      agentPreset: 'research-preset',
+    }
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, preview }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    expect(screen.getByText('issuer-fingerprint-123')).toBeTruthy()
+    expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
+    expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
+    expect(screen.getByText('chat, collaboration')).toBeTruthy()
+    expect(screen.getByText('research-preset')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve and create Bot' })).toBeTruthy()
   })
 
   it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {

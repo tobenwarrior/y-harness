@@ -83,37 +83,79 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
+ * List published Bot configuration snapshots, including revoked rows.
+ * @param _request - Empty list request reserved for future cursor paging.
+ * @returns Published template rows in stable creation order.
+ */
+@Remote('listTemplates') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>
+
+/**
+ * Publish a safe Bot configuration snapshot without runtime or credential fields.
+ * @param request - Source Bot and optional display overrides.
+ * @returns Newly persisted safe template row.
+ */
+@Remote('publishTemplate') async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue>
+
+/**
+ * Revoke one published Bot template while retaining its row for the owner.
+ * @param request - Template identity to revoke.
+ * @returns The retained template row with its revocation timestamp.
+ */
+@Remote('revokeTemplate') async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue>
+
+/**
+ * Preview one active Bot template by exact opaque share code.
+ * @param request - Opaque share code to resolve.
+ * @returns Safe template configuration used by import.
+ */
+@Remote('previewTemplate') async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue>
+
+/**
+ * Approve one exact verified portable artifact before it can provision a Bot.
+ * @param request - Signed code inspected by the recipient.
+ * @returns The verified template marked approved on this Host.
+ */
+@Remote('approveTemplate') async approveTemplate(request: BotTemplateApproveRequest): Promise<BotTemplateApproveValue>
+
+/**
+ * Import an active template as a new Bot with a newly allocated Session.
+ * @param request - Opaque share code and optional replacement Bot name.
+ * @returns Newly provisioned Bot and the source template row.
+ */
+@Remote('importTemplate') async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue>
+
+/**
  * List durable multi-Bot groups and current member projections.
- * @param request - Group list request.
- * @returns The available groups and their members.
+ * @param request - Group list filters and paging request.
+ * @returns Durable group rows with current member projections.
  */
 @Remote('listGroups') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>
 
 /**
  * Create or idempotently reuse one durable multi-Bot group.
- * @param request - Group identity, name, and members.
- * @returns The created or existing group.
+ * @param request - Group name and requested Bot membership.
+ * @returns The created or reused durable group.
  */
 @Remote('createGroup') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>
 
 /**
  * Update a durable multi-Bot group from the human workspace.
- * @param request - Group identity, name, and members.
- * @returns The updated group.
+ * @param request - Group identity and requested changes.
+ * @returns The updated durable group.
  */
 @Remote('updateGroup') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>
 
 /**
  * Read one durable group transcript.
- * @param request - Group identity.
- * @returns The group and its transcript.
+ * @param request - Group identity and transcript query.
+ * @returns The group and bounded transcript projection.
  */
 @Remote('inspectGroup') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>
 
 /**
  * Persist and fan out one human group message to every member Bot.
- * @param request - Group identity, message identity, and text.
- * @returns The updated group transcript.
+ * @param request - Group message and optional caller-provided operation id.
+ * @returns Per-recipient delivery outcomes.
  */
 @Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 

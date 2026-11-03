@@ -605,34 +605,70 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
+        signature: '@Remote(\'listTemplates\') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>',
+        description: 'List published Bot configuration snapshots, including revoked rows.',
+        parameters: [{ name: '_request', description: 'Empty list request reserved for future cursor paging.' }],
+        returns: 'Published template rows in stable creation order.',
+      },
+      {
+        signature: '@Remote(\'publishTemplate\') async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue>',
+        description: 'Publish a safe Bot configuration snapshot without runtime or credential fields.',
+        parameters: [{ name: 'request', description: 'Source Bot and optional display overrides.' }],
+        returns: 'Newly persisted safe template row.',
+      },
+      {
+        signature: '@Remote(\'revokeTemplate\') async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue>',
+        description: 'Revoke one published Bot template while retaining its row for the owner.',
+        parameters: [{ name: 'request', description: 'Template identity to revoke.' }],
+        returns: 'The retained template row with its revocation timestamp.',
+      },
+      {
+        signature: '@Remote(\'previewTemplate\') async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue>',
+        description: 'Preview one active Bot template by exact opaque share code.',
+        parameters: [{ name: 'request', description: 'Opaque share code to resolve.' }],
+        returns: 'Safe template configuration used by import.',
+      },
+      {
+        signature: '@Remote(\'approveTemplate\') async approveTemplate(request: BotTemplateApproveRequest): Promise<BotTemplateApproveValue>',
+        description: 'Approve one exact verified portable artifact before it can provision a Bot.',
+        parameters: [{ name: 'request', description: 'Signed code inspected by the recipient.' }],
+        returns: 'The verified template marked approved on this Host.',
+      },
+      {
+        signature: '@Remote(\'importTemplate\') async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue>',
+        description: 'Import an active template as a new Bot with a newly allocated Session.',
+        parameters: [{ name: 'request', description: 'Opaque share code and optional replacement Bot name.' }],
+        returns: 'Newly provisioned Bot and the source template row.',
+      },
+      {
         signature: '@Remote(\'listGroups\') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>',
         description: 'List durable multi-Bot groups and current member projections.',
-        parameters: [{ name: 'request', description: 'Group list request.' }],
-        returns: 'The available groups and their members.',
+        parameters: [{ name: 'request', description: 'Group list filters and paging request.' }],
+        returns: 'Durable group rows with current member projections.',
       },
       {
         signature: '@Remote(\'createGroup\') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>',
         description: 'Create or idempotently reuse one durable multi-Bot group.',
-        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
-        returns: 'The created or existing group.',
+        parameters: [{ name: 'request', description: 'Group name and requested Bot membership.' }],
+        returns: 'The created or reused durable group.',
       },
       {
         signature: '@Remote(\'updateGroup\') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>',
         description: 'Update a durable multi-Bot group from the human workspace.',
-        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
-        returns: 'The updated group.',
+        parameters: [{ name: 'request', description: 'Group identity and requested changes.' }],
+        returns: 'The updated durable group.',
       },
       {
         signature: '@Remote(\'inspectGroup\') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>',
         description: 'Read one durable group transcript.',
-        parameters: [{ name: 'request', description: 'Group identity.' }],
-        returns: 'The group and its transcript.',
+        parameters: [{ name: 'request', description: 'Group identity and transcript query.' }],
+        returns: 'The group and bounded transcript projection.',
       },
       {
         signature: '@Remote(\'sendGroupMessage\') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>',
         description: 'Persist and fan out one human group message to every member Bot.',
-        parameters: [{ name: 'request', description: 'Group identity, message identity, and text.' }],
-        returns: 'The updated group transcript.',
+        parameters: [{ name: 'request', description: 'Group message and optional caller-provided operation id.' }],
+        returns: 'Per-recipient delivery outcomes.',
       },
       {
         signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
@@ -5499,7 +5535,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCreateRequest',
-    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly string[];\n}',
   },
   {
     name: 'BotCreateValue',
@@ -5639,7 +5675,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5650,8 +5686,84 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotTemplateApproveRequest',
+    declaration: 'export interface BotTemplateApproveRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly fingerprint: string;\n}',
+  },
+  {
+    name: 'BotTemplateApproveValue',
+    declaration: 'export interface BotTemplateApproveValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateAvatar',
+    declaration: 'export interface BotTemplateAvatar {\n    readonly mediaType: \'image/png\' | \'image/jpeg\' | \'image/webp\' | \'image/gif\';\n    readonly data: string;\n    readonly bytes: number;\n    readonly width: number;\n    readonly height: number;\n    readonly name?: string;\n}',
+  },
+  {
+    name: 'BotTemplateCapability',
+    declaration: 'export type BotTemplateCapability = string;',
+  },
+  {
+    name: 'BotTemplateConfiguration',
+    declaration: 'export interface BotTemplateConfiguration {\n    readonly name: string;\n    readonly description?: string;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly agentPreset?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly BotTemplateCapability[];\n    readonly profile?: BotTemplateProfile;\n    readonly avatar?: BotTemplateAvatar;\n}',
+  },
+  {
+    name: 'BotTemplateId',
+    declaration: 'export type BotTemplateId = Branded<\'BotTemplateId\'>;',
+  },
+  {
+    name: 'BotTemplateImportRequest',
+    declaration: 'export interface BotTemplateImportRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly name?: string;\n    readonly importId?: string;\n}',
+  },
+  {
+    name: 'BotTemplateImportValue',
+    declaration: 'export interface BotTemplateImportValue {\n    readonly bot: BotView;\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateListRequest',
+    declaration: 'export interface BotTemplateListRequest {\n    readonly cursor?: string;\n}',
+  },
+  {
+    name: 'BotTemplateListValue',
+    declaration: 'export interface BotTemplateListValue {\n    readonly templates: readonly BotTemplateView[];\n}',
+  },
+  {
+    name: 'BotTemplatePreviewRequest',
+    declaration: 'export interface BotTemplatePreviewRequest {\n    readonly shareCode: BotTemplateShareCode;\n}',
+  },
+  {
+    name: 'BotTemplatePreviewValue',
+    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateProfile',
+    declaration: 'export interface BotTemplateProfile {\n    readonly name: string;\n    readonly description?: string;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n}',
+  },
+  {
+    name: 'BotTemplatePublishRequest',
+    declaration: 'export interface BotTemplatePublishRequest {\n    readonly botId: BotId;\n    readonly name?: string;\n    readonly description?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly BotTemplateCapability[];\n}',
+  },
+  {
+    name: 'BotTemplatePublishValue',
+    declaration: 'export interface BotTemplatePublishValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateRevokeRequest',
+    declaration: 'export interface BotTemplateRevokeRequest {\n    readonly templateId: BotTemplateId;\n}',
+  },
+  {
+    name: 'BotTemplateRevokeValue',
+    declaration: 'export interface BotTemplateRevokeValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateShareCode',
+    declaration: 'export type BotTemplateShareCode = Branded<\'BotTemplateShareCode\'>;',
+  },
+  {
+    name: 'BotTemplateView',
+    declaration: 'export interface BotTemplateView extends BotTemplateConfiguration {\n    readonly id: BotTemplateId;\n    readonly shareCode: BotTemplateShareCode;\n    readonly createdAt: number;\n    readonly revokedAt?: number;\n    readonly fingerprint?: string;\n    readonly issuerFingerprint?: string;\n    readonly portableVersion?: number;\n    readonly approved?: boolean;\n}',
+  },
+  {
     name: 'BotView',
-    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',
