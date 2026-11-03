@@ -26,6 +26,7 @@ import type { ToolDefinition } from '@yharness/tools'
 import McpResources from '@yharness/mcp-resources'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
+import { registerServerContext } from '../../../mcp/mcp-client/src/server-context.ts'
 import BotService from '../src/index.ts'
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
@@ -156,11 +157,13 @@ async function harness(
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
   records = new Map<CredentialKey, CredentialRecord>(),
   useCredentials = true,
+  toolMode: 'native' | 'ptc' | 'both' = 'native',
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
   await ctx.plugin(SystemPrompt)
-  await ctx.plugin(ToolRuntime)
+  await ctx.plugin(ToolRuntime, { mode: toolMode })
+  if (toolMode !== 'native') ctx.provide('ptcRuntime', { language: 'typescript' } as never)
   await ctx.plugin(McpResources)
   const backend: StorageBackend = new MemoryStorageBackend(pool)
   ctx.effect(() => ctx.storage.backend.register('fixture', backend))
@@ -267,6 +270,16 @@ function mcpFixtureTool(name: string, serverName: string, execute: () => Promise
   }
 }
 
+function plainFixtureTool(name: string, execute: () => Promise<string>): ToolDefinition {
+  return defineTool({
+    name,
+    description: `Fixture host tool ${name}`,
+    parameters: {},
+    output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+    execute,
+  })
+}
+
 describe('durable Bot roster', () => {
   it('stores an uploaded avatar without an image generation service', async () => {
     const h = await harness()
@@ -294,6 +307,126 @@ describe('durable Bot roster', () => {
     })
     expect(sharedBotWorkingDirectory(sessionId)).toContain('y-harness-shared-bots')
     expect(sharedBotSessionRequest(sessionId).cwd).not.toBe('/tmp')
+  })
+
+  it('does not expose root MCP tools or resource instructions to a shared Session', async () => {
+    const sharedSessionId = SessionId('shared-session-mcp-isolation')
+    const mcpCalls = vi.fn(async () => 'operator app result')
+    const resourceCalls = vi.fn(async () => ({ resources: [] }))
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__operator__secret', 'operator', mcpCalls))
+      registerServerContext(h.ctx, 'operator', {
+        resources: { request: resourceCalls },
+        instructions: () => 'Operator MCP server instructions.',
+      })
+      const created = await h.service.create({
+        name: 'Shared MCP owner', description: 'Shared collaborator', cwd: '/tmp',
+      })
+      const bot = (await h.service.list({})).bots.find(candidate => candidate.id === created.bot.id)
+      if (bot === undefined) throw new Error('shared MCP test Bot was not created')
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(bot, sharedSessionId, 'principal-shared-mcp', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared MCP test Agent was not created')
+      await agent.ctx.inject(['systemPrompt'], (scope) => {
+        scope.systemPrompt.section({
+          name: 'deployment:persona-prefix',
+          order: scope.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
+          text: 'You are a shared Y Harness Bot. Answer the collaborator in this private Bot session.',
+        })
+        scope.systemPrompt.suppressRuntimeContext()
+      })
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('mcp__operator__secret')
+      expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('list_mcp_resources')
+      expect(renderPrompt(await h.ctx.systemPrompt.assemble())).toContain('Operator MCP server instructions.')
+      const prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('You are a shared Y Harness Bot. Answer the collaborator in this private Bot session.')
+      expect(prompt).toContain('Your Bot name is "Shared MCP owner".')
+      expect(prompt).toContain('Your role is: Shared collaborator')
+      expect(prompt).not.toContain('MCP resource servers')
+      expect(prompt).not.toContain('operator-resources')
+      expect(prompt).not.toContain('Operator MCP server instructions.')
+
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-mcp-tool'), name: 'mcp__operator__secret', arguments: {},
+        signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: true })
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-mcp-resource'), name: 'list_mcp_resources',
+        arguments: { server: 'operator-resources' }, signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: true })
+      expect(mcpCalls).not.toHaveBeenCalled()
+      expect(resourceCalls).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not expose non-MCP host tools or their prompt guidance to a shared Session', async () => {
+    const sharedSessionId = SessionId('shared-session-host-isolation')
+    const calls = new Map<string, ReturnType<typeof vi.fn>>()
+    const hostTools = ['bash', 'read', 'stagehand_tabs', 'cua_driver_native__screenshot'] as const
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      for (const name of hostTools) {
+        const call = vi.fn(async () => `${name} result`)
+        calls.set(name, call)
+        h.ctx.tools.register(plainFixtureTool(name, call))
+      }
+      for (const name of ['tool:bash', 'tool:read', 'browser-use:stagehand-native', 'computer-use:cua-driver-native']) {
+        h.ctx.systemPrompt.section({ name, order: 100, text: `Sensitive ${name} guidance.` })
+      }
+      h.ctx.systemPrompt.context({ name: 'host:runtime', order: 100, text: 'Sensitive host runtime context.' })
+      const created = await h.service.create({ name: 'Shared host owner', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-shared-host', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared host test Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      const schemas = h.ctx.tools.schemas(agent).map(schema => schema.name)
+      expect(schemas).not.toEqual(expect.arrayContaining(hostTools))
+      const prompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(prompt.tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining(hostTools))
+      expect(renderPrompt(prompt)).not.toContain('Sensitive')
+      expect(prompt.contexts).toEqual([])
+      for (const name of hostTools) {
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId(`shared-host-${name}`), name, arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true, error: { info: { code: 'SHARED_BOT_CAPABILITY_DENIED' } } })
+      }
+      for (const call of calls.values()) expect(call).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('denies the reserved PTC transport to a shared Session', async () => {
+    const sharedSessionId = SessionId('shared-session-ptc-isolation')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)], new Map(), new Map(), true, 'both')
+    try {
+      const created = await h.service.create({ name: 'Shared PTC owner', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-shared-ptc', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared PTC test Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      expect(h.ctx.tools.schemas(agent).map(tool => tool.name)).not.toContain('run_code')
+      const prompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(prompt.tools.map(tool => tool.name)).not.toContain('run_code')
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-ptc-run-code'), name: 'run_code',
+        arguments: { description: 'Read a file', code: 'return 1' },
+        signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: true, error: { info: { code: 'SHARED_BOT_CAPABILITY_DENIED' } } })
+    } finally {
+      await close(h.ctx)
+    }
   })
 
   it('propagates shared-session cancellation through the production create host', async () => {
@@ -851,6 +984,261 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('fails closed after a Bot row disappears without affecting ordinary Sessions', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Missing row owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId), 'ordinary-session'])
+    try {
+      const calls = vi.fn(async () => 'called')
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', calls))
+      const botAgent = h.agents[0]
+      const ordinaryAgent = h.agents[1]
+      if (botAgent === undefined || ordinaryAgent === undefined) throw new Error('missing-row test Agents were not created')
+      await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('missing-row-before-delete'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: botAgent,
+      })).resolves.toMatchObject({ isError: false })
+      expect(calls).toHaveBeenCalledOnce()
+
+      const domain = h.ctx.storageDomain.get('agent_bots')
+      if (domain === undefined || !await domain.table('bots').delete(String(created.bot.id))) {
+        throw new Error('missing-row fixture did not remove the Bot row')
+      }
+
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('missing-row-refresh'), name: 'list_connected_apps', arguments: {},
+        signal: new AbortController().signal, agent: botAgent,
+      })).resolves.toMatchObject({ isError: false })
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('missing-row-after-delete'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: botAgent,
+      })).resolves.toMatchObject({
+        isError: true,
+        error: { info: { code: 'BOT_APP_ACCESS_REQUIRED' } },
+      })
+      expect(calls).toHaveBeenCalledOnce()
+
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('ordinary-session-app'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: ordinaryAgent,
+      })).resolves.toMatchObject({ isError: false })
+      expect(calls).toHaveBeenCalledTimes(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('refreshes connected-app policy across processes before guarding and fences profile writes', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const creator = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await creator.service.create({ name: 'Cross-process app policy', cwd: '/tmp' })
+    await close(creator.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    try {
+      const firstCalls = vi.fn(async () => 'first app result')
+      const secondCalls = vi.fn(async () => 'second app result')
+      first.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', firstCalls))
+      second.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', secondCalls))
+      const firstAgent = first.agents[0]
+      if (firstAgent === undefined) throw new Error('first cross-process Agent was not created')
+
+      await second.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+      await expect(first.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [{ id: 'github', allowed: true }],
+      })
+      await expect(first.ctx.tools.execute({
+        callId: ToolCallId('cross-process-app-allowed'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: firstAgent,
+      })).resolves.toMatchObject({ isError: false })
+      expect(firstCalls).toHaveBeenCalledOnce()
+
+      await second.service.rename({ botId: created.bot.id, name: 'Fresh profile from sibling' })
+      await expect(first.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })).resolves.toMatchObject({
+        bot: { name: 'Fresh profile from sibling' },
+        app: { id: 'github', allowed: false },
+      })
+      await expect(first.ctx.tools.execute({
+        callId: ToolCallId('cross-process-app-revoked'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: firstAgent,
+      })).resolves.toMatchObject({ isError: true, error: { info: { code: 'BOT_APP_ACCESS_REQUIRED' } } })
+      expect(firstCalls).toHaveBeenCalledOnce()
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('retains a no-credential connected-app intent when the Bot row write is ambiguous', async () => {
+    const { pool, rows } = postIntentWriteFailurePool()
+    const h = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+    let closed = false
+    try {
+      const created = await h.service.create({ name: 'No-credential app policy', cwd: '/tmp' })
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      rows.throwAfterSet = true
+      await expect(h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true }))
+        .rejects.toThrow('post-write rejection')
+      expect(pool.media.get('agent_bot_intents')?.tables.get('pending')?.size).toBe(1)
+
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+      try {
+        await expect(reopened.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+          apps: [{ id: 'github', allowed: true }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('revalidates connected-app access after approval by another Host', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const creator = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await creator.service.create({ name: 'Approval TOCTOU owner', cwd: '/tmp' })
+    await close(creator.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    try {
+      const firstCalls = vi.fn(async () => 'first app result')
+      const secondCalls = vi.fn(async () => 'second app result')
+      first.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', firstCalls))
+      second.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', secondCalls))
+      const firstAgent = first.agents[0]
+      if (firstAgent === undefined) throw new Error('approval TOCTOU Agent was not created')
+      await first.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+
+      const approvalRequested = Promise.withResolvers<undefined>()
+      const approval = Promise.withResolvers<'allowed-once'>()
+      first.ctx.provide('approval', {
+        request: () => { approvalRequested.resolve(undefined); return approval.promise },
+      } as never)
+      firstAgent.ctx.on('tools/pre-execute', (_exec, _next) => Promise.resolve({ kind: 'ask', reason: 'Approval TOCTOU test' as const }))
+
+      const running = first.ctx.tools.execute({
+        callId: ToolCallId('approval-toctou-call'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: firstAgent,
+      })
+      await approvalRequested.promise
+      await second.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })
+      approval.resolve('allowed-once')
+
+      await expect(running).resolves.toMatchObject({
+        isError: true,
+        error: { info: { code: 'BOT_APP_ACCESS_REQUIRED' } },
+      })
+      expect(firstCalls).not.toHaveBeenCalled()
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('revalidates connected-app access after another Host revokes during dispatch wrapping', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const creator = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await creator.service.create({ name: 'Dispatch TOCTOU owner', cwd: '/tmp' })
+    await close(creator.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    try {
+      const firstCalls = vi.fn(async () => 'first app result')
+      const secondCalls = vi.fn(async () => 'second app result')
+      first.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', firstCalls))
+      second.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', secondCalls))
+      const firstAgent = first.agents[0]
+      if (firstAgent === undefined) throw new Error('dispatch TOCTOU Agent was not created')
+      await first.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+
+      const executeEntered = Promise.withResolvers<undefined>()
+      const releaseExecute = Promise.withResolvers<undefined>()
+      first.ctx.on('tools/execute', async (exec, next) => {
+        if (exec.name === 'mcp__github__list_issues') {
+          executeEntered.resolve(undefined)
+          await releaseExecute.promise
+        }
+        return next()
+      })
+
+      const running = first.ctx.tools.execute({
+        callId: ToolCallId('dispatch-toctou-call'), name: 'mcp__github__list_issues', arguments: {},
+        signal: new AbortController().signal, agent: firstAgent,
+      })
+      await executeEntered.promise
+      await second.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })
+      releaseExecute.resolve(undefined)
+
+      await expect(running).resolves.toMatchObject({
+        isError: true,
+        error: { info: { code: 'BOT_APP_ACCESS_REQUIRED' } },
+      })
+      expect(firstCalls).not.toHaveBeenCalled()
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('cleans per-call MCP revalidation listeners after policy and dispatch failures', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Revalidation cleanup owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const calls = vi.fn(async () => 'called')
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', calls))
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('revalidation cleanup Agent was not created')
+      await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+      const executeListenerCount = (): number => h.ctx.events._hooks['tools/execute']?.length ?? 0
+      const postListenerCount = (): number => h.ctx.events._hooks['tools/post-execute']?.length ?? 0
+      const initialExecuteListeners = executeListenerCount()
+      const initialPostListeners = postListenerCount()
+
+      const failPreExecute = agent.ctx.on('tools/pre-execute', () => { throw new Error('pre-execute failure') })
+      for (let index = 0; index < 3; index += 1) {
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId(`revalidation-pre-failure-${String(index)}`), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+      }
+      failPreExecute()
+      expect(executeListenerCount()).toBe(initialExecuteListeners)
+      expect(postListenerCount()).toBe(initialPostListeners)
+
+      const failExecute = h.ctx.on('tools/execute', () => { throw new Error('execute failure') })
+      for (let index = 0; index < 3; index += 1) {
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId(`revalidation-dispatch-failure-${String(index)}`), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+      }
+      failExecute()
+      expect(executeListenerCount()).toBe(initialExecuteListeners)
+      expect(postListenerCount()).toBe(initialPostListeners)
+      expect(calls).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
     }
   })
 

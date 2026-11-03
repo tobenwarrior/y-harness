@@ -600,6 +600,7 @@
   height: 7px;
   flex: none;
   border-radius: 50%;
+  corner-shape: round;
   background: var(--yh-alias-state-business-primary);
 }
 
@@ -657,6 +658,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+  corner-shape: round;
   background: var(--yh-alias-interactive-bg-hover);
   color: var(--yh-alias-state-business-primary);
 }

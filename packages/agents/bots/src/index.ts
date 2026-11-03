@@ -19,7 +19,7 @@ import type {
   ToolExecution,
   ToolFailure,
 } from '@yharness/tools'
-import type {} from '@yharness/system-prompt'
+import { PERSONA_PREFIX_SECTION } from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
 import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
@@ -309,6 +309,14 @@ const botProfileSnapshotSchema = zod.object({
   identity: zod.enum(BOT_IDENTITIES),
   accent: zod.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  connectedAppIds: zod.array(zod.string()).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app ids must be unique' },
+  ).readonly().optional(),
+  connectedAppDenyIds: zod.array(zod.string()).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app deny ids must be unique' },
+  ).readonly().optional(),
   pinned: zod.boolean().optional(),
   hidden: zod.boolean().optional(),
   group: zod.string().max(80).refine(value => value.trim() === value).nullable().optional(),
@@ -515,6 +523,8 @@ function profileSnapshotOf(record: BotRecord): zod.infer<typeof botProfileSnapsh
     identity: record.identity,
     accent: record.accent,
     ...(record.avatar === undefined ? {} : { avatar: record.avatar }),
+    ...(record.connectedAppIds === undefined ? {} : { connectedAppIds: record.connectedAppIds }),
+    ...(record.connectedAppDenyIds === undefined ? {} : { connectedAppDenyIds: record.connectedAppDenyIds }),
     pinned: record.pinned ?? false,
     hidden: record.hidden ?? false,
     group: record.group ?? null,
@@ -539,6 +549,8 @@ function applyProfileSnapshot(record: BotRecord, profile: zod.infer<typeof botPr
     identity: profile.identity,
     accent: profile.accent,
     ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
+    ...(profile.connectedAppIds === undefined ? {} : { connectedAppIds: profile.connectedAppIds }),
+    ...(profile.connectedAppDenyIds === undefined ? {} : { connectedAppDenyIds: profile.connectedAppDenyIds }),
     ...(profile.pinned === undefined ? {} : { pinned: profile.pinned }),
     ...(profile.hidden === undefined ? {} : { hidden: profile.hidden }),
     ...(profile.group === undefined
@@ -616,6 +628,31 @@ const BOT_IDENTITY_SECTION = 'bot:identity'
 
 /** Stable scoped section name for one Bot's durable reference memory. */
 const BOT_MEMORY_SECTION = 'bot:memory'
+
+/** Shared Bot sessions intentionally expose no host capability; additions must be named here first. */
+const SHARED_BOT_ALLOWED_TOOL_NAMES: ReadonlySet<string> = new Set()
+
+/** Shared Bot prompt text is limited to fixed identity sections; runtime contexts are omitted. */
+const SHARED_BOT_SAFE_PROMPT_SECTIONS: ReadonlySet<string> = new Set([
+  'harness:identity',
+  PERSONA_PREFIX_SECTION,
+  BOT_IDENTITY_SECTION,
+])
+
+const SHARED_BOT_CAPABILITY_ERROR = {
+  name: 'SharedBotCapabilityError',
+  code: 'SHARED_BOT_CAPABILITY_DENIED',
+} as const
+const SHARED_BOT_CAPABILITY_REASON = 'Shared Bot Sessions cannot access host capabilities.'
+
+function sharedBotCapabilityFailure(exec: { readonly name: string }): ToolFailure | undefined {
+  if (SHARED_BOT_ALLOWED_TOOL_NAMES.has(exec.name)) return undefined
+  const reason = `${SHARED_BOT_CAPABILITY_REASON} (${exec.name})`
+  return {
+    message: reason,
+    info: { ...SHARED_BOT_CAPABILITY_ERROR, reason },
+  }
+}
 
 /** Render the Bot identity that every model route, including native Codex, receives. */
 function botIdentityPrompt(record: BotRecord): string {
@@ -1542,7 +1579,15 @@ export class BotService extends TypertRemoteService {
         : undefined
     if (appId === undefined) return undefined
     const record = this.recordsBySession.get(String(agent.id))
-    if (record === undefined) return undefined
+    if (record === undefined) {
+      // A Bot scope may outlive its durable row; missing ownership never grants MCP access.
+      const reason = 'This Bot session is no longer associated with a durable Bot. MCP app access is denied.'
+      return {
+        kind: 'deny',
+        reason,
+        info: { name: 'BotConnectedAppAccessError', code: 'BOT_APP_ACCESS_REQUIRED', reason },
+      }
+    }
     const allowed = record.connectedAppIds === undefined
       ? !record.connectedAppDenyIds?.includes(appId)
       : record.connectedAppIds.includes(appId)
@@ -1596,8 +1641,14 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const current = bots.get(id)
+    const profileState = await this.readProfileRevisionState(bots)
+    const storedCurrent = bots.get(id)
+    const current = storedCurrent === undefined
+      ? undefined
+      : applyProfileSnapshot(storedCurrent, profileState.profiles[String(id)])
     if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    this.recordsBySession.set(String(current.sessionId), current)
+    this.refreshSharedRecords(current)
     return { bot: this.view(current), apps: this.connectedAppsFor(current) }
   }
 
@@ -1613,30 +1664,29 @@ export class BotService extends TypertRemoteService {
       if (id === undefined) return badRequest('Bot id is required')
       const appId = normalizeConnectedAppId(request.appId)
       if (typeof request.allowed !== 'boolean') return badRequest('Connected-app allowed must be a boolean')
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      const app = this.connectedAppsFor(current).find(candidate => candidate.id === appId)
-      if (app === undefined) {
-        throw new RemoteError('bot/app-not-found', `Connected app "${appId}" is not available`, { botId: id, appId })
-      }
-      const next: BotRecord = current.connectedAppIds === undefined
-        ? {
-          ...current,
-          connectedAppDenyIds: request.allowed
-            ? (current.connectedAppDenyIds ?? []).filter(candidate => candidate !== appId)
-            : [...new Set([...(current.connectedAppDenyIds ?? []), appId])],
-          updatedAt: Math.max(Date.now(), current.updatedAt),
+      const next = await this.commitBotMutation(id, (current) => {
+        const app = this.connectedAppsFor(current).find(candidate => candidate.id === appId)
+        if (app === undefined) {
+          throw new RemoteError('bot/app-not-found', `Connected app "${appId}" is not available`, { botId: id, appId })
         }
-        : {
-          ...current,
-          connectedAppIds: request.allowed
-            ? [...new Set([...current.connectedAppIds, appId])]
-            : current.connectedAppIds.filter(candidate => candidate !== appId),
-          updatedAt: Math.max(Date.now(), current.updatedAt),
-        }
-      await bots.put(id, next)
+        return current.connectedAppIds === undefined
+          ? {
+            ...current,
+            connectedAppDenyIds: request.allowed
+              ? (current.connectedAppDenyIds ?? []).filter(candidate => candidate !== appId)
+              : [...new Set([...(current.connectedAppDenyIds ?? []), appId])],
+            updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+          }
+          : {
+            ...current,
+            connectedAppIds: request.allowed
+              ? [...new Set([...current.connectedAppIds, appId])]
+              : current.connectedAppIds.filter(candidate => candidate !== appId),
+            updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+          }
+      })
       this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
       const committed = this.connectedAppsFor(next).find(candidate => candidate.id === appId)
       if (committed === undefined) throw new Error('Connected-app policy disappeared during commit')
       this.emitChanged()
@@ -2054,6 +2104,40 @@ export class BotService extends TypertRemoteService {
         interpolate: false,
       })
       if (operatorBot) {
+        const finalRevalidationDisposals = new Map<ToolExecution['token'], () => void>()
+        scope.on('tools/result', (resultExec) => {
+          finalRevalidationDisposals.get(resultExec.token)?.()
+        })
+        scope.on('tools/pre-execute', async (exec, next) => {
+          const source = scope.tools.get(exec.name, agent)?.source
+          if (source?.kind === 'mcp' || source?.kind === 'mcp-resource') {
+            await this.refreshBotRecord(agent)
+            let disposed = false
+            const registrations: { execute?: () => void; post?: () => void } = {}
+            const dispose = (): void => {
+              if (disposed) return
+              disposed = true
+              finalRevalidationDisposals.delete(exec.token)
+              registrations.execute?.()
+              registrations.post?.()
+            }
+            finalRevalidationDisposals.set(exec.token, dispose)
+            registrations.execute = scope.on('tools/execute', async (dispatchExec, dispatchNext) => {
+              if (dispatchExec.token !== exec.token) return dispatchNext()
+              try {
+                await this.refreshBotRecord(agent)
+                return await dispatchNext()
+              } finally {
+                dispose()
+              }
+            })
+            registrations.post = scope.on('tools/post-execute', (postExec, _result, postNext) => {
+              if (postExec.token === exec.token) dispose()
+              return postNext()
+            })
+          }
+          return next()
+        })
         scope.systemPrompt.section({
           name: BOT_MEMORY_SECTION,
           order: identityOrder + 1,
@@ -2063,15 +2147,50 @@ export class BotService extends TypertRemoteService {
           interpolate: false,
         })
         const connectedApps: BotConnectedAppToolHost = {
-          list: () => {
-            const current = this.recordsBySession.get(String(agent.id))
-            return Promise.resolve(current === undefined ? [] : this.connectedAppsFor(current))
+          list: async () => {
+            const current = await this.refreshBotRecord(agent)
+            return current === undefined ? [] : this.connectedAppsFor(current)
           },
           check: exec => this.checkConnectedApp(agent, exec),
           guard: exec => this.connectedAppGuard(agent, exec),
           beforeDispatch: exec => this.connectedAppBeforeDispatch(agent, exec),
         }
         installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots, connectedApps)
+      } else {
+        // Shared sessions never need the PTC transport; keeping the scope native
+        // also removes the reserved transport from low-level schema lookups.
+        scope.tools.presentAs('native')
+        scope.tools.restrict({ allow: [...SHARED_BOT_ALLOWED_TOOL_NAMES] })
+        scope.on('system-prompt/assemble', async (_assembly, _context, next) => {
+          const transformed = await next()
+          return {
+            ...transformed,
+            sections: transformed.sections.filter(section => SHARED_BOT_SAFE_PROMPT_SECTIONS.has(section.name)),
+            contexts: [],
+            tools: transformed.tools.filter(tool => SHARED_BOT_ALLOWED_TOOL_NAMES.has(tool.name)),
+          }
+        })
+        scope.on('tools/pre-execute', (exec, next) => {
+          const denial = sharedBotCapabilityFailure(exec)
+          return denial === undefined
+            ? next()
+            : Promise.resolve<PreToolDecision>({
+              kind: 'deny',
+              reason: denial.message,
+              ...(denial.info === undefined ? {} : { info: denial.info }),
+            })
+        })
+        scope.tools.guard(exec => sharedBotCapabilityFailure(exec))
+        scope.tools.beforeDispatch((exec) => {
+          const denial = sharedBotCapabilityFailure(exec)
+          return denial === undefined
+            ? { kind: 'allow' }
+            : {
+              kind: 'deny',
+              reason: denial.message,
+              ...(denial.info === undefined ? {} : { info: denial.info }),
+            }
+        })
       }
     })
     this.promptFibers.set(agent, fiber)
@@ -2121,6 +2240,22 @@ export class BotService extends TypertRemoteService {
       return profileRevisionRecordOfState(finishPendingProfile(state))
     })
     return profileRevisionRecordOf(stored)
+  }
+
+  private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotRecord | undefined> {
+    const cached = this.recordsBySession.get(String(agent.id))
+    if (cached === undefined) return undefined
+    const bots = (await this.getDomain()).table('bots')
+    const profileState = await this.readProfileRevisionState(bots)
+    const stored = bots.get(cached.id)
+    if (stored === undefined) {
+      this.recordsBySession.delete(String(agent.id))
+      return undefined
+    }
+    const current = applyProfileSnapshot(stored, profileState.profiles[String(cached.id)])
+    this.recordsBySession.set(String(agent.id), current)
+    this.refreshSharedRecords(current)
+    return current
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {

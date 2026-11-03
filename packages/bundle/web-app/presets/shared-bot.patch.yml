@@ -13,5 +13,4 @@
             name: '@yharness/persona'
             config:
               prefix: You are a shared Y Harness Bot. Answer the collaborator in this private Bot session.
-              complete: true
               includeRuntimeContext: false

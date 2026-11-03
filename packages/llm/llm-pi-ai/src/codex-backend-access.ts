@@ -49,7 +49,7 @@ export interface CodexTurnAccess {
 /**
  * Resolve native execution from the exact live initiating Harness agent. Harness
  * file policy does not restrict networking, so confined native policies allow it.
- * Missing session authority or policy services fail before a native turn starts.
+ * Shared Bot sessions, missing session authority, or missing policy services fail before sandbox resolution or a native turn starts.
  * @param ctx - context owning the live agent and policy services.
  * @param options - assembled request identity and cancellation lifetime.
  * @returns session settings and action-scoped approval/question forwarding.
@@ -62,6 +62,9 @@ export function resolveCodexAccess(ctx: Context, options: GenerateOptions | Pick
     throw new Error('Native Codex turns require the exact live Harness session initiator.')
   }
   const session = agent.session
+  if (session.header.agentPreset === 'shared-bot') {
+    throw new Error('Native Codex does not support shared Bot sessions.')
+  }
   const sandboxPolicy = ctx.get('sandboxPolicy')
   const approval = ctx.get('approval')
   if (sandboxPolicy === undefined || approval === undefined) throw new Error('Native Codex requires Harness sandbox and approval services.')

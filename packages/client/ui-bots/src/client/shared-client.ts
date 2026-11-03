@@ -1,19 +1,41 @@
 /** Browser client for the isolated shared-Bot enrollment and chat route. */
 
-import {
-  BOT_ACCENTS,
-  BOT_IDENTITIES,
-  BotId,
-  BotPrincipalId,
-  BotShareMemoryId,
-  type BotShareProfile,
-  type BotShareRosterEntry,
-  type BotShareMemoryEntry,
-  type BotShareMemoryValue,
-  type BotShareMemoryWriteValue,
-  type BotShareTranscriptEntry,
+import { brandString } from '@yharness/brand'
+import type {
+  BotAccent,
+  BotIdentity,
+  BotId as BotIdType,
+  BotPrincipalId as BotPrincipalIdType,
+  BotShareMemoryId as BotShareMemoryIdType,
+  BotShareProfile,
+  BotShareRosterEntry,
+  BotShareMemoryEntry,
+  BotShareMemoryValue,
+  BotShareMemoryWriteValue,
+  BotShareTranscriptEntry,
 } from '@yharness/bots/client'
-import { SHARED_BOTS_PATH, type ClientConnectionRpc, type ConnectionRpcFailure } from '@yharness/client-connection/client'
+import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
+
+const SHARED_BOTS_PATH = '/shared-bots' as const
+
+const BOT_IDENTITIES = [
+  'agent',
+  'sparkle',
+  'goal',
+  'browse',
+  'skill',
+  'workspace',
+  'round',
+  'cloud',
+  'tile',
+  'clover',
+  'heart',
+  'drop',
+  'oval',
+  'triangle',
+] as const satisfies readonly BotIdentity[]
+
+const BOT_ACCENTS = ['blue', 'teal', 'amber', 'violet', 'rose', 'lime'] as const satisfies readonly BotAccent[]
 
 /** Safe result returned by a shared-Bot client operation. */
 export type SharedBotClientResult<T> =
@@ -165,7 +187,7 @@ function parseProfile(value: unknown): BotShareProfile | undefined {
   const accent = enumValue(value.accent, BOT_ACCENTS)
   if (identity === undefined || accent === undefined) return undefined
   return {
-    id: BotId(value.id),
+    id: brandString<BotIdType>(value.id),
     name: value.name,
     ...(typeof value.description === 'string' ? { description: value.description } : {}),
     identity,
@@ -193,7 +215,7 @@ function parseMemoryValue(value: unknown): SharedBotMemoryValue | undefined {
   return entries.some(entry => entry === undefined)
     ? undefined
     : {
-      botId: BotId(value.botId),
+      botId: brandString<BotIdType>(value.botId),
       enabled: value.enabled,
       updatedAt: value.updatedAt,
       entries: entries as readonly BotShareMemoryEntry[],
@@ -205,8 +227,8 @@ function parseMemoryEntry(value: unknown): BotShareMemoryEntry | undefined {
     || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId)
     || typeof value.text !== 'string' || !isSafeInteger(value.createdAt)) return undefined
   return {
-    id: BotShareMemoryId(value.id),
-    principalId: BotPrincipalId(value.principalId),
+    id: brandString<BotShareMemoryIdType>(value.id),
+    principalId: brandString<BotPrincipalIdType>(value.principalId),
     text: value.text,
     createdAt: value.createdAt,
   }

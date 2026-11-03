@@ -106,4 +106,25 @@ it('routes native approvals and questions to the calling session through a real 
   expect(requests.find(request => request.method === 'turn/start')?.params).toMatchObject({ cwd: process.cwd(), sandboxPolicy: { type: 'workspaceWrite', networkAccess: true } })
   expect(JSON.stringify(requests)).not.toContain('approval requests are declined')
   expect(await nativeRequest!('item/commandExecution/requestApproval', { threadId: 'native-thread', turnId: 'native-turn' })).toEqual({ decision: 'decline' })
+
+  const sharedHandle = await ctx.agents.create({
+    sessionId: SessionId('shared-composition'),
+    meta: { cwd: process.cwd(), agentPreset: 'shared-bot' },
+    agentOptions: { provider: 'codex-backend', model: 'native' },
+  })
+  const shared = sharedHandle.agent
+  expect(shared.session.header.agentPreset).toBe('shared-bot')
+  expect(() => ctx.agents.withInitiator(shared, () => resolveCodexAccess(ctx, { sessionId: shared.session.id })))
+    .toThrow('Native Codex does not support shared Bot sessions.')
+  const sharedFailures: unknown[] = []
+  ctx.on('session/event', (session, event) => {
+    if (session.id === shared.session.id && event.type === 'turn/end' && event.data.reason.kind === 'error') {
+      sharedFailures.push(event.data.reason.error)
+    }
+  })
+  const requestsBeforeShared = requests.length
+  shared.followup(createUserMessage({ content: [{ type: 'text', text: 'Shared sessions are unsupported.' }], source: { kind: 'user' } }))
+  await shared.whenIdle()
+  expect(sharedFailures).toHaveLength(1)
+  expect(requests.slice(requestsBeforeShared).filter(request => request.method === 'thread/start' || request.method === 'turn/start')).toEqual([])
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
   Button,
@@ -34,6 +34,19 @@ import type { SharedBotsClient } from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
+function updatePendingBotIds(current: ReadonlySet<string>, botId: string, pending: boolean): ReadonlySet<string> {
+  if (pending) {
+    if (current.has(botId)) return current
+    const next = new Set(current)
+    next.add(botId)
+    return next
+  }
+  if (!current.has(botId)) return current
+  const next = new Set(current)
+  next.delete(botId)
+  return next
+}
+
 /** Owner-facing invite and membership controls for one Bot. */
 export function BotShareDialog({ bot, actions, open, onClose, t }: {
   readonly bot: BotSummary
@@ -52,72 +65,151 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   const [memoryWorking, setMemoryWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [stateBotId, setStateBotId] = useState<string | null>(open ? bot.id : null)
+  const botIdRef = useRef(bot.id)
+  botIdRef.current = bot.id
+  const openRef = useRef(open)
+  openRef.current = open
+  const viewGenerationRef = useRef(0)
+  const loadGenerationRef = useRef(0)
+  const workingGenerationRef = useRef(0)
+  const memoryOperationGenerationRef = useRef(0)
+  const inviteGenerationRef = useRef(0)
+  const stateMatchesBot = open && stateBotId === bot.id
 
-  const load = async (): Promise<void> => {
+  const isCurrentView = (botId: string, generation: number): boolean => (
+    openRef.current && botIdRef.current === botId && viewGenerationRef.current === generation
+  )
+  const isCurrentWorking = (botId: string, viewGeneration: number, workingGeneration: number): boolean => (
+    isCurrentView(botId, viewGeneration) && workingGenerationRef.current === workingGeneration
+  )
+  const isCurrentMemoryOperation = (botId: string, viewGeneration: number, operationGeneration: number): boolean => (
+    isCurrentView(botId, viewGeneration) && memoryOperationGenerationRef.current === operationGeneration
+  )
+
+  const load = async (requestedBotId: string, viewGeneration: number): Promise<void> => {
+    if (!isCurrentView(requestedBotId, viewGeneration)) return
+    const loadGeneration = loadGenerationRef.current + 1
+    loadGenerationRef.current = loadGeneration
+    const isCurrentLoad = (): boolean => (
+      isCurrentView(requestedBotId, viewGeneration) && loadGenerationRef.current === loadGeneration
+    )
     setWorking('load')
     setError(null)
     try {
-      const value = await actions.listMembers(bot.id)
+      const value = await actions.listMembers(requestedBotId)
+      if (!isCurrentLoad()) return
       setMembers(value.members)
-      if (actions.getMemoryPolicy !== undefined) setMemoryPolicy(await actions.getMemoryPolicy(bot.id))
+      if (actions.getMemoryPolicy !== undefined) {
+        const policy = await actions.getMemoryPolicy(requestedBotId)
+        if (!isCurrentLoad()) return
+        setMemoryPolicy(policy)
+      }
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : t('shareError'))
+      if (isCurrentLoad()) setError(cause instanceof Error ? cause.message : t('shareError'))
     } finally {
-      setWorking(current => current === 'load' ? null : current)
+      if (isCurrentLoad()) setWorking(current => current === 'load' ? null : current)
     }
   }
 
   useEffect(() => {
-    if (!open) return
+    const viewGeneration = viewGenerationRef.current + 1
+    viewGenerationRef.current = viewGeneration
+    loadGenerationRef.current += 1
+    workingGenerationRef.current += 1
+    memoryOperationGenerationRef.current += 1
+    inviteGenerationRef.current += 1
+    if (!open) {
+      setStateBotId(null)
+      setWorking(null)
+      setMemoryWorking(false)
+      setMemoryTarget(null)
+      setMemoryAcknowledged(false)
+      return
+    }
+    setStateBotId(bot.id)
+    setMembers([])
+    setRole('collaborator')
     setInvite(null)
     setCopied(false)
     setMemoryPolicy(null)
     setMemoryTarget(null)
     setMemoryAcknowledged(false)
-    void load()
+    setError(null)
+    void load(bot.id, viewGeneration)
   }, [bot.id, open])
 
   const createInvite = async (): Promise<void> => {
     if (working !== null) return
+    const requestedBotId = bot.id
+    const viewGeneration = viewGenerationRef.current
+    const workingGeneration = workingGenerationRef.current + 1
+    workingGenerationRef.current = workingGeneration
+    inviteGenerationRef.current += 1
     setWorking('invite')
     setError(null)
     setCopied(false)
     try {
-      setInvite(await actions.createInvite(bot.id, role))
-      await load()
+      const created = await actions.createInvite(requestedBotId, role)
+      if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
+      inviteGenerationRef.current += 1
+      setInvite(created)
+      await load(requestedBotId, viewGeneration)
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : t('shareError'))
+      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
+        setError(cause instanceof Error ? cause.message : t('shareError'))
+      }
     } finally {
-      setWorking(null)
+      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
+        setWorking(current => current === 'invite' ? null : current)
+      }
     }
   }
 
   const revoke = async (member: BotShareMember): Promise<void> => {
     if (member.role === 'owner' || working !== null) return
+    const requestedBotId = bot.id
+    const viewGeneration = viewGenerationRef.current
+    const workingGeneration = workingGenerationRef.current + 1
+    workingGenerationRef.current = workingGeneration
     setWorking('revoke')
     setError(null)
     try {
-      await actions.revokeMember(bot.id, String(member.principalId))
+      await actions.revokeMember(requestedBotId, String(member.principalId))
+      if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
       setMembers(current => current.filter(candidate => candidate.principalId !== member.principalId))
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : t('shareError'))
+      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
+        setError(cause instanceof Error ? cause.message : t('shareError'))
+      }
     } finally {
-      setWorking(null)
+      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
+        setWorking(current => current === 'revoke' ? null : current)
+      }
     }
   }
 
   const confirmMemoryPolicy = async (): Promise<void> => {
-    if (memoryTarget === null || actions.setMemoryPolicy === undefined || memoryWorking) return
+    if (!openRef.current || !stateMatchesBot || memoryTarget === null || actions.setMemoryPolicy === undefined || memoryWorking) return
+    const requestedBotId = bot.id
+    const viewGeneration = viewGenerationRef.current
+    const operationGeneration = memoryOperationGenerationRef.current + 1
+    memoryOperationGenerationRef.current = operationGeneration
+    const target = memoryTarget
     setMemoryWorking(true)
     setError(null)
     try {
-      setMemoryPolicy(await actions.setMemoryPolicy(bot.id, memoryTarget))
+      const policy = await actions.setMemoryPolicy(requestedBotId, target)
+      if (!isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) return
+      setMemoryPolicy(policy)
       setMemoryTarget(null)
       setMemoryAcknowledged(false)
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : t('shareError'))
+      if (isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) {
+        setError(cause instanceof Error ? cause.message : t('shareError'))
+      }
     } finally {
-      setMemoryWorking(false)
+      if (isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) setMemoryWorking(false)
     }
   }
 
@@ -133,14 +225,15 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         contentClassName={css.shareDialogContent as string}
         footer={<Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>}
       >
-        {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+        {stateMatchesBot && error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
         <div className={css.dialogField}>
           <span className={css.dialogLabel}>{t('shareRoleLabel')}</span>
           <SegmentedControl
             id="yharness-bots-share-role"
             label={t('shareRoleLabel')}
-            value={role}
-            onChange={(value) => { setRole(value); setInvite(null) }}
+            value={stateMatchesBot ? role : 'collaborator'}
+            disabled={!stateMatchesBot || working === 'invite'}
+            onChange={(value) => { inviteGenerationRef.current += 1; setRole(value); setInvite(null) }}
             options={[
               { value: 'collaborator', label: t('shareRoleCollaborator') },
               { value: 'manager', label: t('shareRoleManager') },
@@ -149,10 +242,10 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           />
         </div>
         <div className={css.shareInviteRow}>
-          <Button variant="primary" onClick={() => { void createInvite() }} disabled={working !== null} icon={<IconLinkOutlineRegular size={14} />}>
-            {working === 'invite' ? t('creatingInvite') : t('createInvite')}
+          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null} icon={<IconLinkOutlineRegular size={14} />}>
+            {stateMatchesBot && working === 'invite' ? t('creatingInvite') : t('createInvite')}
           </Button>
-          {invite !== null && (
+          {stateMatchesBot && invite !== null && (
             <div className={css.inviteCode}>
               <code aria-label={t('inviteCodeLabel')}>{invite.code}</code>
               <Tooltip label={copied ? t('copiedInvite') : t('copyInvite')} side="bottom" portal>
@@ -161,13 +254,25 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                   size="sm"
                   aria-label={copied ? t('copiedInvite') : t('copyInvite')}
                   icon={<IconCopyOutlineRegular size={14} />}
-                  onClick={() => { void writeClipboard(invite.code).then((success) => { if (success) setCopied(true) }) }}
+                  onClick={() => {
+                    const inviteCode = invite.code
+                    const inviteBotId = bot.id
+                    const viewGeneration = viewGenerationRef.current
+                    const inviteGeneration = inviteGenerationRef.current
+                    void writeClipboard(inviteCode).then((success) => {
+                      if (
+                        success &&
+                        isCurrentView(inviteBotId, viewGeneration) &&
+                        inviteGenerationRef.current === inviteGeneration
+                      ) setCopied(true)
+                    })
+                  }}
                 />
               </Tooltip>
             </div>
           )}
         </div>
-        {actions.getMemoryPolicy !== undefined && actions.setMemoryPolicy !== undefined && memoryPolicy !== null && (
+        {stateMatchesBot && actions.getMemoryPolicy !== undefined && actions.setMemoryPolicy !== undefined && memoryPolicy !== null && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-memory-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -177,7 +282,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
               </div>
               <Switch
                 checked={memoryPolicy.enabled}
-                disabled={memoryWorking || working === 'load'}
+                disabled={memoryWorking || working !== null}
                 label={t('sharedMemoryToggle')}
                 onChange={(next) => { setMemoryTarget(next); setMemoryAcknowledged(false) }}
               />
@@ -186,9 +291,9 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         )}
         <div className={css.shareMembers}>
           <div className={css.shareSectionHeading}>{t('membersLabel')}</div>
-          {working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
-          {working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
-          {working !== 'load' && members.map(member => (
+          {stateMatchesBot && working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
+          {stateMatchesBot && working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
+          {stateMatchesBot && working !== 'load' && members.map(member => (
             <div className={css.shareMember} key={String(member.principalId)}>
               <span className={css.shareMemberIdentity}>
                 <span className={css.shareMemberDot} aria-hidden="true" />
@@ -207,7 +312,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         </div>
       </Modal>
       <RiskConfirmation
-        open={memoryTarget !== null}
+        open={stateMatchesBot && memoryTarget !== null}
         title={memoryTarget === true ? t('enableSharedMemoryTitle') : t('disableSharedMemoryTitle')}
         description={memoryTarget === true ? t('enableSharedMemoryDescription') : t('disableSharedMemoryDescription')}
         acknowledgeLabel={memoryTarget === true ? t('enableSharedMemoryAcknowledge') : t('disableSharedMemoryAcknowledge')}
@@ -215,7 +320,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         closeLabel={t('cancel')}
         confirmLabel={memoryTarget === true ? t('enableSharedMemory') : t('disableSharedMemory')}
         acknowledged={memoryAcknowledged}
-        disabled={memoryWorking}
+        disabled={!stateMatchesBot || memoryWorking}
         onAcknowledgedChange={setMemoryAcknowledged}
         onCancel={() => { setMemoryTarget(null); setMemoryAcknowledged(false) }}
         onConfirm={() => { void confirmMemoryPolicy() }}
@@ -235,94 +340,226 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null)
   const [recent, setRecent] = useState<readonly BotShareTranscriptEntry[]>([])
   const [memory, setMemory] = useState<BotShareMemoryValue | null>(null)
-  const [message, setMessage] = useState('')
-  const [memoryDraft, setMemoryDraft] = useState('')
+  const [messageDrafts, setMessageDrafts] = useState<Readonly<Record<string, string>>>({})
+  const [memoryDrafts, setMemoryDrafts] = useState<Readonly<Record<string, string>>>({})
   const [memoryAcknowledged, setMemoryAcknowledged] = useState(false)
   const [memoryConfirmOpen, setMemoryConfirmOpen] = useState(false)
-  const [working, setWorking] = useState<'list' | 'enroll' | 'chat' | null>(null)
-  const [memoryWorking, setMemoryWorking] = useState(false)
+  const [working, setWorking] = useState<'list' | 'enroll' | null>(null)
+  const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
+  const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const openRef = useRef(open)
+  openRef.current = open
+  const selectedBotIdRef = useRef<string | null>(null)
+  const codeRevisionRef = useRef(0)
+  const messageDraftRevisionsRef = useRef<Record<string, number>>({})
+  const memoryDraftRevisionsRef = useRef<Record<string, number>>({})
+  const readGenerationRef = useRef(0)
+  const lifecycleGenerationRef = useRef(0)
+  const refreshGenerationRef = useRef(0)
+  const operationGenerationRef = useRef(0)
+  const selectionEpochRef = useRef(0)
+  const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
+  const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
+  const hasPendingChat = chatWorkingBotIds.size > 0
+  const hasPendingMemory = memoryWorkingBotIds.size > 0
+  const currentChatWorking = selectedBotId !== null && chatWorkingBotIds.has(selectedBotId)
+  const currentMemoryWorking = selectedBotId !== null && memoryWorkingBotIds.has(selectedBotId)
+
+  const isCurrentLifecycle = (generation: number): boolean => openRef.current && lifecycleGenerationRef.current === generation
+  const isCurrentOperation = (lifecycleGeneration: number, operationGeneration: number): boolean => (
+    isCurrentLifecycle(lifecycleGeneration) && operationGenerationRef.current === operationGeneration
+  )
+  const isCurrentSelection = (botId: string, selectionEpoch: number): boolean => (
+    openRef.current && selectedBotIdRef.current === botId && selectionEpochRef.current === selectionEpoch
+  )
+
+  const setSelection = (botId: string | null): void => {
+    if (selectedBotIdRef.current !== botId) selectionEpochRef.current += 1
+    selectedBotIdRef.current = botId
+    setSelectedBotId(botId)
+  }
 
   const refresh = async (): Promise<void> => {
+    if (!openRef.current) return
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    const refreshGeneration = refreshGenerationRef.current + 1
+    refreshGenerationRef.current = refreshGeneration
     setWorking('list')
     setError(null)
-    const result = await client.list()
-    if (result.ok) {
-      setBots(result.value.bots)
-      const selected = selectedBotId !== null && result.value.bots.some(bot => String(bot.id) === selectedBotId)
-        ? selectedBotId
-        : result.value.bots[0] === undefined ? null : String(result.value.bots[0].id)
-      setSelectedBotId(selected)
-      if (selected !== null) await readBot(selected)
-    } else {
-      setError(result.error.message)
+    try {
+      const result = await client.list()
+      if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
+      if (result.ok) {
+        setBots(result.value.bots)
+        const currentSelectedBotId = selectedBotIdRef.current
+        const selected = currentSelectedBotId !== null && result.value.bots.some(bot => String(bot.id) === currentSelectedBotId)
+          ? currentSelectedBotId
+          : result.value.bots[0] === undefined ? null : String(result.value.bots[0].id)
+        setSelection(selected)
+        if (selected !== null) await readBot(selected)
+        else {
+          setRecent([])
+          setMemory(null)
+          setMemoryConfirmOpen(false)
+          setMemoryAcknowledged(false)
+        }
+        if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
+      } else {
+        setError(result.error.message)
+      }
+    } catch (cause: unknown) {
+      if (isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
+        setError(cause instanceof Error ? cause.message : t('shareError'))
+      }
+    } finally {
+      if (isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
+        setWorking(current => current === 'list' ? null : current)
+      }
     }
-    setWorking(null)
   }
 
   const readBot = async (botId: string): Promise<void> => {
+    const generation = readGenerationRef.current + 1
+    readGenerationRef.current = generation
+    selectedBotIdRef.current = botId
     setRecent([])
     setMemory(null)
     setMemoryConfirmOpen(false)
-    const [privateResult, memoryResult] = await Promise.all([
-      client.readPrivateChat(botId),
-      client.readMemory(botId),
-    ])
-    if (privateResult.ok) setRecent(privateResult.value.recent)
-    else setError(privateResult.error.message)
-    if (memoryResult.ok) setMemory(memoryResult.value)
-    else setError(memoryResult.error.message)
+    setMemoryAcknowledged(false)
+    setError(null)
+    try {
+      const [privateResult, memoryResult] = await Promise.all([
+        client.readPrivateChat(botId),
+        client.readMemory(botId),
+      ])
+      if (generation !== readGenerationRef.current || selectedBotIdRef.current !== botId) return
+      if (privateResult.ok) setRecent(privateResult.value.recent)
+      else setError(privateResult.error.message)
+      if (memoryResult.ok) setMemory(memoryResult.value)
+      else setError(memoryResult.error.message)
+    } catch (cause: unknown) {
+      if (generation === readGenerationRef.current && selectedBotIdRef.current === botId) {
+        setError(cause instanceof Error ? cause.message : t('sharedChatFailed'))
+      }
+    }
   }
 
   useEffect(() => {
-    if (!open) return
+    lifecycleGenerationRef.current += 1
+    readGenerationRef.current += 1
+    operationGenerationRef.current += 1
+    if (!open) {
+      setWorking(null)
+      setMemoryConfirmOpen(false)
+      setMemoryAcknowledged(false)
+      return
+    }
     setError(null)
     void refresh()
   }, [open])
 
   const enroll = async (): Promise<void> => {
-    const trimmed = code.trim()
-    if (trimmed === '' || working !== null) return
+    const submittedCode = code
+    const trimmed = submittedCode.trim()
+    if (!openRef.current || trimmed === '' || working !== null || hasPendingChat || hasPendingMemory) return
+    const submittedCodeRevision = codeRevisionRef.current
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    const operationGeneration = operationGenerationRef.current + 1
+    operationGenerationRef.current = operationGeneration
     setWorking('enroll')
     setError(null)
-    const result = await client.enroll(trimmed)
-    if (result.ok) {
-      setCode('')
-      await refresh()
-    } else {
-      setError(result.error.message || t('sharedEnrollmentFailed'))
+    try {
+      const result = await client.enroll(trimmed)
+      if (!isCurrentOperation(lifecycleGeneration, operationGeneration)) return
+      if (result.ok) {
+        if (codeRevisionRef.current === submittedCodeRevision) setCode('')
+        await refresh()
+      } else {
+        setError(result.error.message || t('sharedEnrollmentFailed'))
+      }
+    } catch (cause: unknown) {
+      if (isCurrentOperation(lifecycleGeneration, operationGeneration)) {
+        setError(cause instanceof Error ? cause.message : t('sharedEnrollmentFailed'))
+      }
+    } finally {
+      if (isCurrentOperation(lifecycleGeneration, operationGeneration)) {
+        setWorking(current => current === 'enroll' ? null : current)
+      }
     }
-    setWorking(null)
   }
 
   const send = async (): Promise<void> => {
-    if (selectedBotId === null || message.trim() === '' || working !== null) return
-    setWorking('chat')
+    if (!openRef.current || selectedBotId === null || message.trim() === '' || working !== null || currentChatWorking || currentMemoryWorking) return
+    const botId = selectedBotId
+    const submittedMessageRevision = messageDraftRevisionsRef.current[botId] ?? 0
+    const selectionEpoch = selectionEpochRef.current
+    operationGenerationRef.current += 1
+    setChatWorkingBotIds(current => updatePendingBotIds(current, botId, true))
     setError(null)
-    const result = await client.chat(selectedBotId, message.trim())
-    if (result.ok) {
-      setMessage('')
-      await readBot(selectedBotId)
-    } else {
-      setError(result.error.message || t('sharedChatFailed'))
+    try {
+      const result = await client.chat(botId, message.trim())
+      const currentSelection = isCurrentSelection(botId, selectionEpoch)
+      if (result.ok) {
+        if ((messageDraftRevisionsRef.current[botId] ?? 0) === submittedMessageRevision) {
+          setMessageDrafts((current) => {
+            if ((messageDraftRevisionsRef.current[botId] ?? 0) !== submittedMessageRevision) return current
+            if (!(botId in current)) return current
+            const next = { ...current }
+            Reflect.deleteProperty(next, botId)
+            return next
+          })
+        }
+        if (!currentSelection) return
+        await readBot(botId)
+      } else if (currentSelection) {
+        setError(result.error.message || t('sharedChatFailed'))
+      }
+    } catch (cause: unknown) {
+      if (isCurrentSelection(botId, selectionEpoch)) {
+        setError(cause instanceof Error ? cause.message : t('sharedChatFailed'))
+      }
+    } finally {
+      setChatWorkingBotIds(current => updatePendingBotIds(current, botId, false))
     }
-    setWorking(null)
   }
 
   const publishMemory = async (): Promise<void> => {
-    if (selectedBotId === null || memoryDraft.trim() === '' || memoryWorking || memory?.enabled !== true) return
-    setMemoryWorking(true)
+    if (!openRef.current || selectedBotId === null || !bots.some(bot => String(bot.id) === selectedBotId)
+      || memoryDraft.trim() === '' || working !== null || currentChatWorking || currentMemoryWorking || memory?.enabled !== true) return
+    const botId = selectedBotId
+    const submittedDraftRevision = memoryDraftRevisionsRef.current[botId] ?? 0
+    const selectionEpoch = selectionEpochRef.current
+    operationGenerationRef.current += 1
+    setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, true))
     setError(null)
-    const result = await client.writeMemory(selectedBotId, memoryDraft.trim())
-    if (result.ok) {
-      setMemoryDraft('')
-      setMemoryAcknowledged(false)
-      setMemoryConfirmOpen(false)
-      await readBot(selectedBotId)
-    } else {
-      setError(result.error.message || t('sharedMemoryWriteFailed'))
+    try {
+      const result = await client.writeMemory(botId, memoryDraft.trim())
+      const currentSelection = isCurrentSelection(botId, selectionEpoch)
+      if (result.ok) {
+        if ((memoryDraftRevisionsRef.current[botId] ?? 0) === submittedDraftRevision) {
+          setMemoryDrafts((current) => {
+            if ((memoryDraftRevisionsRef.current[botId] ?? 0) !== submittedDraftRevision) return current
+            if (!(botId in current)) return current
+            const next = { ...current }
+            Reflect.deleteProperty(next, botId)
+            return next
+          })
+        }
+        if (!currentSelection) return
+        setMemoryAcknowledged(false)
+        setMemoryConfirmOpen(false)
+        await readBot(botId)
+      } else if (currentSelection) {
+        setError(result.error.message || t('sharedMemoryWriteFailed'))
+      }
+    } catch (cause: unknown) {
+      if (isCurrentSelection(botId, selectionEpoch)) {
+        setError(cause instanceof Error ? cause.message : t('sharedMemoryWriteFailed'))
+      }
+    } finally {
+      setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, false))
     }
-    setMemoryWorking(false)
   }
 
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
@@ -340,8 +577,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       >
         {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
         <div className={css.shareInviteRow}>
-          <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { setCode(event.currentTarget.value) }} />
-          <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
+          <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { codeRevisionRef.current += 1; setCode(event.currentTarget.value) }} />
+          <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || hasPendingChat || hasPendingMemory || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
         </div>
         {working === 'list' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
         {working !== 'list' && bots.length === 0 && <div className={css.shareEmpty}>{t('noSharedBots')}</div>}
@@ -349,7 +586,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           <div className={css.sharedWorkspace}>
             <div className={css.sharedBotList} aria-label={t('sharedBotsTitle')}>
               {bots.map(bot => (
-                <button type="button" className={bot.id === selectedBotId ? css.sharedBotSelected : css.sharedBot} key={String(bot.id)} onClick={() => { const id = String(bot.id); setSelectedBotId(id); void readBot(id) }}>
+                <button type="button" className={bot.id === selectedBotId ? css.sharedBotSelected : css.sharedBot} key={String(bot.id)} onClick={() => { const id = String(bot.id); setSelection(id); void readBot(id) }}>
                   <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} size="small" />
                   <span><strong>{bot.name}</strong><small>{bot.role}</small></span>
                 </button>
@@ -367,8 +604,14 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                   {recent.map((entry, index) => <p className={entry.role === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={`${entry.role}-${index}`}>{entry.text}</p>)}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void send() }}>
-                  <Input value={message} placeholder={t('sharedChatPlaceholder')} aria-label={t('sharedChatPlaceholder')} onChange={(event) => { setMessage(event.currentTarget.value) }} />
-                  <Button variant="primary" type="submit" aria-label={t('sendMessage')} disabled={working !== null || message.trim() === ''} icon={<IconShareOutlineRegular size={14} />} />
+                  <Input value={message} placeholder={t('sharedChatPlaceholder')} aria-label={t('sharedChatPlaceholder')} onChange={(event) => {
+                    if (selectedBotId === null) return
+                    const revision = (messageDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
+                    messageDraftRevisionsRef.current[selectedBotId] = revision
+                    const value = event.currentTarget.value
+                    setMessageDrafts(current => ({ ...current, [selectedBotId]: value }))
+                  }} />
+                  <Button variant="primary" type="submit" aria-label={t('sendMessage')} disabled={working !== null || currentChatWorking || currentMemoryWorking || message.trim() === ''} icon={<IconShareOutlineRegular size={14} />} />
                 </form>
                 <section className={css.sharedContext} aria-labelledby="yharness-shared-context-heading">
                   <div className={css.sharedContextHeader}>
@@ -391,11 +634,17 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                           value={memoryDraft}
                           placeholder={t('sharedContextPlaceholder')}
                           aria-label={t('sharedContextPlaceholder')}
-                          onChange={(event) => { setMemoryDraft(event.currentTarget.value) }}
+                          onChange={(event) => {
+                            if (selectedBotId === null) return
+                            const revision = (memoryDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
+                            memoryDraftRevisionsRef.current[selectedBotId] = revision
+                            const value = event.currentTarget.value
+                            setMemoryDrafts(current => ({ ...current, [selectedBotId]: value }))
+                          }}
                         />
                         <Button
                           variant="outline"
-                          disabled={memoryWorking || memoryDraft.trim() === ''}
+                          disabled={working !== null || currentChatWorking || currentMemoryWorking || memoryDraft.trim() === ''}
                           onClick={() => { setMemoryAcknowledged(false); setMemoryConfirmOpen(true) }}
                           aria-label={t('publishSharedContext')}
                         >
@@ -411,7 +660,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         )}
       </Modal>
       <RiskConfirmation
-        open={memoryConfirmOpen}
+        open={open && memoryConfirmOpen && selected !== undefined}
         title={t('publishSharedContextTitle')}
         description={t('publishSharedContextDescription')}
         acknowledgeLabel={t('publishSharedContextAcknowledge')}
@@ -419,7 +668,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         closeLabel={t('cancel')}
         confirmLabel={t('publishSharedContext')}
         acknowledged={memoryAcknowledged}
-        disabled={memoryWorking}
+        disabled={working !== null || currentChatWorking || currentMemoryWorking}
         onAcknowledgedChange={setMemoryAcknowledged}
         onCancel={() => { setMemoryConfirmOpen(false); setMemoryAcknowledged(false) }}
         onConfirm={() => { void publishMemory() }}

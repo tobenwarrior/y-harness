@@ -23,8 +23,8 @@ import type {
   BotShareMemberRevokeValue,
   BotShareMembersRequest,
   BotShareMembersValue,
+  BotPrincipalId as BotPrincipalIdType,
 } from '@yharness/bots/client'
-import { BotPrincipalId } from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -531,7 +531,7 @@ export class BotWorkspaceController {
       revokeMember: async (botId, principalId) => {
         const result = await revokeMember({
           botId: brandString<BotIdType>(botId),
-          principalId: BotPrincipalId(principalId),
+          principalId: brandString<BotPrincipalIdType>(principalId),
         })
         if (!result.ok) throw new Error(result.error.message)
         return result.value
