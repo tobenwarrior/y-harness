@@ -83,12 +83,20 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotMemoryForgetRemoteRequest,
+  BotMemoryForgetValue,
+  BotMemoryListRequest,
+  BotMemoryListValue,
+  BotMemoryUpdateRequest,
+  BotMemoryUpdateValue,
+  BotMemoryView,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
   BotView,
 } from './types.ts'
 import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+import type { BotStoredRecord } from './storage.ts'
 import {
   BotTemplateId,
   BotTemplateShareCode,
@@ -124,6 +132,7 @@ import {
 import {
   BOT_TEMPLATE_IMPORT_BINDING_LIMIT,
   BOT_TEMPLATE_APPROVAL_LIMIT,
+  BOT_TEMPLATE_APPROVAL_TOOL_LIMIT,
   botTemplateDomain,
   normalizeBotTemplateShareCode,
 } from './template-storage.ts'
@@ -261,6 +270,15 @@ interface ActiveBotTemplate {
   readonly approval?: BotTemplateApproval
 }
 
+interface TemplateApprovalPreview {
+  readonly fingerprint: string
+  readonly permissions: BotTemplateApprovalPermissions
+  readonly expiresAt: number
+}
+
+const BOT_TEMPLATE_APPROVAL_PREVIEW_LIMIT = 1024
+const BOT_TEMPLATE_APPROVAL_PREVIEW_TTL_MS = 5 * 60 * 1000
+
 function approvalPermissionsOf(localPermissions: BotTemplateLocalPermissions): BotTemplateApprovalPermissions | undefined {
   if (localPermissions.status !== 'resolved' || localPermissions.preset === undefined) return undefined
   return { preset: localPermissions.preset, tools: [...localPermissions.tools].sort() }
@@ -272,6 +290,37 @@ function sameApprovalPermissions(
 ): boolean {
   if (left === undefined || right === undefined || left.preset !== right.preset || left.tools.length !== right.tools.length) return false
   return left.tools.every((tool, index) => tool === right.tools[index])
+}
+
+function normalizeApprovalToken(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128 || !/^[A-Za-z0-9-]+$/u.test(value)) {
+    return badRequest('Bot template approval token is invalid')
+  }
+  return value
+}
+
+function normalizeExpectedApprovalPermissions(value: unknown): BotTemplateApprovalPermissions {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+    || !('status' in value) || value.status !== 'resolved'
+    || !('preset' in value) || typeof value.preset !== 'string'
+    || !('tools' in value) || !Array.isArray(value.tools)) {
+    return badRequest('Bot template approval permissions are invalid')
+  }
+  const preset = value.preset
+  if (preset.length === 0 || preset.length > 160 || preset.trim() !== preset) {
+    return badRequest('Bot template approval preset is invalid')
+  }
+  const tools: string[] = []
+  for (const tool of value.tools) {
+    if (typeof tool !== 'string' || tool.length === 0 || tool.length > 160 || tool.trim() !== tool) {
+      return badRequest('Bot template approval tool list is invalid')
+    }
+    tools.push(tool)
+  }
+  if (tools.length > BOT_TEMPLATE_APPROVAL_TOOL_LIMIT || new Set(tools).size !== tools.length) {
+    return badRequest('Bot template approval tool list is invalid')
+  }
+  return { preset, tools: [...tools].sort() }
 }
 
 function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
@@ -632,6 +681,10 @@ function groupTurnFailure(reason: TurnEndReason): string | undefined {
   }
 }
 
+function memoryView(memory: BotMemoryRecord): BotMemoryView {
+  return { id: String(memory.id), text: memory.text, createdAt: memory.createdAt }
+}
+
 /** Replace legacy avatar selections without deleting their attachments. */
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
@@ -657,9 +710,10 @@ export class BotService extends TypertRemoteService {
   private readonly groupService: Promise<BotGroupService>
   private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
   private readonly templateSigningKey: Promise<KeyObject>
+  private readonly templateApprovalPreviews = new Map<string, TemplateApprovalPreview>()
   private readonly ownerId: string
   private readonly initialized: PromiseLike<unknown>
-  private readonly recordsBySession = new Map<string, BotRecord>()
+  private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
@@ -913,6 +967,7 @@ export class BotService extends TypertRemoteService {
         const openedTemplateDomain = templateDomain
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
+          this.templateApprovalPreviews.clear()
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
@@ -940,6 +995,18 @@ export class BotService extends TypertRemoteService {
 
   async [Service.init](): Promise<void> {
     await this.initialized
+    const domain = await this.ready
+    try {
+      await this.recoverPendingMemoryUpdates(domain.table('bots'))
+    } catch (error: unknown) {
+      this.stopping = true
+      try {
+        await domain.close()
+      } catch (closeError: unknown) {
+        this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+      }
+      throw error
+    }
     await Promise.all(this.ctx.agents.list().map(async (agent) => {
       await this.installPrompt(agent)
       await this.reconcileGroupSession(agent)
@@ -976,9 +1043,14 @@ export class BotService extends TypertRemoteService {
     await this.ensureMemoryLoaded(record)
     return {
       remember: request => this.rememberMemory(sessionId, request),
-      list: signal => this.listMemory(sessionId, signal),
-      forget: request => this.forgetMemory(sessionId, request),
+      list: signal => this.listMemoryForSession(sessionId, signal),
+      forget: request => this.forgetMemoryForSession(sessionId, request),
     }
+  }
+
+  /** Serialize a provider memory list because recovery may append events. */
+  private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+    return this.serialize(() => this.readMemoryForSession(sessionId, signal))
   }
 
   /** Load one Bot's memory projection from its durable Session log once. */
@@ -1051,6 +1123,71 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /** Finish a pending two-event edit recorded in the durable Bot row. */
+  private async recoverPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  ): Promise<void> {
+    const pending = record.pendingMemoryUpdate
+    if (pending === undefined) return
+    const id = parseBotMemoryId(pending.memoryId)
+    const text = normalizeBotMemoryText(pending.text)
+    await this.ensureMemoryLoaded(record)
+    await this.reconcilePendingMemory(record.sessionId)
+    const memories = this.memoriesBySession.get(String(record.sessionId))
+    if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+    const current = memories.get(String(id))
+    if (current === undefined) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    } else if (current.text !== text) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'forget' })
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    }
+    await this.clearPendingMemoryUpdate(record, bots, pending)
+  }
+
+  /** Recover all Bot edits that were interrupted after their intent was saved. */
+  private async recoverPendingMemoryUpdates(bots: KvTable<BotRecord['id'], BotStoredRecord>): Promise<void> {
+    for (const [, record] of bots.entries()) {
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
+    }
+  }
+
+  /** Save an edit intent before mutating its append-only memory log. */
+  private async savePendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<BotStoredRecord> {
+    const next: BotStoredRecord = { ...record, pendingMemoryUpdate: intent }
+    await bots.put(record.id, next)
+    this.recordsBySession.set(String(next.sessionId), next)
+    return next
+  }
+
+  /** Remove a completed edit intent without changing the public Bot row. */
+  private async clearPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<void> {
+    const latest = bots.get(record.id)
+    if (latest === undefined || latest.pendingMemoryUpdate === undefined) return
+    if (latest.pendingMemoryUpdate.memoryId !== intent.memoryId || latest.pendingMemoryUpdate.text !== intent.text) return
+    const { pendingMemoryUpdate: ignored, ...withoutPending } = latest
+    void ignored
+    try {
+      await bots.put(record.id, withoutPending)
+    } catch (error: unknown) {
+      throw new BotMemoryError(
+        'durability-failed',
+        'The Bot memory was updated, but its recovery marker could not be cleared.',
+        { cause: error },
+      )
+    }
+    this.recordsBySession.set(String(withoutPending.sessionId), withoutPending)
+  }
+
   /** Append one memory mutation, update the live projection, and await durability. */
   private async appendMemoryEvent(
     sessionId: SessionId,
@@ -1094,7 +1231,9 @@ export class BotService extends TypertRemoteService {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const text = normalizeBotMemoryText(request.text)
@@ -1116,11 +1255,13 @@ export class BotService extends TypertRemoteService {
     })
   }
 
-  /** List the active durable memories for the Bot that owns `sessionId`. */
-  private async listMemory(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+  /** Read the active durable memories while the caller owns serialization. */
+  private async readMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+    const bots = (await this.getDomain()).table('bots')
     await this.ensureMemoryLoaded(record, signal)
+    if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
     await this.reconcilePendingMemory(sessionId, signal)
     this.throwIfMemoryCancelled(signal)
     const memories = this.memoriesBySession.get(String(sessionId))
@@ -1130,12 +1271,14 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Delete one active durable memory for the Bot that owns `sessionId`. */
-  private async forgetMemory(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
+  private async forgetMemoryForSession(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
     return this.serialize(async () => {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       const pending = await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const id = parseBotMemoryId(String(request.memoryId))
@@ -1304,6 +1447,35 @@ export class BotService extends TypertRemoteService {
     })
   }
 
+  /** Replace one active memory while retaining its stable identity in the log. */
+  private async updateMemoryForSession(
+    sessionId: SessionId,
+    request: { readonly memoryId: BotMemoryId; readonly text: string },
+  ): Promise<BotMemoryRecord> {
+    return this.serialize(async () => {
+      const record = this.recordsBySession.get(String(sessionId))
+      if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+      const text = normalizeBotMemoryText(request.text)
+      const bots = (await this.getDomain()).table('bots')
+      await this.ensureMemoryLoaded(record)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
+      await this.reconcilePendingMemory(sessionId)
+      this.throwIfMemoryCancelled()
+      const id = parseBotMemoryId(String(request.memoryId))
+      const memories = this.memoriesBySession.get(String(sessionId))
+      if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+      const current = memories.get(String(id))
+      if (current === undefined) throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
+      if (current.text === text) return current
+      const intent = { memoryId: String(id), text }
+      const pendingRecord = await this.savePendingMemoryUpdate(record, bots, intent)
+      await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'forget' })
+      const appended = await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'remember', text })
+      await this.clearPendingMemoryUpdate(pendingRecord, bots, intent)
+      return { id, text, createdAt: appended.time }
+    })
+  }
+
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
       const bots = (await this.getDomain()).table('bots')
@@ -1459,11 +1631,36 @@ export class BotService extends TypertRemoteService {
   async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue> {
     return this.serialize(async () => {
       const active = await this.activeTemplate(request)
+      const localPermissions = await this.localTemplatePermissions(active.payload.agentPreset)
+      const approvalPermissions = approvalPermissionsOf(localPermissions)
+      const approvalToken = approvalPermissions === undefined
+        ? undefined
+        : this.issueTemplateApprovalPreview(active.fingerprint, approvalPermissions)
       return {
         template: active.template,
-        localPermissions: await this.localTemplatePermissions(active.payload.agentPreset),
+        localPermissions,
+        ...(approvalToken === undefined ? {} : { approvalToken }),
       }
     })
+  }
+
+  private issueTemplateApprovalPreview(fingerprint: string, permissions: BotTemplateApprovalPermissions): string {
+    const now = Date.now()
+    for (const [token, preview] of this.templateApprovalPreviews) {
+      if (preview.expiresAt <= now) this.templateApprovalPreviews.delete(token)
+    }
+    while (this.templateApprovalPreviews.size >= BOT_TEMPLATE_APPROVAL_PREVIEW_LIMIT) {
+      const oldest = this.templateApprovalPreviews.keys().next().value
+      if (oldest === undefined) break
+      this.templateApprovalPreviews.delete(oldest)
+    }
+    const token = `bot-template-preview-${randomUUID()}`
+    this.templateApprovalPreviews.set(token, {
+      fingerprint,
+      permissions,
+      expiresAt: now + BOT_TEMPLATE_APPROVAL_PREVIEW_TTL_MS,
+    })
+    return token
   }
 
   /**
@@ -1482,6 +1679,25 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
+      if (typeof request.approvalToken !== 'string' || request.expectedPermissions === undefined) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview and target-Host permission view before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const approvalToken = normalizeApprovalToken(request.approvalToken)
+      const expectedPermissions = normalizeExpectedApprovalPermissions(request.expectedPermissions)
+      const preview = this.templateApprovalPreviews.get(approvalToken)
+      if (preview === undefined || preview.expiresAt <= Date.now()
+        || preview.fingerprint !== active.fingerprint
+        || !sameApprovalPermissions(preview.permissions, expectedPermissions)) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview and target-Host permission view before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
       const localPermissions = await this.requireTemplatePermissions(active.payload.agentPreset, { requireResolution: true })
       const approvalPermissions = approvalPermissionsOf(localPermissions)
       if (approvalPermissions === undefined) throw new RemoteError(
@@ -1489,6 +1705,14 @@ export class BotService extends TypertRemoteService {
         'The target Host could not resolve an effective preset and tool view for this Bot template.',
         {},
       )
+      if (!sameApprovalPermissions(approvalPermissions, expectedPermissions)
+        || !sameApprovalPermissions(approvalPermissions, preview.permissions)) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'The target Host preset or tool permissions changed after preview; preview this template again.',
+          { fingerprint: active.fingerprint },
+        )
+      }
       const templateDomain = await this.templateDomain
       const current = templateDomain.global.get()
       const approvals = current.approvals ?? {}
@@ -1675,6 +1899,58 @@ export class BotService extends TypertRemoteService {
   @Remote('sendGroupMessage')
   async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
     return (await this.getGroupService()).send(request)
+  }
+
+  /**
+   * List active memories for a Bot without accepting a model-supplied Session id.
+   * @param request - Durable Bot id whose private projection should be read.
+   * @returns active memory rows owned by that Bot.
+   */
+  @Remote('listMemory')
+  async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const record = bots.get(id)
+      if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const memories = await this.readMemoryForSession(record.sessionId)
+      return { memories: memories.map(memoryView) }
+    })
+  }
+
+  /**
+   * Replace one active memory for a Bot while preserving its stable id.
+   * @param request - Bot id, memory id, and replacement text.
+   * @returns the updated memory row.
+   */
+  @Remote('updateMemory')
+  async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    const memory = await this.updateMemoryForSession(record.sessionId, { memoryId, text: request.text })
+    return { memory: memoryView(memory) }
+  }
+
+  /**
+   * Logically remove one active memory for a Bot.
+   * @param request - Bot id and memory id to remove.
+   * @returns a stable success marker after the forget event is durable.
+   */
+  @Remote('forgetMemory')
+  async forgetMemory(request: BotMemoryForgetRemoteRequest): Promise<BotMemoryForgetValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    await this.forgetMemoryForSession(record.sessionId, { memoryId })
+    return { removed: true }
   }
 
   /**
@@ -2283,15 +2559,16 @@ export class BotService extends TypertRemoteService {
     void task.finally(() => { this.promptDisposals.delete(task) })
   }
 
-  private view(record: BotRecord): BotView {
-    const { ownerId: ignoredOwnerId, ...withoutOwner } = record
+  private view(record: BotStoredRecord): BotView {
+    const { ownerId: ignoredOwnerId, pendingMemoryUpdate: ignoredPendingMemoryUpdate, ...withoutPrivateFields } = record
     const agent = this.ctx.agents.get(record.sessionId)
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
     void ignoredOwnerId
+    void ignoredPendingMemoryUpdate
     return {
-      ...withoutOwner,
+      ...withoutPrivateFields,
       pinned: record.pinned ?? false,
       hidden: record.hidden ?? false,
       availability,

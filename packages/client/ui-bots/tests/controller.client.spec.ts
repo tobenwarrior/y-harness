@@ -232,7 +232,7 @@ describe('BotWorkspaceController', () => {
     const template = templateView('bot-template-1', 'bot-template-code-1')
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
     }))
@@ -257,6 +257,7 @@ describe('BotWorkspaceController', () => {
     }))
     expect(remote.approveTemplate).toHaveBeenCalledWith({
       shareCode: 'bot-template-code-1', fingerprint: template.fingerprint,
+      expectedPermissions: localPermissions, approvalToken: 'preview-token',
     })
     expect(controller.source.getSnapshot().templates).toMatchObject({ code: '', preview: null, busy: false })
     controller.dispose()
@@ -288,7 +289,7 @@ describe('BotWorkspaceController', () => {
     const template = templateView('bot-template-failure-row', 'bot-template-code-failure')
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
     }))
@@ -311,7 +312,7 @@ describe('BotWorkspaceController', () => {
     const template = templateView('bot-template-no-approval-row', 'bot-template-code-no-approval')
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
     await controller.load()
@@ -363,7 +364,7 @@ describe('BotWorkspaceController', () => {
     actions?.setTemplateCode('bot-template-code-a')
     const pending = actions?.previewTemplate()
     actions?.setTemplateCode('bot-template-code-b')
-    resolvePreview?.({ ok: true, value: { template, localPermissions } })
+    resolvePreview?.({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
     await pending
 
     expect(controller.source.getSnapshot().templates.preview).toBeNull()
@@ -418,11 +419,11 @@ describe('BotWorkspaceController', () => {
     actions?.setTemplateCode('bot-template-code-a')
     const second = actions?.previewTemplate()
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
-    pending[0]?.resolve({ ok: true, value: { template, localPermissions } })
+    pending[0]?.resolve({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
     expect(controller.source.getSnapshot().templates.preview).toBeNull()
     expect(controller.source.getSnapshot().templates.busy).toBe(true)
-    pending[1]?.resolve({ ok: true, value: { template, localPermissions } })
+    pending[1]?.resolve({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
     await Promise.all([first, second])
 
     expect(controller.source.getSnapshot().templates.preview?.shareCode).toBe('bot-template-code-a')
@@ -482,7 +483,7 @@ describe('BotWorkspaceController', () => {
     const template = templateView('bot-template-current-row', 'bot-template-code-a')
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
     }))
@@ -506,7 +507,7 @@ describe('BotWorkspaceController', () => {
     const importResult = Promise.withResolvers<RemoteResult<{ readonly bot: BotView; readonly template: BotTemplateView }>>()
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
     }))
@@ -533,7 +534,7 @@ describe('BotWorkspaceController', () => {
     const template = templateView('bot-template-approval-row', 'bot-template-code-approval')
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const,
       value: { template: { ...template, fingerprint: 'c'.repeat(64), approved: true }, localPermissions },
@@ -557,7 +558,7 @@ describe('BotWorkspaceController', () => {
     })
     const remote = remoteFixture([source])
     remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
-    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const,
       value: {
@@ -883,7 +884,6 @@ describe('BotWorkspaceController', () => {
     expect(controller.face().reference()?.sessionId).toBe('session-lost')
     expect(controller.source.getSnapshot().error).toBeNull()
   })
-
   it('switches from a direct Bot Session to a persistent shared group transcript', async () => {
     const first = bot('bot-first-group', 'session-first-group')
     const second = bot('bot-second-group', 'session-second-group')
@@ -1405,5 +1405,33 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => {
       expect(controller.source.getSnapshot().selectedGroup?.messages.at(-1)?.text).toBe('Arrived during refresh.')
     })
+  })
+  it('binds memory management to the requested Bot id and preserves stable memory ids', async () => {
+    const persisted = bot('bot-memory-owner', 'bot-session-memory-owner')
+    const remote = remoteFixture([persisted])
+    const listMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memories: [{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }],
+    } }))
+    const updateMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memory: { id: 'memory-one', text: 'Keep the review short.', createdAt: 2 },
+    } }))
+    const forgetMemory = vi.fn(async () => ({ ok: true as const, value: { removed: true as const } }))
+    remote.listMemory = listMemory
+    remote.updateMemory = updateMemory
+    remote.forgetMemory = forgetMemory
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    const manager = controller.face().memoryManager
+    if (manager === undefined) throw new Error('memory manager was not mounted')
+    await expect(manager.list(String(persisted.id))).resolves.toEqual([{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }])
+    await expect(manager.update(String(persisted.id), 'memory-one', 'Keep the review short.')).resolves.toEqual({
+      id: 'memory-one', text: 'Keep the review short.', createdAt: 2,
+    })
+    await expect(manager.remove(String(persisted.id), 'memory-one')).resolves.toBeUndefined()
+
+    expect(listMemory).toHaveBeenCalledWith({ botId: persisted.id })
+    expect(updateMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one', text: 'Keep the review short.' })
+    expect(forgetMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one' })
   })
 })

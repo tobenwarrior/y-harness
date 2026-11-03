@@ -671,6 +671,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
+        description: 'List active memories for a Bot without accepting a model-supplied Session id.',
+        parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
+        returns: 'active memory rows owned by that Bot.',
+      },
+      {
+        signature: '@Remote(\'updateMemory\') async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue>',
+        description: 'Replace one active memory for a Bot while preserving its stable id.',
+        parameters: [{ name: 'request', description: 'Bot id, memory id, and replacement text.' }],
+        returns: 'the updated memory row.',
+      },
+      {
+        signature: '@Remote(\'forgetMemory\') async forgetMemory(request: BotMemoryForgetRemoteRequest): Promise<BotMemoryForgetValue>',
+        description: 'Logically remove one active memory for a Bot.',
+        parameters: [{ name: 'request', description: 'Bot id and memory id to remove.' }],
+        returns: 'a stable success marker after the forget event is durable.',
+      },
+      {
         signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
         description: 'Create one durable Bot and its exactly-one ordinary Session.\n\nA provisioning row is committed before Session creation. If Session creation or activation cannot finish, the row remains visible and the same Bot id can be retried safely; no second Session is allocated for that Bot.',
         parameters: [{ name: 'request', description: 'Name, visual identity, optional working directory, and preset.' }],
@@ -5642,12 +5660,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
   },
   {
+    name: 'BotMemoryForgetRemoteRequest',
+    declaration: 'export interface BotMemoryForgetRemoteRequest {\n    readonly botId: BotId;\n    readonly memoryId: string;\n}',
+  },
+  {
     name: 'BotMemoryForgetRequest',
     declaration: 'export interface BotMemoryForgetRequest {\n    readonly memoryId: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
   },
   {
+    name: 'BotMemoryForgetValue',
+    declaration: 'export interface BotMemoryForgetValue {\n    readonly removed: true;\n}',
+  },
+  {
     name: 'BotMemoryId',
     declaration: 'export type BotMemoryId = Branded<\'BotMemoryId\'>;',
+  },
+  {
+    name: 'BotMemoryListRequest',
+    declaration: 'export interface BotMemoryListRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotMemoryListValue',
+    declaration: 'export interface BotMemoryListValue {\n    readonly memories: readonly BotMemoryView[];\n}',
   },
   {
     name: 'BotMemoryRecord',
@@ -5656,6 +5690,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotMemoryRememberRequest',
     declaration: 'export interface BotMemoryRememberRequest {\n    readonly text: string;\n    readonly memoryId?: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'BotMemoryUpdateRequest',
+    declaration: 'export interface BotMemoryUpdateRequest {\n    readonly botId: BotId;\n    readonly memoryId: string;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'BotMemoryUpdateValue',
+    declaration: 'export interface BotMemoryUpdateValue {\n    readonly memory: BotMemoryView;\n}',
+  },
+  {
+    name: 'BotMemoryView',
+    declaration: 'export interface BotMemoryView {\n    readonly id: string;\n    readonly text: string;\n    readonly createdAt: number;\n}',
   },
   {
     name: 'BotMessageId',
@@ -5687,7 +5733,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotTemplateApproveRequest',
-    declaration: 'export interface BotTemplateApproveRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly fingerprint: string;\n}',
+    declaration: 'export interface BotTemplateApproveRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly fingerprint: string;\n    readonly expectedPermissions: BotTemplateLocalPermissions;\n    readonly approvalToken: string;\n}',
   },
   {
     name: 'BotTemplateApproveValue',
@@ -5735,7 +5781,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotTemplatePreviewValue',
-    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n}',
+    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n    readonly approvalToken?: string;\n}',
   },
   {
     name: 'BotTemplateProfile',

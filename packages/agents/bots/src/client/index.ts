@@ -23,6 +23,8 @@ export type {
   BotGroupSendValue,
   BotGroupView,
 } from '../group-chat.ts'
+/** Backward-compatible Client alias for the remote memory-removal request. */
+export type { BotMemoryForgetRemoteRequest as BotMemoryForgetRequest } from '../types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from '../types.ts'
 
 /** The Host Bot service has no independent Client lifecycle; API remotes own its calls. */

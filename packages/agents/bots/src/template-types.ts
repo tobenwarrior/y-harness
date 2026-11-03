@@ -166,6 +166,8 @@ export interface BotTemplatePreviewValue {
   readonly template: BotTemplateView
   /** Current target-Host preset and tool view; never signed into the portable code. */
   readonly localPermissions: BotTemplateLocalPermissions
+  /** Opaque Host-local token required to approve a resolved preview. */
+  readonly approvalToken?: string
 }
 
 /** Approve one exact verified artifact for future imports on this Host. */
@@ -174,6 +176,10 @@ export interface BotTemplateApproveRequest {
   readonly shareCode: BotTemplateShareCode
   /** Fingerprint shown by the inspected preview. */
   readonly fingerprint: string
+  /** Exact target-Host permission view shown by the inspected preview. */
+  readonly expectedPermissions: BotTemplateLocalPermissions
+  /** Opaque token issued by the inspected preview and bound to its permission view. */
+  readonly approvalToken: string
 }
 
 /** Import request for a new Bot and Session. */

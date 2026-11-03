@@ -45,6 +45,12 @@ import type {
   BotTemplateId,
   BotTemplateShareCode,
   BotTemplateView,
+  BotMemoryForgetRemoteRequest,
+  BotMemoryForgetValue,
+  BotMemoryListRequest,
+  BotMemoryListValue,
+  BotMemoryUpdateRequest,
+  BotMemoryUpdateValue,
   BotView,
 } from '@yharness/bots/client'
 import type {
@@ -60,7 +66,7 @@ import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
-  BotGroupSummary, BotIdentity, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
+  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -83,6 +89,9 @@ export interface BotWorkspaceRemote {
   inspectGroup?: (request: BotGroupInspectRequest) => Promise<RemoteResult<BotGroupInspectValue>>
   sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<RemoteResult<BotGroupSendValue>>
 
+  listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
+  updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
+  forgetMemory?: (request: BotMemoryForgetRemoteRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -153,6 +162,7 @@ export interface BotWorkspaceFace {
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
+  readonly memoryManager?: BotMemoryManagerActions
   readonly retry: () => void
 }
 
@@ -272,7 +282,6 @@ interface TemplateCatalogRead {
   readonly templates: readonly BotTemplateSummary[]
   readonly error: string | null
 }
-
 /** Owns the remote roster query and the selected Bot's single Session reference. */
 export class BotWorkspaceController {
   /** Observable roster state consumed by the Bot panel. */
@@ -444,6 +453,13 @@ export class BotWorkspaceController {
         || this.remote.uploadAvatar !== undefined
         || (this.avatarGeneration !== undefined && this.remote.updateAvatar !== undefined)
           ? { avatarEditor: this.avatarEditor() }
+          : {}
+      ),
+      ...(
+        this.remote.listMemory !== undefined
+        && this.remote.updateMemory !== undefined
+        && this.remote.forgetMemory !== undefined
+          ? { memoryManager: this.memoryManager() }
           : {}
       ),
       retry: () => {
@@ -800,7 +816,8 @@ export class BotWorkspaceController {
       if (!validLocalPermissions(result.value.localPermissions)) throw new Error(this.unexpectedResponse())
       const preview = templateSummary(result.value.template)
       if (preview.shareCode !== requestedCode || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
-        || !validTemplateAvatar(preview.avatar)) {
+        || !validTemplateAvatar(preview.avatar)
+        || (result.value.localPermissions.status === 'resolved' && !validApprovalToken(result.value.approvalToken))) {
         throw new Error(this.unexpectedResponse())
       }
       const latest = this.source.getSnapshot()
@@ -808,7 +825,15 @@ export class BotWorkspaceController {
         || previewGeneration !== this.templatePreviewGeneration || latest.templates.code.trim() !== requestedCode) return
       this.source.set({
         ...latest,
-        templates: { ...latest.templates, preview: { ...preview, localPermissions: result.value.localPermissions }, error: null },
+        templates: {
+          ...latest.templates,
+          preview: {
+            ...preview,
+            localPermissions: result.value.localPermissions,
+            ...(result.value.approvalToken === undefined ? {} : { approvalToken: result.value.approvalToken }),
+          },
+          error: null,
+        },
       })
     }, 'preview')
   }
@@ -825,9 +850,10 @@ export class BotWorkspaceController {
       if (preview === null || preview.shareCode !== requestedCode
         || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
         || preview.localPermissions === undefined || !validLocalPermissions(preview.localPermissions)
-        || preview.localPermissions.status !== 'resolved') {
+        || preview.localPermissions.status !== 'resolved' || !validApprovalToken(preview.approvalToken)) {
         throw new Error(this.unexpectedResponse())
       }
+      const approvalToken = preview.approvalToken
       const previewGeneration = this.templatePreviewGeneration
       const normalizedName = name?.trim()
       const importKey = `${requestedCode}\n${normalizedName ?? ''}`
@@ -842,7 +868,12 @@ export class BotWorkspaceController {
       if (approveTemplate === undefined) throw new Error(this.unexpectedResponse())
       let approval: RemoteResult<BotTemplateApproveValue>
       try {
-        approval = await approveTemplate({ shareCode: request.shareCode, fingerprint: preview.fingerprint })
+        approval = await approveTemplate({
+          shareCode: request.shareCode,
+          fingerprint: preview.fingerprint,
+          expectedPermissions: preview.localPermissions,
+          approvalToken,
+        })
       } catch (error: unknown) {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
@@ -866,6 +897,7 @@ export class BotWorkspaceController {
         || latestBeforeImport.preview.fingerprint !== preview.fingerprint
         || latestBeforeImport.preview.issuerFingerprint !== preview.issuerFingerprint
         || latestBeforeImport.preview.localPermissions === undefined
+        || latestBeforeImport.preview.approvalToken !== approvalToken
         || !sameLocalPermissions(latestBeforeImport.preview.localPermissions, preview.localPermissions)) {
         throw new Error(this.unexpectedResponse())
       }
@@ -1420,6 +1452,39 @@ export class BotWorkspaceController {
     })
   }
 
+  private memoryManager(): BotMemoryManagerActions {
+    const listMemory = this.remote.listMemory
+    const updateMemory = this.remote.updateMemory
+    const forgetMemory = this.remote.forgetMemory
+    if (listMemory === undefined || updateMemory === undefined || forgetMemory === undefined) {
+      throw new Error('Bot memory management is not mounted.')
+    }
+    return {
+      list: async (botId) => {
+        const result = await listMemory({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value.memories
+      },
+      update: async (botId, memoryId, text) => {
+        const result = await updateMemory({
+          botId: brandString<BotIdType>(botId),
+          memoryId,
+          text,
+        })
+        if (!result.ok) throw new Error(result.error.message)
+        if (result.value.memory.id !== memoryId) throw new Error(this.unexpectedResponse())
+        return result.value.memory
+      },
+      remove: async (botId, memoryId) => {
+        const result = await forgetMemory({
+          botId: brandString<BotIdType>(botId),
+          memoryId,
+        })
+        if (!result.ok) throw new Error(result.error.message)
+      },
+    }
+  }
+
   private create(creation: BotCreation): Promise<void> {
     if (this.disposed) return Promise.resolve()
     if (this.pendingCreation !== undefined) return this.retryPendingCreate()
@@ -1562,6 +1627,10 @@ function validLocalPermissions(value: unknown): value is BotTemplateLocalPermiss
   if (value.preset !== undefined && (typeof value.preset !== 'string' || value.preset.trim() !== value.preset || value.preset.length === 0)) return false
   if (!Array.isArray(value.tools) || value.tools.some(tool => typeof tool !== 'string' || tool.trim() !== tool || tool.length === 0)) return false
   return new Set(value.tools).size === value.tools.length
+}
+
+function validApprovalToken(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9-]+$/u.test(value)
 }
 
 function validTemplateAvatar(value: unknown): value is BotTemplateAvatar {
