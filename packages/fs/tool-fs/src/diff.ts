@@ -5,7 +5,7 @@
  */
 
 import { structuredPatch } from 'diff'
-import type { FileDiff } from '@yharness/tools'
+import type { FileDiff, FileLocation } from '@yharness/tools'
 
 /** Context lines shown on each side of an applied hunk. */
 export const DIFF_CONTEXT = 3
@@ -57,7 +57,6 @@ export function computeHunkDiffs(path: string, before: string, after: string): F
   }
   return diffs
 }
-
 /** Whether `value` is a valid {@link FileDiff} (defensive narrowing from opaque `meta`). */
 function isFileDiff(value: unknown): value is FileDiff {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -78,4 +77,32 @@ export function diffsFromMeta(meta: unknown): FileDiff[] | undefined {
   const diffs = (meta as Record<string, unknown>).diffs
   if (!Array.isArray(diffs) || diffs.length === 0 || !diffs.every(isFileDiff)) return undefined
   return diffs
+}
+
+/**
+ * Narrow optional file locations from patch presentation metadata.
+ * @param meta - opaque result metadata from a live or replayed tool result.
+ * @returns validated file locations, or `undefined` for absent or malformed metadata.
+ */
+export function locationsFromMeta(meta: unknown): FileLocation[] | undefined {
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return undefined
+  const locations = (meta as Record<string, unknown>).locations
+  if (!Array.isArray(locations) || locations.length === 0) return undefined
+  if (!locations.every((value) => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const { path, line } = value as Record<string, unknown>
+    return typeof path === 'string' && path.length > 0
+      && (line === undefined || (typeof line === 'number' && Number.isInteger(line) && line > 0))
+  })) return undefined
+  return locations as FileLocation[]
+}
+
+/**
+ * Narrow the patch tool's optional stopped flag from persisted metadata.
+ * @param meta - opaque live or replayed result metadata.
+ * @returns true only for an explicit stopped flag.
+ */
+export function stoppedFromMeta(meta: unknown): boolean {
+  return typeof meta === 'object' && meta !== null && !Array.isArray(meta)
+    && (meta as Record<string, unknown>).stopped === true
 }

@@ -12,6 +12,7 @@ import { homedir, tmpdir } from 'node:os'
 import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import type {} from '@yharness/agent'
+import type { FsTarget } from '@yharness/fs'
 import type { Session, SessionId } from '@yharness/session'
 import type {} from '@yharness/subprocess'
 import type {} from '@yharness/tools'
@@ -26,7 +27,8 @@ export type {
 /** Stable Loader identity. */
 export const name = 'workspace-changes'
 
-/** Services used to run git and observe turns. */
+/** Services used to run git and observe turns. Filesystem is optional so the
+ * recorder remains useful in compositions that only expose file-tool events. */
 export const inject = ['subprocess']
 
 /** Snapshot, capture, and comparison bounds. Invalid values fail plugin load. */
@@ -101,6 +103,7 @@ export function apply(ctx: Context, config: Config): void {
   const lifetime = new AbortController()
   const recorders = new Map<Session, TurnRecorder>()
   const byId = new Map<SessionId, TurnRecorder>()
+  const mutations = new WeakMap<object, TurnRecorder>()
   const forget = (session: Session): Promise<void> => {
     const recorder = recorders.get(session)
     recorders.delete(session)
@@ -153,10 +156,34 @@ export function apply(ctx: Context, config: Config): void {
   ctx.on('agent/turn-stopping', async ({ agent, turn }) => {
     await recorders.get(agent.session)?.stopping(turn)
   })
+  ctx.inject(['fs'], (fsCtx) => {
+    const capture = async (target: FsTarget, actor: object | undefined): Promise<void> => {
+      const recorder = actor === undefined ? undefined : mutations.get(actor)
+      if (recorder === undefined) return
+      recorder.capturePath(fsCtx.fs.processPath(target))
+      await recorder.settled()
+    }
+    fsCtx.on('fs/write-intent', async (target, actor, next) => {
+      const intent = await next()
+      await capture(target, actor)
+      return intent
+    }, { prepend: true })
+    fsCtx.on('fs/edit-intent', async (target, actor, next) => {
+      const intent = await next()
+      await capture(target, actor)
+      return intent
+    }, { prepend: true })
+    fsCtx.on('fs/delete-intent', async (target, actor, next) => {
+      const intent = await next()
+      await capture(target, actor)
+      return intent
+    }, { prepend: true })
+  })
   ctx.on('tools/pre-execute', async (exec, next) => {
     const session = exec.agent?.session
     const recorder = session === undefined ? undefined : recorders.get(session)
     if (recorder !== undefined) {
+      mutations.set(exec, recorder)
       recorder.capture(exec.name, exec.arguments)
       await recorder.settled()
     }

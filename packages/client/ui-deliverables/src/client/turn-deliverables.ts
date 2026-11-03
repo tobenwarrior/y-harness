@@ -44,8 +44,12 @@ declare module '@yharness/client-ui-conversation/client' {
 
 interface DeliverablesState extends DeliverablesTurnData {
   readonly turn: number
-  readonly calls: ReadonlyMap<string, string | null>
+  readonly calls: ReadonlyMap<string, PendingMutation | null>
 }
+
+type PendingMutation =
+  | { readonly kind: 'path'; readonly path: string }
+  | { readonly kind: 'patch' }
 
 /**
  * Extract the path from a supported first-party mutation call. Session
@@ -58,7 +62,7 @@ interface DeliverablesState extends DeliverablesTurnData {
 function mutationPath(name: string, argsRaw: string): string | null {
   let args: unknown
   try {
-    args = JSON.parse(argsRaw) as unknown
+    args = JSON.parse(argsRaw)
   } catch {
     return null
   }
@@ -73,6 +77,33 @@ function mutationPath(name: string, argsRaw: string): string | null {
     default:
       return null
   }
+}
+
+/** Extract a supported first-party mutation call, preserving apply_patch for its result. */
+function mutationCall(name: string, argsRaw: string): PendingMutation | null {
+  const path = mutationPath(name, argsRaw)
+  if (path !== null) return { kind: 'path', path }
+  if (name !== 'apply_patch') return null
+  let args: unknown
+  try {
+    args = JSON.parse(argsRaw)
+  } catch {
+    return null
+  }
+  return isRecord(args) && typeof args.input === 'string' && args.input.trim().length > 0
+    ? { kind: 'patch' }
+    : null
+}
+
+/** Read written paths from a non-error apply_patch result's stable metadata. */
+function patchPaths(meta: unknown): readonly string[] {
+  if (!isRecord(meta) || !Array.isArray(meta.produced)) return []
+  const paths: string[] = []
+  for (const location of meta.produced) {
+    if (!isRecord(location) || typeof location.path !== 'string' || location.path.length === 0) return []
+    paths.push(location.path)
+  }
+  return paths
 }
 
 /** Validate the fields that an `edit` execution requires. */
@@ -123,11 +154,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Files produced by one Turn data value.
  *
  * The source is the arguments of successful `write`, `edit`, and mutating
- * `str_replace_editor` calls, not the closing prose: a produced file must be
- * listed whether or not the model remembered to name it. Reads, unsupported
- * tools, malformed calls, and failed results contribute nothing. Paths keep
- * first-seen order and appear once, so a file written and then edited in the
- * same turn is one entry.
+ * `str_replace_editor` calls, or stable produced-path metadata from successful
+ * and partially completed `apply_patch` calls, not the closing prose: a
+ * produced file must be listed whether or not the model remembered to name it.
+ * Reads, unsupported tools, malformed calls, and failed results contribute nothing.
+ * Paths keep first-seen order and appear once, so a file written and then
+ * edited in the same turn is one entry.
  *
  * The Conversation Location index owns turn membership before this function
  * runs, so paths cannot spill across turns and this derivation does not infer
@@ -195,17 +227,21 @@ export const deliverablesDefinition: ConversationNodeDefinition<DeliverablesStat
       const calls = new Map(context.state.calls)
       calls.set(
         String(match.event.data.callId),
-        mutationPath(match.event.data.name, match.event.data.arguments),
+        mutationCall(match.event.data.name, match.event.data.arguments),
       )
       return { ...context.state, calls }
     }
     if (match.event.type !== 'tool/result') return context.state
     if (match.event.data.message.isError === true) return context.state
     const callId = String(match.event.data.message.source.callId)
-    const path = context.state.calls.get(callId)
-    return path === null || path === undefined
+    const mutation = context.state.calls.get(callId)
+    if (mutation === undefined || mutation === null) return context.state
+    const paths = mutation.kind === 'path'
+      ? [mutation.path]
+      : patchPaths(match.event.data.meta)
+    return paths.length === 0
       ? context.state
-      : { ...context.state, produced: [...context.state.produced, { seq: match.event.seq, path }] }
+      : { ...context.state, produced: [...context.state.produced, ...paths.map(path => ({ seq: match.event.seq, path }))] }
   },
   buildLocationData: (context, scope, previous) => {
     if (scope !== 'turn' || context.state === undefined) return null

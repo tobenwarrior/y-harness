@@ -1,5 +1,5 @@
 ---
-description: "The model-facing read, read_image, write, and edit tools for users and maintainers composing or debugging filesystem access for agents."
+description: "The model-facing read, read_image, write, edit, and optional apply_patch tools for users and maintainers composing or debugging filesystem access for agents."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use `dsh-tool-fs` to let a model read UTF-8 files with line numbers, read supported images, create or atomically replace files, and apply targeted literal edits. Results are capped, and failures provide stable error codes and recovery instructions. Add `dsh-fs-observation-policy` when writes and edits must follow a successful read; without it, mutations remain atomic but are unconditional. Image reads require durable attachment storage and an image-capable routed model. Choose the sibling discovery package for glob or grep searches.
+Use `dsh-tool-fs` to let a model read UTF-8 files with line numbers, read supported images, create or atomically replace files, apply targeted literal edits, and optionally apply one Codex-style patch across several files. Results are capped, and failures provide stable error codes and recovery instructions. Add `dsh-fs-observation-policy` when mutations must follow a successful read; without it, mutations remain atomic but are unconditional. Image reads require durable attachment storage and an image-capable routed model. Choose the sibling discovery package for glob or grep searches.
 
 ## Table of Contents
 
@@ -35,7 +35,7 @@ A backend, the policy plugin, then the tools; the attachment store is optional a
 - name: '@yharness/tool-fs'
 ```
 
-The policy plugin is optional: without it the tools run against the bare provider (unconditional write, overwrite, and edit with no observed-state). A deployment that loads these tools is expected to also load it, so the behavior is read-before-write/edit. `read_image` registers only while a durable `ctx.attachments` service is mounted; execution additionally refuses on a route whose exact model does not declare image input, so a text route's durable history stays free of image blocks.
+The policy plugin is optional: without it the tools run against the bare provider (unconditional write, overwrite, edit, and patch with no observed-state). A deployment that loads these tools is expected to also load it, so the behavior is read-before-mutation. `read_image` registers only while a durable `ctx.attachments` service is mounted; execution additionally refuses on a route whose exact model does not declare image input, so a text route's durable history stays free of image blocks. `apply_patch` is opt-in through `applyPatch` because it can delete and move files.
 
 ### The tools
 
@@ -45,8 +45,9 @@ The policy plugin is optional: without it the tools run against the bare provide
 | `read_image` | `file_path` | Reads and persists a PNG/JPEG/WebP/GIF source; an extension-less path (normalized attachment object paths included) is identified from its file signature; normalization can downscale it before the next model request, so the model need not create a thumbnail first |
 | `write` | `file_path`, `content` | Creates or fully replaces a file; with the policy plugin, overwriting requires a prior `read` at the unchanged version, creating does not |
 | `edit` | `file_path`, `old_string`, `new_string`, `replace_all?` | Literal replacement requiring a unique match unless `replace_all` is true; with the policy plugin, requires a prior `read` and an unchanged file |
+| `apply_patch` | `input` | Applies an ordered Codex-style patch containing add, update, delete, and move operations; the complete patch is preflighted before sequential commits, and a later failure stops without rollback |
 
-Field names are snake_case to match Claude Code and existing harness tool schemas. The `write` and `edit` path descriptions ask the model to emit `file_path` before the content or replacement strings; this guides streaming presentation but does not enforce JSON member order. Successes return compact envelopes — a read window, an image reference, or a `Created file`/`Updated file` confirmation — and `write`/`edit` derive replayable diff-card metadata for UI presentation.
+Field names are snake_case to match Claude Code and existing harness tool schemas. The `write` and `edit` path descriptions ask the model to emit `file_path` before the content or replacement strings; this guides streaming presentation but does not enforce JSON member order. Successes return compact envelopes — a read window, an image reference, or a `Created file`/`Updated file` confirmation — and mutation tools derive replayable diff-card metadata for UI presentation. `apply_patch` also records `produced` locations from actual non-deletion after-images, including a destination written before a partial move failure; deleted paths and move sources stay in the broader affected-location list only. A created or moved file gets a whole-file diff only when its UTF-8 body is at most 64 KiB; larger bodies remain location-only so persisted metadata stays bounded.
 
 ### Configuration
 
@@ -58,6 +59,7 @@ All keys are optional; the defaults are the shipped read caps.
 | `readMaxLineLength` | `2000` | Characters kept per line before truncation |
 | `readMaxBytes` | `51200` | Byte cap on one `read` call's selected lines; overflow ends the window with a capped footer |
 | `readStreamMinSize` | `10485760` | Files at or above this size (or of unknown size) stream instead of loading whole into memory |
+| `applyPatch` | `false` | Register the optional multi-file `apply_patch` tool |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#yharnesstool-fs) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -65,7 +67,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#yharnessto
 
 Path authorization for `read` and `read_image` belongs entirely to `ctx.fs`; media-type declarations and file signatures only decide whether `read_image` accepts the bytes returned by that backend.
 
-With the policy plugin mounted, `write` and `edit` obtain their guard from the `fs/*` intent slots, so an unread target or a stale observation fails with `FS_NOT_OBSERVED` or `FS_STALE_VERSION` and a recovery instruction. Under a confining backend (`fs-sandbox`), `write`/`edit` additionally advertise `sandbox_permissions` and `justification`; a denied mutation returns the `[sandbox: file access denied under <mode> mode]` marker with the same-turn escalation hint, and an approved retry may stamp a strictly wider mode for that one call. The justification asks the model to use the language of the current user request.
+With the policy plugin mounted, `write`, `edit`, and `apply_patch` obtain guards from the `fs/*` intent slots, so an unread target or a stale observation fails with `FS_NOT_OBSERVED` or `FS_STALE_VERSION` and a recovery instruction. Under a confining backend (`fs-sandbox`), all mutating tools additionally advertise `sandbox_permissions` and `justification`; a denied mutation returns the `[sandbox: file access denied under <mode> mode]` marker with the same-turn escalation hint, and an approved retry may stamp a strictly wider mode for that one call. The justification asks the model to use the language of the current user request.
 
 ### Failures and recovery
 
@@ -94,13 +96,15 @@ The tools are the executor; policy is an event gate. The tools inject no policy 
 | [`src/read-image.ts`](src/read-image.ts) | `read_image` executor: route and media-type gates, bounded bytes, attachment save |
 | [`src/write.ts`](src/write.ts) | `write` executor: intent waterfall, atomic write, observation |
 | [`src/edit.ts`](src/edit.ts) | `edit` executor: intent waterfall, literal edit, observation |
+| [`src/apply-patch.ts`](src/apply-patch.ts) | `apply_patch` registration, prompt guidance, and result projection |
+| [`src/patch/`](src/patch/) | Patch planning, preflight simulation, and sequential commit outcomes |
 | [`src/read-render.ts`](src/read-render.ts) | Cordis-free windowing and envelope formatting |
-| [`src/sandbox.ts`](src/sandbox.ts) | Escalation API shared by `write`/`edit`: policy resolution and denial-marker mapping |
+| [`src/sandbox.ts`](src/sandbox.ts) | Escalation API shared by mutating tools: policy resolution and denial-marker mapping |
 | [`src/error.ts`](src/error.ts) | Stable model-facing diagnostics for guarded-mutation failures |
 
 ### Per-tool flow
 
-All four tools share one flow shape: resolve the path with the calling session's cwd, run the applicable gate, perform exactly one provider operation, and emit `fs/observed` only after success. `read` and `read_image` pay one `stat` for type and size routing; `write` and `edit` pay none because their guard comes from the intent slot, and provider failures surface as typed `FsError` results. The per-tool executors live in `src/read.ts`, `src/read-image.ts`, `src/write.ts`, and `src/edit.ts`.
+The path-based tools share one flow shape: resolve the path with the calling session's cwd, run the applicable gate, perform exactly one provider operation, and emit `fs/observed` only after success. `read` and `read_image` pay one `stat` for type and size routing; `write` and `edit` pay none because their guard comes from the intent slot. `apply_patch` parses and resolves every operation, simulates the whole patch without mutation, then commits admitted operations in order and reports partial outcomes. The per-tool executors live in `src/read.ts`, `src/read-image.ts`, `src/write.ts`, `src/edit.ts`, and `src/patch/`.
 
 ### Observation and concurrency
 
@@ -163,7 +167,7 @@ Prefix-stable while the visible tool set, plugin scope, and guidance text are un
 
 #### What the model sees
 
-The model sees the generated [`read`, `read_image`, `write`, and `edit` schemas](../../../docs/tool-catalog.md#yharnesstool-fs), with snake_case arguments. The image tool appears only while a durable attachment store is mounted; its schema is route-independent, and the strict gate refuses at execution. Scoped tool restrictions can remove any definition for one agent.
+The model sees the generated [`read`, `read_image`, `write`, `edit`, and optional `apply_patch` schemas](../../../docs/tool-catalog.md#yharnesstool-fs), with snake_case arguments except for the Codex-compatible patch `input`. The image tool appears only while a durable attachment store is mounted; its schema is route-independent, and the strict gate refuses at execution. Scoped tool restrictions can remove any definition for one agent.
 
 #### Token effect
 

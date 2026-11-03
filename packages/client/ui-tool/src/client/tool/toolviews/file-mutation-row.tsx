@@ -2,7 +2,7 @@ import type { Context } from '@yharness/cordis'
 import { IconEditOutlineRegular } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import type { ToolCallViewProps } from '../../contract/slots.ts'
-import { diffCardModel } from '../models/diff-card-model.ts'
+import { diffCardModel, diffLocationsSummary } from '../models/diff-card-model.ts'
 import { toolRowModel } from '../models/tool-call-model.ts'
 import { ToolRow } from '../components/ToolRow.tsx'
 import { CONVERSATION_NS as NS } from '../../locale.ts'
@@ -33,6 +33,7 @@ function contentKilobytes(block: FileMutationRowProps['block']): number | null {
 export function FileMutationRow({ toolName, block, cwd, home, openFile, inspect, useDisclosure, t }: FileMutationRowProps) {
   const model = toolRowModel(toolName, block, cwd, home)
   const diff = diffCardModel(block)
+  const summary = diffLocationsSummary(diff) ?? model.summary
   const kilobytes = contentKilobytes(block)
   const size = kilobytes === null ? null : t('tool.preparing.content', { kilobytes })
   return (
@@ -43,8 +44,8 @@ export function FileMutationRow({ toolName, block, cwd, home, openFile, inspect,
       toolName={toolName}
       icon={FILE_MUTATION_ICON}
       title={t(model.titleKey)}
-      summary={model.summary}
-      summarySuffix={size !== null && model.summary !== '' ? size : undefined}
+      summary={summary}
+      summarySuffix={size !== null && summary !== '' ? size : undefined}
       output={model.output}
       errorSummary={model.errorSummary}
       diff={diff}
@@ -56,7 +57,7 @@ export function FileMutationRow({ toolName, block, cwd, home, openFile, inspect,
   )
 }
 
-/** Registers the edit and write conversation rows. */
+/** Registers the edit, write, and apply_patch conversation rows. */
 export const fileMutationToolview = {
   name: 'file-mutation-toolview',
   inject: ['slots'],
@@ -64,6 +65,7 @@ export const fileMutationToolview = {
     ctx.slots.inject('tool.call.toolview', function* () {
       yield ctx.slots.register({ name: 'tool.call.toolview', key: 'edit', locale: NS }, FileMutationRow)
       yield ctx.slots.register({ name: 'tool.call.toolview', key: 'write', locale: NS }, FileMutationRow)
+      yield ctx.slots.register({ name: 'tool.call.toolview', key: 'apply_patch', locale: NS }, FileMutationRow)
     })
   },
 }

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 /**
- * The way back into a hidden panel: the header's corner button exists exactly
- * while the panel is collapsed, asks for it to expand, and renders nothing
- * while the panel is shown.
+ * The way back into a hidden panel: desktop releases the header seat while
+ * expanded; mobile keeps the disabled control mounted so the title stays put.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { useSyncExternalStore } from 'react'
+import * as uiPrimitives from '@yharness/client-ui-primitives'
 import type { GlobalStandardProps, SessionStandardProps } from '@yharness/client-ui-slots'
 import type { ShortcutCatalogEntry } from '@yharness/client-shortcuts/client'
 import type { SessionId } from '@yharness/session/types'
@@ -15,6 +15,10 @@ import type { ExpandButtonProps } from '../src/client/shell/ExpandButton.tsx'
 import { createSidebarRightStore } from '../src/client/stores.ts'
 
 const SESSION = 's-test' as SessionId
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 const unused = (): never => { throw new Error('This isolated component does not consume framework hooks') }
 const standard: GlobalStandardProps & SessionStandardProps = {
   sessionId: SESSION, useSession: unused, useProjection: unused, useConversation: unused,
@@ -33,7 +37,8 @@ function hookOf<T>(inst: { subscribe: (fn: () => void) => () => void; getSnapsho
 }
 
 /** Mount the button over its real store and an empty shortcut catalog. */
-function mountButton(shortcuts: readonly ShortcutCatalogEntry[] = []) {
+function mountButton(shortcuts: readonly ShortcutCatalogEntry[] = [], mobile = false) {
+  vi.spyOn(uiPrimitives, 'isMobileDevice').mockReturnValue(mobile)
   const instance = createSidebarRightStore(() => ({ kind: 'guide', title: 'Start' })).create()
   const props: ExpandButtonProps = {
     ...standard,
@@ -45,7 +50,7 @@ function mountButton(shortcuts: readonly ShortcutCatalogEntry[] = []) {
     t: (key: string) => key,
   }
   const view = render(<ExpandButton {...props} />)
-  const control = (): HTMLElement | null => view.container.querySelector('[data-sidebar-right-expand]')
+  const control = (): HTMLButtonElement | null => view.container.querySelector('[data-sidebar-right-expand]')
   return { instance, view, control }
 }
 
@@ -79,5 +84,21 @@ describe('ExpandButton', () => {
     act(() => { instance.actions.setExpanded(SESSION, false) })
     expect(control()).not.toBeNull()
     cleanup()
+  })
+
+  it.each(['push', 'fullscreen'] as const)('retains the disabled control through mobile %s panel opening and closing', (mode) => {
+    const { instance, control } = mountButton([], true)
+    const button = control()
+    if (button === null) throw new Error('expected the expand control')
+    act(() => {
+      instance.actions.setMode(SESSION, mode)
+      instance.actions.setExpanded(SESSION, true)
+    })
+    expect(control()).toBe(button)
+    expect(button.disabled).toBe(true)
+    expect(button.className).toContain('expanded')
+    act(() => { instance.actions.setExpanded(SESSION, false) })
+    expect(control()).toBe(button)
+    expect(button.disabled).toBe(false)
   })
 })

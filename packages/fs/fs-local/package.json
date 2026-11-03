@@ -33,7 +33,8 @@
   "dependencies": {
     "chokidar": "^4.0.3",
     "koffi": "3.1.1",
-    "@yharness/schemastery": "workspace:~"
+    "@yharness/schemastery": "workspace:~",
+    "@yharness/fs-patch": "workspace:*"
   },
   "devDependencies": {
     "@yharness/fs": "workspace:*",

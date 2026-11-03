@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { computeHunkDiffs, diffsFromMeta, DIFF_CONTEXT } from '../src/diff.ts'
+import { computeHunkDiffs, diffsFromMeta, locationsFromMeta, DIFF_CONTEXT } from '../src/diff.ts'
 import type { JsonValue } from '@yharness/util-values'
 
 const lines = (n: number): string => Array.from({ length: n }, (_, i) => `line${i + 1}`).join('\n') + '\n'
@@ -109,5 +109,34 @@ describe('diffsFromMeta (defensive narrowing)', () => {
     expect(diffsFromMeta(m({ diffs: [null] }))).toBeUndefined()
     expect(diffsFromMeta(m({ diffs: ['x'] }))).toBeUndefined()
     expect(diffsFromMeta(m({ diffs: [[]] }))).toBeUndefined()
+  })
+})
+
+describe('locationsFromMeta (defensive narrowing)', () => {
+  const m = (value: unknown): JsonValue | undefined => value as JsonValue | undefined
+
+  it('narrows valid path locations with optional lines', () => {
+    const locations = [{ path: 'a.ts' }, { path: 'b.ts', line: 3 }]
+    expect(locationsFromMeta(m({ locations }))).toEqual(locations)
+  })
+
+  it('rejects absent, empty, and non-array location fields', () => {
+    expect(locationsFromMeta(undefined)).toBeUndefined()
+    expect(locationsFromMeta(null)).toBeUndefined()
+    expect(locationsFromMeta(m('nope'))).toBeUndefined()
+    expect(locationsFromMeta(m([]))).toBeUndefined()
+    expect(locationsFromMeta(m({}))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: 'a.ts' }))).toBeUndefined()
+  })
+
+  it('rejects malformed path and line values', () => {
+    expect(locationsFromMeta(m({ locations: [null] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [[]] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [{ path: '' }] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [{ path: 1 }] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [{ path: 'a', line: 0 }] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [{ path: 'a', line: 1.5 }] }))).toBeUndefined()
+    expect(locationsFromMeta(m({ locations: [{ path: 'a', line: '1' }] }))).toBeUndefined()
   })
 })

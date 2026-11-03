@@ -76,7 +76,7 @@ The remaining `watch*` fields tune Chokidar behavior — polling, stability wind
 
 ### Change detection
 
-Existing roots are watched, so adding, renaming, or deleting a skill (or editing its frontmatter) triggers a catalog refresh for the next model step; edits below `references`, `scripts`, `assets`, and other bundle resources do not. The first-party `write` and `edit` tools invalidate the provider directly when their target could affect a watched skill, so the model observes its own filesystem mutation without waiting for the host watcher. External IDE, Git, and shell changes are picked up by the host watcher, and a root that does not exist yet is probed until it appears.
+Existing roots are watched, so adding, renaming, or deleting a skill (or editing its frontmatter) triggers a catalog refresh for the next model step; edits below `references`, `scripts`, `assets`, and other bundle resources do not. The first-party `write`, `edit`, and `apply_patch` tools invalidate the provider directly when their target could affect a watched skill, so the model observes its own filesystem mutation without waiting for the host watcher. External IDE, Git, and shell changes are picked up by the host watcher, and a root that does not exist yet is probed until it appears.
 
 ### Observable success and failures
 
@@ -108,7 +108,7 @@ Discovery resolves the root list for the lookup cwd, asks the watch manager to a
 
 ### Watching and invalidation
 
-Existing roots are watched by Chokidar at depth 1; a root that does not exist is followed from its nearest existing ancestor one missing segment at a time using `fs.watchFile`. Relevant events — direct bundle add/remove, flat `.md` add/remove, and direct `SKILL.md` add/remove/change — coalesce into one provider invalidation per microtask batch, while resource-subtree changes are ignored. The watch manager is bounded by `watchMaxProjects`, logs and retries failed startup, and closes every handle at teardown. First-party `write`/`edit` mutations invalidate synchronously through the `fs/observed` event.
+Existing roots are watched by Chokidar at depth 1; a root that does not exist is followed from its nearest existing ancestor one missing segment at a time using `fs.watchFile`. Relevant events — direct bundle add/remove, flat `.md` add/remove, and direct `SKILL.md` add/remove/change — coalesce into one provider invalidation per microtask batch, while resource-subtree changes are ignored. The watch manager is bounded by `watchMaxProjects`, logs and retries failed startup, and closes every handle at teardown. First-party `write`, `edit`, and `apply_patch` mutations invalidate synchronously through the `fs/observed` event.
 
 </details>
 
