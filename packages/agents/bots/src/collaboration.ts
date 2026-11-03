@@ -307,6 +307,23 @@ export class BotCollaborationService {
     }
   }
 
+  /** Confirm a target receipt again after one event-loop turn for late cancellation races. */
+  private async confirmMessageReceipt(
+    sessionId: SessionId,
+    messageId: BotMessageId,
+    failure: string,
+  ): Promise<void> {
+    const first = await this.host.inspectSession(sessionId)
+    if (!hasMessage(first.events, messageId)) {
+      throw new BotCollaborationError('durability-failed', failure)
+    }
+    await Promise.resolve()
+    const confirmed = await this.host.inspectSession(sessionId)
+    if (!hasMessage(confirmed.events, messageId)) {
+      throw new BotCollaborationError('durability-failed', failure)
+    }
+  }
+
   /**
    * Admit one explicit message to a target Bot's next turn.
    *
@@ -342,10 +359,11 @@ export class BotCollaborationService {
         // durability barrier. Re-run the barrier before acknowledging the
         // retry as a duplicate.
         await this.flushTarget(target.sessionId, target.name)
-        const after = await this.host.inspectSession(target.sessionId)
-        if (!hasMessage(after.events, messageId)) {
-          throw new BotCollaborationError('durability-failed', `Bot "${target.name}" no longer has the message receipt`)
-        }
+        await this.confirmMessageReceipt(
+          target.sessionId,
+          messageId,
+          `Bot "${target.name}" no longer has the message receipt`,
+        )
         return { messageId, status: 'duplicate' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
       }
       const resolved = await this.host.resolveAgent(target.sessionId)
@@ -366,10 +384,11 @@ export class BotCollaborationService {
         source,
       }))
       await this.flushTarget(target.sessionId, target.name)
-      const after = await this.host.inspectSession(target.sessionId)
-      if (!hasMessage(after.events, messageId)) {
-        throw new BotCollaborationError('durability-failed', `Bot "${target.name}" did not retain the message receipt`)
-      }
+      await this.confirmMessageReceipt(
+        target.sessionId,
+        messageId,
+        `Bot "${target.name}" did not retain the message receipt`,
+      )
       return { messageId, status: 'accepted' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
     })
     const tail = run.then(() => undefined, () => undefined)

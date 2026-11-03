@@ -712,14 +712,25 @@ describe('durable Bot roster', () => {
       const owner = h.agents[0]
       const followup = h.followups[0]
       if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      let ownerInspections = 0
+      h.inspect.mockImplementation(async (sessionId) => {
+        const events = h.agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? []
+        ownerInspections += 1
+        if (String(sessionId) === String(owner.id) && ownerInspections === 3) {
+          queueMicrotask(() => {
+            owner.session.append('agent/inbox/spliced', {
+              target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+            })
+            h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+          })
+        }
+        return { events: [...events] }
+      })
       h.flush.mockImplementationOnce(async () => {
         const pendingMessage = followup.mock.calls[0]?.[0]
         if (pendingMessage === undefined) throw new Error('canceled event follow-up was not captured before flush')
         owner.session.append('agent/inbox/spliced', {
           target: 'next-turn', start: 0, inserted: [pendingMessage],
-        })
-        owner.session.append('agent/inbox/spliced', {
-          target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
         })
         return true
       })
@@ -728,11 +739,11 @@ describe('durable Bot roster', () => {
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledTimes(2) })
-      const seed = owner.session.snapshotEvents()
       await vi.waitFor(async () => {
         const recovered = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
         expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
       })
+      const seed = owner.session.snapshotEvents()
       await close(h.ctx)
       initialClosed = true
 

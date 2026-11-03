@@ -113,6 +113,44 @@ describe('Bot collaboration seam', () => {
     expect(host.flushSession).toHaveBeenCalledOnce()
   })
 
+  it('rejects a peer message canceled after the first receipt check', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    let targetInspections = 0
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async (sessionId) => {
+        const targetEvents = events.get(String(sessionId)) ?? []
+        if (String(sessionId) === 'bot-session-beta') {
+          targetInspections += 1
+          if (targetInspections === 2) {
+            queueMicrotask(() => {
+              targetEvents.push({
+                type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+                data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+              })
+            })
+          }
+        }
+        return { events: [...targetEvents] }
+      },
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => undefined),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This late cancellation must be rejected.', messageId: BotMessageId('peer-late-cancel'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(targetInspections).toBe(3)
+  })
+
   it('checks cancellation after target resume and before followup', async () => {
     const senderSessionId = SessionId('bot-session-alpha')
     const targetSessionId = SessionId('bot-session-beta')

@@ -424,6 +424,14 @@ function clearDispatchMarker(delivery: BotEventRoutineDelivery): BotEventRoutine
   return withoutDispatchMarker
 }
 
+/** Return a pending delivery after an inbox cancellation, dropping old receipt timestamps. */
+function resetCanceledDelivery(delivery: BotEventRoutineDelivery): BotEventRoutineDelivery {
+  const { dispatchStartedAt, deliveredAt, ...withoutReceipt } = delivery
+  void dispatchStartedAt
+  void deliveredAt
+  return { ...withoutReceipt, status: 'pending' }
+}
+
 /** Extract plain visible text from model content without exposing tool or reasoning blocks. */
 function visibleText(content: readonly { readonly type: string; readonly text?: string }[]): string {
   return content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join('')
@@ -1253,6 +1261,12 @@ export class BotService extends TypertRemoteService {
       this.eventRoutineTurns.set(turnKey, { turn: event.data.turn, runs: new Map(), output: [] })
       return
     }
+    if (event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled') {
+      queueMicrotask(() => {
+        void this.reconcileCanceledEventRoutines(sessionId)
+      })
+      return
+    }
     // Inbox splices are pending admission and may be canceled. A routine only
     // fires, and a routine result only becomes attributable, after the input
     // is claimed into the model-visible user/message surface below.
@@ -1493,10 +1507,18 @@ export class BotService extends TypertRemoteService {
       throw new Error('Bot Session persistence did not acknowledge the event routine')
     }
     const afterFlush = await this.ctx.sessionController.inspect(record.sessionId)
-    const afterInbox = botInboxMessageState(afterFlush.events, currentDelivery.messageId)
-    const afterSurface = afterFlush.events.some(event => event.type === 'user/message' && event.data.id === currentDelivery.messageId)
+    let afterInbox = botInboxMessageState(afterFlush.events, currentDelivery.messageId)
+    let afterSurface = afterFlush.events.some(event => event.type === 'user/message' && event.data.id === currentDelivery.messageId)
+    if (afterSurface || afterInbox?.disposition === 'pending' || afterInbox?.disposition === 'claimed') {
+      // Let a cancellation event already queued by the persistence barrier
+      // become visible before the delivery record is acknowledged.
+      await Promise.resolve()
+      const confirmed = await this.ctx.sessionController.inspect(record.sessionId)
+      afterInbox = botInboxMessageState(confirmed.events, currentDelivery.messageId)
+      afterSurface = confirmed.events.some(event => event.type === 'user/message' && event.data.id === currentDelivery.messageId)
+    }
     if (!afterSurface && afterInbox?.disposition === 'canceled') {
-      const resetDelivery = clearDispatchMarker(currentDelivery)
+      const resetDelivery = resetCanceledDelivery(currentDelivery)
       const resetRoutine: BotEventRoutine = {
         ...currentRoutine,
         deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === resetDelivery.messageId
@@ -1539,6 +1561,50 @@ export class BotService extends TypertRemoteService {
     this.recordsBySession.set(String(next.sessionId), next)
     this.emitChanged()
     return next
+  }
+
+  /** Repair a delivery that was acknowledged before its inbox cancellation became visible. */
+  private async reconcileCanceledEventRoutines(sessionId: SessionId): Promise<void> {
+    try {
+      await this.serialize(async () => {
+        const inspection = await this.ctx.sessionController.inspect(sessionId)
+        const surfaceIds = new Set(inspection.events.flatMap(event => event.type === 'user/message' ? [String(event.data.id)] : []))
+        const repairedIds = new Set<string>()
+        const domain = await this.getDomain()
+        const bots = domain.table('bots')
+        const current = this.currentBotRecord(domain, sessionId)
+        if (current === undefined) return
+        const routines = (current.eventRoutines ?? []).map((routine) => {
+          let changed = false
+          const deliveries = routine.deliveries.map((delivery) => {
+            const inbox = botInboxMessageState(inspection.events, delivery.messageId)
+            if (surfaceIds.has(String(delivery.messageId)) || inbox?.disposition !== 'canceled') return delivery
+            if (delivery.status !== 'delivered' && delivery.dispatchStartedAt === undefined) return delivery
+            changed = true
+            repairedIds.add(String(delivery.messageId))
+            return resetCanceledDelivery(delivery)
+          })
+          return changed
+            ? { ...routine, deliveries, updatedAt: Math.max(Date.now(), routine.updatedAt) }
+            : routine
+        })
+        if (!routines.some((routine, index) => routine !== current.eventRoutines?.[index])) return
+        const next: BotRecord = {
+          ...current,
+          eventRoutines: routines,
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+        await bots.put(next.id, next)
+        this.recordsBySession.set(String(next.sessionId), next)
+        this.emitChanged()
+        for (const messageId of repairedIds) {
+          const routine = routines.find(candidate => candidate.deliveries.some(delivery => String(delivery.messageId) === messageId))
+          if (routine !== undefined) this.scheduleCanceledEventRoutineRetry(sessionId, routine.id, MessageId(messageId))
+        }
+      })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`bots: canceled event routine repair failed: ${String(error)}`)
+    }
   }
 
   /** Retry one canceled delivery once in-process without creating a retry loop. */
