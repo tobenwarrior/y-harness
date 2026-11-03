@@ -490,6 +490,14 @@
       }
     },
     {
+      "name": "list_connected_apps",
+      "description": "List the connected MCP apps available to this Bot and whether access is currently allowed. This only reads access policy.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "read",
       "description": "Read a UTF-8 text file and return line-numbered content.",
       "parameters": {

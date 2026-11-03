@@ -1,6 +1,7 @@
 import type {
   BotAccent as SharedBotAccent,
   BotAvatar as SharedBotAvatar,
+  BotConnectedAppAccess as SharedBotConnectedAppAccess,
   BotIdentity as SharedBotIdentity,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
@@ -16,6 +17,9 @@ export type BotAccent = SharedBotAccent
 
 /** Stable expressive character silhouette families persisted by the Bot service. */
 export type BotIdentity = SharedBotIdentity
+
+/** Connected app and the selected Bot's durable access decision. */
+export type BotConnectedAppAccess = SharedBotConnectedAppAccess
 
 /** Live availability mapped from the Bot's retained Session. */
 export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
@@ -183,6 +187,10 @@ export interface BotWorkspaceProps {
 
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined
+  /** Loads the connected-app catalog and current access policy for one Bot. */
+  readonly onLoadConnectedApps?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
+  /** Persists one Bot's grant or revoke for a connected app. */
+  readonly onSetConnectedAppAccess?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
   readonly onOpenAvatarSettings?: (() => void) | undefined
   /** Optional retry for an owner-provided loading failure. */

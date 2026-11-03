@@ -35,7 +35,9 @@ A caller with no configured MCP server sees no MCP prompt text or resource tools
 
 When system-prompt assembly is mounted, the prompt lists server names visible to the calling agent. Call `list_mcp_resources` or `list_mcp_resource_templates` with one of those names as `server`. Without a cursor, the MCP SDK collects the server’s pages. An explicit `cursor` requests that page; pass a returned `nextCursor` unchanged. Read a listed URI or an expanded template with `read_mcp_resource`, using the same `server` name and an explicit `uri`.
 
-Every operation resolves the server in the calling agent's scope. A missing server argument or unavailable server fails before dispatch. The connection owner handles request cancellation, timeouts, and recovery; a failed request remains a failed tool call.
+Every operation resolves the server in the calling agent's scope. A missing server argument or unavailable server fails before dispatch. When the caller is a Bot, its connected-app policy sees the explicit `server` argument and enforces the grant at the last-mile tool-body boundary, including after an asynchronous `tools/execute` wrapper. A denied call retains `BOT_APP_ACCESS_REQUIRED` structured metadata for Host routing while the model sees the concise reason. The connection owner handles request cancellation, timeouts, and recovery; a failed request remains a failed tool call.
+
+Resource providers register exact opaque server ids. Registration preserves every string exactly, including empty, long, and punctuation-bearing ids such as braces. Durable Bot connected-app policy stores up to 128 exact ids in each allow or deny list; it does not trim or normalize ids.
 
 -----
 
@@ -52,7 +54,7 @@ The [base](../../bundle/base/README.md) and standalone [sdk-minimal](../../bundl
   name: '@yharness/mcp-resources'
 ```
 
-The first provider in a scope registers its shared tools; removing the last removes those local registrations, while inherited providers and tools remain visible. The resource service owns the shared tool effects independently of the first provider's plugin, so unloading that provider cannot remove tools needed by another server. Provider selection and the server-name prompt use the same scoped registry. Each call resolves its server before dispatch.
+The first provider in a scope registers its shared tools; removing the last removes those local registrations, while inherited providers and tools remain visible. The resource service owns the shared tool effects independently of the first provider's plugin, so unloading that provider cannot remove tools needed by another server. Provider selection, the server-name prompt, and the connected-app catalog use the same scoped registry. Each call resolves its server before the provider request; Bot policy is enforced earlier at the registry's final operation boundary.
 
 Canonical results retain the complete JSON for programmatic callers. The pure text renderer adds server attribution and replaces string-valued `blob` fields with a description of their base64 length; URI, MIME type, and text fields remain in the rendered JSON. The tool pipeline owns recorded results. Server instructions belong to the MCP client and its logged system-prompt section.
 
@@ -116,6 +118,7 @@ Each result appends to history without rewriting earlier results. Later reads ca
 Resource access is explicit and on demand.
 
 - A configured server without the MCP `resources` capability still appears in the server-name prompt and keeps shared resource tools available. The SDK returns empty resource and template lists; unsupported reads fail.
+- Bot connected-app grants apply to the explicit server argument on all three shared resource tools. Revocation during an asynchronous around-dispatch wrapper blocks the provider request; revocation after the provider request starts cannot cancel that provider work.
 - `tools.restrict()` checks names supplied by global or ancestor scopes when the filter is registered. Naming a resource tool absent from those scopes fails as an unknown tool. Resource tools registered in the caller's own scope are outside allow/deny masks.
 - Resource subscriptions and update notifications are unsupported; call the list or read tools again to obtain current content.
 - Binary resources are not projected as native images or audio. Programmatic callers retain their canonical base64 values.

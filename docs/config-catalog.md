@@ -4253,7 +4253,7 @@ export interface Config {
 ## `@yharness/tools`
 
 - `inject`: `systemPrompt`
-- `source`: [`packages/core/tools/src/index.ts:674`](../packages/core/tools/src/index.ts)
+- `source`: [`packages/core/tools/src/index.ts:719`](../packages/core/tools/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: how the registered tools are presented to the model. */

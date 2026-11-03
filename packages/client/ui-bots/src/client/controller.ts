@@ -6,6 +6,9 @@ import type {
   BotAppearanceUpdateValue,
   BotAvatar,
   BotAvatarUpdateValue,
+  BotConnectedAppAccessRequest,
+  BotConnectedAppAccessValue,
+  BotConnectedAppsValue,
   BotCreateRequest,
   BotId as BotIdType,
   BotGroupCreateRequest,
@@ -38,14 +41,10 @@ import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
-
 import type {
-
-  BotAccent, BotAvatarEditorActions, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
+  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
   BotGroupSummary, BotIdentity, BotOrganizationPatch,
-
 } from './types.ts'
-
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
@@ -65,6 +64,8 @@ export interface BotWorkspaceRemote {
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
+  listConnectedApps?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotConnectedAppsValue>>
+  setConnectedAppAccess?: (request: BotConnectedAppAccessRequest) => Promise<RemoteResult<BotConnectedAppAccessValue>>
 }
 
 /** Avatar generation namespace mounted by the API remotes assembly. */
@@ -119,12 +120,12 @@ export interface BotWorkspaceFace {
 
   readonly rename: (id: string, name: string) => Promise<void>
   readonly organize?: (id: string, patch: BotOrganizationPatch) => Promise<void>
-
   readonly createGroup: (creation: BotGroupCreation) => Promise<void>
   readonly updateGroup: (update: BotGroupUpdate) => Promise<void>
   readonly sendGroupMessage: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
   readonly retryGroup: () => void
-
+  readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
+  readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
@@ -354,7 +355,6 @@ export class BotWorkspaceController {
       ...(this.remote.updateOrganization === undefined
         ? {}
         : { organize: (id: string, patch: BotOrganizationPatch) => this.organize(id, patch) }),
-
       createGroup: creation => this.createGroup(creation),
       updateGroup: update => this.updateGroup(update),
       sendGroupMessage: (text, messageId, targetBotIds) => this.sendGroupMessage(text, messageId, targetBotIds),
@@ -363,7 +363,12 @@ export class BotWorkspaceController {
           this.setGroupError(error instanceof Error ? error.message : String(error))
         })
       },
-
+      ...(this.remote.listConnectedApps === undefined
+        ? {}
+        : { loadConnectedApps: (id: string) => this.loadConnectedApps(id) }),
+      ...(this.remote.setConnectedAppAccess === undefined
+        ? {}
+        : { setConnectedAppAccess: (id: string, appId: string, allowed: boolean) => this.setConnectedAppAccess(id, appId, allowed) }),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined
@@ -1042,6 +1047,30 @@ export class BotWorkspaceController {
       ? current.bots.map(bot => bot.id === id ? result.value.bot : bot)
       : [...current.bots, result.value.bot]
     this.source.set({ ...current, bots, error: null })
+  }
+
+  private async loadConnectedApps(id: string): Promise<readonly BotConnectedAppAccess[]> {
+    const listConnectedApps = this.remote.listConnectedApps
+    if (listConnectedApps === undefined) return []
+    const result = await listConnectedApps({ botId: brandString<BotIdType>(id) })
+    if (!result.ok) throw new Error(result.error.message)
+    if (String(result.value.bot.id) !== id) throw new Error(this.unexpectedResponse())
+    return result.value.apps
+  }
+
+  private async setConnectedAppAccess(id: string, appId: string, allowed: boolean): Promise<void> {
+    const setConnectedAppAccess = this.remote.setConnectedAppAccess
+    if (setConnectedAppAccess === undefined) return
+    const result = await setConnectedAppAccess({ botId: brandString<BotIdType>(id), appId, allowed })
+    if (!result.ok) throw new Error(result.error.message)
+    if (String(result.value.bot.id) !== id) throw new Error(this.unexpectedResponse())
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    this.source.set({
+      ...current,
+      bots: current.bots.map(bot => bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot),
+      error: null,
+    })
   }
 
   private create(creation: BotCreation): Promise<void> {

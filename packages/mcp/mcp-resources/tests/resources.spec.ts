@@ -109,6 +109,15 @@ describe('MCP resource tools', () => {
     expect(visibleResourceTools(ctx)).toEqual([])
   })
 
+  it('preserves empty and long opaque server ids for durable connected-app policy', async () => {
+    const ctx = await setup()
+    const provider = { request: async () => ({ resources: [] }) }
+    const ids = ['', 'x'.repeat(65)]
+    const disposers = ids.map(id => ctx.mcpResources.register(id, provider))
+    expect(ctx.mcpResources.servers()).toEqual(ids)
+    disposers.forEach(dispose => dispose())
+  })
+
   it.each([false, true])('shares scoped tools across independent provider owners (reverse disposal: %s)', async (reverse) => {
     const ctx = await setup()
     const owner = {} as Agent
