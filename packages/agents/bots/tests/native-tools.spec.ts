@@ -61,14 +61,70 @@ describe('native Bot actions', () => {
       routineAvailable: async () => true,
       replay: async () => [{
         phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
-        arguments: { title: 'Daily check' },
+        arguments: { title: ' Daily check ', prompt: ' Check the report ' },
       }],
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (create === undefined) throw new Error('schedule_create missing')
-    const result = await create.execute({ title: 'Daily check' }, context({ sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn' }))
+    const result = await create.execute({ title: 'Daily check', prompt: 'Check the report' }, context({ sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn' }))
     expect(result.success).toBe(false)
     expect(result.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(routine).not.toHaveBeenCalled()
+  })
+
+  it('allows a cross-call retry after a successful list proves the request is absent', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, routine,
+      routineAvailable: async () => true,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+        arguments: { title: ' Daily check ', prompt: ' Check the report ' },
+      }, {
+        phase: 'started', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
+        arguments: {},
+      }, {
+        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
+        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: '[]' }] },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    const result = await create.execute({ title: 'Daily check', prompt: 'Check the report' }, context({
+      sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn',
+    }))
+    expect(result.success).toBe(true)
+    expect(routine).toHaveBeenCalledOnce()
+  })
+
+  it('replays a matching routine found by the reconciliation list', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const routine = vi.fn(async () => ({ id: 'schedule-new' }))
+    const existing = {
+      id: 'schedule-existing', kind: 'after', title: 'Daily check', prompt: 'Check the report',
+      afterSeconds: 60, scheduledAt: '2099-01-01T00:00:00.000Z', state: 'scheduled', deliveryMode: 'host',
+    }
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, routine,
+      routineAvailable: async () => true,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+        arguments: { title: ' Daily check ', prompt: ' Check the report ', after_seconds: 60 },
+      }, {
+        phase: 'started', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
+        arguments: {},
+      }, {
+        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
+        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify([existing]) }] },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    const result = await create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
+      sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn',
+    }))
+    expect(result).toEqual({ success: true, contentItems: [{ type: 'inputText', text: JSON.stringify(existing) }] })
     expect(routine).not.toHaveBeenCalled()
   })
 

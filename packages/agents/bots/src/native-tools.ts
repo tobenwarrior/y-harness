@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import type { GenerateOptions } from '@yharness/llm'
+import { canonicalizeCronExpression } from '@yharness/schedule'
 import type { SessionId } from '@yharness/session'
 import {
   BotCollaborationError,
@@ -141,6 +142,88 @@ function stableJson(value: unknown): string {
   return JSON.stringify(`[${typeof value}]`)
 }
 
+const LOCAL_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.(\d{1,3}))?$/
+const OFFSET_INSTANT_PATTERN = new RegExp(
+  String.raw`^(?!0000)\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T`
+  + String.raw`(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$`,
+)
+const IANA_ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$/
+
+function canonicalRoutineTime(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const match = LOCAL_TIME_PATTERN.exec(value)
+  if (match === null) return value
+  return `${value.slice(0, 8)}.${(match[1] ?? '').padEnd(3, '0')}`
+}
+
+function canonicalRoutineZone(value: unknown): unknown {
+  if (typeof value !== 'string' || (value !== 'UTC' && !IANA_ZONE_PATTERN.test(value))) return value
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: value }).resolvedOptions().timeZone
+  } catch {
+    return value
+  }
+}
+
+function canonicalRoutineAt(value: unknown): unknown {
+  if (typeof value === 'string') {
+    if (!OFFSET_INSTANT_PATTERN.test(value)) return value
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : value
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+  const local = value as { readonly [key: string]: unknown }
+  return {
+    ...local,
+    time: canonicalRoutineTime(local['time']),
+    time_zone: canonicalRoutineZone(local['time_zone']),
+  }
+}
+
+function canonicalRoutineSelector(key: string, value: unknown): unknown {
+  if (key === 'at') return canonicalRoutineAt(value)
+  if (key === 'daily' || key === 'weekly') {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+    const selector = value as { readonly [key: string]: unknown }
+    const weekdays = selector['weekdays']
+    return {
+      ...selector,
+      time: canonicalRoutineTime(selector['time']),
+      time_zone: canonicalRoutineZone(selector['time_zone']),
+      ...(key === 'weekly' && Array.isArray(weekdays) && weekdays.every(item => typeof item === 'number')
+        ? { weekdays: [...weekdays].sort((left, right) => left - right) }
+        : {}),
+    }
+  }
+  if (key === 'cron' && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const selector = value as { readonly [key: string]: unknown }
+    let expression = selector['expression']
+    if (typeof expression === 'string') {
+      try { expression = canonicalizeCronExpression(expression) }
+      catch (error: unknown) { void error /* Preserve invalid input for safe comparison. */ }
+    }
+    return { ...selector, expression, time_zone: canonicalRoutineZone(selector['time_zone']) }
+  }
+  return value
+}
+
+/**
+ * Normalize the fields whose routine adapter trims or order-normalizes them.
+ * Unknown fields remain in the comparison so malformed requests cannot be
+ * silently treated as the same operation as a valid request.
+ */
+function canonicalRoutineArguments(arguments_: Readonly<Record<string, unknown>>): string {
+  const canonical: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(arguments_)) {
+    if ((key === 'prompt' || key === 'title') && typeof value === 'string') {
+      canonical[key] = value.trim()
+      continue
+    }
+    canonical[key] = canonicalRoutineSelector(key, value)
+  }
+  return stableJson(canonical)
+}
+
 function sendArgumentKey(arguments_: Readonly<Record<string, unknown>>): string {
   return JSON.stringify([
     textArgument(arguments_, 'targetBotId') ?? '',
@@ -243,10 +326,10 @@ function priorRoutineCreateResult(
   const key = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
   const matches = events.filter(event => event.name === 'schedule_create' && dynamicCallKey(event) === key)
   const started = matches.findLast(event => event.phase === 'started')
-  if (started !== undefined && stableJson(started.arguments) !== stableJson(current.arguments)) return 'conflict'
+  if (started !== undefined && canonicalRoutineArguments(started.arguments) !== canonicalRoutineArguments(current.arguments)) return 'conflict'
   const settled = matches.findLast(event => event.phase === 'settled')
   if (settled !== undefined) {
-    if (stableJson(settled.arguments) !== stableJson(current.arguments) || settled.result === undefined) return 'conflict'
+    if (canonicalRoutineArguments(settled.arguments) !== canonicalRoutineArguments(current.arguments) || settled.result === undefined) return 'conflict'
     // A rejected approval, validation, or cancellation did not commit a
     // routine. The Schedule Host reconciles retries of this same operation by
     // its durable idempotency key, so only successful creates are replay receipts.
@@ -266,20 +349,105 @@ function pendingRoutineCreate(
   current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
     readonly arguments: Readonly<Record<string, unknown>>
   },
-): boolean {
+): number | undefined {
   const currentKey = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
-  const currentArguments = stableJson(current.arguments)
-  const keys = new Set(events.filter(event => event.name === 'schedule_create').map(dynamicCallKey))
+  const currentArguments = canonicalRoutineArguments(current.arguments)
+  const keys = new Set(events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId).map(dynamicCallKey))
+  let pendingIndex: number | undefined
   for (const key of keys) {
     if (key === currentKey) continue
-    const matches = events.filter(event => event.name === 'schedule_create' && dynamicCallKey(event) === key)
+    const matches = events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId
+      && dynamicCallKey(event) === key)
     const startedIndex = matches.findLastIndex(event => event.phase === 'started')
-    if (startedIndex < 0 || stableJson(matches[startedIndex]?.arguments) !== currentArguments) continue
+    if (startedIndex < 0 || canonicalRoutineArguments(matches[startedIndex]?.arguments ?? {}) !== currentArguments) continue
     const settledIndex = matches.findLastIndex(event => event.phase === 'settled')
     if (startedIndex <= settledIndex) continue
-    return true
+    const absoluteIndex = events.findLastIndex(event => event === matches[startedIndex])
+    if (absoluteIndex >= 0 && (pendingIndex === undefined || absoluteIndex > pendingIndex)) pendingIndex = absoluteIndex
   }
-  return false
+  return pendingIndex
+}
+
+interface RoutineListReconciliation {
+  readonly kind: 'unknown' | 'absent' | 'found'
+  readonly record?: JsonObject
+}
+
+function routineRecordArguments(record: JsonObject): JsonObject | undefined {
+  const title = record['title']
+  const prompt = record['prompt']
+  const kind = record['kind']
+  if (typeof title !== 'string' || typeof prompt !== 'string' || typeof kind !== 'string') return undefined
+  if (kind === 'after' && typeof record['afterSeconds'] === 'number') {
+    return { title, prompt, after_seconds: record['afterSeconds'] }
+  }
+  if (kind === 'at' && typeof record['scheduledAt'] === 'string') {
+    return { title, prompt, at: record['scheduledAt'] }
+  }
+  if (kind === 'every' && typeof record['everySeconds'] === 'number') {
+    return { title, prompt, every_seconds: record['everySeconds'] }
+  }
+  if (kind === 'daily' && typeof record['time'] === 'string' && typeof record['timeZone'] === 'string') {
+    return { title, prompt, daily: { time: record['time'], time_zone: record['timeZone'] } }
+  }
+  if (kind === 'weekly' && typeof record['time'] === 'string' && typeof record['timeZone'] === 'string'
+    && Array.isArray(record['weekdays']) && record['weekdays'].every(item => typeof item === 'number')) {
+    return {
+      title, prompt,
+      weekly: { time: record['time'], time_zone: record['timeZone'], weekdays: record['weekdays'] },
+    }
+  }
+  if (kind === 'cron' && typeof record['expression'] === 'string' && typeof record['timeZone'] === 'string') {
+    return { title, prompt, cron: { expression: record['expression'], time_zone: record['timeZone'] } }
+  }
+  return undefined
+}
+
+function routineListValue(event: BotDynamicToolEvent): readonly JsonObject[] | undefined {
+  if (event.phase !== 'settled' || event.result?.success !== true) return undefined
+  const text = event.result.contentItems[0]?.text
+  if (text === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (!Array.isArray(parsed)) return undefined
+    const records = parsed.filter((value): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value))
+    return records.length === parsed.length ? records : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Reconcile one unresolved create after a durable schedule listing. A
+ * successful list with a matching record proves the earlier write committed;
+ * a successful list without one permits a retry. Missing or malformed list
+ * evidence stays uncertain because it cannot distinguish a lost reply from a
+ * still-running write.
+ */
+function reconcilePendingRoutineCreate(
+  events: readonly BotDynamicToolEvent[],
+  sessionId: SessionId,
+  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
+    readonly arguments: Readonly<Record<string, unknown>>
+  },
+): RoutineListReconciliation | undefined {
+  const pendingIndex = pendingRoutineCreate(events, sessionId, current)
+  if (pendingIndex === undefined) return undefined
+  const listStartedIndex = events.findLastIndex((event, index) => index > pendingIndex
+    && event.sessionId === sessionId && event.phase === 'started' && event.name === 'schedule_list')
+  const listSettledIndex = events.findLastIndex((event, index) => index > pendingIndex
+    && event.sessionId === sessionId && event.phase === 'settled' && event.name === 'schedule_list')
+  if (listStartedIndex > listSettledIndex || listSettledIndex < 0) return { kind: 'unknown' }
+  const settledList = events[listSettledIndex]
+  if (settledList === undefined) return { kind: 'unknown' }
+  const list = routineListValue(settledList)
+  if (list === undefined) return { kind: 'unknown' }
+  const currentKey = canonicalRoutineArguments(current.arguments)
+  const record = list.find((candidate) => {
+    const candidateArguments = routineRecordArguments(candidate)
+    return candidateArguments !== undefined && canonicalRoutineArguments(candidateArguments) === currentKey
+  })
+  return record === undefined ? { kind: 'absent' } : { kind: 'found', record }
 }
 
 function safeString(value: string): string {
@@ -545,7 +713,9 @@ function routineTool(
             return failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
           }
           if (prior !== undefined) return prior
-          if (pendingRoutineCreate(replayed, sessionId, current)) {
+          const reconciliation = reconcilePendingRoutineCreate(replayed, sessionId, current)
+          if (reconciliation?.kind === 'found') return output(reconciliation.record)
+          if (reconciliation?.kind === 'unknown') {
             return failure(
               'uncertain-outcome',
               'An earlier routine creation with the same request has an unknown outcome. List Bot routines before retrying.',
@@ -574,7 +744,7 @@ function routineTool(
 
       if (action !== 'create') return executeOnce()
       const key = nativeCallKey(sessionId, { name, callId: context.callId, threadId: context.threadId, turnId: context.turnId })
-      const argumentsKey = stableJson(arguments_)
+      const argumentsKey = canonicalRoutineArguments(arguments_)
       const receipt = createReceipts.get(key)
       if (receipt !== undefined) {
         return receipt.argumentsKey === argumentsKey

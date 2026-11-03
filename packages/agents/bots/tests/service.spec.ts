@@ -226,6 +226,22 @@ describe('durable Bot roster', () => {
       expect(duplicate.success).toBe(false)
       expect(duplicate.contentItems[0]?.text).toContain('uncertain-outcome')
       expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
+
+      // A successful list is the explicit recovery point for a lost create
+      // reply. It proves the committed task exists, so the next native call
+      // replays that record instead of remaining blocked forever.
+      const list = tools.find(tool => tool.name === 'schedule_list')
+      if (list === undefined) throw new Error('schedule_list missing')
+      const listContext = {
+        ...context, callId: 'routine-list', threadId: 'thread-list', turnId: 'turn-list',
+      }
+      await provider.observe({ phase: 'started', name: 'schedule_list', ...listContext, arguments: {} })
+      const listed = await list.execute({}, listContext)
+      expect(listed.success).toBe(true)
+      await provider.observe({ phase: 'settled', name: 'schedule_list', ...listContext, arguments: {}, result: listed })
+      const reconciled = await create.execute(arguments_, newCallContext)
+      expect(reconciled.success).toBe(true)
+      expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
       const serviceCancelled = new AbortController()
       serviceCancelled.abort()
       await expect(h.ctx.schedule.create(sessionId, arguments_, serviceCancelled.signal)).rejects.toThrow()
@@ -243,8 +259,7 @@ describe('durable Bot roster', () => {
       const sameCall = await createAfterRestart.execute(arguments_, context)
       expect(sameCall).toEqual(result)
       const replayed = await createAfterRestart.execute(arguments_, newCallContext)
-      expect(replayed.success).toBe(false)
-      expect(replayed.contentItems[0]?.text).toContain('uncertain-outcome')
+      expect(replayed.success).toBe(true)
       expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
 
       const cancelled = new AbortController()
