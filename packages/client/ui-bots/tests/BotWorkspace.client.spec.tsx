@@ -362,6 +362,32 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
+  it('shows persisted per-Bot turn failures and retries only the failed user message', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={{
+        ...groupDetail,
+        deliveries: [
+          { messageId: 'message-1', botId: 'research', status: 'responded' },
+          { messageId: 'message-1', botId: 'release', status: 'failed', error: 'Provider credentials are missing.' },
+        ],
+      }}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getByText('Release captain could not reply: Provider credentials are missing.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry: Release captain' }))
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('Plan the release together.', 'message-1', undefined)
+    })
+  })
+
   it('offers member mentions and sends only to the selected Bot ids', async () => {
     const onSend = vi.fn().mockResolvedValue(undefined)
     render(<BotGroupDetail

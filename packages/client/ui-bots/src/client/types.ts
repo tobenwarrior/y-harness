@@ -3,6 +3,7 @@ import type {
   BotAvatar as SharedBotAvatar,
   BotIdentity as SharedBotIdentity,
 } from '@yharness/bots/client'
+import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -71,10 +72,24 @@ export interface BotGroupMessageSummary {
   readonly createdAt: number
 }
 
+/** Persisted per-recipient execution state projected into the group transcript. */
+export interface BotGroupDeliverySummary {
+  /** Source group message identity. */
+  readonly messageId: string
+  /** Recipient Bot identity. */
+  readonly botId: string
+  /** Durable delivery lifecycle. */
+  readonly status: SharedBotGroupDeliveryStatusView['status']
+  /** Safe failure description supplied by the Host after a failed turn. */
+  readonly error?: string
+}
+
 /** Selected shared group plus its durable transcript. */
 export interface BotGroupDetailData extends BotGroupSummary {
   /** Chronological transcript rows. */
   readonly messages: readonly BotGroupMessageSummary[]
+  /** Persisted per-recipient delivery state, when the Host supports it. */
+  readonly deliveries?: readonly BotGroupDeliverySummary[]
 }
 
 /** User choice passed to the owner when creating a shared group. */

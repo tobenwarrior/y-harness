@@ -618,6 +618,34 @@
   overflow-wrap: anywhere;
 }
 
+.groupDeliveryStatuses {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.groupDeliveryStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupDeliveryStatusFailed {
+  color: var(--yh-alias-state-error-primary);
+}
+
+.groupDeliveryStatusCopy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .groupNotice {
   display: flex;
   flex: none;

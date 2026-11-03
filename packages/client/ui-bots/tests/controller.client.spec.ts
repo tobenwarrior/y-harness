@@ -391,6 +391,7 @@ describe('BotWorkspaceController', () => {
     const detail: BotGroupInspectValue = {
       group,
       messages: [{ id: brandString('bot-group-message-1'), groupId: group.id, sender: { kind: 'user' }, text: 'Plan it.', createdAt: 1 }],
+      deliveries: [{ messageId: brandString('bot-group-message-1'), botId: second.id, status: 'failed', error: 'Provider credentials are missing.' }],
     }
     const remote = remoteFixture([first, second])
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
@@ -405,6 +406,9 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup?.name).toBe('Release room') })
 
     expect(controller.source.getSnapshot().selectedBotId).toBeNull()
+    expect(controller.source.getSnapshot().selectedGroup?.deliveries).toEqual([{
+      messageId: 'bot-group-message-1', botId: 'bot-second-group', status: 'failed', error: 'Provider credentials are missing.',
+    }])
     expect(controller.face().reference()).toBeUndefined()
     expect(directReference?.release).toHaveBeenCalledOnce()
     expect(remote.inspectGroup).toHaveBeenCalledWith({ groupId: group.id })

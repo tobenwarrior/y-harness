@@ -1073,5 +1073,13 @@ function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {
       ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
       createdAt: message.createdAt,
     })),
+    ...(value.deliveries === undefined ? {} : {
+      deliveries: value.deliveries.map(delivery => ({
+        messageId: String(delivery.messageId),
+        botId: String(delivery.botId),
+        status: delivery.status,
+        ...(delivery.error === undefined ? {} : { error: delivery.error }),
+      })),
+    }),
   }
 }

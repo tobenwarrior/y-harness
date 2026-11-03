@@ -9,6 +9,7 @@ import type {} from '@yharness/avatar-generation'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
+import type { TurnEndReason } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
@@ -98,6 +99,7 @@ export type {
   BotGroupDeliveryClaimInput,
   BotGroupDeliveryHost,
   BotGroupDeliveryRecord,
+  BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
   BotGroupDomain,
   BotGroupInspectRequest,
@@ -271,6 +273,34 @@ function botIdentityPrompt(record: BotRecord): string {
   ].join('\n\n')
 }
 
+/** Convert a durable turn outcome into a safe group-visible recovery message. */
+function groupTurnFailure(reason: TurnEndReason): string | undefined {
+  switch (reason.kind) {
+    case 'completed':
+    case 'forked':
+      return undefined
+    case 'error':
+      switch (reason.error.code) {
+        case 'MISSING_CREDENTIAL':
+          return 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.'
+        case 'INVALID_CREDENTIAL':
+          return 'This Bot could not reply because its provider credentials were rejected. Update the provider connection, then retry.'
+        default:
+          return 'This Bot could not complete its reply. Try again.'
+      }
+    case 'aborted':
+      return 'This Bot stopped before replying. Try again.'
+    case 'blocked':
+      return 'This Bot could not reply because the request was blocked. Try again.'
+    case 'max-tokens':
+      return 'This Bot reached its response limit before replying. Try again with a shorter request.'
+    case 'interrupted':
+      return 'This Bot stopped before replying. Try again.'
+    default:
+      return 'This Bot did not complete its reply. Try again.'
+  }
+}
+
 /** Replace legacy avatar selections without deleting their attachments. */
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
@@ -372,9 +402,18 @@ export class BotService extends TypertRemoteService {
       changed: () => this.emitChanged(),
     }))
     ctx.on('session/event', (session, event) => {
-      if (event.type !== 'assistant/message') return
       const record = this.recordsBySession.get(String(session.id))
       if (record === undefined) return
+      if (event.type === 'turn/end') {
+        const failure = groupTurnFailure(event.data.reason)
+        if (failure === undefined) return
+        void this.groupService.then(service => service.recordBotTurnFailure(record.id, event.data.turn, failure))
+          .catch((error: unknown) => {
+            ctx.logger.warn(`bots: group failure projection failed: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        return
+      }
+      if (event.type !== 'assistant/message') return
       const text = event.data.message.content
         .flatMap(block => block.type === 'text' ? [block.text] : [])
         .join('\n')
@@ -998,6 +1037,27 @@ export class BotService extends TypertRemoteService {
         if (rawInboxSeen || event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
         const current = inputs.get(`${String(turn)}:${String(step)}`)
         if (current !== undefined) current.messages.push(event.data)
+        continue
+      }
+      if (event.type === 'turn/end') {
+        const failure = groupTurnFailure(event.data.reason)
+        if (failure === undefined) continue
+        const turnInputs = [...inputs.values()].filter(input => input.turn === event.data.turn)
+        await this.groupService.then(async (service) => {
+          for (const input of turnInputs) {
+            const claims = groupDeliveryClaims(input.messages)
+            if (claims.length === 0) continue
+            await service.recordBotMessageClaims(
+              record.id,
+              claims,
+              input.turn,
+              input.step,
+              isolatedGroupDelivery(input.messages, claims),
+              input.messages.length > 0 && !isolatedGroupDelivery(input.messages, claims),
+            )
+          }
+          await service.recordBotTurnFailure(record.id, event.data.turn, failure)
+        })
         continue
       }
       if (event.type !== 'assistant/message') continue

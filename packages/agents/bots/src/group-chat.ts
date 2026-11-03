@@ -187,6 +187,20 @@ export interface BotGroupInspectValue {
   readonly group: BotGroupView
   /** Durable messages in chronological order. */
   readonly messages: readonly BotGroupMessageView[]
+  /** Durable per-recipient state for the messages in this transcript. */
+  readonly deliveries?: readonly BotGroupDeliveryStatusView[]
+}
+
+/** Browser-safe per-recipient state for one persisted group delivery. */
+export interface BotGroupDeliveryStatusView {
+  /** Source group message identity. */
+  readonly messageId: BotGroupMessageId
+  /** Recipient Bot identity. */
+  readonly botId: BotId
+  /** Durable execution state. */
+  readonly status: BotGroupDeliveryRecord['status']
+  /** Safe user-facing failure description, when the Bot could not complete. */
+  readonly error?: string
 }
 
 /** Human or Bot group message request. */
@@ -495,7 +509,19 @@ export class BotGroupService {
       .filter(message => message.groupId === id)
       .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
       .map(message => this.messageView(message, bots))
-    return { group: this.view(group, bots), messages }
+    const messageIds = new Set(messages.map(message => String(message.id)))
+    const deliveries = [...this.domain.table('deliveries').entries()]
+      .map(([, delivery]) => delivery)
+      .filter(delivery => delivery.groupId === id && messageIds.has(String(delivery.messageId)))
+      .sort((left, right) => String(left.messageId).localeCompare(String(right.messageId))
+        || String(left.botId).localeCompare(String(right.botId)))
+      .map((delivery): BotGroupDeliveryStatusView => ({
+        messageId: delivery.messageId,
+        botId: delivery.botId,
+        status: delivery.status,
+        ...(delivery.error === undefined ? {} : { error: delivery.error }),
+      }))
+    return { group: this.view(group, bots), messages, deliveries }
   }
 
   /** Persist one human or Bot message, then fan it out to every intended recipient. */
@@ -618,7 +644,7 @@ export class BotGroupService {
           || delivery.groupId !== claim.groupId
           || delivery.messageId !== claim.messageId
           || delivery.botId !== botId
-          || (delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
+          || (delivery.status !== 'pending' && delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
         const nextClaim: BotGroupDeliveryClaim = { turn, step, isolated }
         if (delivery.claim?.turn === turn && delivery.claim.step === step && delivery.claim.isolated === isolated) continue
         await deliveries.put(id, { ...delivery, claim: nextClaim, updatedAt: now })
@@ -635,6 +661,42 @@ export class BotGroupService {
           await deliveries.put(delivery.id, { ...delivery, claim: { ...claim, isolated: false }, updatedAt: now })
           changed = true
         }
+      }
+      if (changed) this.host.changed?.()
+    })
+  }
+
+  /**
+   * Persist a failed model turn against its isolated group delivery.
+   *
+   * Queuing a message only proves that it entered the Bot Session. The turn
+   * end event is the durable evidence that the model either replied or failed;
+   * only an isolated, still-accepted delivery can be changed here so private
+   * or already projected turns never leak into a group transcript.
+   * @param botId - Live Bot identity owning the model turn.
+   * @param turn - Durable model turn number.
+   * @param error - Safe user-facing failure description.
+   */
+  async recordBotTurnFailure(botId: BotId, turn: number, error: string): Promise<void> {
+    await this.serialize(async () => {
+      if (!Number.isSafeInteger(turn) || turn < 0) return
+      const safeError = normalizeText(error, 'Bot group failure', 400)
+      const deliveries = this.domain.table('deliveries')
+      const groups = this.domain.table('groups')
+      const now = Date.now()
+      let changed = false
+      for (const [id, delivery] of deliveries.entries()) {
+        const claim = delivery.claim
+        if (delivery.botId !== botId
+          || delivery.status !== 'accepted'
+          || claim === undefined
+          || claim.turn !== turn
+          || !claim.isolated) continue
+        const group = groups.get(delivery.groupId)
+        if (group === undefined || !group.botIds.includes(botId)) continue
+        await deliveries.put(id, { ...delivery, status: 'failed', error: safeError, updatedAt: now })
+        if (now > group.updatedAt) await groups.put(group.id, { ...group, updatedAt: now })
+        changed = true
       }
       if (changed) this.host.changed?.()
     })

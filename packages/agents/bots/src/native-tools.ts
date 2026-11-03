@@ -644,6 +644,12 @@ function inspectGroupTool(groups: BotGroupToolHost): BotNativeTool {
             text: frameUntrustedTranscript(message.text),
             createdAt: message.createdAt,
           })),
+          ...(result.deliveries === undefined ? {} : {
+            deliveries: result.deliveries.map(delivery => ({
+              messageId: String(delivery.messageId), botId: String(delivery.botId), status: delivery.status,
+              ...(delivery.error === undefined ? {} : { error: delivery.error }),
+            })),
+          }),
         })
       } catch (error: unknown) { return groupFailure(error) }
     },

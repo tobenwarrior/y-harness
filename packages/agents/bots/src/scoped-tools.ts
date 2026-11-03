@@ -88,9 +88,17 @@ const GROUP_MESSAGE_SCHEMA = {
     } }, text: { type: 'string', required: true }, targetBotIds: { type: 'array', items: { type: 'string' } }, createdAt: { type: 'number', required: true },
   },
 } as const
+const GROUP_DELIVERY_SCHEMA = {
+  type: 'object', additionalProperties: false, properties: {
+    messageId: { type: 'string', required: true }, botId: { type: 'string', required: true },
+    status: { type: 'string', required: true, enum: ['pending', 'accepted', 'responded', 'failed'] },
+    error: { type: 'string' },
+  },
+} as const
 const GROUP_LIST_RESULT_SCHEMA = { type: 'array', items: GROUP_SCHEMA } as const
 const GROUP_INSPECT_RESULT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   group: { ...GROUP_SCHEMA, required: true }, messages: { type: 'array', required: true, items: GROUP_MESSAGE_SCHEMA },
+  deliveries: { type: 'array', items: GROUP_DELIVERY_SCHEMA },
 } } as const
 const GROUP_SEND_RESULT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   messageId: { type: 'string', required: true }, status: { type: 'string', required: true, enum: ['accepted', 'duplicate', 'partial'] },
@@ -220,6 +228,12 @@ export function installBotCollaborationTools(
                 ...(message.sender.kind === 'bot' ? { botId: String(message.sender.botId) } : {}),
               },
             })),
+            ...(value.deliveries === undefined ? {} : {
+              deliveries: value.deliveries.map(delivery => ({
+                messageId: String(delivery.messageId), botId: String(delivery.botId), status: delivery.status,
+                ...(delivery.error === undefined ? {} : { error: delivery.error }),
+              })),
+            }),
           }
         },
       })))

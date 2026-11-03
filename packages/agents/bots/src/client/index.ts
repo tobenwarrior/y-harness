@@ -4,6 +4,7 @@ export type * from '../types.ts'
 export type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
+  BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
   BotGroupId,
   BotGroupInspectRequest,

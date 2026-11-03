@@ -13,7 +13,8 @@ import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import css from './BotWorkspace.module.css'
 import type {
-  BotAccent, BotGroupCreation, BotGroupDetailData, BotGroupSummary, BotIdentity, BotStatus, BotSummary,
+  BotAccent, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
+  BotIdentity, BotStatus, BotSummary,
   BotWorkspaceProps,
 } from './types.ts'
 
@@ -351,6 +352,20 @@ function mentionTargets(text: string, bots: readonly BotSummary[]): readonly str
   })
 }
 
+function deliveryStatusText(
+  delivery: BotGroupDeliverySummary,
+  name: string,
+  t: BotWorkspaceViewProps['t'],
+): string {
+  switch (delivery.status) {
+    case 'pending': return t('groupDeliverySending', { name })
+    case 'accepted': return t('groupDeliveryWaiting', { name })
+    case 'responded': return t('groupDeliveryResponded', { name })
+    case 'failed': return t('groupDeliveryFailed', { name, error: delivery.error ?? t('groupDeliveryFailure') })
+    default: return t('groupDeliveryFailure')
+  }
+}
+
 /** Render a persistent shared group transcript without creating a second Bot Session. */
 export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
@@ -369,7 +384,16 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
   const [editOpen, setEditOpen] = useState(false)
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null)
   const transcript = useMemo(() => group?.messages ?? [], [group])
+  const deliveriesByMessage = useMemo(() => {
+    const result = new Map<string, readonly BotGroupDeliverySummary[]>()
+    for (const delivery of group?.deliveries ?? []) {
+      const current = result.get(delivery.messageId)
+      result.set(delivery.messageId, current === undefined ? [delivery] : [...current, delivery])
+    }
+    return result
+  }, [group])
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -420,6 +444,17 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       setSending(false)
     }
   }
+  const retryMessage = async (message: BotGroupMessageSummary): Promise<void> => {
+    if (message.sender.kind !== 'user' || retryingMessageId !== null) return
+    setRetryingMessageId(message.id)
+    try {
+      await onSend(message.text, message.id, message.targetBotIds)
+    } catch {
+      // The owner keeps the durable failure beside the transcript.
+    } finally {
+      setRetryingMessageId(null)
+    }
+  }
   if (group === undefined) {
     return (
       <section className={css.detailEmpty} aria-labelledby="yharness-bots-group-loading-title">
@@ -456,12 +491,38 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           ? <div className={css.threadEmpty}><p>{t('groupEmptyDescription')}</p></div>
           : transcript.map((message) => {
             const bot = message.sender.kind === 'bot' ? botsById.get(message.sender.botId) : undefined
+            const deliveryStatuses = deliveriesByMessage.get(message.id) ?? []
             return (
               <article className={clsx(css.groupMessage, message.sender.kind === 'user' && css.groupMessageUser)} key={message.id}>
                 {message.sender.kind === 'bot' && <BotAvatar name={message.sender.name} identity={bot?.identity} accent={bot?.accent} avatar={bot?.avatar} botId={bot?.id} loadAvatar={loadAvatar} size="small" status={bot?.status} />}
                 <div className={css.groupMessageBody}>
                   <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
                   <p>{message.text}</p>
+                  {deliveryStatuses.length > 0 && (
+                    <div className={css.groupDeliveryStatuses} aria-label={t('groupDeliveryStatus')}>
+                      {deliveryStatuses.map((delivery) => {
+                        const member = botsById.get(delivery.botId)
+                        const name = member?.name ?? delivery.botId
+                        const failed = delivery.status === 'failed'
+                        return (
+                          <span className={clsx(css.groupDeliveryStatus, failed && css.groupDeliveryStatusFailed)} key={`${delivery.messageId}-${delivery.botId}`}>
+                            <span className={css.groupDeliveryStatusCopy}>{deliveryStatusText(delivery, name, t)}</span>
+                            {failed && message.sender.kind === 'user' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`${t('groupRetryDelivery')}: ${name}`}
+                                disabled={retryingMessageId !== null}
+                                onClick={() => { void retryMessage(message) }}
+                              >
+                                {retryingMessageId === message.id ? t('groupRetryingDelivery') : t('groupRetryDelivery')}
+                              </Button>
+                            )}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </article>
             )

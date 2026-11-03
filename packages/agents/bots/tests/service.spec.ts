@@ -613,6 +613,99 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('persists a model turn failure in the group transcript and restores it after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Credential failure room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Ask Beta for a status.', messageId: 'bot-group-message-credential-failure' })
+    const betaAgent = h.agents[1]
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (betaAgent === undefined || delivered === undefined) throw new Error('credential-failure delivery was not admitted')
+
+    await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+      messages: [delivered], turn: 10, step: 1, signal: new AbortController().signal,
+    }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+    betaAgent.session.append('turn/start', { turn: 10 })
+    betaAgent.session.append('step/start', { turn: 10, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('step/end', { turn: 10, step: 1 })
+    const failure = betaAgent.session.append('turn/end', {
+      turn: 10,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    h.ctx.emit('session/event', betaAgent.session, failure)
+
+    await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+      deliveries: expect.arrayContaining([
+        expect.objectContaining({
+          messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
+          status: 'failed', error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
+        }),
+      ]),
+    })
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
+            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reconciles a persisted failed group turn when the Bot Session resumes', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Restart failure room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({ groupId: group.group.id, text: 'Resume this request.', messageId: 'bot-group-message-restart-failure' })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('restart-failure delivery was not admitted')
+    await close(first.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 12 })
+      resumedBeta.session.append('step/start', { turn: 12, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('step/end', { turn: 12, step: 1 })
+      resumedBeta.session.append('turn/end', {
+        turn: 12,
+        reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+      })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-restart-failure', botId: beta.bot.id,
+            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('ignores synthetic runtime context while reconciling a claimed group turn after restart', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
