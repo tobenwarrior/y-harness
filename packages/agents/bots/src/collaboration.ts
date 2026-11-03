@@ -342,6 +342,10 @@ export class BotCollaborationService {
         // durability barrier. Re-run the barrier before acknowledging the
         // retry as a duplicate.
         await this.flushTarget(target.sessionId, target.name)
+        const after = await this.host.inspectSession(target.sessionId)
+        if (!hasMessage(after.events, messageId)) {
+          throw new BotCollaborationError('durability-failed', `Bot "${target.name}" no longer has the message receipt`)
+        }
         return { messageId, status: 'duplicate' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
       }
       const resolved = await this.host.resolveAgent(target.sessionId)
@@ -362,6 +366,10 @@ export class BotCollaborationService {
         source,
       }))
       await this.flushTarget(target.sessionId, target.name)
+      const after = await this.host.inspectSession(target.sessionId)
+      if (!hasMessage(after.events, messageId)) {
+        throw new BotCollaborationError('durability-failed', `Bot "${target.name}" did not retain the message receipt`)
+      }
       return { messageId, status: 'accepted' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
     })
     const tail = run.then(() => undefined, () => undefined)

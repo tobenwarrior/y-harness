@@ -55,6 +55,8 @@ async function harness(
     }
   })
   const followups = existingSessionIds.map(() => vi.fn<(message: UserMessage) => void>())
+  const pendingFollowups = new Map<string, UserMessage[]>()
+  for (const sessionId of existingSessionIds) pendingFollowups.set(sessionId, [])
   const agents = existingSessionIds.map((sessionId, index) => {
     const followup = followups[index]
     if (followup === undefined) throw new Error('test followup was not created')
@@ -82,6 +84,13 @@ async function harness(
     for (const event of seedEvents.filter(candidate => candidate.sessionId === id)) agent.session.append('bot/dynamic-tool', event)
     return agent
   })
+  for (const [index, agent] of agents.entries()) {
+    const followup = followups[index]
+    if (followup === undefined) throw new Error('test followup was not created')
+    followup.mockImplementation((message) => {
+      pendingFollowups.get(String(agent.id))?.push(message)
+    })
+  }
   ctx.provide('agents', {
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
     list: () => [...agents],
@@ -95,7 +104,19 @@ async function harness(
     const agent = agents.find(candidate => candidate.id === sessionId)
     return agent === undefined ? { error: new Error('session not found') } : { agent }
   })
-  const flush = vi.fn(async () => true)
+  const flush = vi.fn(async (session: Session) => {
+    const agent = agents.find(candidate => candidate.session === session)
+    if (agent !== undefined) {
+      const pending = pendingFollowups.get(String(agent.id)) ?? []
+      for (const message of pending) {
+        agent.session.append('agent/inbox/spliced', {
+          target: 'next-turn', start: 0, inserted: [message],
+        })
+      }
+      pending.length = 0
+    }
+    return true
+  })
   const sessions = {
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId)?.session,
     flush,
@@ -688,23 +709,24 @@ describe('durable Bot roster', () => {
       }, context)
       expect(result.success).toBe(true)
       const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
-      h.flush.mockResolvedValueOnce(false)
       const owner = h.agents[0]
       const followup = h.followups[0]
       if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      h.flush.mockImplementationOnce(async () => {
+        const pendingMessage = followup.mock.calls[0]?.[0]
+        if (pendingMessage === undefined) throw new Error('canceled event follow-up was not captured before flush')
+        owner.session.append('agent/inbox/spliced', {
+          target: 'next-turn', start: 0, inserted: [pendingMessage],
+        })
+        owner.session.append('agent/inbox/spliced', {
+          target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+        })
+      })
       owner.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'Trigger the canceled delivery.' }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
-      const pendingMessage = followup.mock.calls[0]?.[0]
-      if (pendingMessage === undefined) throw new Error('canceled event follow-up was not captured')
-      owner.session.append('agent/inbox/spliced', {
-        target: 'next-turn', start: 0, inserted: [pendingMessage],
-      })
-      owner.session.append('agent/inbox/spliced', {
-        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
-      })
       const seed = owner.session.snapshotEvents()
       const pending = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
       expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
@@ -859,12 +881,19 @@ describe('durable Bot roster', () => {
         kind: 'agent-message', botEventRoutine: { depth: 1 },
       })
 
+      const targetClient = await h.service.collaborationFor(targetAgent)
       targetAgent.session.append('turn/start', { turn: 1 })
       h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
       targetAgent.session.append('user/message', targetRelayMessage, { surfaceOp: 'append' })
       h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
-      await vi.waitFor(() => { expect(targetFollowup).toHaveBeenCalledOnce() })
-      const targetRoutineMessage = targetFollowup.mock.calls[0]?.[0]
+      await targetClient.send({ targetBotId: sender.bot.id, text: 'A direct reply from this peer turn.' })
+      const directReply = senderFollowup.mock.calls.at(-1)?.[0]
+      if (directReply === undefined) throw new Error('direct relay reply was not captured')
+      expect(directReply.source).toMatchObject({
+        kind: 'agent-message', botEventRoutine: { depth: 2 },
+      })
+      await vi.waitFor(() => { expect(targetFollowup).toHaveBeenCalledTimes(2) })
+      const targetRoutineMessage = targetFollowup.mock.calls.at(-1)?.[0]
       if (targetRoutineMessage === undefined) throw new Error('target routine message was not captured')
 
       targetAgent.session.append('turn/start', { turn: 2 })
@@ -872,9 +901,8 @@ describe('durable Bot roster', () => {
       await new Promise(resolve => setTimeout(resolve, 0))
       targetAgent.session.append('user/message', targetRoutineMessage, { surfaceOp: 'append' })
       h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
-      const targetClient = await h.service.collaborationFor(targetAgent)
       await targetClient.send({ targetBotId: sender.bot.id, text: 'The relay continued.' })
-      await vi.waitFor(() => { expect(senderFollowup).toHaveBeenCalledTimes(2) })
+      await vi.waitFor(() => { expect(senderFollowup).toHaveBeenCalledTimes(3) })
 
       senderAgent.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'Ignore this subagent.' }],
@@ -890,9 +918,62 @@ describe('durable Bot roster', () => {
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
       await new Promise(resolve => setTimeout(resolve, 0))
-      expect(senderFollowup).toHaveBeenCalledTimes(2)
+      await senderClient.send({ targetBotId: target.bot.id, text: 'Do not relay this capped message.' })
+      const cappedReply = targetFollowup.mock.calls.at(-1)?.[0]
+      if (cappedReply === undefined) throw new Error('capped relay reply was not captured')
+      expect(cappedReply.source).toMatchObject({
+        kind: 'agent-message', botEventRoutine: { depth: 4 },
+      })
+      expect(targetFollowup).toHaveBeenCalledTimes(3)
+      expect(senderFollowup).toHaveBeenCalledTimes(3)
       void senderRoutine
       void targetRoutine
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('reconstructs capped peer relay depth from an unobserved persisted turn', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Persisted relay owner', cwd: '/tmp' })
+    const peer = await first.service.create({ name: 'Persisted relay peer', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(owner.bot.sessionId), String(peer.bot.sessionId),
+    ], true)
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: owner.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('event routine create tool missing')
+      const routine = await create.execute({
+        title: 'Persist relay context', prompt: 'Handle peer messages.', event: { type: 'message', source: 'bot' },
+      }, {
+        callId: 'persisted-relay-create', threadId: 'persisted-relay-thread', turnId: 'persisted-relay-turn',
+        sessionId: owner.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      })
+      expect(routine.success).toBe(true)
+      const ownerAgent = h.agents[0]
+      if (ownerAgent === undefined) throw new Error('persisted relay owner Agent was not created')
+      ownerAgent.session.append('turn/start', { turn: 9 })
+      ownerAgent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'A capped peer relay.' }],
+        source: {
+          kind: 'agent-message', form: 'relay', senderSessionId: peer.bot.sessionId,
+          botEventRoutine: { chainId: 'persisted-relay-chain', depth: 4 },
+        },
+      }), { surfaceOp: 'append' })
+      const client = await h.service.collaborationFor(ownerAgent)
+      await client.send({ targetBotId: peer.bot.id, text: 'Keep the capped relay depth.' })
+      const peerMessage = h.followups[1]?.mock.calls[0]?.[0]
+      if (peerMessage === undefined) throw new Error('persisted relay message was not captured')
+      expect(peerMessage.source).toMatchObject({
+        kind: 'agent-message', botEventRoutine: { chainId: 'persisted-relay-chain', depth: 4 },
+      })
     } finally {
       await close(h.ctx)
     }

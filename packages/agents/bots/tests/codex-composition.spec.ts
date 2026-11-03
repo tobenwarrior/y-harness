@@ -285,7 +285,11 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     'schedule_pause', 'schedule_resume', 'schedule_history',
   ]))
 
-  const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
+  const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation((message) => {
+    targetAgent.session.append('agent/inbox/spliced', {
+      target: 'next-turn', start: 0, inserted: [message],
+    })
+  })
   senderAgent.session.append('turn/start', { turn: 1 })
   const messages = [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Coordinate with Grok bot.' }] })]
   const chunks: unknown[] = []

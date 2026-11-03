@@ -466,9 +466,16 @@ function routineTurnsFromEvents(events: readonly SessionEvent[]): Map<number, Ev
       continue
     }
     if (openTurn === undefined) continue
-    if (event.type === 'user/message' && event.data.source.kind === 'bot-event-routine') {
-      openTurn.runs.set(String(event.data.id), event.data.source.routineId)
-      openTurn.relayContext ??= relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`)
+    if (event.type === 'user/message') {
+      if (event.data.source.kind === 'bot-event-routine') {
+        openTurn.runs.set(String(event.data.id), event.data.source.routineId)
+        openTurn.relayContext ??= relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`)
+      } else if (event.data.source.kind === 'agent-message' && event.data.source.botEventRoutine !== undefined) {
+        openTurn.relayContext ??= relayContextOf(
+          event.data.source.botEventRoutine,
+          `${String(event.data.id)}:${String(openTurn.turn)}`,
+        )
+      }
     } else if (event.type === 'assistant/message') {
       openTurn.output.push(visibleText(event.data.message.content))
     }
@@ -1279,6 +1286,10 @@ export class BotService extends TypertRemoteService {
     const relayContext = trigger.relayContext === undefined
       ? undefined
       : relayContextOf(trigger.relayContext, `${String(sessionId)}:${String(message.id)}`)
+    if (relayContext !== undefined) {
+      const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
+      if (turn !== undefined) turn.relayContext = relayContext
+    }
     if (relayContext !== undefined && relayContext.depth >= MAX_EVENT_ROUTINE_HOPS) return
     queueMicrotask(() => {
       void this.triggerEventRoutines(sessionId, {
@@ -1463,6 +1474,34 @@ export class BotService extends TypertRemoteService {
     // the previous attempt may have observed the splice but lost its reply.
     if (!await this.ctx.sessions.flush(resolved.agent.session)) {
       throw new Error('Bot Session persistence did not acknowledge the event routine')
+    }
+    const afterFlush = await this.ctx.sessionController.inspect(record.sessionId)
+    const afterInbox = botInboxMessageState(afterFlush.events, currentDelivery.messageId)
+    const afterSurface = afterFlush.events.some(event => event.type === 'user/message' && event.data.id === currentDelivery.messageId)
+    if (!afterSurface && afterInbox?.disposition === 'canceled') {
+      const resetDelivery = clearDispatchMarker(currentDelivery)
+      const resetRoutine: BotEventRoutine = {
+        ...currentRoutine,
+        deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === resetDelivery.messageId
+          ? resetDelivery
+          : candidate),
+        updatedAt: Math.max(Date.now(), currentRoutine.updatedAt),
+      }
+      const resetRecord: BotRecord = {
+        ...currentRecord,
+        eventRoutines: (currentRecord.eventRoutines ?? []).map(candidate => candidate.id === resetRoutine.id
+          ? resetRoutine
+          : candidate),
+        updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
+      }
+      await bots.put(resetRecord.id, resetRecord)
+      this.recordsBySession.set(String(resetRecord.sessionId), resetRecord)
+      return resetRecord
+    }
+    if (!afterSurface && afterInbox?.disposition !== 'pending' && afterInbox?.disposition !== 'claimed') {
+      // A successful flush without a durable receipt is still uncertain. Keep
+      // the dispatch marker so recovery does not invoke the routine twice.
+      return currentRecord
     }
     const deliveredAt = new Date(Date.now()).toISOString()
     const updatedRoutine: BotEventRoutine = {

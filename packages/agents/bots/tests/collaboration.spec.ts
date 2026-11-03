@@ -83,6 +83,36 @@ describe('Bot collaboration seam', () => {
     expect(followup).toHaveBeenCalledTimes(1)
   })
 
+  it('does not acknowledge a peer message canceled during the durability flush', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async sessionId => ({ events: events.get(String(sessionId)) ?? [] }),
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => {
+        const message = followup.mock.calls[0]?.[0]
+        if (message === undefined) throw new Error('peer message was not admitted before flush')
+        events.get('bot-session-beta')!.push({
+          type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+          data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+        })
+      }),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This must not be acknowledged.', messageId: BotMessageId('peer-canceled-after-flush'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(host.flushSession).toHaveBeenCalledOnce()
+  })
+
   it('checks cancellation after target resume and before followup', async () => {
     const senderSessionId = SessionId('bot-session-alpha')
     const targetSessionId = SessionId('bot-session-beta')
