@@ -2,11 +2,14 @@
 
 import type { Context } from '@yharness/cordis'
 import type { AgentHandle } from '@yharness/agent'
+import { MessageId } from '@yharness/llm'
 import type {} from '@yharness/agent-default-model'
+import type {} from '../../../../agents/bots/src/collaboration.ts'
 import type { SessionEvent } from '@yharness/session'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
 import { BotMemoryId } from '../../../../agents/bots/src/memory.ts'
+import { BotGroupId, BotGroupMessageId } from '../../../../agents/bots/src/group-chat.ts'
 import { BotId } from '../../../../agents/bots/src/types.ts'
 import { botDomain } from '../../../../agents/bots/src/storage.ts'
 
@@ -67,6 +70,22 @@ export async function apply(ctx: Context): Promise<void> {
     memoryId: BotMemoryId('memory-snapshot'),
     operation: 'remember',
     text: 'The release checklist must include rollback steps.',
+  })
+  const targetSession = ctx.sessions.get(SessionId('bot-session-target'))
+  if (targetSession === undefined) throw new Error('snapshot Bot Session "bot-session-target" is not live')
+  targetSession.append('agent/inbox/spliced', {
+    target: 'next-turn',
+    start: 0,
+    inserted: [{
+      id: MessageId('bot-group-message-snapshot'),
+      role: 'user',
+      source: {
+        kind: 'bot-group-message',
+        groupId: BotGroupId('bot-group-snapshot'),
+        messageId: BotGroupMessageId('bot-group-message-snapshot'),
+      },
+      content: [{ type: 'text', text: 'A group message remains queued after restart.' }],
+    }],
   })
   const sessionEvents = new Map<string, readonly SessionEvent[]>()
   for (const handle of handles) {

@@ -45,7 +45,7 @@ The body stage is identity-preserving. It tracks the inherited cut from the sour
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The migration stage validates the source V4 header and delivery ownership, then forwards every event and compact run. The V5 restorer delegates common lifecycle, source, compaction, and native-field checks to a private V4 view while applying V5 delivery-marker rules to the original artifact. The codec changes only the physical header version and leaves event rows in V4 framing.
+The migration stage validates the source V4 header and delivery ownership, then forwards every event and compact run. The V5 restorer validates the required `groupId` and `messageId` strings for `bot-group-message` sources in declared message slots, then delegates common lifecycle, source, compaction, and native-field checks to a private V4 view while applying V5 delivery-marker rules to the original artifact. Native row admission applies the same V5 source check before recoverable reads can discard a suffix. The codec changes only the physical header version and leaves event rows in V4 framing.
 
 </details>
 

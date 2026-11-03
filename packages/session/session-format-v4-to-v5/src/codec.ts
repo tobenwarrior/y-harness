@@ -8,6 +8,7 @@ import type {
 } from '@yharness/session-format'
 import { releasedV4SessionFormatCodec, assertV4RowAdmission } from '@yharness/session-format-v3-to-v4'
 import { assertReleasedV5Header } from './validation.ts'
+import { assertV5SourceRowAdmission } from './message-sources.ts'
 
 function v4PhysicalHeader(value: unknown): SessionFormatHeader {
   if (!isSessionFormatJsonObject(value) || value['version'] !== 5) {
@@ -27,6 +28,10 @@ export const releasedV5SessionFormatCodec = Object.freeze({
     return {
       ...decoder,
       header: { ...decoder.header, version: 5 },
+      decodeRow(row, context) {
+        assertV5RowAdmission(row)
+        decoder.decodeRow(row, context)
+      },
     }
   },
   encodeHeader(header: SessionFormatHeader, inheritedEventCount: number) {
@@ -37,6 +42,7 @@ export const releasedV5SessionFormatCodec = Object.freeze({
     }
   },
   encodeEvent(event) {
+    assertV5RowAdmission(event)
     return releasedV4SessionFormatCodec.encodeEvent(event)
   },
 } satisfies SessionFormatCodec & SessionFormatCurrentEncoder)
@@ -47,5 +53,8 @@ export const releasedV5SessionFormatCodec = Object.freeze({
  * @param knownEventTypes - installed event types used for ignorable admission.
  */
 export function assertV5RowAdmission(row: unknown, knownEventTypes?: ReadonlySet<string>): void {
+  if (isSessionFormatJsonObject(row) && row['type'] === 'developer/message' && row['ignorable'] === true
+    && knownEventTypes?.has('developer/message') !== true) return
   assertV4RowAdmission(row, knownEventTypes)
+  assertV5SourceRowAdmission(row)
 }

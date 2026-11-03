@@ -11,6 +11,7 @@ import {
   assertReleasedV4Header,
   restoreReleasedV4Artifact,
 } from '@yharness/session-format-v3-to-v4'
+import { assertV5MessageSources } from './message-sources.ts'
 
 /**
  * Validate the exact native V5 logical header.
@@ -44,6 +45,7 @@ function assertV5Relationships(artifact: SessionFormatArtifact, knownEventTypes:
   const deliveryType = 'session-log-deepseek/delivery-accepted'
   for (const event of artifact.events) {
     if (!knownEventTypes.has(event.type)) continue
+    assertV5MessageSources(event)
     const deliveryId = validateDeliveryAccepted(event)
     if (deliveryId !== undefined
       && !(artifact.header.parentSession !== undefined && event.seq < artifact.inheritedEventCount)
