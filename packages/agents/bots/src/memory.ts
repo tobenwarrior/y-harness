@@ -165,7 +165,22 @@ function parseStoredMemoryEvent(event: SessionEvent, botId: BotId): BotMemoryEve
  * @returns active memory records keyed by their stable id.
  */
 export function projectBotMemories(events: readonly SessionEvent[], botId: BotId): Map<string, BotMemoryRecord> {
+  return projectBotMemoryState(events, botId).memories
+}
+
+/**
+ * Reconstruct active Bot memories and logical forget tombstones from a
+ * Session log. Tombstones make a repeated forget idempotent after a restart.
+ * @param events - Events read from the Bot-owned Session.
+ * @param botId - Authoritative Bot id bound to that Session.
+ * @returns active records and ids whose latest memory event is a forget.
+ */
+export function projectBotMemoryState(events: readonly SessionEvent[], botId: BotId): {
+  readonly memories: Map<string, BotMemoryRecord>
+  readonly forgotten: Set<string>
+} {
   const memories = new Map<string, BotMemoryRecord>()
+  const forgotten = new Set<string>()
   for (const event of events) {
     const memoryEvent = parseStoredMemoryEvent(event, botId)
     if (memoryEvent === undefined) continue
@@ -178,8 +193,12 @@ export function projectBotMemories(events: readonly SessionEvent[], botId: BotId
       if (current === undefined) memories.set(id, {
         id: memoryEvent.memoryId, text: memoryEvent.text, createdAt: event.time,
       })
+      forgotten.delete(id)
     }
-    else memories.delete(id)
+    else {
+      memories.delete(id)
+      forgotten.add(id)
+    }
   }
-  return memories
+  return { memories, forgotten }
 }

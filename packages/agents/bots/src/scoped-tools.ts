@@ -1,5 +1,6 @@
 /** Agent-scoped model tools for inspecting and explicitly messaging named Bots. */
 
+import { createHash } from 'node:crypto'
 import type { Context } from '@yharness/cordis'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import {
@@ -64,6 +65,12 @@ const MEMORY_RECEIPT_SCHEMA = {
 } as const
 
 const MEMORY_LIST_RESULT_SCHEMA = { type: 'array', items: MEMORY_RECEIPT_SCHEMA } as const
+
+/** Derive the retry identity for one scoped remember call. */
+function implicitMemoryId(senderId: string, callId: string): BotMemoryId {
+  const digest = createHash('sha256').update(senderId).update('\0').update(callId).digest('hex')
+  return BotMemoryId(`memory-${digest}`)
+}
 
 /** Shared JSON renderer for compact model-facing Bot results. */
 function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
@@ -158,14 +165,17 @@ export function installBotCollaborationTools(
       description: 'Save one durable memory for this Bot when the user asks you to remember it. Future prompts use it as untrusted reference data; the result returns only its id and timestamp.',
       parameters: {
         text: { type: 'string', required: true, description: 'The concise fact or preference to remember.' },
-        memoryId: { type: 'string', description: 'Optional retry identity returned by a prior call.' },
+        memoryId: { type: 'string', description: 'Optional retry identity returned by a prior call; omitted calls use their stable tool-call identity.' },
       },
       output: jsonOutput(MEMORY_RECEIPT_SCHEMA),
       async execute(args, exec) {
-        const memory = (await bind()).memory
+        const client = await bind()
+        const memory = client.memory
         if (memory === undefined) throw new Error('Bot memory is unavailable.')
-        const memoryId = args.memoryId === undefined ? undefined : BotMemoryId(args.memoryId)
-        const result = await memory.remember({ text: args.text, signal: exec.signal, ...(memoryId === undefined ? {} : { memoryId }) })
+        const memoryId = args.memoryId === undefined
+          ? implicitMemoryId(String(client.sender.id), String(exec.callId))
+          : BotMemoryId(args.memoryId)
+        const result = await memory.remember({ text: args.text, memoryId, signal: exec.signal })
         return { id: result.id, createdAt: result.createdAt }
       },
     })))

@@ -22,7 +22,7 @@ import {
   BotMemoryId,
   normalizeBotMemoryText,
   parseBotMemoryId,
-  projectBotMemories,
+  projectBotMemoryState,
 } from './memory.ts'
 import type {
   BotMemoryClient,
@@ -64,6 +64,7 @@ export {
   BotMemoryId,
   normalizeBotMemoryText,
   parseBotMemoryId,
+  projectBotMemoryState,
   projectBotMemories,
 } from './memory.ts'
 export type {
@@ -271,6 +272,7 @@ export class BotService extends TypertRemoteService {
   private readonly initialized: PromiseLike<unknown>
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
+  private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
   private readonly pendingMemoryFlushes = new Map<string, Map<string, BotMemoryEvent['operation']>>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
@@ -498,7 +500,9 @@ export class BotService extends TypertRemoteService {
         ? await this.ctx.sessionController.inspect(record.sessionId)
         : await this.ctx.sessionController.inspect(record.sessionId, signal)
       this.throwIfMemoryCancelled(signal)
-      this.memoriesBySession.set(key, projectBotMemories(inspection.events, record.id))
+      const projection = projectBotMemoryState(inspection.events, record.id)
+      this.memoriesBySession.set(key, projection.memories)
+      this.forgottenMemoryIdsBySession.set(key, projection.forgotten)
     })()
     this.memoryLoads.set(key, load)
     try {
@@ -562,13 +566,19 @@ export class BotService extends TypertRemoteService {
   ): Promise<SessionEvent<'bot/memory'>> {
     const memories = this.memoriesBySession.get(String(sessionId))
     if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+    const forgotten = this.forgottenMemoryIdsBySession.get(String(sessionId))
+    if (forgotten === undefined) throw new Error('Bot memory tombstone projection was not initialized.')
     const session = await this.memorySession(sessionId, signal)
     this.throwIfMemoryCancelled(signal)
     const appended = session.append('bot/memory', event)
-    if (event.operation === 'remember') memories.set(String(event.memoryId), {
-      id: event.memoryId, text: event.text, createdAt: appended.time,
-    })
-    else memories.delete(String(event.memoryId))
+    if (event.operation === 'remember') {
+      memories.set(String(event.memoryId), { id: event.memoryId, text: event.text, createdAt: appended.time })
+      forgotten.delete(String(event.memoryId))
+    }
+    else {
+      memories.delete(String(event.memoryId))
+      forgotten.add(String(event.memoryId))
+    }
     try {
       if (!await this.ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       this.pendingMemoryFlushes.get(String(sessionId))?.delete(String(event.memoryId))
@@ -638,8 +648,10 @@ export class BotService extends TypertRemoteService {
       const id = parseBotMemoryId(String(request.memoryId))
       const memories = this.memoriesBySession.get(String(sessionId))
       if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+      const forgotten = this.forgottenMemoryIdsBySession.get(String(sessionId))
+      if (forgotten === undefined) throw new Error('Bot memory tombstone projection was not initialized.')
       if (!memories.has(String(id))) {
-        if (pending.get(String(id)) === 'forget') return
+        if (pending.get(String(id)) === 'forget' || forgotten.has(String(id))) return
         throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
       }
       await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'forget' }, signal)

@@ -38,7 +38,7 @@ Existing Session logs contain no bot/memory events and remain valid. New readers
 <a id="verification"></a>
 ## Verification
 
-CI=1 node_modules/.bin/vitest run packages/agents/bots/tests --maxWorkers=1: 5 files and 53 tests passed. pnpm run gen-persistence-catalog regenerated the event catalog and schema inventory; pnpm run gen-cordis-catalog refreshed the public Bot collaboration catalog.
+CI=1 node_modules/.bin/vitest run packages/agents/bots/tests --maxWorkers=1: 5 files and 55 tests passed. pnpm run gen-persistence-catalog regenerated the event catalog and schema inventory; pnpm run gen-cordis-catalog refreshed the public Bot collaboration catalog.
 
 <a id="dev-note"></a>
 ## Dev Note

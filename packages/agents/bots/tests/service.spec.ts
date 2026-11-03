@@ -25,6 +25,7 @@ async function harness(
     data: Uint8Array.of(1, 2, 3),
   })),
   existingSessionIds: readonly string[] = [],
+  existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -64,6 +65,10 @@ async function harness(
       cancel() {},
       runMaintenance: task => task(new AbortController().signal),
       whenIdle: () => Promise.resolve(),
+    }
+    for (const event of existingSessionEvents.get(sessionId) ?? []) {
+      if (event.type === 'bot/memory') agent.session.append('bot/memory', event.data)
+      else if (event.type === 'bot/dynamic-tool') agent.session.append('bot/dynamic-tool', event.data)
     }
     const scope = createScope(ctx, agent)
     Object.defineProperty(agent, 'ctx', { value: scope.ctx })
@@ -326,6 +331,56 @@ describe('durable Bot roster', () => {
       expect(events.filter(event => event.type === 'bot/memory' && event.data.operation === 'forget')).toHaveLength(1)
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('retains a durable forget tombstone across a native service restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Native restart owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const sessionId = String(created.bot.sessionId)
+    const firstRun = await harness(pool, undefined, undefined, [sessionId])
+    let events: readonly SessionEvent[] = []
+    try {
+      const agent = firstRun.agents[0]
+      if (agent === undefined) throw new Error('native restart Agent was not created')
+      const memory = (await firstRun.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('native restart memory was not bound')
+      const memoryId = BotMemoryId('memory-native-restart')
+      await memory.remember({ memoryId, text: 'Delete this after the native call.' })
+      const provider = firstRun.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native action provider was not mounted')
+      const forget = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'forget_bot_memory')
+      if (forget === undefined) throw new Error('native forget tool was not registered')
+      const context = {
+        callId: 'forget-restart-1', threadId: 'thread-restart', turnId: 'turn-restart', sessionId: created.bot.sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      await provider.observe({ phase: 'started', name: 'forget_bot_memory', callId: context.callId,
+        threadId: context.threadId, turnId: context.turnId, sessionId: created.bot.sessionId,
+        arguments: { memoryId: String(memoryId) } })
+      await expect(forget.execute({ memoryId: String(memoryId) }, context)).resolves.toMatchObject({ success: true })
+      events = agent.session.snapshotEvents()
+    } finally {
+      await close(firstRun.ctx)
+    }
+
+    const secondRun = await harness(pool, undefined, undefined, [sessionId], new Map([[sessionId, events]]))
+    try {
+      const provider = secondRun.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('restarted native action provider was not mounted')
+      const forget = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'forget_bot_memory')
+      if (forget === undefined) throw new Error('restarted native forget tool was not registered')
+      const result = await forget.execute({ memoryId: 'memory-native-restart' }, {
+        callId: 'forget-restart-2', threadId: 'thread-restart-2', turnId: 'turn-restart-2', sessionId: created.bot.sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result).toMatchObject({ success: true })
+      const memoryEvents = secondRun.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory') ?? []
+      expect(memoryEvents.filter(event => event.type === 'bot/memory' && event.data.operation === 'forget')).toHaveLength(1)
+    } finally {
+      await close(secondRun.ctx)
     }
   })
 

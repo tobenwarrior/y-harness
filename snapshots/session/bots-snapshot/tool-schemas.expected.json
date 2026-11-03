@@ -464,7 +464,7 @@
           },
           "memoryId": {
             "type": "string",
-            "description": "Optional retry identity returned by a prior call."
+            "description": "Optional retry identity returned by a prior call; omitted calls use their stable tool-call identity."
           }
         },
         "required": [

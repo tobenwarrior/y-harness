@@ -2,9 +2,10 @@ import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import { ToolCallId } from '@yharness/llm'
 import { createScope } from '@yharness/scope'
-import { SessionId } from '@yharness/session'
+import { Session, SessionId } from '@yharness/session'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
+import ApprovalService from '@yharness/user-approval'
 import { describe, expect, it, vi } from 'vitest'
 import {
   BotMessageId,
@@ -37,11 +38,17 @@ function client(): BotCollaborationClient {
   }
 }
 
-async function harness(withManagement = false) {
+async function harness(withManagement = false, withApproval = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
-  const agent = { id: SessionId('bot-session-alpha') } as Agent
+  if (withApproval) {
+    await ctx.plugin(ApprovalService, { policy: 'ask' })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+  }
+  const session = Session.create(SessionId('bot-session-alpha'))
+  session.append('turn/start', { turn: 1 })
+  const agent = { id: session.id, session } as Agent
   let scope!: ReturnType<typeof createScope>
   await ctx.plugin(Object.assign((inner: Context) => {
     scope = createScope(inner, agent)
@@ -107,5 +114,24 @@ describe('scoped Bot collaboration tools', () => {
     h.dispose()
     expect(h.ctx.tools.schemas(h.agent)).toEqual([])
     await h.ctx.fiber.dispose()
+  })
+
+  it('reuses one stable memory id when a scoped remember retry follows an uncertain result', async () => {
+    const h = await harness(false, true)
+    try {
+      const remember = vi.mocked(h.bound.memory!.remember)
+      remember.mockImplementationOnce(async () => { throw new Error('flush result was uncertain') })
+      const first = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' })
+      expect(first.isError).toBe(true)
+      const second = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' })
+      expect(second.isError).toBe(false)
+      const requests = remember.mock.calls.map(call => call[0])
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.memoryId).toBeDefined()
+      expect(requests[1]?.memoryId).toBe(requests[0]?.memoryId)
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
   })
 })
