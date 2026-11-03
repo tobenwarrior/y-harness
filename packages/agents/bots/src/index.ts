@@ -780,6 +780,11 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /** Serialize a provider memory list because recovery may append events. */
+  private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+    return this.serialize(() => this.readMemoryForSession(sessionId, signal))
+  }
+
   /** Load one Bot's memory projection from its durable Session log once. */
   private async ensureMemoryLoaded(record: BotRecord, signal?: AbortSignal): Promise<void> {
     this.throwIfMemoryCancelled(signal)
@@ -982,8 +987,8 @@ export class BotService extends TypertRemoteService {
     })
   }
 
-  /** List the active durable memories for the Bot that owns `sessionId`. */
-  private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+  /** Read the active durable memories while the caller owns serialization. */
+  private async readMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
     const bots = (await this.getDomain()).table('bots')
@@ -1299,7 +1304,7 @@ export class BotService extends TypertRemoteService {
       const bots = (await this.getDomain()).table('bots')
       const record = bots.get(id)
       if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      const memories = await this.listMemoryForSession(record.sessionId)
+      const memories = await this.readMemoryForSession(record.sessionId)
       return { memories: memories.map(memoryView) }
     })
   }

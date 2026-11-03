@@ -877,6 +877,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
       </Modal>}
       {memoryManager !== undefined && (
         <BotMemoryManager
+          key={bot.id}
           bot={bot}
           actions={memoryManager}
           loadAvatar={loadAvatar}

@@ -493,6 +493,48 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('does not return a stale memory while recovery and an update overlap', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Concurrent recovery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('concurrent recovery Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('concurrent recovery memory was not bound')
+      const memoryId = BotMemoryId('memory-concurrent-recovery')
+      await memory.remember({ memoryId, text: 'The original concurrent note.' })
+      h.flush.mockClear().mockResolvedValueOnce(false).mockResolvedValue(true)
+      await expect(h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The pending concurrent note.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+
+      let flushCalls = 0
+      let releaseRecovery!: () => void
+      const recoveryGate = new Promise<void>((resolve) => { releaseRecovery = resolve })
+      h.flush.mockImplementation(async () => {
+        flushCalls += 1
+        if (flushCalls === 2) await recoveryGate
+        return true
+      })
+
+      const updated = h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The final concurrent note.',
+      })
+      await vi.waitFor(() => { expect(flushCalls).toBe(2) })
+      const listed = memory.list()
+      releaseRecovery()
+
+      await expect(updated).resolves.toMatchObject({ memory: { text: 'The final concurrent note.' } })
+      await expect(listed).resolves.toMatchObject([{ text: 'The final concurrent note.' }])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('recovers a pending edit while resuming its cold Session during startup', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type { BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -162,6 +162,49 @@ describe('Bot roster and detail', () => {
     expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
     expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('does not apply a pending edit from the previous Bot after selection changes', async () => {
+    let resolveUpdate!: (memory: BotMemorySummary) => void
+    const pendingUpdate = new Promise<BotMemorySummary>((resolve) => { resolveUpdate = resolve })
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(async () => pendingUpdate),
+      remove: vi.fn(async () => {}),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
+    fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-shared', 'Updated research note') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
+    await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
+    expect(screen.queryByText('Updated research note')).toBeNull()
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {
