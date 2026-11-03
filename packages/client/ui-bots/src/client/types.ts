@@ -3,6 +3,7 @@ import type {
   BotAvatar as SharedBotAvatar,
   BotIdentity as SharedBotIdentity,
 } from '@yharness/bots/client'
+import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -78,14 +79,30 @@ export interface BotGroupMessageSummary {
     | { readonly kind: 'bot'; readonly botId: string; readonly name: string }
   /** User-visible message text. */
   readonly text: string
+  /** Exact Bot ids selected by mentions for this message, when it was targeted. */
+  readonly targetBotIds?: readonly string[]
   /** Unix timestamp used for stable transcript ordering. */
   readonly createdAt: number
+}
+
+/** Persisted per-recipient execution state projected into the group transcript. */
+export interface BotGroupDeliverySummary {
+  /** Source group message identity. */
+  readonly messageId: string
+  /** Recipient Bot identity. */
+  readonly botId: string
+  /** Durable delivery lifecycle. */
+  readonly status: SharedBotGroupDeliveryStatusView['status']
+  /** Safe failure description supplied by the Host after a failed turn. */
+  readonly error?: string
 }
 
 /** Selected shared group plus its durable transcript. */
 export interface BotGroupDetailData extends BotGroupSummary {
   /** Chronological transcript rows. */
   readonly messages: readonly BotGroupMessageSummary[]
+  /** Persisted per-recipient delivery state, when the Host supports it. */
+  readonly deliveries?: readonly BotGroupDeliverySummary[]
 }
 
 /** User choice passed to the owner when creating a shared group. */
@@ -97,6 +114,16 @@ export interface BotGroupCreation {
   /** Optional explicit retry/new-operation identity. */
   readonly groupId?: string
 
+}
+
+/** Group metadata and member selection submitted by the edit dialog. */
+export interface BotGroupUpdate {
+  /** Existing group identity. */
+  readonly groupId: string
+  /** New display name. */
+  readonly name: string
+  /** Complete member selection in display order. */
+  readonly botIds: readonly string[]
 }
 
 /** User choice passed to the owner when creating a bot. */
@@ -150,6 +177,9 @@ export interface BotWorkspaceProps {
 
   /** Create a shared group from existing Bot identities. */
   readonly onCreateGroup?: ((creation: BotGroupCreation) => Promise<void>) | undefined
+
+  /** Rename a shared group or replace its members. */
+  readonly onUpdateGroup?: ((update: BotGroupUpdate) => Promise<void>) | undefined
 
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined

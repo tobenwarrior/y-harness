@@ -83,6 +83,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('createGroup') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>
 
 /**
+ * Update a durable multi-Bot group from the human workspace.
+ * @param request - Group identity, name, and members.
+ * @returns The updated group.
+ */
+@Remote('updateGroup') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>
+
+/**
  * Read one durable group transcript.
  * @param request - Group identity.
  * @returns The group and its transcript.

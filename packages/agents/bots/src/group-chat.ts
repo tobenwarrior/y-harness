@@ -53,6 +53,8 @@ export interface BotGroupMessageRecord {
   readonly sender: BotGroupMessageSender
   /** User-visible text. */
   readonly text: string
+  /** Recipients selected by the author; omitted in legacy records that broadcast to the group. */
+  readonly targetBotIds?: readonly BotId[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
@@ -123,6 +125,8 @@ export interface BotGroupMessageView {
   readonly sender: BotGroupMessageSenderView
   /** User-visible text. */
   readonly text: string
+  /** Recipients selected by the author, in the original mention order. */
+  readonly targetBotIds?: readonly BotId[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
@@ -155,6 +159,22 @@ export interface BotGroupCreateValue {
   readonly group: BotGroupView
 }
 
+/** Group metadata and membership replacement request. */
+export interface BotGroupUpdateRequest {
+  /** Group to update. */
+  readonly groupId: BotGroupId
+  /** New non-empty display name. */
+  readonly name: string
+  /** Two through six existing Bot ids in their new display order. */
+  readonly botIds: readonly BotId[]
+}
+
+/** Group update response. */
+export interface BotGroupUpdateValue {
+  /** Updated group projection. */
+  readonly group: BotGroupView
+}
+
 /** Group transcript request. */
 export interface BotGroupInspectRequest {
   /** Group to inspect. */
@@ -167,6 +187,20 @@ export interface BotGroupInspectValue {
   readonly group: BotGroupView
   /** Durable messages in chronological order. */
   readonly messages: readonly BotGroupMessageView[]
+  /** Durable per-recipient state for the messages in this transcript. */
+  readonly deliveries?: readonly BotGroupDeliveryStatusView[]
+}
+
+/** Browser-safe per-recipient state for one persisted group delivery. */
+export interface BotGroupDeliveryStatusView {
+  /** Source group message identity. */
+  readonly messageId: BotGroupMessageId
+  /** Recipient Bot identity. */
+  readonly botId: BotId
+  /** Durable execution state. */
+  readonly status: BotGroupDeliveryRecord['status']
+  /** Safe user-facing failure description, when the Bot could not complete. */
+  readonly error?: string
 }
 
 /** Human or Bot group message request. */
@@ -177,6 +211,8 @@ export interface BotGroupSendRequest {
   readonly text: string
   /** Optional retry identity. */
   readonly messageId?: BotGroupMessageId
+  /** Optional targeted recipients; omitted messages are delivered to every other member. */
+  readonly targetBotIds?: readonly BotId[]
   /** Cancellation for delivery admission. */
   readonly signal?: AbortSignal
 }
@@ -189,6 +225,8 @@ export interface BotGroupSendRemoteRequest {
   readonly text: string
   /** Optional retry identity. */
   readonly messageId?: BotGroupMessageId
+  /** Optional targeted recipients; omitted messages are delivered to every group member. */
+  readonly targetBotIds?: readonly BotId[]
 }
 
 /** One recipient's group delivery outcome. */
@@ -274,8 +312,16 @@ export const botGroupMessageRecordSchema = z.object({
   groupId: groupIdSchema,
   sender: senderSchema,
   text: groupTextSchema,
+  targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
   createdAt: z.number().safe().int().nonnegative(),
-}).strict()
+}).strict().transform((value): BotGroupMessageRecord => ({
+  id: value.id,
+  groupId: value.groupId,
+  sender: value.sender,
+  text: value.text,
+  ...(value.targetBotIds === undefined ? {} : { targetBotIds: value.targetBotIds }),
+  createdAt: value.createdAt,
+}))
 
 /** Stored per-recipient delivery schema. */
 export const botGroupDeliveryRecordSchema = z.object({
@@ -355,9 +401,17 @@ function sameIds(left: readonly BotId[], right: readonly BotId[]): boolean {
   return left.every(id => rightSet.has(id))
 }
 
+function sameIdSet(left: readonly BotId[], right: readonly BotId[]): boolean {
+  if (left.length !== right.length) return false
+  const rightIds = new Set(right.map(String))
+  return new Set(left.map(String)).size === rightIds.size && left.every(id => rightIds.has(String(id)))
+}
+
 /** Durable group roster and fan-out delivery owner. */
 export class BotGroupService {
   private chain: Promise<unknown> = Promise.resolve()
+  private readonly externalDeliveries = new Set<Promise<void>>()
+  private readonly inFlightDeliveries = new Map<string, BotGroupDeliveryFlight>()
 
   /** @param domain - Open group domain. @param host - Bot roster and delivery capabilities. */
   constructor(
@@ -394,7 +448,7 @@ export class BotGroupService {
       const groups = this.domain.table('groups')
       const existing = groups.get(id)
       if (existing !== undefined) {
-        if (existing.name === name && sameIds(existing.botIds, botIds)) return { group: this.view(existing, bots) }
+        if (existing.name === name && sameIdSet(existing.botIds, botIds)) return { group: this.view(existing, bots) }
         throw new BotGroupError('invalid', `Bot group "${String(id)}" already exists with different metadata`)
       }
       const now = Date.now()
@@ -405,19 +459,85 @@ export class BotGroupService {
     })
   }
 
+  /** Update a group from the human workspace while preserving its durable identity. */
+  async update(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return this.updateInternal(request)
+  }
+
+  /** Update a group from a live member Bot after re-checking membership. */
+  async updateAsBot(senderBotId: BotId, request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return this.updateInternal(request, senderBotId)
+  }
+
+  private async updateInternal(request: BotGroupUpdateRequest, senderBotId?: BotId): Promise<BotGroupUpdateValue> {
+    return this.serialize(async () => {
+      const groupId = normalizeGroupId(request.groupId)
+      const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
+      const botIds = [...request.botIds]
+      if (botIds.length < 2) throw new BotGroupError('invalid', 'A Bot group must contain at least two Bots')
+      if (botIds.length > MAX_GROUP_MEMBERS) throw new BotGroupError('invalid', `A Bot group may contain at most ${String(MAX_GROUP_MEMBERS)} Bots`)
+      if (new Set(botIds.map(String)).size !== botIds.length) throw new BotGroupError('invalid', 'Bot group members must be unique')
+      const groups = this.domain.table('groups')
+      const group = groups.get(groupId)
+      if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
+      const bots = await this.host.listBots()
+      if (senderBotId !== undefined && !group.botIds.includes(senderBotId)) {
+        throw new BotGroupError('member-not-found', `Bot "${String(senderBotId)}" is not a member of this group`)
+      }
+      if (senderBotId !== undefined && !botIds.includes(senderBotId)) {
+        throw new BotGroupError('invalid', 'The Bot making this change must remain a member of the group')
+      }
+      for (const botId of botIds) {
+        const bot = bots.find(candidate => candidate.id === botId)
+        if (bot === undefined) throw new BotGroupError('member-not-found', `Bot "${String(botId)}" was not found`)
+        if (bot.state !== 'active') throw new BotGroupError('member-not-found', `Bot "${String(botId)}" is not active`)
+      }
+      if (group.name === name && sameIds(group.botIds, botIds)) return { group: this.view(group, bots) }
+      const updatedAt = Math.max(Date.now(), group.updatedAt)
+      const next = { ...group, name, botIds, updatedAt }
+      await groups.put(groupId, next)
+      this.host.changed?.()
+      return { group: this.view(next, bots) }
+    })
+  }
+
   /** Read one durable group transcript. */
   async inspect(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
     await this.chain
+    return this.inspectInternal(request)
+  }
+
+  /** Read one durable group transcript while authorizing the live member atomically. */
+  async inspectAsBot(senderBotId: BotId, request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
+    return this.serialize(async () => this.inspectInternal(request, senderBotId))
+  }
+
+  private async inspectInternal(request: BotGroupInspectRequest, senderBotId?: BotId): Promise<BotGroupInspectValue> {
     const id = normalizeGroupId(request.groupId)
-    const bots = await this.host.listBots()
     const group = this.domain.table('groups').get(id)
     if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(id)}" was not found`)
+    if (senderBotId !== undefined && !group.botIds.includes(senderBotId)) {
+      throw new BotGroupError('member-not-found', `Bot "${String(senderBotId)}" is not a member of this group`)
+    }
+    const bots = await this.host.listBots()
     const messages = [...this.domain.table('messages').entries()]
       .map(([, message]) => message)
       .filter(message => message.groupId === id)
       .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
       .map(message => this.messageView(message, bots))
-    return { group: this.view(group, bots), messages }
+    const messageIds = new Set(messages.map(message => String(message.id)))
+    const deliveries = [...this.domain.table('deliveries').entries()]
+      .map(([, delivery]) => delivery)
+      .filter(delivery => delivery.groupId === id && messageIds.has(String(delivery.messageId)))
+      .sort((left, right) => String(left.messageId).localeCompare(String(right.messageId))
+        || String(left.botId).localeCompare(String(right.botId)))
+      .map((delivery): BotGroupDeliveryStatusView => ({
+        messageId: delivery.messageId,
+        botId: delivery.botId,
+        status: delivery.status,
+        ...(delivery.error === undefined ? {} : { error: delivery.error }),
+      }))
+    return { group: this.view(group, bots), messages, deliveries }
   }
 
   /** Persist one human or Bot message, then fan it out to every intended recipient. */
@@ -430,80 +550,173 @@ export class BotGroupService {
     return this.sendInternal(request, senderBotId)
   }
 
-  private async sendInternal(request: BotGroupSendRequest, senderBotId?: BotId): Promise<BotGroupSendValue> {
-    return this.serialize(async () => {
-      const groupId = normalizeGroupId(request.groupId)
-      const text = normalizeText(request.text, 'Bot group message', MAX_MESSAGE_TEXT)
-      const group = this.domain.table('groups').get(groupId)
-      if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
-      const bots = await this.host.listBots()
-      const sender = senderBotId === undefined
-        ? ({ kind: 'user' } as const)
-        : this.sender(group, senderBotId, bots)
-      const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
-      const messageId = normalizeMessageId(request.messageId)
-      const messages = this.domain.table('messages')
-      let changed = false
-      const existing = messages.get(messageId)
-      if (existing !== undefined) {
-        if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
-          || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)) {
-          throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
+  private sendInternal(request: BotGroupSendRequest, senderBotId?: BotId): Promise<BotGroupSendValue> {
+    return this.trackExternal(this.sendInternalImpl(request, senderBotId))
+  }
+
+  private async sendInternalImpl(request: BotGroupSendRequest, senderBotId?: BotId): Promise<BotGroupSendValue> {
+    const createdFlights: Array<{ readonly id: string; readonly flight: BotGroupDeliveryFlight }> = []
+    let prepared: PreparedBotGroupSend
+    try {
+      prepared = await this.serialize(async () => {
+        const groupId = normalizeGroupId(request.groupId)
+        const text = normalizeText(request.text, 'Bot group message', MAX_MESSAGE_TEXT)
+        const group = this.domain.table('groups').get(groupId)
+        if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
+        const bots = await this.host.listBots()
+        const sender = senderBotId === undefined
+          ? ({ kind: 'user' } as const)
+          : this.sender(group, senderBotId, bots)
+        const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
+        const targetBotIds = this.recipientIds(group, sender, request.targetBotIds)
+        const messageId = normalizeMessageId(request.messageId)
+        const messages = this.domain.table('messages')
+        let changed = false
+        const existing = messages.get(messageId)
+        if (existing !== undefined) {
+          if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
+          || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
+          || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)) {
+            throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
+          }
+        } else {
+          await messages.put(messageId, {
+            id: messageId, groupId, sender, text, targetBotIds, createdAt: Date.now(),
+          })
+          changed = true
         }
-      } else {
-        await messages.put(messageId, {
-          id: messageId, groupId, sender, text, createdAt: Date.now(),
-        })
-        changed = true
-      }
-      const deliveries = this.domain.table('deliveries')
-      const outcomes: BotGroupDeliveryView[] = []
-      let admitted = false
-      for (const botId of group.botIds) {
-        if (sender.kind === 'bot' && sender.botId === botId) continue
-        const id = deliveryId(messageId, botId)
-        const current = deliveries.get(id)
-        if (current?.status === 'accepted' || current?.status === 'responded') {
-          outcomes.push({ botId, status: 'duplicate' })
-          continue
-        }
-        const pending: BotGroupDeliveryRecord = {
-          id, groupId, messageId, botId, status: 'pending', updatedAt: Date.now(),
-        }
-        if (current === undefined) await deliveries.put(id, pending)
-        if (current === undefined) changed = true
-        try {
-          const result = await this.host.deliverToBot({
-            targetBotId: botId,
-            groupId,
-            groupName: group.name,
+        const deliveries = this.domain.table('deliveries')
+        const outcomes = new Map<string, BotGroupDeliveryView>()
+        const pending: PreparedBotGroupDelivery[] = []
+        for (const botId of targetBotIds) {
+          const id = deliveryId(messageId, botId)
+          const current = deliveries.get(id)
+          if (current?.status === 'accepted' || current?.status === 'responded') {
+            outcomes.set(String(botId), { botId, status: 'duplicate' })
+            continue
+          }
+          const reservation: BotGroupDeliveryRecord = {
+            id, groupId, messageId, botId, status: 'pending', updatedAt: Date.now(),
+          }
+          if (current === undefined || current.status === 'failed') {
+            await deliveries.put(id, reservation)
+            changed = true
+          }
+          const flight = this.inFlightDeliveries.get(id)
+          const owner = flight === undefined
+          const nextFlight = flight ?? createBotGroupDeliveryFlight()
+          if (owner) {
+            this.inFlightDeliveries.set(id, nextFlight)
+            createdFlights.push({ id, flight: nextFlight })
+          }
+          pending.push({
+            id, groupId, messageId, botId, groupName: group.name, text,
+            flight: nextFlight,
+            owner,
             ...(senderName === undefined ? {} : { senderName }),
-            text,
-            messageId,
             ...(request.signal === undefined ? {} : { signal: request.signal }),
           })
-          const next: BotGroupDeliveryRecord = { ...pending, status: 'accepted', updatedAt: Date.now() }
-          await deliveries.put(id, next)
+        }
+        const updatedAt = Date.now()
+        if (updatedAt > group.updatedAt) {
+          await this.domain.table('groups').put(group.id, { ...group, updatedAt })
           changed = true
-          outcomes.push({ botId, status: result })
+        }
+        if (changed) this.host.changed?.()
+        return { groupId, messageId, pending, outcomes, targetBotIds }
+      })
+    } catch (error: unknown) {
+      for (const { id, flight } of createdFlights) {
+        if (this.inFlightDeliveries.get(id) === flight) this.inFlightDeliveries.delete(id)
+      }
+      throw error
+    }
+
+    for (const delivery of prepared.pending) {
+      if (delivery.owner) void this.deliverExternal(delivery)
+    }
+    const attempts = await Promise.all(prepared.pending.map(delivery => delivery.flight.promise))
+
+    try {
+      return await this.serialize(async () => {
+        const deliveries = this.domain.table('deliveries')
+        const groups = this.domain.table('groups')
+        let changed = false
+        let admitted = false
+        for (const attempt of attempts) {
+          const current = deliveries.get(attempt.delivery.id)
+          if (current !== undefined && (current.groupId !== attempt.delivery.groupId
+          || current.messageId !== attempt.delivery.messageId || current.botId !== attempt.delivery.botId)) {
+            prepared.outcomes.set(String(attempt.delivery.botId), {
+              botId: attempt.delivery.botId, status: 'failed', error: 'Bot delivery reservation changed before completion',
+            })
+            continue
+          }
+          if (current?.status === 'accepted' || current?.status === 'responded') {
+            prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: 'duplicate' })
+            admitted ||= current.status === 'responded'
+            continue
+          }
+          if (current?.status === 'failed') {
+            prepared.outcomes.set(String(attempt.delivery.botId), {
+              botId: attempt.delivery.botId, status: 'failed', error: current.error ?? 'Bot delivery failed',
+            })
+            continue
+          }
+          if (attempt.error !== undefined) {
+            const error = attempt.error
+            await deliveries.put(attempt.delivery.id, {
+              id: attempt.delivery.id,
+              groupId: attempt.delivery.groupId,
+              messageId: attempt.delivery.messageId,
+              botId: attempt.delivery.botId,
+              status: 'failed', error, updatedAt: Date.now(),
+            })
+            prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: 'failed', error })
+            changed = true
+            continue
+          }
+          const result = attempt.result
+          if (result === undefined) {
+            prepared.outcomes.set(String(attempt.delivery.botId), {
+              botId: attempt.delivery.botId, status: 'failed', error: 'Bot delivery did not return a result',
+            })
+            continue
+          }
+          const prior = current ?? {
+            id: attempt.delivery.id,
+            groupId: attempt.delivery.groupId,
+            messageId: attempt.delivery.messageId,
+            botId: attempt.delivery.botId,
+            status: 'pending' as const,
+            updatedAt: Date.now(),
+          }
+          await deliveries.put(attempt.delivery.id, { ...prior, status: 'accepted', updatedAt: Date.now() })
+          prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: result })
           admitted ||= result === 'accepted'
-        } catch (error: unknown) {
-          const detail = error instanceof Error ? error.message : String(error)
-          await deliveries.put(id, { ...pending, status: 'failed', error: detail.slice(0, 400), updatedAt: Date.now() })
           changed = true
-          outcomes.push({ botId, status: 'failed', error: detail.slice(0, 400) })
+        }
+        const group = groups.get(prepared.groupId)
+        if (changed && group !== undefined) {
+          await groups.put(group.id, { ...group, updatedAt: Math.max(Date.now(), group.updatedAt) })
+        }
+        if (changed) this.host.changed?.()
+        const deliveriesInOrder = prepared.targetBotIds.flatMap((botId) => {
+          const outcome = prepared.outcomes.get(String(botId))
+          return outcome === undefined ? [] : [outcome]
+        })
+        const status = deliveriesInOrder.some(outcome => outcome.status === 'failed')
+          ? 'partial'
+          : admitted ? 'accepted' : 'duplicate'
+        return { messageId: prepared.messageId, status, deliveries: deliveriesInOrder }
+      })
+    } finally {
+      for (const delivery of prepared.pending) {
+        if (delivery.owner && this.inFlightDeliveries.get(delivery.id) === delivery.flight) {
+          this.inFlightDeliveries.delete(delivery.id)
         }
       }
-      const hasFailure = outcomes.some(outcome => outcome.status === 'failed')
-      const status = hasFailure ? 'partial' : admitted ? 'accepted' : 'duplicate'
-      const updatedAt = Date.now()
-      if (updatedAt > group.updatedAt) {
-        await this.domain.table('groups').put(group.id, { ...group, updatedAt })
-        changed = true
-      }
-      if (changed) this.host.changed?.()
-      return { messageId, status, deliveries: outcomes }
-    })
+    }
   }
 
   /** Record the exact model turn and step that claimed one or more group messages. */
@@ -532,14 +745,14 @@ export class BotGroupService {
       }
       for (const claim of claims) {
         const group = groups.get(claim.groupId)
-        if (group === undefined || !group.botIds.includes(botId)) continue
+        if (group === undefined) continue
         const id = deliveryId(claim.messageId, botId)
         const delivery = deliveries.get(id)
         if (delivery === undefined
           || delivery.groupId !== claim.groupId
           || delivery.messageId !== claim.messageId
           || delivery.botId !== botId
-          || (delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
+          || (delivery.status !== 'pending' && delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
         const nextClaim: BotGroupDeliveryClaim = { turn, step, isolated }
         if (delivery.claim?.turn === turn && delivery.claim.step === step && delivery.claim.isolated === isolated) continue
         await deliveries.put(id, { ...delivery, claim: nextClaim, updatedAt: now })
@@ -561,6 +774,42 @@ export class BotGroupService {
     })
   }
 
+  /**
+   * Persist a failed model turn against its isolated group delivery.
+   *
+   * Queuing a message only proves that it entered the Bot Session. The turn
+   * end event is the durable evidence that the model either replied or failed;
+   * only an isolated, still-pending or accepted delivery can be changed here
+   * so private or already projected turns never leak into a group transcript.
+   * @param botId - Live Bot identity owning the model turn.
+   * @param turn - Durable model turn number.
+   * @param error - Safe user-facing failure description.
+   */
+  async recordBotTurnFailure(botId: BotId, turn: number, error: string): Promise<void> {
+    await this.serialize(async () => {
+      if (!Number.isSafeInteger(turn) || turn < 0) return
+      const safeError = normalizeText(error, 'Bot group failure', 400)
+      const deliveries = this.domain.table('deliveries')
+      const groups = this.domain.table('groups')
+      const now = Date.now()
+      let changed = false
+      for (const [id, delivery] of deliveries.entries()) {
+        const claim = delivery.claim
+        if (delivery.botId !== botId
+          || (delivery.status !== 'pending' && delivery.status !== 'accepted')
+          || claim === undefined
+          || claim.turn !== turn
+          || !claim.isolated) continue
+        const group = groups.get(delivery.groupId)
+        if (group === undefined) continue
+        await deliveries.put(id, { ...delivery, status: 'failed', error: safeError, updatedAt: now })
+        if (now > group.updatedAt) await groups.put(group.id, { ...group, updatedAt: now })
+        changed = true
+      }
+      if (changed) this.host.changed?.()
+    })
+  }
+
   /** Record one real Bot response against its one exact claimed group delivery. */
   async recordBotResponse(botId: BotId, turn: number, step: number, text: string, sourceMessageId: string): Promise<void> {
     await this.serialize(async () => {
@@ -574,7 +823,7 @@ export class BotGroupService {
       const candidates = [...deliveries.entries()]
         .map(([, delivery]) => delivery)
         .filter(delivery => delivery.botId === botId
-          && delivery.status === 'accepted'
+          && (delivery.status === 'pending' || delivery.status === 'accepted')
           && delivery.claim?.turn === turn
           && delivery.claim.isolated)
         .filter(delivery => delivery.claim !== undefined && delivery.claim.step <= step)
@@ -582,11 +831,10 @@ export class BotGroupService {
       const pending = candidates[0]
       if (pending === undefined) return
       const group = this.domain.table('groups').get(pending.groupId)
-      if (group === undefined || !group.botIds.includes(botId)) return
+      if (group === undefined) return
       const source = messages.get(pending.messageId)
       if (source === undefined) return
       if (source.groupId !== pending.groupId) return
-      if (source.sender.kind === 'bot' && !group.botIds.includes(source.sender.botId)) return
       const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
       let changed = false
@@ -606,13 +854,40 @@ export class BotGroupService {
 
   /** Wait until already-admitted group writes have settled before shutdown. */
   async whenIdle(): Promise<void> {
-    await this.chain
+    while (true) {
+      await this.chain
+      const pending = [...this.externalDeliveries]
+      if (pending.length === 0) return
+      await Promise.all(pending)
+    }
   }
 
   private sender(group: BotGroupRecord, botId: BotId, bots: readonly BotView[]): { readonly kind: 'bot'; readonly botId: BotId } {
     const bot = bots.find(candidate => candidate.id === botId)
     if (bot === undefined || !group.botIds.includes(botId)) throw new BotGroupError('member-not-found', `Bot "${String(botId)}" is not a member of this group`)
     return { kind: 'bot', botId }
+  }
+
+  private recipientIds(
+    group: BotGroupRecord,
+    sender: BotGroupMessageSender,
+    requested?: readonly BotId[],
+  ): readonly BotId[] {
+    const defaults = group.botIds.filter(botId => sender.kind !== 'bot' || botId !== sender.botId)
+    if (requested === undefined) return defaults
+    if (requested.length === 0 || requested.length > MAX_GROUP_MEMBERS) {
+      throw new BotGroupError('invalid', `Bot group targets must contain 1-${String(MAX_GROUP_MEMBERS)} members`)
+    }
+    if (new Set(requested.map(String)).size !== requested.length) {
+      throw new BotGroupError('invalid', 'Bot group targets must be unique')
+    }
+    for (const botId of requested) {
+      if (!group.botIds.includes(botId)) throw new BotGroupError('member-not-found', `Bot "${String(botId)}" is not a member of this group`)
+      if (sender.kind === 'bot' && sender.botId === botId) {
+        throw new BotGroupError('invalid', 'A Bot cannot target itself in a group message')
+      }
+    }
+    return [...requested]
   }
 
   private view(record: BotGroupRecord, bots: readonly BotView[]): BotGroupView {
@@ -643,6 +918,72 @@ export class BotGroupService {
     const pending = this.chain.then(work)
     this.chain = pending.catch(() => undefined)
     return pending
+  }
+
+  private trackExternal<T>(work: Promise<T>): Promise<T> {
+    const settled = work.then(() => undefined, () => undefined)
+    this.externalDeliveries.add(settled)
+    void settled.then(() => { this.externalDeliveries.delete(settled) })
+    return work
+  }
+
+  private async deliverExternal(delivery: PreparedBotGroupDelivery): Promise<void> {
+    try {
+      const result = await this.host.deliverToBot({
+        targetBotId: delivery.botId,
+        groupId: delivery.groupId,
+        groupName: delivery.groupName,
+        ...(delivery.senderName === undefined ? {} : { senderName: delivery.senderName }),
+        text: delivery.text,
+        messageId: delivery.messageId,
+        ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
+      })
+      delivery.flight.resolve({ delivery, result })
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error)
+      delivery.flight.resolve({ delivery, error: detail.slice(0, 400) || 'Bot delivery failed' })
+    }
+  }
+}
+
+interface PreparedBotGroupDelivery {
+  readonly id: string
+  readonly groupId: BotGroupId
+  readonly messageId: BotGroupMessageId
+  readonly botId: BotId
+  readonly groupName: string
+  readonly flight: BotGroupDeliveryFlight
+  readonly owner: boolean
+  readonly senderName?: string
+  readonly text: string
+  readonly signal?: AbortSignal
+}
+
+interface PreparedBotGroupSend {
+  readonly groupId: BotGroupId
+  readonly messageId: BotGroupMessageId
+  readonly pending: readonly PreparedBotGroupDelivery[]
+  readonly outcomes: Map<string, BotGroupDeliveryView>
+  readonly targetBotIds: readonly BotId[]
+}
+
+interface BotGroupDeliveryAttempt {
+  readonly delivery: PreparedBotGroupDelivery
+  readonly result?: 'accepted' | 'duplicate'
+  readonly error?: string
+}
+
+interface BotGroupDeliveryFlight {
+  readonly promise: Promise<BotGroupDeliveryAttempt>
+  readonly resolve: (attempt: BotGroupDeliveryAttempt) => void
+}
+
+function createBotGroupDeliveryFlight(): BotGroupDeliveryFlight {
+  let settle: ((attempt: BotGroupDeliveryAttempt) => void) | undefined
+  const promise = new Promise<BotGroupDeliveryAttempt>((resolve) => { settle = resolve })
+  return {
+    promise,
+    resolve: (attempt) => { settle?.(attempt) },
   }
 }
 

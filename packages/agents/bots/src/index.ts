@@ -11,6 +11,7 @@ import { admitEncodedImages } from '@yharness/attachment'
 import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
+import type { TurnEndReason } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
@@ -42,6 +43,8 @@ import type {
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
 } from './group-chat.ts'
@@ -120,7 +123,6 @@ export {
   BotGroupError,
   BotGroupId,
   BotGroupMessageId,
-  BotGroupService,
   botGroupDomain,
   botGroupRecordSchema,
   botGroupMessageRecordSchema,
@@ -133,12 +135,15 @@ export type {
   BotGroupDeliveryClaimInput,
   BotGroupDeliveryHost,
   BotGroupDeliveryRecord,
+  BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
   BotGroupDomain,
   BotGroupInspectRequest,
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
   BotGroupMemberView,
   BotGroupMessageRecord,
   BotGroupMessageSender,
@@ -186,7 +191,31 @@ function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonl
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
-const RUNTIME_CONTEXT_SOURCE: string = 'runtime-context'
+
+/** Context producers that the runtime may add while preparing a Bot step. */
+const SYNTHETIC_GROUP_CONTEXT_SOURCES: ReadonlySet<string> = new Set([
+  'runtime-context',
+  'agent-instructions',
+  'skill-catalog',
+  'model-selection',
+  'goal',
+  'plan-mode',
+  'time-context',
+  'tmux-context',
+  'repeat-tool-reminder',
+  'tool-jobs',
+  'tool-goal',
+])
+
+/**
+ * Return whether a user-role message is ambient context rather than a private
+ * request or a message authored by another Bot.
+ * @param message - model-visible user-role message under attribution review.
+ * @returns whether the runtime may ignore the message when isolating a group turn.
+ */
+function isSyntheticGroupContext(message: UserMessage): boolean {
+  return SYNTHETIC_GROUP_CONTEXT_SOURCES.has(message.source.kind)
+}
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -327,6 +356,34 @@ function botMemoryPrompt(memories: readonly BotMemoryRecord[]): string {
   ].join('\n')
 }
 
+/** Convert a durable turn outcome into a safe group-visible recovery message. */
+function groupTurnFailure(reason: TurnEndReason): string | undefined {
+  switch (reason.kind) {
+    case 'completed':
+    case 'forked':
+      return undefined
+    case 'error':
+      switch (reason.error.code) {
+        case 'MISSING_CREDENTIAL':
+          return 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.'
+        case 'INVALID_CREDENTIAL':
+          return 'This Bot could not reply because its provider credentials were rejected. Update the provider connection, then retry.'
+        default:
+          return 'This Bot could not complete its reply. Try again.'
+      }
+    case 'aborted':
+      return 'This Bot stopped before replying. Try again.'
+    case 'blocked':
+      return 'This Bot could not reply because the request was blocked. Try again.'
+    case 'max-tokens':
+      return 'This Bot reached its response limit before replying. Try again with a shorter request.'
+    case 'interrupted':
+      return 'This Bot stopped before replying. Try again.'
+    default:
+      return 'This Bot did not complete its reply. Try again.'
+  }
+}
+
 /** Replace legacy avatar selections without deleting their attachments. */
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
@@ -432,9 +489,18 @@ export class BotService extends TypertRemoteService {
       changed: () => this.emitChanged(),
     }))
     ctx.on('session/event', (session, event) => {
-      if (event.type !== 'assistant/message') return
       const record = this.recordsBySession.get(String(session.id))
       if (record === undefined) return
+      if (event.type === 'turn/end') {
+        const failure = groupTurnFailure(event.data.reason)
+        if (failure === undefined) return
+        void this.groupService.then(service => service.recordBotTurnFailure(record.id, event.data.turn, failure))
+          .catch((error: unknown) => {
+            ctx.logger.warn(`bots: group failure projection failed: ${error instanceof Error ? error.message : String(error)}`)
+          })
+        return
+      }
+      if (event.type !== 'assistant/message') return
       const text = event.data.message.content
         .flatMap(block => block.type === 'text' ? [block.text] : [])
         .join('\n')
@@ -456,15 +522,17 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
       const decision = await next()
       const record = this.recordsBySession.get(String(agent.id))
-      const claims = groupDeliveryClaims(messages)
-      if (record !== undefined && decision.kind === 'enter') {
+      const admittedMessages = (decision.kind === 'enter' ? decision.messages : messages)
+        .filter(message => !isSyntheticGroupContext(message))
+      const claims = groupDeliveryClaims(admittedMessages)
+      if (record !== undefined) {
         await this.groupService.then(service => service.recordBotMessageClaims(
           record.id,
           claims,
           turn,
           step,
-          isolatedGroupDelivery(messages, claims),
-          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
+          isolatedGroupDelivery(admittedMessages, claims),
+          admittedMessages.length > 0 && !isolatedGroupDelivery(admittedMessages, claims),
         ))
       }
       return decision
@@ -865,6 +933,16 @@ export class BotService extends TypertRemoteService {
   @Remote('createGroup')
   async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
     return (await this.getGroupService()).create(request)
+  }
+
+  /**
+   * Update a durable multi-Bot group from the human workspace.
+   * @param request - Group identity, name, and members.
+   * @returns The updated group.
+   */
+  @Remote('updateGroup')
+  async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return (await this.getGroupService()).update(request)
   }
 
   /**
@@ -1288,19 +1366,34 @@ export class BotService extends TypertRemoteService {
   private async reconcileGroupSession(agent: Agent): Promise<void> {
     const record = this.recordsBySession.get(String(agent.id))
     if (record === undefined) return
-    const inputs = new Map<string, { readonly turn: number; readonly step: number; readonly messages: UserMessage[] }>()
+    const inputs = new Map<string, {
+      readonly turn: number
+      readonly step: number
+      readonly rawMessages: UserMessage[]
+      readonly messages: UserMessage[]
+    }>()
     const inbox: { 'next-turn': UserMessage[]; 'next-step': UserMessage[] } = {
       'next-turn': [],
       'next-step': [],
     }
-    let rawInboxSeen = false
     let claimedForStep: UserMessage[] = []
     let turn = 0
     let step = 0
+    const admittedMessages = (input: {
+      readonly rawMessages: readonly UserMessage[]
+      readonly messages: readonly UserMessage[]
+    }): readonly UserMessage[] => {
+      const rawMessages = input.rawMessages.filter(message => !isSyntheticGroupContext(message))
+      const messages = input.messages.filter(message => !isSyntheticGroupContext(message))
+      if (messages.length === 0) return rawMessages
+      const hasUnloggedRawCompetingInput = messages.length === 1
+        && groupDeliveryClaims(messages).length > 0
+        && rawMessages.some(message => message.source.kind !== 'bot-group-message')
+      return hasUnloggedRawCompetingInput ? rawMessages : messages
+    }
     const inspection = await this.ctx.sessionController.inspect(agent.id)
     for (const event of inspection.events) {
       if (event.type === 'agent/inbox/spliced') {
-        rawInboxSeen = true
         const queue = inbox[event.data.target]
         const removed = queue.splice(
           event.data.start,
@@ -1315,7 +1408,7 @@ export class BotService extends TypertRemoteService {
         continue
       }
       if (event.type === 'turn/start') {
-        if (rawInboxSeen) claimedForStep = []
+        claimedForStep = []
         turn = event.data.turn
         step = 0
         continue
@@ -1326,32 +1419,58 @@ export class BotService extends TypertRemoteService {
         inputs.set(`${String(turn)}:${String(step)}`, {
           turn,
           step,
-          messages: rawInboxSeen ? claimedForStep.splice(0) : [],
+          rawMessages: claimedForStep.splice(0),
+          messages: [],
         })
         continue
       }
       if (event.type === 'user/message') {
-        // When inbox events are present, the pure deletion that admitted the
-        // step is authoritative. Surface appends can include synthetic notices
-        // or rewritten history that did not belong to that claim. Older logs
-        // without inbox events retain the append-only fallback for migration.
-        if (rawInboxSeen || event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
+        // Synthetic context and surface replacements are not admitted user input.
+        // Non-context appends identify a pre-step replacement that superseded
+        // the raw inbox claim, so they must win over the raw fallback.
+        if (event.surfaceOp !== 'append' || isSyntheticGroupContext(event.data)) continue
         const current = inputs.get(`${String(turn)}:${String(step)}`)
         if (current !== undefined) current.messages.push(event.data)
+        continue
+      }
+      if (event.type === 'turn/end') {
+        const failure = groupTurnFailure(event.data.reason)
+        if (failure === undefined) continue
+        const turnInputs = [...inputs.values()].filter(input => input.turn === event.data.turn)
+        if (claimedForStep.length > 0) {
+          turnInputs.push({ turn: event.data.turn, step: 0, rawMessages: claimedForStep, messages: [] })
+        }
+        await this.groupService.then(async (service) => {
+          for (const input of turnInputs) {
+            const messages = admittedMessages(input)
+            if (messages.length === 0) continue
+            const claims = groupDeliveryClaims(messages)
+            await service.recordBotMessageClaims(
+              record.id,
+              claims,
+              input.turn,
+              input.step,
+              isolatedGroupDelivery(messages, claims),
+              messages.length > 0 && !isolatedGroupDelivery(messages, claims),
+            )
+          }
+          await service.recordBotTurnFailure(record.id, event.data.turn, failure)
+        })
         continue
       }
       if (event.type !== 'assistant/message') continue
       const current = inputs.get(`${String(event.data.turn)}:${String(event.data.step)}`)
       if (current === undefined) continue
-      const claims = groupDeliveryClaims(current.messages)
+      const messages = admittedMessages(current)
+      const claims = groupDeliveryClaims(messages)
       await this.groupService.then(async (service) => {
         await service.recordBotMessageClaims(
           record.id,
           claims,
           event.data.turn,
           event.data.step,
-          isolatedGroupDelivery(current.messages, claims),
-          current.messages.length > 0 && !isolatedGroupDelivery(current.messages, claims),
+          isolatedGroupDelivery(messages, claims),
+          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
         )
         if (claims.length === 0) return
         const text = event.data.message.content
@@ -1369,28 +1488,18 @@ export class BotService extends TypertRemoteService {
     const record = this.recordsBySession.get(String(agent.id))
     if (record === undefined) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot')
     const service = await this.getGroupService()
-    const memberGroup = async (groupId: BotGroupInspectRequest['groupId']): Promise<void> => {
-      const listed = await service.list({})
-      const group = listed.groups.find(candidate => candidate.id === groupId)
-      if (group === undefined || !group.botIds.includes(record.id)) throw new Error(`Bot is not a member of group "${String(groupId)}"`)
-    }
     return {
       list: async () => {
         const listed = await service.list({})
         return { groups: listed.groups.filter(group => group.botIds.includes(record.id)) }
       },
-      inspect: async (request) => {
-        await memberGroup(request.groupId)
-        return service.inspect(request)
-      },
+      inspect: request => service.inspectAsBot(record.id, request),
       create: async (request) => {
         const botIds = [record.id, ...request.botIds.filter(botId => botId !== record.id)]
         return service.create({ ...request, botIds })
       },
-      send: async (request) => {
-        await memberGroup(request.groupId)
-        return service.sendAsBot(record.id, request)
-      },
+      send: request => service.sendAsBot(record.id, request),
+      update: async request => service.updateAsBot(record.id, request),
     }
   }
 

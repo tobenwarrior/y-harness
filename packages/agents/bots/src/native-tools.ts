@@ -87,7 +87,7 @@ const BOT_TOOL_NAMES = [
   'list_bots', 'inspect_bot', 'send_bot_message',
   'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
   'create_bot', 'edit_bot_profile',
-  'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'send_bot_group_message',
+  'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
 ] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
@@ -518,6 +518,10 @@ function stringArrayArgument(arguments_: JsonObject, key: string): readonly stri
   return values
 }
 
+function canonicalStringArray(values: readonly string[] | undefined): readonly string[] {
+  return values === undefined ? [] : [...new Set(values)].sort()
+}
+
 function effectiveGroupBotIds(senderId: string, botIds: readonly string[]): readonly string[] {
   return [...new Set([senderId, ...botIds.filter(botId => botId !== senderId)])].sort()
 }
@@ -533,6 +537,7 @@ function groupArgumentKey(name: string, arguments_: Readonly<Record<string, unkn
   return JSON.stringify([
     textArgument(arguments_, 'groupId') ?? '',
     textArgument(arguments_, 'text') ?? '',
+    canonicalStringArray(stringArrayArgument(arguments_, 'targetBotIds')),
     textArgument(arguments_, 'messageId') ?? '',
   ])
 }
@@ -585,9 +590,10 @@ function groupSendIdForEvent(senderId: string, event: NativeInvocation): BotGrou
   const groupId = textArgument(event.arguments, 'groupId')
   const text = textArgument(event.arguments, 'text')
   if (groupId === undefined || text === undefined) return undefined
+  const targetBotIds = stringArrayArgument(event.arguments, 'targetBotIds') ?? []
   const requested = textArgument(event.arguments, 'messageId')
   return requested === undefined
-    ? implicitGroupMessageId(senderId, event.threadId, event.turnId, groupId, text)
+    ? implicitGroupMessageId(senderId, event.threadId, event.turnId, groupId, text, targetBotIds)
     : BotGroupMessageId(requested)
 }
 
@@ -613,12 +619,14 @@ function priorPartialGroupMessageIds(
   events: readonly BotDynamicToolEvent[],
   groupId: string,
   text: string,
+  targetBotIds: readonly string[],
 ): readonly string[] {
   const unresolved = new Set<string>()
   for (const event of events) {
     if (event.name !== 'send_bot_group_message'
       || textArgument(event.arguments, 'groupId') !== groupId
-      || textArgument(event.arguments, 'text') !== text) continue
+      || textArgument(event.arguments, 'text') !== text
+      || JSON.stringify(canonicalStringArray(stringArrayArgument(event.arguments, 'targetBotIds'))) !== JSON.stringify(canonicalStringArray(targetBotIds))) continue
     const messageId = partialGroupMessageId(event)
     if (messageId !== undefined) {
       unresolved.add(messageId)
@@ -649,12 +657,15 @@ function implicitGroupMessageId(
   turnId: string,
   groupId: string,
   text: string,
+  targetBotIds: readonly string[] = [],
 ): BotGroupMessageId {
+  const canonicalTargets = canonicalStringArray(targetBotIds)
   const digest = createHash('sha256')
     .update(senderId).update('\0')
     .update(threadId).update('\0')
     .update(turnId).update('\0')
     .update(groupId).update('\0')
+    .update(canonicalTargets.join('\0')).update('\0')
     .update(text)
     .digest('hex')
   return BotGroupMessageId(`bot-group-message-codex-${digest}`)
@@ -668,6 +679,41 @@ function groupView(group: Awaited<ReturnType<BotGroupToolHost['list']>>['groups'
       ...(bot.description === undefined ? {} : { description: bot.description }),
       availability: bot.availability, state: bot.state,
     })),
+  }
+}
+
+function updateGroupTool(groups: BotGroupToolHost): BotNativeTool {
+  return {
+    name: 'update_bot_group',
+    description: 'Rename a persistent shared Bot group or replace its members when the user asks. The calling Bot must remain a member and this side effect requires approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        groupId: { type: 'string', description: 'The exact group id from list_bot_groups.' },
+        name: { type: 'string', description: 'The new display name for the group.' },
+        botIds: { type: 'array', items: { type: 'string' }, description: 'The complete replacement member list, including the calling Bot.' },
+      },
+      required: ['groupId', 'name', 'botIds'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot group editing is disabled by this Session approval policy.')
+      const groupId = textArgument(arguments_, 'groupId')
+      const name = textArgument(arguments_, 'name')
+      const botIds = stringArrayArgument(arguments_, 'botIds')
+      if (groupId === undefined || name === undefined || botIds === undefined) return failure('invalid-request', 'groupId, name, and botIds are required.')
+      let approved: boolean
+      try { approved = await context.requestApproval(`Edit shared Bot group "${groupId}".`) }
+      catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error) }
+      if (!approved) return failure('approval-denied', 'The Bot group was not edited.')
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      try {
+        const result = await groups.update({
+          groupId: BotGroupId(groupId), name, botIds: botIds.map(BotId),
+        })
+        return output({ group: groupView(result.group) })
+      } catch (error: unknown) { return groupFailure(error) }
+    },
   }
 }
 
@@ -765,8 +811,15 @@ function inspectGroupTool(groups: BotGroupToolHost): BotNativeTool {
           messages: result.messages.map(message => ({
             id: String(message.id), groupId: String(message.groupId), sender: message.sender,
             text: frameUntrustedTranscript(message.text),
+            ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
             createdAt: message.createdAt,
           })),
+          ...(result.deliveries === undefined ? {} : {
+            deliveries: result.deliveries.map(delivery => ({
+              messageId: String(delivery.messageId), botId: String(delivery.botId), status: delivery.status,
+              ...(delivery.error === undefined ? {} : { error: delivery.error }),
+            })),
+          }),
         })
       } catch (error: unknown) { return groupFailure(error) }
     },
@@ -910,6 +963,7 @@ function sendGroupTool(
       properties: {
         groupId: { type: 'string', description: 'The exact group id from list_bot_groups.' },
         text: { type: 'string', description: 'The message to deliver to the other group members.' },
+        targetBotIds: { type: 'array', items: { type: 'string' }, description: 'Optional exact Bot ids selected by @mentions.' },
         messageId: { type: 'string', description: 'Optional retry identity for an uncertain delivery.' },
       },
       required: ['groupId', 'text'], additionalProperties: false,
@@ -920,6 +974,7 @@ function sendGroupTool(
       const groupId = textArgument(arguments_, 'groupId')
       const text = textArgument(arguments_, 'text')
       if (groupId === undefined || text === undefined) return failure('invalid-request', 'groupId and text are required.')
+      const targetBotIds = stringArrayArgument(arguments_, 'targetBotIds')
       let approved: boolean
       try { approved = await context.requestApproval(`Send a message from ${client.sender.name} to shared Bot group "${groupId}".`) }
       catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error) }
@@ -937,7 +992,7 @@ function sendGroupTool(
       }
       if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
       const senderId = String(client.sender.id)
-      const partialMessageIds = priorPartialGroupMessageIds(replayed, groupId, text)
+      const partialMessageIds = priorPartialGroupMessageIds(replayed, groupId, text, targetBotIds ?? [])
       if (partialMessageIds.length > 0 && (requestedId === undefined || !partialMessageIds.includes(requestedId))) {
         return failure('uncertain-outcome', `A previous message to shared Bot group "${groupId}" was only partially delivered. Retry with the original messageId: ${partialMessageIds.join(', ')}.`)
       }
@@ -962,11 +1017,12 @@ function sendGroupTool(
         return failure('uncertain-outcome', `A previous message to shared Bot group "${groupId}" may already have been delivered.${suffix}`)
       }
       const messageId = requestedId === undefined
-        ? priorId ?? implicitGroupMessageId(senderId, context.threadId, context.turnId, groupId, text)
+        ? priorId ?? implicitGroupMessageId(senderId, context.threadId, context.turnId, groupId, text, targetBotIds ?? [])
         : BotGroupMessageId(requestedId)
       try {
         const result = await groups.send({
           groupId: BotGroupId(groupId), text,
+          ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(BotId) }),
           messageId,
           signal: context.signal,
         })
@@ -1049,6 +1105,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         ...(groups === undefined ? [] : [
           listGroupTool(groups), inspectGroupTool(groups),
           createGroupTool(groups, client, () => host.replay(sessionId)),
+          updateGroupTool(groups),
           sendGroupTool(groups, client, () => host.replay(sessionId)),
         ]),
       ]

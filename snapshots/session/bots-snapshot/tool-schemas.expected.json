@@ -523,7 +523,7 @@
     },
     {
       "name": "send_bot_group_message",
-      "description": "Send a message to every other Bot in a shared group when the user explicitly requests it; this action requires approval. Reusing the same group and text is retry-safe; provide messageId to intentionally send identical text again.",
+      "description": "Send a message to other Bots in a shared group when the user explicitly requests it; this action requires approval. Supply targetBotIds to address only mentioned members.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -535,6 +535,13 @@
           },
           "messageId": {
             "type": "string"
+          },
+          "targetBotIds": {
+            "type": "array",
+            "description": "Optional exact Bot ids selected by @mentions.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -687,6 +694,32 @@
         },
         "required": [
           "todos"
+        ]
+      }
+    },
+    {
+      "name": "update_bot_group",
+      "description": "Rename a shared Bot group or replace its members when requested; the calling Bot must remain a member and this action requires approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "botIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "groupId",
+          "name",
+          "botIds"
         ]
       }
     },

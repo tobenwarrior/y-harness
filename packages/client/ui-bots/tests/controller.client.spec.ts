@@ -470,7 +470,10 @@ describe('BotWorkspaceController', () => {
     const group = groupView('bot-group-release', 'Release room', [first, second])
     const detail: BotGroupInspectValue = {
       group,
+
       messages: [{ id: brandString<BotGroupMessageId>('bot-group-message-1'), groupId: group.id, sender: { kind: 'user' }, text: 'Plan it.', createdAt: 1 }],
+      deliveries: [{ messageId: brandString<BotGroupMessageId>('bot-group-message-1'), botId: second.id, status: 'failed', error: 'Provider credentials are missing.' }],
+
     }
     const remote = remoteFixture([first, second])
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
@@ -485,6 +488,9 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup?.name).toBe('Release room') })
 
     expect(controller.source.getSnapshot().selectedBotId).toBeNull()
+    expect(controller.source.getSnapshot().selectedGroup?.deliveries).toEqual([{
+      messageId: 'bot-group-message-1', botId: 'bot-second-group', status: 'failed', error: 'Provider credentials are missing.',
+    }])
     expect(controller.face().reference()).toBeUndefined()
     expect(directReference?.release).toHaveBeenCalledOnce()
     expect(remote.inspectGroup).toHaveBeenCalledWith({ groupId: group.id })
@@ -724,6 +730,37 @@ describe('BotWorkspaceController', () => {
     expect(remote.sendGroupMessage.mock.calls[0]?.[0].messageId).not.toBe(remote.sendGroupMessage.mock.calls[1]?.[0].messageId)
     expect(remote.sendGroupMessage.mock.calls[2]?.[0].messageId).toBe('bot-group-message-explicit-repeat')
     expect(remote.sendGroupMessage.mock.calls[3]?.[0].messageId).toBe('bot-group-message-explicit-repeat')
+    controller.dispose()
+  })
+
+  it('persists an edited group roster through the Remote and refreshes the selected group', async () => {
+    const first = bot('bot-first-update', 'session-first-update')
+    const second = bot('bot-second-update', 'session-second-update')
+    const third = bot('bot-third-update', 'session-third-update')
+    const group = groupView('bot-group-update', 'Original room', [first, second])
+    let currentGroup = group
+    const remote = remoteFixture([first, second, third])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [currentGroup] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group: currentGroup, messages: [] } }))
+    remote.updateGroup = vi.fn(async (request) => {
+      currentGroup = groupView(String(request.groupId), request.name, [first, third])
+      return { ok: true as const, value: { group: currentGroup } }
+    })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await controller.face().updateGroup({
+      groupId: String(group.id), name: 'Updated room', botIds: [String(first.id), String(third.id)],
+    })
+
+    expect(remote.updateGroup).toHaveBeenCalledWith({
+      groupId: group.id, name: 'Updated room', botIds: [first.id, third.id],
+    })
+    expect(controller.source.getSnapshot().selectedGroup).toMatchObject({
+      id: String(group.id), name: 'Updated room', bots: [{ id: first.id }, { id: third.id }],
+    })
     controller.dispose()
   })
 

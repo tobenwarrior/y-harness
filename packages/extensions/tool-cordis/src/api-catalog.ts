@@ -605,6 +605,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The created or existing group.',
       },
       {
+        signature: '@Remote(\'updateGroup\') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>',
+        description: 'Update a durable multi-Bot group from the human workspace.',
+        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
+        returns: 'The updated group.',
+      },
+      {
         signature: '@Remote(\'inspectGroup\') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>',
         description: 'Read one durable group transcript.',
         parameters: [{ name: 'request', description: 'Group identity.' }],
@@ -5442,6 +5448,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotGroupCreateValue {\n    readonly group: BotGroupView;\n}',
   },
   {
+    name: 'BotGroupDeliveryClaim',
+    declaration: 'export interface BotGroupDeliveryClaim {\n    readonly turn: number;\n    readonly step: number;\n    readonly isolated: boolean;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryRecord',
+    declaration: 'export interface BotGroupDeliveryRecord {\n    readonly id: string;\n    readonly groupId: BotGroupId;\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: \'pending\' | \'accepted\' | \'responded\' | \'failed\';\n    readonly responseMessageId?: BotGroupMessageId;\n    readonly error?: string;\n    readonly claim?: BotGroupDeliveryClaim;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryStatusView',
+    declaration: 'export interface BotGroupDeliveryStatusView {\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: BotGroupDeliveryRecord[\'status\'];\n    readonly error?: string;\n}',
+  },
+  {
     name: 'BotGroupDeliveryView',
     declaration: 'export interface BotGroupDeliveryView {\n    readonly botId: BotId;\n    readonly status: \'accepted\' | \'duplicate\' | \'failed\';\n    readonly error?: string;\n}',
   },
@@ -5455,7 +5473,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupInspectValue',
-    declaration: 'export interface BotGroupInspectValue {\n    readonly group: BotGroupView;\n    readonly messages: readonly BotGroupMessageView[];\n}',
+    declaration: 'export interface BotGroupInspectValue {\n    readonly group: BotGroupView;\n    readonly messages: readonly BotGroupMessageView[];\n    readonly deliveries?: readonly BotGroupDeliveryStatusView[];\n}',
   },
   {
     name: 'BotGroupListRequest',
@@ -5479,7 +5497,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupMessageView',
-    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly createdAt: number;\n}',
   },
   {
     name: 'BotGroupRecord',
@@ -5487,11 +5505,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupSendRemoteRequest',
-    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n}',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n}',
   },
   {
     name: 'BotGroupSendValue',
     declaration: 'export interface BotGroupSendValue {\n    readonly messageId: BotGroupMessageId;\n    readonly status: \'accepted\' | \'duplicate\' | \'partial\';\n    readonly deliveries: readonly BotGroupDeliveryView[];\n}',
+  },
+  {
+    name: 'BotGroupUpdateRequest',
+    declaration: 'export interface BotGroupUpdateRequest {\n    readonly groupId: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
+  },
+  {
+    name: 'BotGroupUpdateValue',
+    declaration: 'export interface BotGroupUpdateValue {\n    readonly group: BotGroupView;\n}',
   },
   {
     name: 'BotGroupView',
