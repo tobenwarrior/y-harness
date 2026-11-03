@@ -3687,8 +3687,12 @@ describe('durable Bot roster', () => {
         importId: 'untrusted-import',
       } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.approvalToken).toBeDefined()
+      if (preview.approvalToken === undefined) throw new Error('Expected an approval token')
       await expect(target.service.approveTemplate({
         shareCode: published.template.shareCode, fingerprint: '0'.repeat(64),
+        expectedPermissions: preview.localPermissions, approvalToken: preview.approvalToken,
       })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
 
       await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({

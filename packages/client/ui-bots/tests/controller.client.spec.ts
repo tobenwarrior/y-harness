@@ -562,7 +562,7 @@ describe('BotWorkspaceController', () => {
     remote.approveTemplate = vi.fn(async () => ({
       ok: true as const,
       value: {
-        template: { ...template, avatar: { mediaType: 'image/png', data: 'BAUG', bytes: 3, width: 1, height: 1 }, approved: true },
+        template: { ...template, avatar: { mediaType: 'image/png' as const, data: 'BAUG', bytes: 3, width: 1, height: 1 }, approved: true },
         localPermissions,
       },
     }))

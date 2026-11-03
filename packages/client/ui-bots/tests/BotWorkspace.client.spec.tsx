@@ -186,8 +186,8 @@ describe('Bot roster and detail', () => {
       persona: 'Summarize evidence before recommending action.',
       capabilities: ['chat', 'collaboration'],
       agentPreset: 'research-preset',
-      avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 1, height: 1 },
-      localPermissions: { status: 'resolved', preset: 'research-preset', tools: ['chat', 'read_file'] },
+      avatar: { mediaType: 'image/png' as const, data: 'AQID', bytes: 3, width: 1, height: 1 },
+      localPermissions: { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] },
     }
     const actions: BotTemplateActions = {
       setTemplateCode: vi.fn(),
