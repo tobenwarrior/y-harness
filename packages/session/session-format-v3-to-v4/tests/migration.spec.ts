@@ -120,12 +120,15 @@ describe('V3 to V4 source preservation', () => {
     expect(() => migrate([fact, { ...seed, data: {} }], { ...header, isSeeded: true })).toThrow('inherited event count')
   })
 
-  it('refuses target-generation delivery while retaining other generations unchanged', () => {
+  it('refuses each migration edge target delivery while retaining other generations unchanged', () => {
     expect(() => migrate([fact, delivery(4)])).toThrow('claims target format v4')
-    expect(() => restore([fact, delivery(4)])).toThrow('claims target format v4')
+    expect(() => restore([fact, delivery(5)])).toThrow('claims target format v5')
     for (const version of [undefined, 0, 1, 2, 3, 5, 99]) {
       const marker = delivery(version)
       expect(migrate([fact, marker]).events[1]).toBe(marker)
+    }
+    for (const version of [undefined, 0, 1, 2, 3, 99]) {
+      const marker = delivery(version)
       expect(restore([fact, marker]).events[1]).toEqual(marker)
     }
   })
