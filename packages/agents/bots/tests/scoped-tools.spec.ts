@@ -135,6 +135,13 @@ describe('scoped Bot collaboration tools', () => {
         name: 'Canonical room', botIds: ['bot-beta', ' bot-zeta '],
       }, 'create-canonical-second')
       expect(vi.mocked(h.groupTools.create).mock.calls[3]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[2]?.[0].id)
+      await execute(h.ctx, h.agent, 'create_bot_group', {
+        name: 'Self canonical room', botIds: ['bot-beta'],
+      }, 'create-self-omitted')
+      await execute(h.ctx, h.agent, 'create_bot_group', {
+        name: 'Self canonical room', botIds: ['bot-alpha', 'bot-beta'],
+      }, 'create-self-included')
+      expect(vi.mocked(h.groupTools.create).mock.calls[5]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[4]?.[0].id)
       const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-first')
       expect(sent.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-tool-/)
@@ -147,7 +154,7 @@ describe('scoped Bot collaboration tools', () => {
       await execute(h.ctx, h.agent, 'send_bot_group_message', {
         groupId: ' bot-group-room ', text: ' hello ', messageId: 'bot-group-message-explicit',
       }, 'send-explicit')
-      expect(vi.mocked(h.groupTools.create).mock.calls[4]?.[0].id).toBe('bot-group-explicit')
+      expect(vi.mocked(h.groupTools.create).mock.calls[6]?.[0].id).toBe('bot-group-explicit')
       expect(vi.mocked(h.groupTools.send).mock.calls[2]?.[0].messageId).toBe('bot-group-message-explicit')
     } finally {
       h.dispose()

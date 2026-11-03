@@ -114,6 +114,10 @@ function canonicalBotIds(botIds: readonly string[]): string[] {
   return botIds.map(botId => botId.trim()).sort()
 }
 
+function canonicalGroupMemberIds(senderId: string, botIds: readonly string[]): string[] {
+  return [...new Set([senderId, ...botIds].map(botId => botId.trim()))].sort()
+}
+
 /** Host-owned group operations bound to the live Bot that owns the scope. */
 export interface BotGroupToolHost {
   readonly list: () => Promise<BotGroupListValue>
@@ -221,8 +225,9 @@ export function installBotCollaborationTools(
         async execute(args) {
           const client = await bind()
           const botIds = canonicalBotIds(args.botIds)
+          const senderId = String(client.sender.id).trim()
           const groupId = args.groupId === undefined
-            ? scopedGroupId([String(client.sender.id), args.name.trim(), ...botIds].join('\u0000'))
+            ? scopedGroupId([senderId, args.name.trim(), ...canonicalGroupMemberIds(senderId, botIds)].join('\u0000'))
             : BotGroupId(args.groupId.trim())
           const value = await (await groups()).create({ id: groupId, name: args.name.trim(), botIds: botIds.map(BotId) })
           return {
