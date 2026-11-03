@@ -256,6 +256,11 @@ function createPendingGroupStore(): BotGroupPendingStore {
   }
 }
 
+type GroupRetryStorageMessage =
+  | 'groupRetryUnavailable'
+  | 'groupCreateRetryUnavailable' | 'groupCreateRetryCleanupFailed'
+  | 'groupSendRetryUnavailable' | 'groupSendRetryCleanupFailed'
+
 /** Owns the remote roster query and the selected Bot's single Session reference. */
 export class BotWorkspaceController {
   /** Observable roster state consumed by the Bot panel. */
@@ -285,6 +290,7 @@ export class BotWorkspaceController {
     private readonly avatarGeneration?: BotAvatarGenerationRemote,
     private readonly groupDeliveryFailure: () => string = unexpectedResponse,
     pendingGroupStore?: BotGroupPendingStore,
+    private readonly retryStorageMessage: (key: GroupRetryStorageMessage) => string = () => unexpectedResponse(),
   ) {
     this.pendingGroupStore = pendingGroupStore ?? createPendingGroupStore()
     const restored = this.pendingGroupStore.read()
@@ -322,7 +328,7 @@ export class BotWorkspaceController {
 
   private requirePendingDurability(): void {
     if (!this.pendingGroupStore.durable) {
-      throw new Error('Cannot safely start or retry a Bot group operation because retry persistence is unavailable.')
+      throw new Error(this.retryStorageMessage('groupRetryUnavailable'))
     }
   }
 
@@ -920,7 +926,7 @@ export class BotWorkspaceController {
       this.pendingGroupCreations.set(pendingKey, id)
       if (!this.persistPendingGroupOperations()) {
         this.pendingGroupCreations.delete(pendingKey)
-        const message = 'Cannot safely start Bot group creation because retry persistence is unavailable.'
+        const message = this.retryStorageMessage('groupCreateRetryUnavailable')
         this.setGroupError(message)
         throw new Error(message)
       }
@@ -943,7 +949,7 @@ export class BotWorkspaceController {
       this.pendingGroupCreations.delete(pendingKey)
       if (!this.persistPendingGroupOperations()) {
         this.pendingGroupCreations.set(pendingKey, id)
-        const message = 'Bot group creation succeeded, but retry state could not be cleared safely.'
+        const message = this.retryStorageMessage('groupCreateRetryCleanupFailed')
         this.setGroupError(message)
         throw new Error(message)
       }
@@ -1056,7 +1062,7 @@ export class BotWorkspaceController {
       })
       if (!this.persistPendingGroupOperations()) {
         this.pendingGroupMessages.delete(pendingKey)
-        const message = 'Cannot safely start Bot group messaging because retry persistence is unavailable.'
+        const message = this.retryStorageMessage('groupSendRetryUnavailable')
         this.setGroupError(message)
         throw new Error(message)
       }
@@ -1085,7 +1091,7 @@ export class BotWorkspaceController {
       this.pendingGroupMessages.delete(pendingKey)
       if (!this.persistPendingGroupOperations()) {
         this.pendingGroupMessages.set(pendingKey, { text: normalizedText, messageId })
-        const message = 'Bot message delivery succeeded, but retry state could not be cleared safely.'
+        const message = this.retryStorageMessage('groupSendRetryCleanupFailed')
         this.setGroupError(message)
         throw new Error(message)
       }
