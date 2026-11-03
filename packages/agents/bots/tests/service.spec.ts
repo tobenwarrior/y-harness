@@ -3835,14 +3835,15 @@ describe('durable Bot roster', () => {
     if (scope === undefined) throw new Error('skill policy test Agent has no scope')
     try {
       await expect(h.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        revision: 0,
         policy: { mode: 'all', enabled: [], disabled: [] },
         skills: [{ name: 'code-review', enabled: true }, { name: 'release-notes', enabled: true }],
       })
       await expect(h.service.updateSkills({
-        botId: created.bot.id, mode: 'selected', enabled: ['not valid'], disabled: [],
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['not valid'], disabled: [],
       })).rejects.toThrow('Bot skill name')
       await h.service.updateSkills({
-        botId: created.bot.id, mode: 'selected', enabled: ['code-review', 'code-review'], disabled: [],
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review', 'code-review'], disabled: [],
       })
       const scoped = await h.ctx.skills.list({ scope })
       expect(scoped.map(skill => [skill.name, skill.invocation.modelInvocable])).toEqual([
@@ -3861,10 +3862,33 @@ describe('durable Bot roster', () => {
     const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
     try {
       await expect(reopened.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        revision: 1,
         policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
       })
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('rejects a stale full-policy write after another actor revokes a skill', async () => {
+    const h = await harness()
+    try {
+      const { bot } = await h.service.create({ name: 'Concurrent skill owner', cwd: '/tmp' })
+      await expect(h.service.updateSkills({
+        botId: bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
+      })).resolves.toMatchObject({ revision: 1, policy: { mode: 'selected', enabled: ['code-review'] } })
+      await expect(h.service.updateSkills({
+        botId: bot.id, expectedRevision: 0, mode: 'all', enabled: [], disabled: [],
+      })).rejects.toMatchObject({
+        code: 'bot/skill-policy-conflict',
+        details: { botId: bot.id, expectedRevision: 0, actualRevision: 1 },
+      })
+      await expect(h.service.listSkills({ botId: bot.id })).resolves.toMatchObject({
+        revision: 1,
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+      })
+    } finally {
+      await close(h.ctx)
     }
   })
 

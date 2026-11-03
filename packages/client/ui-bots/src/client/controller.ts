@@ -72,6 +72,7 @@ import type {
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotSkillManagerActions, BotSkillPolicy,
   BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
+import { BotSkillPolicyConflictError } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
@@ -1505,10 +1506,11 @@ export class BotWorkspaceController {
     }
     const valueOf = (value: BotSkillListValue, id: string): {
       readonly policy: BotSkillPolicy
+      readonly revision: number
       readonly skills: BotSkillListValue['skills']
     } => {
       if (String(value.bot.id) !== id) throw new Error(this.unexpectedResponse())
-      return { policy: value.policy, skills: value.skills }
+      return { policy: value.policy, revision: value.revision, skills: value.skills }
     }
     return {
       list: async (botId) => {
@@ -1516,14 +1518,20 @@ export class BotWorkspaceController {
         if (!result.ok) throw new Error(result.error.message)
         return valueOf(result.value, botId)
       },
-      update: async (botId, policy) => {
+      update: async (botId, policy, expectedRevision) => {
         const result = await updateSkills({
           botId: brandString<BotIdType>(botId),
+          expectedRevision,
           mode: policy.mode,
           enabled: policy.enabled,
           disabled: policy.disabled,
         })
-        if (!result.ok) throw new Error(result.error.message)
+        if (!result.ok) {
+          if (result.error.code === 'bot/skill-policy-conflict') {
+            throw new BotSkillPolicyConflictError(result.error.message)
+          }
+          throw new Error(result.error.message)
+        }
         if (!this.disposed) {
           const current = this.source.getSnapshot()
           this.source.set({

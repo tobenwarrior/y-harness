@@ -106,6 +106,8 @@ export interface BotRecord {
   readonly agentPreset?: string | undefined
   /** Optional host-local skill discovery policy; absent means all available skills. */
   readonly skillPolicy?: BotSkillPolicy | undefined
+  /** Monotonic compare-and-swap revision for host-local skill policy updates. */
+  readonly skillPolicyRevision?: number | undefined
   /** Whether the row has completed Session provisioning. */
   readonly state: BotProvisioningState
   /** Creation time in Unix milliseconds. */
@@ -115,7 +117,7 @@ export interface BotRecord {
 }
 
 /** Browser-facing Bot row enriched with live availability. */
-export type BotView = Omit<BotRecord, 'ownerId'> & {
+export type BotView = Omit<BotRecord, 'ownerId' | 'skillPolicyRevision'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
   /** Whether the Bot is kept at the top of its roster view. */
@@ -326,6 +328,8 @@ export interface BotSkillListValue {
   readonly bot: BotView
   /** Current canonical policy, defaulting to all for legacy rows. */
   readonly policy: BotSkillPolicy
+  /** Monotonic revision required for the next policy replacement. */
+  readonly revision: number
   /** Available local skills and their current decisions. */
   readonly skills: readonly BotSkillAccess[]
 }
@@ -334,6 +338,8 @@ export interface BotSkillListValue {
 export interface BotSkillUpdateRequest {
   /** Bot whose skill policy should change. */
   readonly botId: BotId
+  /** Revision returned by the latest list; stale replacements are rejected. */
+  readonly expectedRevision: number
   /** Whether the Bot receives every skill or only the enabled names. */
   readonly mode: BotSkillPolicy['mode']
   /** Skill names explicitly enabled in selected mode. */
@@ -348,6 +354,8 @@ export interface BotSkillUpdateValue {
   readonly bot: BotView
   /** Canonical policy written for the Bot. */
   readonly policy: BotSkillPolicy
+  /** Monotonic revision after the policy replacement. */
+  readonly revision: number
 }
 
 /** Browser-safe view of one active memory owned by a Bot. */
@@ -418,6 +426,12 @@ declare module '@yharness/typert-protocol' {
     'bot/avatar-missing': { readonly botId: BotId }
     /** The requested connected MCP app is not currently available. */
     'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
+    /** A Bot skill policy replacement was based on an older revision. */
+    'bot/skill-policy-conflict': {
+      readonly botId: BotId
+      readonly expectedRevision: number
+      readonly actualRevision: number
+    }
   }
 }
 

@@ -12,6 +12,7 @@ import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary,
   BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
 } from '../src/client/types.ts'
+import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -386,6 +387,7 @@ describe('Bot roster and detail', () => {
     const actions: BotSkillManagerActions = {
       list: vi.fn(async () => ({
         policy: initialPolicy,
+        revision: 0,
         skills: [
           { name: 'code-review', description: 'Review code', enabled: true, available: true },
           { name: 'release-notes', description: 'Write release notes', enabled: true, available: true },
@@ -416,9 +418,85 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Allow code-review' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => {
-      expect(actions.update).toHaveBeenCalledWith('research', { mode: 'selected', enabled: ['code-review'], disabled: [] })
+      expect(actions.update).toHaveBeenCalledWith('research', { mode: 'selected', enabled: ['code-review'], disabled: [] }, 0)
     })
     expect(screen.queryByRole('dialog', { name: 'Bot skills' })).toBeNull()
+  })
+
+  it('shows selected-mode denied skills as disabled and clears the deny when granted', async () => {
+    const policy: BotSkillPolicy = { mode: 'selected', enabled: ['release-notes'], disabled: ['code-review'] }
+    const update = vi.fn(async (_botId: string, next: BotSkillPolicy) => ({ policy: next }))
+    const actions: BotSkillManagerActions = {
+      list: vi.fn(async () => ({
+        policy,
+        skills: [
+          { name: 'code-review', description: 'Review code', enabled: false, available: true },
+          { name: 'release-notes', description: 'Write release notes', enabled: true, available: true },
+        ],
+        revision: 1,
+      })),
+      update,
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    const denied = within(dialog).getByRole('checkbox', { name: 'Allow code-review' }) as HTMLInputElement
+    expect(denied.checked).toBe(false)
+    fireEvent.click(denied)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
+    await waitFor(() => {
+      expect(update).toHaveBeenCalledWith('research', {
+        mode: 'selected', enabled: ['code-review', 'release-notes'], disabled: [],
+      }, 1)
+    })
+  })
+
+  it('requires a reload after a concurrent skill policy conflict', async () => {
+    const initialPolicy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+    const latestPolicy: BotSkillPolicy = { mode: 'selected', enabled: ['code-review'], disabled: [] }
+    const list = vi.fn<BotSkillManagerActions['list']>()
+      .mockResolvedValueOnce({
+        policy: initialPolicy,
+        revision: 0,
+        skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
+      })
+      .mockResolvedValueOnce({
+        policy: latestPolicy,
+        revision: 1,
+        skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
+      })
+    const update = vi.fn<BotSkillManagerActions['update']>().mockRejectedValue(
+      new BotSkillPolicyConflictError('Skill policy changed elsewhere'),
+    )
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={{ list, update }}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('changed elsewhere') })
+    expect((within(dialog).getByRole('button', { name: 'Save skills' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Reload skills' }))
+    await waitFor(() => {
+      expect(list).toHaveBeenCalledTimes(2)
+      expect((within(dialog).getByRole('button', { name: 'Save skills' }) as HTMLButtonElement).disabled).toBe(false)
+    })
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {

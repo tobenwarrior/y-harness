@@ -13,6 +13,7 @@ import type {
   BotSummary,
   BotWorkspaceProps,
 } from './types.ts'
+import { BotSkillPolicyConflictError } from './types.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
@@ -37,7 +38,8 @@ function sortedNames(names: readonly string[]): string[] {
 }
 
 function hasSkill(policy: BotSkillPolicy, name: string): boolean {
-  return policy.mode === 'all' ? !policy.disabled.includes(name) : policy.enabled.includes(name)
+  if (policy.disabled.includes(name)) return false
+  return policy.mode === 'all' || policy.enabled.includes(name)
 }
 
 function toggleSkill(policy: BotSkillPolicy, name: string): BotSkillPolicy {
@@ -46,6 +48,13 @@ function toggleSkill(policy: BotSkillPolicy, name: string): BotSkillPolicy {
       ? policy.disabled.filter(candidate => candidate !== name)
       : [...policy.disabled, name]
     return { ...policy, disabled: sortedNames(disabled) }
+  }
+  if (policy.disabled.includes(name)) {
+    return {
+      ...policy,
+      enabled: sortedNames([...policy.enabled, name]),
+      disabled: policy.disabled.filter(candidate => candidate !== name),
+    }
   }
   const enabled = policy.enabled.includes(name)
     ? policy.enabled.filter(candidate => candidate !== name)
@@ -61,10 +70,11 @@ function skillLabel(skill: BotSkillSummary, t: Translate): string {
 export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }: BotSkillsManagerProps): ReactNode {
   const [skills, setSkills] = useState<readonly BotSkillSummary[]>([])
   const [policy, setPolicy] = useState<BotSkillPolicy>({ mode: 'all', enabled: [], disabled: [] })
+  const [revision, setRevision] = useState(0)
   const [loading, setLoading] = useState(false)
   const [working, setWorking] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const [error, setError] = useState<'load' | 'save' | null>(null)
+  const [error, setError] = useState<'load' | 'save' | 'conflict' | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -75,6 +85,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
       if (!live) return
       setSkills(value.skills)
       setPolicy(value.policy)
+      setRevision(value.revision)
     }).catch(() => {
       if (live) setError('load')
     }).finally(() => {
@@ -88,11 +99,11 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
     setWorking(true)
     setError(null)
     try {
-      const value = await actions.update(bot.id, policy)
+      const value = await actions.update(bot.id, policy, revision)
       setPolicy(value.policy)
       onClose()
-    } catch {
-      setError('save')
+    } catch (error: unknown) {
+      setError(error instanceof BotSkillPolicyConflictError ? 'conflict' : 'save')
     } finally {
       setWorking(false)
     }
@@ -102,7 +113,9 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
     ? t('skillsLoadFailed')
     : error === 'save'
       ? t('skillsSaveFailed')
-      : undefined
+      : error === 'conflict'
+        ? t('skillsConflict')
+        : undefined
 
   return (
     <Modal
@@ -116,7 +129,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
       footer={(
         <>
           <Button variant="ghost" onClick={onClose} disabled={working}>{t('close')}</Button>
-          <Button variant="primary" onClick={() => { void save() }} disabled={working || loading || error === 'load'}>
+          <Button variant="primary" onClick={() => { void save() }} disabled={working || loading || error === 'load' || error === 'conflict'}>
             {working ? t('skillsSaving') : t('skillsSave')}
           </Button>
         </>
@@ -129,7 +142,16 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
           <span>{t('skillsHostLocalHint')}</span>
         </span>
       </div>
-      {errorText !== undefined && <div className={css.skillsNotice} role="alert">{errorText}</div>}
+      {errorText !== undefined && (
+        <div className={css.skillsNotice} role="alert">
+          <span>{errorText}</span>
+          {error === 'conflict' && (
+            <Button variant="outline" size="sm" onClick={() => { setLoadAttempt(value => value + 1) }}>
+              {t('skillsReload')}
+            </Button>
+          )}
+        </div>
+      )}
       {loading && <div className={css.skillsLoading} role="status"><StateDot state="ongoing" size={13} />{t('skillsLoading')}</div>}
       {!loading && error === 'load' && (
         <div className={css.skillsEmpty}>
@@ -139,7 +161,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
       )}
       {!loading && error !== 'load' && (
         <>
-          <fieldset className={css.skillsModes} disabled={working}>
+          <fieldset className={css.skillsModes} disabled={working || error === 'conflict'}>
             <legend className={css.dialogLabel}>{t('skillsModeLabel')}</legend>
             <label className={css.skillsModeOption}>
               <input
@@ -168,7 +190,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
               </div>
             )
             : (
-              <fieldset className={css.skillsList} disabled={working}>
+              <fieldset className={css.skillsList} disabled={working || error === 'conflict'}>
                 <legend className={css.dialogLabel}>{t('skillsListLabel')}</legend>
                 {skills.map((skill) => {
                   const label = skillLabel(skill, t)

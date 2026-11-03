@@ -53,6 +53,8 @@ export const en = {
   skillsSaving: 'Saving…',
   skillsLoadFailed: 'The local skills could not be loaded. Try again.',
   skillsSaveFailed: 'The skill policy could not be saved. Try again.',
+  skillsConflict: 'This Bot skill policy changed elsewhere. Reload before saving again.',
+  skillsReload: 'Reload skills',
   skillFallbackName: 'Unnamed skill',
   grantSkill: 'Allow {name}',
   revokeSkill: 'Do not allow {name}',

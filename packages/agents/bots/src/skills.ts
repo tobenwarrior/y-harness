@@ -1,5 +1,6 @@
 import type {
   SkillCandidate,
+  SkillDefinition,
   SkillLookupOptions,
   SkillProvider,
   SkillRegistry,
@@ -105,6 +106,18 @@ function projectedCandidate(candidate: SkillCandidate, allowed: boolean): SkillC
   }
 }
 
+function deniedDefinition(candidate: Pick<SkillCandidate, 'name' | 'description' | 'whenToUse'>): SkillDefinition {
+  return {
+    name: candidate.name,
+    description: candidate.description,
+    ...(candidate.whenToUse === undefined ? {} : { whenToUse: candidate.whenToUse }),
+    invocation: { modelInvocable: false, userInvocable: false },
+    source: 'runtime',
+    provider: 'bot-skill-policy',
+    content: '',
+  }
+}
+
 /**
  * Build a scoped provider that enforces one Bot's skill policy before bodies load.
  * @param registry - registry used to read inherited host and preset skills.
@@ -130,17 +143,12 @@ export function createBotSkillPolicyProvider(
     async get(candidate, options) {
       const currentPolicy = policy()
       if (!botSkillPolicyAllows(currentPolicy, candidate.name)) {
-        return {
-          name: candidate.name,
-          description: candidate.description,
-          ...(candidate.whenToUse === undefined ? {} : { whenToUse: candidate.whenToUse }),
-          invocation: { modelInvocable: false, userInvocable: false },
-          source: 'runtime',
-          provider: 'bot-skill-policy',
-          content: '',
-        }
+        return deniedDefinition(candidate)
       }
-      return registry.get(candidate.name, parentOptions(options))
+      const definition = await registry.get(candidate.name, parentOptions(options))
+      return botSkillPolicyAllows(policy(), candidate.name)
+        ? definition
+        : deniedDefinition(candidate)
     },
   }
 }

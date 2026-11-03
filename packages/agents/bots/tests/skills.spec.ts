@@ -82,4 +82,29 @@ describe('Bot skill policy', () => {
     expect(list).toHaveBeenCalledOnce()
     expect(get).toHaveBeenCalledOnce()
   })
+
+  it('rechecks the current policy after a delayed body load', async () => {
+    const candidate: SkillCandidate = {
+      name: 'release-notes', description: 'Write release notes',
+      invocation: { modelInvocable: true, userInvocable: true },
+      provider: 'bundled', source: 'bundled', rank: 600, locator: 'release-notes',
+    }
+    let current: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+    let releaseBody!: (definition: SkillDefinition) => void
+    const body = new Promise<SkillDefinition>((resolve) => { releaseBody = resolve })
+    const provider = createBotSkillPolicyProvider({
+      list: async () => [candidate],
+      get: async () => body,
+    }, undefined, () => current)
+
+    const loading = provider.get(candidate, { cwd: '/workspace' })
+    current = { mode: 'all', enabled: [], disabled: ['release-notes'] }
+    releaseBody({ ...candidate, content: 'The revoked body must not be returned.' })
+
+    await expect(loading).resolves.toMatchObject({
+      name: 'release-notes',
+      invocation: { modelInvocable: false, userInvocable: false },
+      content: '',
+    })
+  })
 })

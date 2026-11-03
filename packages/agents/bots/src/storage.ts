@@ -112,6 +112,7 @@ export const botRecordSchema = z.object({
     message: 'Agent presets must not have surrounding whitespace',
   }).optional(),
   skillPolicy: botSkillPolicySchema.optional(),
+  skillPolicyRevision: z.number().safe().int().nonnegative().optional(),
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
@@ -136,8 +137,8 @@ export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 /** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 6,
-  compatibleVersions: [1, 2, 3, 4, 5],
+  version: 7,
+  compatibleVersions: [1, 2, 3, 4, 5, 6],
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,

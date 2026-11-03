@@ -1497,11 +1497,12 @@ export class BotService extends TypertRemoteService {
     const record = bots.get(id)
     if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
     const policy = normalizeBotSkillPolicy(record.skillPolicy)
+    const revision = record.skillPolicyRevision ?? 0
     const agent = this.ctx.agents.get(record.sessionId)
     const registry = agent === undefined
       ? this.ctx.get('skills')
       : this.ctx.get('agentPresets')?.serviceFor(agent, 'skills') ?? agent.ctx.get('skills') ?? this.ctx.get('skills')
-    if (registry === undefined) return { bot: this.view(record), policy, skills: [] }
+    if (registry === undefined) return { bot: this.view(record), policy, revision, skills: [] }
     const agentScope = agent === undefined ? undefined : scopeOf(agent.ctx)
     let scope = agentScope === undefined ? undefined : scopeParentOf(agentScope)
     let releasePreset: (() => Promise<void>) | undefined
@@ -1523,6 +1524,7 @@ export class BotService extends TypertRemoteService {
       return {
         bot: this.view(record),
         policy,
+        revision,
         skills: summaries.map(skill => projectBotSkillSummary(skill, policy)),
       }
     } finally {
@@ -1543,21 +1545,37 @@ export class BotService extends TypertRemoteService {
       const bots = (await this.getDomain()).table('bots')
       const current = bots.get(id)
       if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+        return badRequest('Bot skill policy revision must be a non-negative safe integer')
+      }
+      const currentRevision = current.skillPolicyRevision ?? 0
+      if (request.expectedRevision !== currentRevision) {
+        throw new RemoteError(
+          'bot/skill-policy-conflict',
+          `Bot "${id}" skill policy changed while it was being edited`,
+          { botId: id, expectedRevision: request.expectedRevision, actualRevision: currentRevision },
+        )
+      }
+      if (currentRevision === Number.MAX_SAFE_INTEGER) {
+        return badRequest('Bot skill policy revision limit reached')
+      }
       const policy = normalizeRequestedBotSkillPolicy({
         mode: request.mode,
         enabled: request.enabled,
         disabled: request.disabled,
       })
+      const revision = currentRevision + 1
       const updated: BotRecord = {
         ...current,
         skillPolicy: policy,
+        skillPolicyRevision: revision,
         updatedAt: Math.max(Date.now(), current.updatedAt),
       }
       await bots.put(id, updated)
       this.recordsBySession.set(String(updated.sessionId), updated)
       this.skillPolicyInvalidators.get(String(updated.sessionId))?.()
       this.emitChanged()
-      return { bot: this.view(updated), policy }
+      return { bot: this.view(updated), policy, revision }
     })
   }
 
@@ -2151,6 +2169,7 @@ export class BotService extends TypertRemoteService {
       ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
       ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
       ...(normalized.skillPolicy === undefined ? {} : { skillPolicy: normalized.skillPolicy }),
+      skillPolicyRevision: 0,
       state: 'provisioning',
       createdAt: now,
       updatedAt: now,
@@ -2708,13 +2727,19 @@ export class BotService extends TypertRemoteService {
   }
 
   private view(record: BotStoredRecord): BotView {
-    const { ownerId: ignoredOwnerId, pendingMemoryUpdate: ignoredPendingMemoryUpdate, ...withoutPrivateFields } = record
+    const {
+      ownerId: ignoredOwnerId,
+      pendingMemoryUpdate: ignoredPendingMemoryUpdate,
+      skillPolicyRevision: ignoredSkillPolicyRevision,
+      ...withoutPrivateFields
+    } = record
     const agent = this.ctx.agents.get(record.sessionId)
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
     void ignoredOwnerId
     void ignoredPendingMemoryUpdate
+    void ignoredSkillPolicyRevision
     return {
       ...withoutPrivateFields,
       pinned: record.pinned ?? false,

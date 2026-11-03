@@ -204,13 +204,14 @@ describe('BotWorkspaceController', () => {
     const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
     const listSkills = vi.fn(async () => ({
       ok: true as const,
-      value: { bot: original, policy, skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }] },
+      value: { bot: original, policy, revision: 0, skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }] },
     }))
     const updateSkills = vi.fn(async () => ({
       ok: true as const,
       value: {
         bot: { ...original, skillPolicy: { mode: 'selected', enabled: ['code-review'], disabled: [] }, updatedAt: 2 },
         policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+        revision: 1,
         skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
       },
     }))
@@ -222,10 +223,10 @@ describe('BotWorkspaceController', () => {
     const manager = controller.face().skillManager
     expect(manager).toBeDefined()
     await expect(manager?.list(original.id)).resolves.toMatchObject({ policy })
-    await manager?.update(original.id, { mode: 'selected', enabled: ['code-review'], disabled: [] })
+    await manager?.update(original.id, { mode: 'selected', enabled: ['code-review'], disabled: [] }, 0)
     expect(listSkills).toHaveBeenCalledWith({ botId: original.id })
     expect(updateSkills).toHaveBeenCalledWith({
-      botId: original.id, mode: 'selected', enabled: ['code-review'], disabled: [],
+      botId: original.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
     })
     expect(controller.source.getSnapshot().bots[0]?.skillPolicy).toEqual({
       mode: 'selected', enabled: ['code-review'], disabled: [],
