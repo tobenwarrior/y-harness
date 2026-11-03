@@ -37,6 +37,7 @@
     "@yharness/tools": "workspace:*"
   },
   "dependencies": {
+    "@yharness/fs-patch": "workspace:*",
     "@yharness/util-values": "workspace:*",
     "@yharness/schemastery": "workspace:~"
   },

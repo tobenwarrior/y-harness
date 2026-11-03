@@ -400,6 +400,7 @@
       "@yharness/fs": ["./packages/fs/fs/src"],
       "@yharness/fs-local": ["./packages/fs/fs-local/src"],
       "@yharness/fs-observation-policy": ["./packages/fs/fs-observation-policy/src"],
+      "@yharness/fs-patch": ["./packages/fs/fs-patch/src"],
       "@yharness/fs-sandbox": ["./packages/fs/fs-sandbox/src"],
       "@yharness/fs-ssh": ["./packages/ssh/fs-ssh/src"],
       "@yharness/goal": ["./packages/goal/goal/src"],

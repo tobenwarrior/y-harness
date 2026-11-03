@@ -5,7 +5,7 @@ import {
 } from '@yharness/client-ui-primitives'
 import type { ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
 import { readCardModel } from '../models/read-card-model.ts'
-import { diffCardModel } from '../models/diff-card-model.ts'
+import { diffCardModel, diffLocationsSummary } from '../models/diff-card-model.ts'
 import { searchCardModel } from '../models/search-card-model.ts'
 import { terminalCardModel, terminalFailed } from '../models/terminal-card-model.ts'
 import { webCardModel } from '../models/web-card-model.ts'
@@ -38,6 +38,7 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
   const terminal = terminalCardModel(block, cwd)
   const read = readCardModel(block, cwd, home)
   const diff = diffCardModel(block)
+  const summary = diffLocationsSummary(diff) ?? model.summary
   const search = searchCardModel(block)
   const web = webCardModel(block)
   // A failing exit status is the terminal card's own error signal (the call
@@ -54,7 +55,7 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
       toolName={toolName}
       icon={VARIANT_ICONS[model.variant]}
       title={t(model.titleKey)}
-      summary={model.summary}
+      summary={summary}
       // Single-file tools never expose an args body — the path link is the only
       // args interaction. A card is not an args body: a read/write/edit row is
       // single-file AND carries a card, so the card expands under the path link.
@@ -68,7 +69,7 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
       web={web}
       state={state}
       filePath={model.filePath}
-      onOpenFile={singleFile ? openFile : undefined}
+      onOpenFile={singleFile || diff?.locations !== undefined ? openFile : undefined}
       inspect={inspect}
     />
   )

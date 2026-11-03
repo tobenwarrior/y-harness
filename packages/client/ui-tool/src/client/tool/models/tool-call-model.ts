@@ -58,6 +58,7 @@ const TOOL_VARIANTS: Record<string, ToolRowVariant> = {
   glob: 'search',
   write: 'write',
   edit: 'edit',
+  apply_patch: 'edit',
   run_code: 'code',
   cordis_package_inspect: 'read',
   cordis_runtime_inspect: 'read',

@@ -5,6 +5,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Button, ConnectionIndicator, Input, Menu, MenuItemButton, Modal, Pill } from '@yharness/client-ui-primitives'
 import { POINTER_GRACE_MS } from '../src/pointer-grace.ts'
 
+describe('isMobileDevice', () => {
+  it.each([
+    { name: 'iPhone', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)', platform: 'iPhone', maxTouchPoints: 5, mobile: true },
+    { name: 'Android tablet', userAgent: 'Mozilla/5.0 (Linux; Android 10; K)', platform: 'Linux armv8l', maxTouchPoints: 5, mobile: true },
+    { name: 'desktop Mac', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', platform: 'MacIntel', maxTouchPoints: 0, mobile: false },
+  ])('classifies $name from browser device information', async ({ userAgent, platform, maxTouchPoints, mobile }) => {
+    vi.resetModules()
+    const descriptors = new Map<string, PropertyDescriptor | undefined>()
+    for (const [name, value] of Object.entries({ userAgent, platform, maxTouchPoints })) {
+      descriptors.set(name, Object.getOwnPropertyDescriptor(navigator, name))
+      Object.defineProperty(navigator, name, { configurable: true, value })
+    }
+    try {
+      const { isMobileDevice } = await import('../src/focus.ts')
+      expect(isMobileDevice()).toBe(mobile)
+    } finally {
+      for (const [name, descriptor] of descriptors) {
+        if (descriptor === undefined) Reflect.deleteProperty(navigator, name)
+        else Object.defineProperty(navigator, name, descriptor)
+      }
+    }
+  })
+})
+
 afterEach(cleanup)
 
 describe('Button', () => {

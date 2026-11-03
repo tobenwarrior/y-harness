@@ -8,7 +8,7 @@ import {
 import type { PropsRenderSlots, TranslateNS } from '@yharness/client-ui-slots'
 import type { OpenFileOptions, UseDisclosure } from '@yharness/client-ui-chat/client'
 import type { MessageImageLoader } from '@yharness/client-ui-conversation/client'
-import { CHAT_DIFF_MAX_LINES, type DiffCardModel } from '../models/diff-card-model.ts'
+import { CHAT_DIFF_MAX_LINES, type DiffCardModel, type DiffLocation } from '../models/diff-card-model.ts'
 import { CHAT_READ_MAX_LINES, type ReadCardModel } from '../models/read-card-model.ts'
 import type { ImageCardModel } from '../models/image-card-model.ts'
 import { CHAT_SEARCH_MAX_LINES, type SearchCardModel } from '../models/search-card-model.ts'
@@ -111,6 +111,35 @@ function stateStatus(state: ToolRowState, t: TranslateNS<'conversation'>): strin
   }
 }
 
+/** Render affected paths when a mutation has no bounded before-image to diff. */
+function DiffLocations({
+  locations,
+  onOpenFile,
+}: {
+  locations: readonly DiffLocation[]
+  onOpenFile?: ((path: string, options?: OpenFileOptions) => void) | undefined
+}) {
+  return (
+    <div className={css.diffLocations} data-diff-locations>
+      {locations.map(({ path }) => onOpenFile === undefined ? (
+        <span key={path} className={css.diffLocation}>{path}</span>
+      ) : (
+        <button
+          key={path}
+          type="button"
+          className={clsx(css.fileLink, css.diffLocation)}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenFile(path)
+          }}
+        >
+          {path}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /**
  * Render one localized tool summary and lazily mounted result card.
  * Preparation retains the icon, title, and optional tool-name summary without disclosure.
@@ -182,7 +211,10 @@ export const ToolRow = memo(function ToolRow({
   const failureLine = state === 'error' ? errorSummary ?? normalSummary : null
   const summaryText = failureLine ?? normalSummary
   // Diff totals remain visible after the optional summary suffix.
-  const diffStat = useMemo(() => diffBody === null ? null : diffTotals(diffBody.card.diffs), [diffBody])
+  const diffStat = useMemo(
+    () => diffBody === null || diffBody.card.diffs.length === 0 ? null : diffTotals(diffBody.card.diffs),
+    [diffBody],
+  )
   const settledWithCue = state === 'error' || state === 'stopped'
   const suffix = settledWithCue ? null : summarySuffix ?? null
   const totals = settledWithCue ? null : diffStat
@@ -265,7 +297,11 @@ export const ToolRow = memo(function ToolRow({
             />
           )
           : diffBody !== null
-            ? <DiffBlock {...diffBody.card} labels={diffLabels} maxLines={CHAT_DIFF_MAX_LINES} className={css.diffBody} />
+            ? diffBody.card.diffs.length > 0
+              ? <DiffBlock {...diffBody.card} labels={diffLabels} maxLines={CHAT_DIFF_MAX_LINES} className={css.diffBody} />
+              : diffBody.locations !== undefined && diffBody.locations.length > 0
+                ? <DiffLocations locations={diffBody.locations} onOpenFile={onOpenFile} />
+                : null
             : readBody !== null
               ? <ReadBlock {...readBody} labels={readLabels} maxLines={CHAT_READ_MAX_LINES} className={css.readBody} />
               : imageBody !== null

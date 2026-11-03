@@ -187,6 +187,8 @@ export interface DiffResultView {
   title?: string
   /** The change to show, in file order — applied contextual hunks, or a whole-file diff when there is no before-image. */
   diffs: FileDiff[]
+  /** Files changed when an effect has no bounded before-image, such as a delete-only patch. */
+  locations?: FileLocation[]
 }
 
 /** One matched line inside a {@link SearchFileMatches} group: its 1-based line number and text. */

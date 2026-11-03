@@ -29,7 +29,9 @@
   "dependencies": {
     "diff": "^9.0.0",
     "@yharness/schemastery": "workspace:~",
-    "@yharness/util-code-language": "workspace:*"
+    "@yharness/util-code-language": "workspace:*",
+    "@yharness/fs-patch": "workspace:*",
+    "@yharness/util-values": "workspace:*"
   },
   "peerDependencies": {
     "@yharness/attachment": "workspace:*",

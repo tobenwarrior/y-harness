@@ -20,6 +20,9 @@
     },
     {
       "path": "../../sandbox/sandbox"
+    },
+    {
+      "path": "../fs-patch"
     }
   ]
 }
