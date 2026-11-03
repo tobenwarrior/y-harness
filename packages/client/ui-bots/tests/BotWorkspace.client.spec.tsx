@@ -396,7 +396,7 @@ describe('Bot roster and detail', () => {
     const onConnectApps = vi.fn()
     renderSplitWorkspace({ onConnectApps })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect apps' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
 
     expect(onConnectApps).toHaveBeenCalledOnce()
   })
@@ -408,7 +408,7 @@ describe('Bot roster and detail', () => {
     const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ onLoadConnectedApps, onSetConnectedAppAccess })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect apps' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
