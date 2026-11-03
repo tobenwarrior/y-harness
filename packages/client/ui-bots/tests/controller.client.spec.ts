@@ -424,4 +424,49 @@ describe('BotWorkspaceController', () => {
     expect(controller.source.getSnapshot().selectedGroup?.id).toBe(String(group.id))
     expect(controller.source.getSnapshot().groupError).toBe('Some Bots could not receive this message.')
   })
+
+  it('re-reads a selected group when a change arrives during an in-flight refresh', async () => {
+    const first = bot('bot-first-refresh-race', 'session-first-refresh-race')
+    const second = bot('bot-second-refresh-race', 'session-second-refresh-race')
+    const group = groupView('bot-group-refresh-race', 'Refresh race room', [first, second])
+    const stale: BotGroupInspectValue = {
+      group,
+      messages: [{ id: brandString('bot-group-message-stale'), groupId: group.id, sender: { kind: 'user' }, text: 'Before refresh.', createdAt: 1 }],
+    }
+    const fresh: BotGroupInspectValue = {
+      group,
+      messages: [
+        ...stale.messages,
+        { id: brandString('bot-group-message-fresh'), groupId: group.id, sender: { kind: 'user' }, text: 'Arrived during refresh.', createdAt: 2 },
+      ],
+    }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    let releaseFirst!: (value: { ok: true; value: BotGroupInspectValue }) => void
+    let releaseSecond!: (value: { ok: true; value: BotGroupInspectValue }) => void
+    const firstInspect = new Promise<{ ok: true; value: BotGroupInspectValue }>((resolve) => { releaseFirst = resolve })
+    const secondInspect = new Promise<{ ok: true; value: BotGroupInspectValue }>((resolve) => { releaseSecond = resolve })
+    const inspectGroup = vi.fn(async () => {
+      if (inspectGroup.mock.calls.length === 1) return firstInspect
+      if (inspectGroup.mock.calls.length === 2) return secondInspect
+      return { ok: true as const, value: fresh }
+    })
+    remote.inspectGroup = inspectGroup
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(inspectGroup).toHaveBeenCalledTimes(1) })
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(inspectGroup).toHaveBeenCalledTimes(2) })
+    void controller.load()
+    releaseFirst({ ok: true, value: stale })
+    releaseSecond({ ok: true, value: stale })
+    await loading
+
+    await vi.waitFor(() => { expect(inspectGroup).toHaveBeenCalledTimes(3) })
+    await vi.waitFor(() => {
+      expect(controller.source.getSnapshot().selectedGroup?.messages.at(-1)?.text).toBe('Arrived during refresh.')
+    })
+  })
 })

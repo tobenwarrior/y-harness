@@ -110,6 +110,7 @@ export class BotWorkspaceController {
   readonly source: SnapshotStore<BotWorkspaceState> = createSnapshotStore(INITIAL_STATE)
   private selectedReference: SessionReference | undefined
   private pending: Promise<void> | undefined
+  private reloadRequested = false
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
@@ -127,6 +128,7 @@ export class BotWorkspaceController {
   /** Stop asynchronous reads and release the selected Session. */
   dispose(): void {
     this.disposed = true
+    this.reloadRequested = false
     this.selectionGeneration++
     this.selectedReference?.release()
     this.selectedReference = undefined
@@ -167,7 +169,11 @@ export class BotWorkspaceController {
 
   /** Load or refresh the durable Bot roster. */
   async load(): Promise<void> {
-    if (this.disposed || this.pending !== undefined) return this.pending ?? Promise.resolve()
+    if (this.disposed) return
+    if (this.pending !== undefined) {
+      this.reloadRequested = true
+      return this.pending
+    }
     const before = this.source.getSnapshot()
     this.source.set({ ...before, phase: 'loading', error: null })
     const pending = this.read()
@@ -176,6 +182,10 @@ export class BotWorkspaceController {
       await pending
     } finally {
       if (this.pending === pending) this.pending = undefined
+      if (this.reloadRequested && !this.disposed) {
+        this.reloadRequested = false
+        void this.load()
+      }
     }
   }
 

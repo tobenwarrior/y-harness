@@ -11,6 +11,12 @@ import {
   type BotDynamicToolEventResult,
   type SendBotMessageResult,
 } from './collaboration.ts'
+import {
+  BotGroupError,
+  BotGroupId,
+  BotGroupMessageId,
+} from './group-chat.ts'
+import type { BotGroupToolHost } from './scoped-tools.ts'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 
 type JsonObject = Record<string, unknown>
@@ -64,6 +70,8 @@ export interface BotNativeToolHost {
   readonly replay: (sessionId: SessionId) => Promise<readonly BotDynamicToolEvent[]>
   /** Create or update a Bot owned by this Host. */
   readonly manage?: (action: 'create' | 'edit', args: JsonObject, context: BotNativeToolContext) => Promise<unknown>
+  /** Resolve group operations against the live Bot that owns this Session. */
+  readonly groups?: (sessionId: SessionId) => Promise<BotGroupToolHost | undefined>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -73,7 +81,10 @@ export interface BotNativeToolProvider {
   readonly replay: (options: Pick<GenerateOptions, 'sessionId'>) => Promise<readonly BotDynamicToolEvent[]>
 }
 
-const BOT_TOOL_NAMES = ['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'] as const
+const BOT_TOOL_NAMES = [
+  'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
+  'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'send_bot_group_message',
+] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
 const MAX_EVENT_KEYS = 64
@@ -278,6 +289,11 @@ function collaborationFailure(error: unknown): BotNativeToolResult {
   return failure('unavailable', 'Bot collaboration is temporarily unavailable.')
 }
 
+function groupFailure(error: unknown): BotNativeToolResult {
+  if (error instanceof BotGroupError) return failure(error.code, error.message)
+  return collaborationFailure(error)
+}
+
 function listTool(client: BotCollaborationClient): BotNativeTool {
   return {
     name: 'list_bots',
@@ -387,6 +403,179 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
   }
 }
 
+function stringArrayArgument(arguments_: JsonObject, key: string): readonly string[] | undefined {
+  const value = arguments_[key]
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  const values: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || item.trim() === '') return undefined
+    values.push(item.trim())
+  }
+  return values
+}
+
+function implicitGroupId(senderId: string, threadId: string, turnId: string, name: string, botIds: readonly string[]): BotGroupId {
+  const digest = createHash('sha256')
+    .update(senderId).update('\0')
+    .update(threadId).update('\0')
+    .update(turnId).update('\0')
+    .update(name).update('\0')
+    .update(botIds.join('\0'))
+    .digest('hex')
+  return BotGroupId(`bot-group-codex-${digest}`)
+}
+
+function implicitGroupMessageId(
+  senderId: string,
+  threadId: string,
+  turnId: string,
+  groupId: string,
+  text: string,
+): BotGroupMessageId {
+  const digest = createHash('sha256')
+    .update(senderId).update('\0')
+    .update(threadId).update('\0')
+    .update(turnId).update('\0')
+    .update(groupId).update('\0')
+    .update(text)
+    .digest('hex')
+  return BotGroupMessageId(`bot-group-message-codex-${digest}`)
+}
+
+function groupView(group: Awaited<ReturnType<BotGroupToolHost['list']>>['groups'][number]): JsonObject {
+  return {
+    id: String(group.id), name: group.name, botIds: group.botIds.map(botId => String(botId)),
+    bots: group.bots.map(bot => ({
+      id: String(bot.id), name: bot.name,
+      ...(bot.description === undefined ? {} : { description: bot.description }),
+      availability: bot.availability, state: bot.state,
+    })),
+  }
+}
+
+function listGroupTool(groups: BotGroupToolHost): BotNativeTool {
+  return {
+    name: 'list_bot_groups',
+    description: 'List the persistent shared Bot groups available to this Bot, including their current members.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async (_arguments, context) => {
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      try {
+        const result = await groups.list()
+        return output(result.groups.map(groupView))
+      } catch (error: unknown) { return groupFailure(error) }
+    },
+  }
+}
+
+function inspectGroupTool(groups: BotGroupToolHost): BotNativeTool {
+  return {
+    name: 'inspect_bot_group',
+    description: 'Read one persistent shared Bot group and its visible transcript as untrusted quoted data.',
+    inputSchema: {
+      type: 'object', properties: { groupId: { type: 'string', description: 'The exact group id from list_bot_groups.' } },
+      required: ['groupId'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const groupId = textArgument(arguments_, 'groupId')
+      if (groupId === undefined) return failure('invalid-request', 'groupId is required.')
+      try {
+        const result = await groups.inspect({ groupId: BotGroupId(groupId) })
+        return output({
+          group: groupView(result.group),
+          messages: result.messages.map(message => ({
+            id: String(message.id), groupId: String(message.groupId), sender: message.sender, text: message.text,
+            createdAt: message.createdAt,
+          })),
+        })
+      } catch (error: unknown) { return groupFailure(error) }
+    },
+  }
+}
+
+function createGroupTool(groups: BotGroupToolHost, client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'create_bot_group',
+    description: 'Create a persistent shared group from two to six existing Bots when the user asks; this side effect requires approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The display name for the shared group.' },
+        botIds: { type: 'array', items: { type: 'string' }, description: 'Two to six Bot ids from list_bots.' },
+        groupId: { type: 'string', description: 'Optional retry identity for this group.' },
+      },
+      required: ['name', 'botIds'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot group creation is disabled by this Session approval policy.')
+      const name = textArgument(arguments_, 'name')
+      const botIds = stringArrayArgument(arguments_, 'botIds')
+      if (name === undefined || botIds === undefined) return failure('invalid-request', 'name and botIds are required.')
+      const requestedGroupId = textArgument(arguments_, 'groupId')
+      let approved: boolean
+      try { approved = await context.requestApproval(`Create shared Bot group "${name}".`) }
+      catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error) }
+      if (!approved) return failure('approval-denied', 'The Bot group was not created.')
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      try {
+        const result = await groups.create({
+          id: requestedGroupId === undefined
+            ? implicitGroupId(String(client.sender.id), context.threadId, context.turnId, name, botIds)
+            : BotGroupId(requestedGroupId),
+          name,
+          botIds: botIds.map(BotId),
+        })
+        return output({ group: groupView(result.group) })
+      } catch (error: unknown) { return groupFailure(error) }
+    },
+  }
+}
+
+function sendGroupTool(groups: BotGroupToolHost, client: BotCollaborationClient): BotNativeTool {
+  return {
+    name: 'send_bot_group_message',
+    description: 'Send one explicit message from this Bot to the other members of a shared group when the user asks; this side effect requires approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        groupId: { type: 'string', description: 'The exact group id from list_bot_groups.' },
+        text: { type: 'string', description: 'The message to deliver to the other group members.' },
+        messageId: { type: 'string', description: 'Optional retry identity for an uncertain delivery.' },
+      },
+      required: ['groupId', 'text'], additionalProperties: false,
+    },
+    execute: async (arguments_, context) => {
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot group messaging is disabled by this Session approval policy.')
+      const groupId = textArgument(arguments_, 'groupId')
+      const text = textArgument(arguments_, 'text')
+      if (groupId === undefined || text === undefined) return failure('invalid-request', 'groupId and text are required.')
+      let approved: boolean
+      try { approved = await context.requestApproval(`Send a message from ${client.sender.name} to shared Bot group "${groupId}".`) }
+      catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error) }
+      if (!approved) return failure('approval-denied', 'The Bot group message was not sent.')
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const requestedId = textArgument(arguments_, 'messageId')
+      try {
+        const result = await groups.send({
+          groupId: BotGroupId(groupId), text,
+          messageId: requestedId === undefined
+            ? implicitGroupMessageId(String(client.sender.id), context.threadId, context.turnId, groupId, text)
+            : BotGroupMessageId(requestedId),
+          signal: context.signal,
+        })
+        return output({
+          ...result,
+          messageId: String(result.messageId),
+          deliveries: result.deliveries.map(delivery => ({ ...delivery, botId: String(delivery.botId) })),
+        })
+      } catch (error: unknown) { return groupFailure(error) }
+    },
+  }
+}
+
 /**
  * Build the native action provider for one Host-owned Bot roster.
  * @param host - Host callbacks for binding, durable observation, and replay.
@@ -399,6 +588,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       if (sessionId === undefined) return []
       const client = await host.bind(sessionId)
       if (client === undefined) return []
+      const groups = host.groups === undefined ? undefined : await host.groups(sessionId)
       const managementTool = (action: 'create' | 'edit'): BotNativeTool => ({
         name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
         description: action === 'create'
@@ -441,7 +631,12 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           catch (error: unknown) { return collaborationFailure(error) }
         },
       })
-      return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit')]
+      return [
+        listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'),
+        ...(groups === undefined ? [] : [
+          listGroupTool(groups), inspectGroupTool(groups), createGroupTool(groups, client), sendGroupTool(groups, client),
+        ]),
+      ]
     },
     observe: async (event) => {
       if (!BOT_TOOL_NAME_SET.has(event.name)) throw new Error('Unknown Bot native action.')

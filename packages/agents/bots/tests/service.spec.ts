@@ -3,7 +3,8 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import { agentEvents, type Agent } from '@yharness/agent'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
-import { freezeMessage, MessageId } from '@yharness/llm'
+import { freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
+import type { ContextFormed } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
@@ -13,8 +14,16 @@ import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
+import { BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
+import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
+
+declare module '@yharness/llm' {
+  interface MessageSourceMap {
+    'runtime-context': { kind: 'runtime-context' } & ContextFormed
+  }
+}
 
 async function harness(
   pool = new MemoryMediaPool(),
@@ -125,7 +134,10 @@ describe('durable Bot roster', () => {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       expect(provider).toBeDefined()
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
-      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
+      expect(tools.map(tool => tool.name)).toEqual([
+        'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
+        'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'send_bot_group_message',
+      ])
       const context = {
         callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
         signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
@@ -156,6 +168,19 @@ describe('durable Bot roster', () => {
       h.ctx.provide('avatarGeneration', generator as never)
       expect((await edit.execute({ botId: research.id, pictureDescription: 'A friendly fox' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({ avatar })
+      const createGroup = tools.find(tool => tool.name === 'create_bot_group')
+      const sendGroupMessage = tools.find(tool => tool.name === 'send_bot_group_message')
+      if (createGroup === undefined || sendGroupMessage === undefined) throw new Error('native group tools were not registered')
+      const groupResult = await createGroup.execute({
+        name: 'Native room', botIds: [created.bot.id, research.id],
+      }, { ...context, callId: 'create-group-1' })
+      expect(groupResult.success).toBe(true)
+      const group = JSON.parse(groupResult.contentItems[0]?.text ?? '{}') as { readonly group?: { readonly id?: string } }
+      const groupId = group.group?.id
+      if (groupId === undefined) throw new Error('native group creation returned no id')
+      expect((await sendGroupMessage.execute({ groupId, text: 'Native group update.' }, {
+        ...context, callId: 'send-group-1',
+      })).success).toBe(true)
       const cancelled = new AbortController()
       generator.generate.mockImplementation(async () => {
         cancelled.abort()
@@ -373,6 +398,161 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('attributes a response to a Bot-authored group message', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Bot-authored room', botIds: [alpha.bot.id, beta.bot.id] })
+      const domain = h.ctx.storageDomain.get(botGroupDomain.name)
+      if (domain === undefined) throw new Error('group domain was not mounted')
+      const target = h.agents[1]
+      if (target === undefined) throw new Error('target Bot Agent was not created')
+      const deliveryHost: BotGroupDeliveryHost = {
+        listBots: async () => (await h.service.list({})).bots,
+        deliverToBot: async (request) => {
+          target.followup(freezeMessage({
+            id: MessageId(String(request.messageId)), role: 'user',
+            content: [{ type: 'text', text: `Message from group "${request.groupName}":\n${request.text}` }],
+            source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
+          }))
+          return 'accepted'
+        },
+      }
+      const groups = new BotGroupService(domain, deliveryHost)
+      await expect(groups.sendAsBot(alpha.bot.id, {
+        groupId: group.group.id,
+        text: 'Alpha asks Beta for a status.',
+        messageId: BotGroupMessageId('bot-group-message-authored'),
+      })).resolves.toMatchObject({ status: 'accepted' })
+
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (delivered === undefined) throw new Error('Bot-authored delivery was not admitted')
+      await agentEvents(h.ctx, target).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 7, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      target.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const responseEvent = target.session.append('assistant/message', {
+        turn: 7, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-authored'), role: 'assistant',
+          content: [{ type: 'text', text: 'Beta received the request.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', target.session, responseEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha asks Beta for a status.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta received the request.' },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('waits for the final assistant message after an intermediate tool-call response', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Tool turn room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Use a tool before answering.', messageId: 'bot-group-message-tool-turn' })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('tool-turn delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 8, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const toolEvent = betaAgent.session.append('assistant/message', {
+        turn: 8, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-tool-call'), role: 'assistant',
+          content: [
+            { type: 'text', text: 'I am checking the release status.' },
+            { type: 'tool-call', id: ToolCallId('beta-tool-call'), name: 'inspect', arguments: '{}' },
+          ], source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, toolEvent)
+      const finalEvent = betaAgent.session.append('assistant/message', {
+        turn: 8, step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-tool-final'), role: 'assistant',
+          content: [{ type: 'text', text: 'The release status is green.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, finalEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Use a tool before answering.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The release status is green.' },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('ignores synthetic runtime context while reconciling a claimed group turn after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Runtime context room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive synthetic context.', messageId: 'bot-group-message-runtime-context' })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('runtime-context delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 9 })
+      resumedBeta.session.append('step/start', { turn: 9, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('user/message', freezeMessage({
+        id: MessageId('runtime-context-input'), role: 'user',
+        content: [{ type: 'text', text: 'Current runtime context.' }],
+        source: { kind: 'runtime-context' },
+      }), { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 9, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-runtime-context'), role: 'assistant',
+          content: [{ type: 'text', text: 'The request survived restart.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Survive synthetic context.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The request survived restart.' },
+        ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('restores a claimed group turn across a service restart before projecting its response', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -550,13 +730,13 @@ describe('durable Bot roster', () => {
         h.ctx.emit('session/event', agent.session, responseEvent)
       }
 
-      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        messages: [
-          { sender: { kind: 'user' }, text: 'Answer separately.' },
-          { sender: { kind: 'bot', botId: alpha.bot.id } },
-          { sender: { kind: 'bot', botId: beta.bot.id } },
-        ],
-      })
+      const transcript = (await h.service.inspectGroup({ groupId: group.group.id })).messages
+      expect(transcript).toHaveLength(3)
+      expect(transcript[0]).toMatchObject({ sender: { kind: 'user' }, text: 'Answer separately.' })
+      expect(transcript.slice(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
+        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
+      ]))
     } finally {
       await close(h.ctx)
     }

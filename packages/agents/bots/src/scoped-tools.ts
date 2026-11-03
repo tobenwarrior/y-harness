@@ -118,7 +118,7 @@ function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
 }
 
 /**
- * Register the three collaboration tools in one Bot Agent scope.
+ * Register collaboration, profile, and membership-scoped group tools in one Bot Agent scope.
  *
  * The callback receives no sender identity: it closes over the live Agent that
  * owns the scope and asks the Host to re-authorize that Agent on each call.

@@ -149,6 +149,7 @@ function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonl
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
+const RUNTIME_CONTEXT_SOURCE: string = 'runtime-context'
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -372,7 +373,9 @@ export class BotService extends TypertRemoteService {
         .flatMap(block => block.type === 'text' ? [block.text] : [])
         .join('\n')
         .trim()
-      if (text === '') return
+      // Tool-call assistant messages are intermediate model steps. Keep the
+      // delivery open until the first assistant message without a tool call.
+      if (text === '' || event.data.message.content.some(block => block.type === 'tool-call')) return
       void this.groupService.then(service => service.recordBotResponse(
         record.id,
         event.data.turn,
@@ -406,6 +409,16 @@ export class BotService extends TypertRemoteService {
         if (agent === undefined) return undefined
         try {
           return await this.collaboration.bind(agent)
+        } catch (error: unknown) {
+          if (error instanceof BotCollaborationError && error.code === 'sender-not-bot') return undefined
+          throw error
+        }
+      },
+      groups: async (sessionId) => {
+        const agent = ctx.get('agents')?.get(sessionId)
+        if (agent === undefined) return undefined
+        try {
+          return await this.groupToolsFor(agent)
         } catch (error: unknown) {
           if (error instanceof BotCollaborationError && error.code === 'sender-not-bot') return undefined
           throw error
@@ -937,7 +950,7 @@ export class BotService extends TypertRemoteService {
       if (event.type === 'user/message') {
         // Reconciliation follows the raw inbox admission, not a later surface
         // replacement produced by compaction or another history rewrite.
-        if (event.surfaceOp !== 'append') continue
+        if (event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
         const current = inputs.get(`${String(turn)}:${String(step)}`)
         if (current !== undefined) current.messages.push(event.data)
         continue
@@ -960,7 +973,7 @@ export class BotService extends TypertRemoteService {
           .flatMap(block => block.type === 'text' ? [block.text] : [])
           .join('\n')
           .trim()
-        if (text !== '') {
+        if (text !== '' && !event.data.message.content.some(block => block.type === 'tool-call')) {
           await service.recordBotResponse(record.id, event.data.turn, event.data.step, text, String(event.data.message.id))
         }
       })

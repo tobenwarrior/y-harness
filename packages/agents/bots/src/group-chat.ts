@@ -579,7 +579,8 @@ export class BotGroupService {
       if (group === undefined || !group.botIds.includes(botId)) return
       const source = messages.get(pending.messageId)
       if (source === undefined) return
-      if (source.groupId !== pending.groupId || source.sender.kind !== 'user') return
+      if (source.groupId !== pending.groupId) return
+      if (source.sender.kind === 'bot' && !group.botIds.includes(source.sender.botId)) return
       const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
       let changed = false
