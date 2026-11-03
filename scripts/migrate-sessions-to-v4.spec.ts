@@ -14,8 +14,8 @@ import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
 
 const repository = resolve(import.meta.dirname, '..')
-/** Published V4 writer retained for testing this one-time command after V5 advances the workspace writer. */
-const V4_SOURCE_COMMIT = '40ce9db64de69bc5e0aed8d2c6538bb31064c596'
+/** Committed V4-to-V5 source delta, reversed in the temporary checkout without requiring Git history. */
+const V4_FORMAT_REVERSAL = 'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch'
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
 let v4Checkout = ''
@@ -49,9 +49,14 @@ function run(...args: string[]) {
 beforeAll(async () => {
   v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
   const archive = join(v4Checkout, 'source.tar')
-  await execa('git', ['archive', '--format=tar', '--output', archive, V4_SOURCE_COMMIT], { cwd: repository })
+  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
   await extractTar({ file: archive, cwd: v4Checkout })
   await unlink(archive)
+  const reversal = join(v4Checkout, V4_FORMAT_REVERSAL)
+  await mkdir(dirname(reversal), { recursive: true })
+  await writeFile(reversal, await readFile(join(repository, V4_FORMAT_REVERSAL)))
+  await execa('git', ['apply', '--reverse', '--unidiff-zero', '--whitespace=nowarn', reversal], { cwd: v4Checkout })
+  await unlink(reversal)
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
   await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)

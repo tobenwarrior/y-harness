@@ -1,0 +1,114 @@
+diff --git a/packages/core/session/src/types.ts b/packages/core/session/src/types.ts
+index 7085250f..a9f8e4f8 100644
+--- a/packages/core/session/src/types.ts
++++ b/packages/core/session/src/types.ts
+@@ -89 +89 @@ export type OptionalSessionSeq = SessionSeq | null
+-export const SESSION_FORMAT_VERSION = 4
++export const SESSION_FORMAT_VERSION = 5
+diff --git a/packages/session/session-format-catalog/src/generated.ts b/packages/session/session-format-catalog/src/generated.ts
+index 2f4903ce..f0a1bab5 100644
+--- a/packages/session/session-format-catalog/src/generated.ts
++++ b/packages/session/session-format-catalog/src/generated.ts
+@@ -13 +13,2 @@ import { releasedV3SessionFormatCodec, sessionFormatV2ToV3 } from '@yharness/session-format-v2-to-v3'
+-import { assertReleasedV4Header, releasedV4SessionFormatCodec, restoreReleasedV4Artifact, sessionFormatV3ToV4 } from '@yharness/session-format-v3-to-v4'
++import { releasedV4SessionFormatCodec, sessionFormatV3ToV4 } from '@yharness/session-format-v3-to-v4'
++import { assertReleasedV5Header, releasedV5SessionFormatCodec, restoreReleasedV5Artifact, sessionFormatV4ToV5 } from '@yharness/session-format-v4-to-v5'
+@@ -17 +18 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-  currentVersion: 4,
++  currentVersion: 5,
+@@ -23,0 +25 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
++    releasedV5SessionFormatCodec,
+@@ -25 +27 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-  currentEncoder: releasedV4SessionFormatCodec,
++  currentEncoder: releasedV5SessionFormatCodec,
+@@ -30,0 +33 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
++    sessionFormatV4ToV5,
+@@ -33 +36 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    const restored = restoreReleasedV4Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++    const restored = restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+@@ -38 +41 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    return restoreReleasedV4Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++    return restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+@@ -41 +44 @@ export const sessionFormatCatalogOptions: SessionFormatCatalogOptions = {
+-    assertReleasedV4Header(header)
++    assertReleasedV5Header(header)
+diff --git a/packages/session/session-persistence-jsonl/src/format.ts b/packages/session/session-persistence-jsonl/src/format.ts
+index d016e0ad..9f6a7af0 100644
+--- a/packages/session/session-persistence-jsonl/src/format.ts
++++ b/packages/session/session-persistence-jsonl/src/format.ts
+@@ -27 +27 @@ import { sessionFormatCatalog } from '@yharness/session-format-catalog'
+-import { assertV4RowAdmission, assertReleasedV4Relationships } from '@yharness/session-format-v3-to-v4'
++import { assertV5RowAdmission, restoreReleasedV5Artifact } from '@yharness/session-format-v4-to-v5'
+@@ -467,7 +467,14 @@ export class SessionLogScanner {
+-    const artifact = this.restore.finish()
+-    assertReleasedV4Relationships(artifact, KNOWN_SESSION_EVENT_TYPES)
+-    return {
+-      meta: this.meta,
+-      inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
+-      events: artifact.events as unknown as SessionEvent[],
+-      committedBytes: this.committedBytes,
++    try {
++      const artifact = this.restore.finish()
++      restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
++      return {
++        meta: this.meta,
++        inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
++        events: artifact.events as unknown as SessionEvent[],
++        committedBytes: this.committedBytes,
++      }
++    } catch (error: unknown) {
++      if (error instanceof SessionFormatUnsupportedMigrationError) {
++        throw new SessionFormatUnsupportedError(error.message)
++      }
++      throw error
+@@ -493 +500 @@ export class SessionLogScanner {
+-      assertV4RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
++      assertV5RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
+diff --git a/packages/session/session-persistence-jsonl/src/generation.ts b/packages/session/session-persistence-jsonl/src/generation.ts
+index 9d099f0b..601ca16f 100644
+--- a/packages/session/session-persistence-jsonl/src/generation.ts
++++ b/packages/session/session-persistence-jsonl/src/generation.ts
+@@ -61,0 +62,2 @@ export interface JsonlGenerationFormatAdapter {
++  /** Validate one parsed historical row before recoverable suffix suppression. */
++  assertHistoricalRowAdmission?(row: unknown, sourceVersion: number): void
+@@ -311 +313,4 @@ class MigratingJsonlRows {
+-  constructor(private readonly restore: SessionFormatRestore) {}
++  constructor(
++    private readonly restore: SessionFormatRestore,
++    private readonly assertRowAdmission?: (row: unknown) => void,
++  ) {}
+@@ -361,0 +367 @@ class MigratingJsonlRows {
++    this.assertRowAdmission?.(row)
+@@ -378 +384 @@ async function startMigrationStream(
+-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
++  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
+@@ -390 +396,5 @@ async function startMigrationStream(
+-  return { parser: new MigratingJsonlRows(stream) }
++  const sourceAdmission = format.assertHistoricalRowAdmission
++  const assertRowAdmission = sourceAdmission === undefined
++    ? undefined
++    : (row: unknown) => sourceAdmission(row, sourceVersion)
++  return { parser: new MigratingJsonlRows(stream, assertRowAdmission) }
+@@ -415 +425 @@ async function decodeStreamingMigration(
+-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
++  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
+@@ -1047 +1057 @@ export async function readDecodedJsonlSource(
+-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
++  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
+diff --git a/packages/session/session-persistence-jsonl/src/index.ts b/packages/session/session-persistence-jsonl/src/index.ts
+index 8599935d..a597edcf 100644
+--- a/packages/session/session-persistence-jsonl/src/index.ts
++++ b/packages/session/session-persistence-jsonl/src/index.ts
+@@ -15,0 +16 @@ import {
++import { assertV5RowAdmission } from '@yharness/session-format-v4-to-v5'
+@@ -36 +37 @@ import { SessionWriteLease } from './lease.ts'
+-import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@yharness/session'
++import { KNOWN_SESSION_EVENT_TYPES, SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@yharness/session'
+@@ -283,0 +285,4 @@ class JsonlSessionPersistence extends SessionPersistence {
++      assertHistoricalRowAdmission: (row, sourceVersion) => {
++        if (sourceVersion !== 4) return
++        assertV5RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
++      },
+@@ -656 +661 @@ class JsonlSessionPersistence extends SessionPersistence {
+-            recovery: 'recoverable', validation: 'transformed',
++            recovery: 'recoverable', validation: header.version === SESSION_FORMAT_VERSION ? 'current' : 'transformed',
