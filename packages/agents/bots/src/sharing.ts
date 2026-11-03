@@ -39,6 +39,8 @@ export const BOT_SHARE_OPERATIONS = [
   'read-memory',
   'write-memory',
   'manage-memory',
+  'read-group',
+  'write-group',
 ] as const
 
 /** Shared Bot operation. */
@@ -189,6 +191,8 @@ export function authorizeBotShare(roster: SharedBotRoster, request: BotShareRequ
         : deny('private-chat-owner-only')
     case 'read-memory':
     case 'write-memory':
+    case 'read-group':
+    case 'write-group':
       return { allowed: true }
     case 'manage-memory':
       return actor.role === 'owner' || actor.role === 'manager' ? { allowed: true } : deny('role-forbidden')

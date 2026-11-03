@@ -257,6 +257,9 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
 
   /**
    * Consume one invite and mint a principal-bound HttpOnly session cookie.
+   * When the trusted request already carries an active collaborator cookie,
+   * redeeming another invite extends that authenticated principal to the new
+   * capability instead of creating a second identity.
    * @param code - raw code received through the enrollment flow.
    * @param request - trusted request authority that receives the cookie.
    * @returns the principal and Set-Cookie header to send to that collaborator.
@@ -275,11 +278,19 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
         return undefined
       }
       state.invites.splice(index, 1)
-      const principalId = SharedPrincipalId(`principal-${this.options.randomUUID()}`)
-      const sessionId = this.options.randomUUID()
-      const expiresAt = expiry(now, this.options.sessionMaxAgeMs)
-      state.principals.push({ id: principalId, createdAt: now })
-      state.sessions.push({ id: sessionId, principalId, issuedAt: now, expiresAt })
+      const token = cookieValue(header(request.headers, 'cookie') ?? '', SHARED_ACCESS_COOKIE_NAME)
+      const existingSessionId = token === undefined ? undefined : this.verifyCookie(token, state.secret, authority)
+      const existingSession = existingSessionId === undefined ? undefined : state.sessions.find(session =>
+        session.id === existingSessionId && session.revokedAt === undefined && now < session.expiresAt)
+      const existingPrincipal = existingSession === undefined ? undefined : state.principals.find(principal =>
+        principal.id === existingSession.principalId && principal.revokedAt === undefined)
+      const principalId = existingPrincipal?.id ?? SharedPrincipalId(`principal-${this.options.randomUUID()}`)
+      const sessionId = existingSession?.id ?? this.options.randomUUID()
+      const expiresAt = existingSession?.expiresAt ?? expiry(now, this.options.sessionMaxAgeMs)
+      if (existingPrincipal === undefined) {
+        state.principals.push({ id: principalId, createdAt: now })
+        state.sessions.push({ id: sessionId, principalId, issuedAt: now, expiresAt })
+      }
       return { principalId, sessionId, expiresAt }
     })
     if (created === undefined) throw new Error('shared access: invite is invalid or expired')

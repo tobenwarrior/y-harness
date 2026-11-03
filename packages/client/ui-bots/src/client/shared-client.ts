@@ -13,6 +13,22 @@ import type {
   BotShareMemoryValue,
   BotShareMemoryWriteValue,
   BotShareTranscriptEntry,
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupDeliveryStatusView,
+  BotGroupDeliveryView,
+  BotGroupInspectValue,
+  BotGroupListValue,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
+  BotGroupView,
+  BotGroupMessageView,
+  BotGroupMessageSenderView,
+  BotGroupMemberView,
+  BotGroupId as BotGroupIdType,
+  BotGroupMessageId as BotGroupMessageIdType,
 } from '@yharness/bots/client'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 
@@ -93,6 +109,13 @@ export interface SharedBotRevokeValue {
   readonly principalId: string
 }
 
+/** Group catalog visible to the authenticated collaborator. */
+export type SharedBotGroupListValue = BotGroupListValue
+/** Group transcript visible to the authenticated collaborator. */
+export type SharedBotGroupInspectValue = BotGroupInspectValue
+/** Group message delivery result. */
+export type SharedBotGroupSendValue = BotGroupSendValue
+
 /** Browser operations exposed by the isolated `/shared-bots` route. */
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
@@ -113,6 +136,16 @@ export interface SharedBotsClient {
   readonly createInvite: (botId: string, role: SharedBotInviteValue['role']) => Promise<SharedBotClientResult<SharedBotInviteValue>>
   /** Revoke one member from one Bot when the current membership role permits it. */
   readonly revokeMember: (botId: string, principalId: string) => Promise<SharedBotClientResult<SharedBotRevokeValue>>
+  /** List groups whose every Bot is shared with the current principal. */
+  readonly listGroups?: () => Promise<SharedBotClientResult<SharedBotGroupListValue>>
+  /** Create a group from Bots shared with the current principal. */
+  readonly createGroup?: (request: BotGroupCreateRequest) => Promise<SharedBotClientResult<BotGroupCreateValue>>
+  /** Update a group while retaining principal-derived membership access. */
+  readonly updateGroup?: (request: BotGroupUpdateRequest) => Promise<SharedBotClientResult<BotGroupUpdateValue>>
+  /** Read a shared group transcript without private Session events. */
+  readonly inspectGroup?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInspectValue>>
+  /** Send an idempotent shared group message attributed by the server. */
+  readonly sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
 }
 
 /**
@@ -150,6 +183,11 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     writeMemory: (botId, text) => call('bots/share/write-memory', { botId, text, consent: true }, parseMemoryWrite),
     createInvite: (botId, role) => call('bots/share/manage-members', { botId, action: 'create-invite', role }, parseInvite),
     revokeMember: (botId, principalId) => call('bots/share/manage-members', { botId, action: 'revoke', principalId }, parseRevoke),
+    listGroups: () => call('bots/share/list-groups', {}, parseGroupList),
+    createGroup: request => call('bots/share/create-group', request, parseGroupResult),
+    updateGroup: request => call('bots/share/update-group', request, parseGroupResult),
+    inspectGroup: groupId => call('bots/share/inspect-group', { groupId }, parseGroupInspect),
+    sendGroupMessage: request => call('bots/share/send-group-message', request, parseGroupSend),
   }
 }
 
@@ -260,6 +298,139 @@ function parseInvite(value: unknown): SharedBotInviteValue | undefined {
 function parseRevoke(value: unknown): SharedBotRevokeValue | undefined {
   if (!isRecord(value) || value.revoked !== true || typeof value.principalId !== 'string') return undefined
   return { revoked: true, principalId: value.principalId }
+}
+
+function parseGroupList(value: unknown): SharedBotGroupListValue | undefined {
+  if (!isRecord(value) || !Array.isArray(value.groups)) return undefined
+  const groups = value.groups.map(parseGroup)
+  return groups.some(group => group === undefined) ? undefined : { groups: groups as readonly BotGroupView[] }
+}
+
+function parseGroupResult(value: unknown): { readonly group: BotGroupView } | undefined {
+  if (!isRecord(value)) return undefined
+  const group = parseGroup(value.group)
+  return group === undefined ? undefined : { group }
+}
+
+function parseGroupInspect(value: unknown): SharedBotGroupInspectValue | undefined {
+  if (!isRecord(value) || !Array.isArray(value.messages)) return undefined
+  const group = parseGroup(value.group)
+  if (group === undefined) return undefined
+  const messages = value.messages.map(parseGroupMessage)
+  if (messages.some(message => message === undefined)) return undefined
+  const deliveryValue = value.deliveries
+  if (deliveryValue !== undefined && !Array.isArray(deliveryValue)) return undefined
+  const deliveries = deliveryValue === undefined ? undefined : deliveryValue.map(parseGroupDeliveryStatus)
+  if (deliveries?.some(delivery => delivery === undefined)) return undefined
+  return deliveries === undefined
+    ? { group, messages: messages as readonly BotGroupMessageView[] }
+    : {
+      group,
+      messages: messages as readonly BotGroupMessageView[],
+      deliveries: deliveries as readonly BotGroupDeliveryStatusView[],
+    }
+}
+
+function parseGroupSend(value: unknown): SharedBotGroupSendValue | undefined {
+  if (!isRecord(value) || typeof value.messageId !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.messageId)
+    || !['accepted', 'duplicate', 'partial'].includes(String(value.status))
+    || !Array.isArray(value.deliveries)) return undefined
+  const deliveries = value.deliveries.map(parseGroupDelivery)
+  if (deliveries.some(delivery => delivery === undefined)) return undefined
+  return {
+    messageId: brandString<BotGroupMessageIdType>(value.messageId),
+    status: value.status as BotGroupSendValue['status'],
+    deliveries: deliveries as readonly BotGroupDeliveryView[],
+  }
+}
+
+function parseGroupDelivery(value: unknown): BotGroupDeliveryView | undefined {
+  if (!isRecord(value) || typeof value.botId !== 'string'
+    || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || !['accepted', 'duplicate', 'failed'].includes(String(value.status))) return undefined
+  return {
+    botId: brandString<BotIdType>(value.botId),
+    status: value.status as BotGroupDeliveryView['status'],
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+  }
+}
+
+function parseGroupDeliveryStatus(value: unknown): BotGroupDeliveryStatusView | undefined {
+  if (!isRecord(value) || typeof value.messageId !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.messageId)
+    || typeof value.botId !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || !['pending', 'accepted', 'responded', 'failed'].includes(String(value.status))) return undefined
+  return {
+    messageId: brandString<BotGroupMessageIdType>(value.messageId),
+    botId: brandString<BotIdType>(value.botId),
+    status: value.status as BotGroupDeliveryStatusView['status'],
+    ...(typeof value.error === 'string' ? { error: value.error } : {}),
+  }
+}
+
+function parseGroup(value: unknown): BotGroupView | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string'
+    || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)
+    || typeof value.name !== 'string' || !isSafeInteger(value.createdAt) || !isSafeInteger(value.updatedAt)
+    || !Array.isArray(value.botIds) || !Array.isArray(value.bots)) return undefined
+  const botIds = value.botIds.map(item => typeof item === 'string' && /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(item)
+    ? brandString<BotIdType>(item)
+    : undefined)
+  const bots = value.bots.map(parseGroupMember)
+  if (botIds.some(botId => botId === undefined) || bots.some(bot => bot === undefined)
+    || bots.length !== botIds.length
+    || new Set(botIds.filter((botId): botId is BotIdType => botId !== undefined).map(String)).size !== botIds.length
+    || botIds.some(botId => botId !== undefined && !bots.some(bot => bot !== undefined && bot.id === botId))
+    || bots.some(bot => bot !== undefined && !botIds.some(botId => botId === bot.id))) return undefined
+  return {
+    id: brandString<BotGroupIdType>(value.id),
+    name: value.name,
+    botIds: botIds as readonly BotIdType[],
+    bots: bots as readonly BotGroupMemberView[],
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  }
+}
+
+function parseGroupMember(value: unknown): BotGroupMemberView | undefined {
+  const profile = parseProfile(value)
+  return profile === undefined ? undefined : profile
+}
+
+function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)
+    || typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
+    || typeof value.text !== 'string' || !isSafeInteger(value.createdAt)
+    || !isRecord(value.sender)) return undefined
+  const sender = parseGroupMessageSender(value.sender)
+  if (sender === undefined) return undefined
+  const targetValue = value.targetBotIds
+  if (targetValue !== undefined && !Array.isArray(targetValue)) return undefined
+  const targetBotIds = targetValue === undefined ? undefined : targetValue.map(item => (
+    typeof item === 'string' && /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(item) ? brandString<BotIdType>(item) : undefined
+  ))
+  if (targetBotIds?.some(botId => botId === undefined)) return undefined
+  return {
+    id: brandString<BotGroupMessageIdType>(value.id),
+    groupId: brandString<BotGroupIdType>(value.groupId),
+    sender,
+    text: value.text,
+    createdAt: value.createdAt,
+    ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds as readonly BotIdType[] }),
+  }
+}
+
+function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessageSenderView | undefined {
+  if (value.kind === 'user') {
+    if (value.principalId === undefined) return { kind: 'user' }
+    return typeof value.principalId === 'string' && /^principal-[A-Za-z0-9-]+$/.test(value.principalId)
+      ? { kind: 'user', principalId: brandString<BotPrincipalIdType>(value.principalId) }
+      : undefined
+  }
+  if (value.kind !== 'bot' || typeof value.botId !== 'string' || typeof value.name !== 'string') return undefined
+  return { kind: 'bot', botId: brandString<BotIdType>(value.botId), name: value.name }
 }
 
 function enumValue<T extends string>(value: unknown, choices: readonly T[]): T | undefined {

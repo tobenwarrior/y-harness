@@ -6,6 +6,8 @@ import type { Domain } from '@yharness/storage-domain'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { BotId } from './types.ts'
 import type { BotView } from './types.ts'
+import { BotPrincipalId } from './sharing.ts'
+import type { BotPrincipalId as BotPrincipalIdType } from './sharing.ts'
 import { z } from 'zod'
 
 /** Stable identity of one durable Bot group. */
@@ -32,7 +34,7 @@ export function BotGroupMessageId(value: string): BotGroupMessageId {
 
 /** Human-authored or Bot-authored group message attribution. */
 export type BotGroupMessageSender =
-  | { readonly kind: 'user' }
+  | { readonly kind: 'user'; readonly principalId?: BotPrincipalIdType }
   | { readonly kind: 'bot'; readonly botId: BotId }
 
 /** Stored group metadata. */
@@ -118,7 +120,7 @@ export interface BotGroupView extends Omit<BotGroupRecord, 'botIds'> {
 
 /** Browser-facing transcript sender with a resolved Bot name when applicable. */
 export type BotGroupMessageSenderView =
-  | { readonly kind: 'user' }
+  | { readonly kind: 'user'; readonly principalId?: BotPrincipalIdType }
   | { readonly kind: 'bot'; readonly botId: BotId; readonly name: string }
 
 /** Browser-facing transcript row. */
@@ -295,9 +297,14 @@ const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform
 const groupNameSchema = z.string().min(1).max(MAX_GROUP_NAME).refine(value => value.trim() === value)
 const groupTextSchema = z.string().min(1).max(MAX_MESSAGE_TEXT).refine(value => value.trim() === value)
 const senderSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('user') }).strict(),
+  z.object({
+    kind: z.literal('user'),
+    principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId).optional(),
+  }).strict(),
   z.object({ kind: z.literal('bot'), botId: botIdSchema }).strict(),
-])
+]).transform((sender): BotGroupMessageSender => sender.kind === 'user'
+  ? sender.principalId === undefined ? { kind: 'user' } : { kind: 'user', principalId: sender.principalId }
+  : sender)
 
 /** Stored group row schema. */
 export const botGroupRecordSchema = z.object({
@@ -574,6 +581,15 @@ export class BotGroupService {
     return this.sendInternal(request)
   }
 
+  /** Persist and fan out one message authored by an authenticated collaborator.
+   * @param principalId - Principal authenticated by the shared-Bot Host.
+   * @param request - Group message and optional recipient or retry identity.
+   * @returns Fan-out status and each recipient's delivery result.
+   */
+  async sendAsPrincipal(principalId: BotPrincipalIdType, request: BotGroupSendRequest): Promise<BotGroupSendValue> {
+    return this.sendInternal(request, undefined, principalId)
+  }
+
   /** Persist and fan out one message authored by the exact live Bot identity supplied by the Host.
    * @param senderBotId - Authenticated Bot author.
    * @param request - Group message and optional recipient or retry identity.
@@ -583,11 +599,19 @@ export class BotGroupService {
     return this.sendInternal(request, senderBotId)
   }
 
-  private sendInternal(request: BotGroupSendRequest, senderBotId?: BotId): Promise<BotGroupSendValue> {
-    return this.trackExternal(this.sendInternalImpl(request, senderBotId))
+  private sendInternal(
+    request: BotGroupSendRequest,
+    senderBotId?: BotId,
+    principalId?: BotPrincipalIdType,
+  ): Promise<BotGroupSendValue> {
+    return this.trackExternal(this.sendInternalImpl(request, senderBotId, principalId))
   }
 
-  private async sendInternalImpl(request: BotGroupSendRequest, senderBotId?: BotId): Promise<BotGroupSendValue> {
+  private async sendInternalImpl(
+    request: BotGroupSendRequest,
+    senderBotId?: BotId,
+    principalId?: BotPrincipalIdType,
+  ): Promise<BotGroupSendValue> {
     const createdFlights: Array<{ readonly id: string; readonly flight: BotGroupDeliveryFlight }> = []
     let prepared: PreparedBotGroupSend
     try {
@@ -598,7 +622,7 @@ export class BotGroupService {
         if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
         const bots = await this.host.listBots()
         const sender = senderBotId === undefined
-          ? ({ kind: 'user' } as const)
+          ? principalId === undefined ? ({ kind: 'user' } as const) : ({ kind: 'user', principalId } as const)
           : this.sender(group, senderBotId, bots)
         const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
         const targetBotIds = this.recipientIds(group, sender, request.targetBotIds)
@@ -608,6 +632,8 @@ export class BotGroupService {
         const existing = messages.get(messageId)
         if (existing !== undefined) {
           if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
+          || (existing.sender.kind === 'user' && sender.kind === 'user'
+            && String(existing.sender.principalId ?? '') !== String(sender.principalId ?? ''))
           || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
           || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)) {
             throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)

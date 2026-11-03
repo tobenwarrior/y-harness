@@ -243,6 +243,37 @@ describe('self-hosted shared-bot access', () => {
     }
   })
 
+  it('extends an active collaborator principal when redeeming a second invite', async () => {
+    const { ctx, dispose } = await mounted()
+    const authority = await SharedAccessAuthority.create(ctx, ctx.credentials, {
+      sessionMaxAgeMs: 60_000,
+      inviteMaxAgeMs: 60_000,
+      now: () => 1_000,
+    })
+    try {
+      const first = await authority.redeemInvite(
+        (await authority.createInvite()).code,
+        fakeRequest({ host: '127.0.0.1:3080' }),
+      )
+      const second = await authority.redeemInvite(
+        (await authority.createInvite()).code,
+        fakeRequest({
+          host: '127.0.0.1:3080',
+          cookie: cookieFromSetCookie(first.setCookie),
+        }),
+      )
+      expect(second.principalId).toBe(first.principalId)
+      const admitted = await authority.admit(fakeRequest({
+        host: '127.0.0.1:3080',
+        cookie: cookieFromSetCookie(second.setCookie),
+      }))
+      expect('peer' in admitted && sharedPrincipalOf(admitted.peer)).toBe(first.principalId)
+    } finally {
+      await authority.dispose()
+      await dispose()
+    }
+  })
+
   it('closes active sockets admitted by another authority instance when a principal is revoked', async () => {
     const { ctx, credentials, upgrades, connection, dispose } = await mounted()
     const options = { sessionMaxAgeMs: 60_000, inviteMaxAgeMs: 60_000, now: () => 1_000 }

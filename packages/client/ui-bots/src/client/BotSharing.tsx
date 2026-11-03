@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { brandString } from '@yharness/brand'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
   Button,
@@ -18,6 +19,9 @@ import {
   writeClipboard,
 } from '@yharness/client-ui-primitives'
 import type {
+  BotGroupMessageView,
+  BotGroupView,
+  BotGroupId as BotGroupIdType,
   BotShareInviteValue,
   BotShareMember,
   BotShareMemoryValue,
@@ -354,6 +358,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [memoryDrafts, setMemoryDrafts] = useState<Readonly<Record<string, string>>>({})
   const [memoryAcknowledged, setMemoryAcknowledged] = useState(false)
   const [memoryConfirmOpen, setMemoryConfirmOpen] = useState(false)
+  const [groups, setGroups] = useState<readonly BotGroupView[]>([])
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
+  const [groupDraft, setGroupDraft] = useState('')
+  const [groupWorking, setGroupWorking] = useState<'load' | 'send' | null>(null)
   const [working, setWorking] = useState<'list' | 'enroll' | null>(null)
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
@@ -361,6 +370,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const openRef = useRef(open)
   openRef.current = open
   const selectedBotIdRef = useRef<string | null>(null)
+  const selectedGroupIdRef = useRef<string | null>(null)
   const codeRevisionRef = useRef(0)
   const messageDraftRevisionsRef = useRef<Record<string, number>>({})
   const memoryDraftRevisionsRef = useRef<Record<string, number>>({})
@@ -369,6 +379,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const refreshGenerationRef = useRef(0)
   const operationGenerationRef = useRef(0)
   const selectionEpochRef = useRef(0)
+  const groupReadGenerationRef = useRef(0)
+  const groupOperationGenerationRef = useRef(0)
+  const groupDraftRevisionRef = useRef(0)
   const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
   const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
   const hasPendingChat = chatWorkingBotIds.size > 0
@@ -388,6 +401,47 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (selectedBotIdRef.current !== botId) selectionEpochRef.current += 1
     selectedBotIdRef.current = botId
     setSelectedBotId(botId)
+    if (botId !== null) {
+      selectedGroupIdRef.current = null
+      setSelectedGroupId(null)
+      setGroupMessages([])
+    }
+  }
+
+  const setGroupSelection = (groupId: string | null): void => {
+    if (selectedGroupIdRef.current !== groupId) {
+      groupOperationGenerationRef.current += 1
+      groupDraftRevisionRef.current += 1
+      setGroupDraft('')
+      setGroupWorking(null)
+    }
+    selectedGroupIdRef.current = groupId
+    setSelectedGroupId(groupId)
+    if (groupId !== null) {
+      selectedBotIdRef.current = null
+      setSelectedBotId(null)
+      setRecent([])
+      setMemory(null)
+    }
+  }
+
+  const readGroup = async (groupId: string): Promise<void> => {
+    const inspect = client.inspectGroup
+    if (inspect === undefined) return
+    const generation = groupReadGenerationRef.current + 1
+    groupReadGenerationRef.current = generation
+    selectedGroupIdRef.current = groupId
+    setGroupMessages([])
+    try {
+      const result = await inspect(groupId)
+      if (!openRef.current || generation !== groupReadGenerationRef.current || selectedGroupIdRef.current !== groupId) return
+      if (result.ok) setGroupMessages(result.value.messages)
+      else setError(result.error.message || t('sharedGroupLoadFailed'))
+    } catch (cause: unknown) {
+      if (openRef.current && generation === groupReadGenerationRef.current && selectedGroupIdRef.current === groupId) {
+        setError(cause instanceof Error ? cause.message : t('sharedGroupLoadFailed'))
+      }
+    }
   }
 
   const refresh = async (): Promise<void> => {
@@ -397,6 +451,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     refreshGenerationRef.current = refreshGeneration
     setWorking('list')
     setError(null)
+    setGroups([])
+    setGroupSelection(null)
+    setGroupMessages([])
     try {
       const result = await client.list()
       if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
@@ -415,6 +472,30 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           setMemoryAcknowledged(false)
         }
         if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
+        const listGroups = client.listGroups
+        if (listGroups !== undefined) {
+          setGroupWorking('load')
+          let groupsResult: Awaited<ReturnType<typeof listGroups>>
+          try {
+            groupsResult = await listGroups()
+          } finally {
+            if (isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
+              setGroupWorking(current => current === 'load' ? null : current)
+            }
+          }
+          if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
+          if (groupsResult.ok) {
+            setGroups(groupsResult.value.groups)
+            const currentGroupId = selectedGroupIdRef.current
+            const nextGroupId = currentGroupId !== null && groupsResult.value.groups.some(group => String(group.id) === currentGroupId)
+              ? currentGroupId
+              : groupsResult.value.groups[0] === undefined ? null : String(groupsResult.value.groups[0].id)
+            setGroupSelection(nextGroupId)
+            if (nextGroupId !== null) await readGroup(nextGroupId)
+          } else {
+            setError(groupsResult.error.message || t('sharedGroupLoadFailed'))
+          }
+        }
       } else {
         setError(result.error.message)
       }
@@ -458,11 +539,14 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   useEffect(() => {
     lifecycleGenerationRef.current += 1
     readGenerationRef.current += 1
+    groupReadGenerationRef.current += 1
     operationGenerationRef.current += 1
     if (!open) {
       setWorking(null)
       setMemoryConfirmOpen(false)
       setMemoryAcknowledged(false)
+      setGroupSelection(null)
+      setGroupMessages([])
       return
     }
     setError(null)
@@ -572,7 +656,46 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
   }
 
+  const sendGroup = async (): Promise<void> => {
+    const send = client.sendGroupMessage
+    const groupId = selectedGroupIdRef.current
+    const draft = groupDraft.trim()
+    if (send === undefined || !openRef.current || groupId === null || draft === '' || working !== null
+      || groupWorking !== null || hasPendingChat || hasPendingMemory) return
+    const submittedRevision = groupDraftRevisionRef.current
+    const submittedGroupId = groupId
+    const operationGeneration = groupOperationGenerationRef.current + 1
+    groupOperationGenerationRef.current = operationGeneration
+    const isCurrentGroupOperation = (): boolean => (
+      openRef.current
+      && selectedGroupIdRef.current === submittedGroupId
+      && groupOperationGenerationRef.current === operationGeneration
+    )
+    setGroupWorking('send')
+    setError(null)
+    try {
+      const result = await send({
+        groupId: brandString<BotGroupIdType>(groupId),
+        text: draft,
+      })
+      if (!openRef.current || selectedGroupIdRef.current !== submittedGroupId) return
+      if (result.ok) {
+        if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
+        await readGroup(submittedGroupId)
+      } else {
+        setError(result.error.message || t('sharedGroupSendFailed'))
+      }
+    } catch (cause: unknown) {
+      if (openRef.current && selectedGroupIdRef.current === submittedGroupId) {
+        setError(cause instanceof Error ? cause.message : t('sharedGroupSendFailed'))
+      }
+    } finally {
+      if (isCurrentGroupOperation()) setGroupWorking(null)
+    }
+  }
+
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
+  const selectedGroup = groups.find(group => String(group.id) === selectedGroupId)
   return (
     <>
       <Modal
@@ -667,6 +790,68 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
               </section>
             )}
           </div>
+        )}
+        {client.listGroups !== undefined && working !== 'list' && (
+          <section className={css.sharedContext} aria-labelledby="yharness-shared-groups-heading">
+            <div className={css.sharedContextHeader}>
+              <div>
+                <div className={css.sharedContextLabel} id="yharness-shared-groups-heading">{t('sharedGroupsTitle')}</div>
+                <p className={css.sharedMemoryDescription}>{t('sharedGroupsDescription')}</p>
+              </div>
+              {groupWorking === 'load' && <span role="status" aria-label={t('sharedGroupLoading')}><StateDot state="ongoing" size={12} /></span>}
+            </div>
+            {groupWorking !== 'load' && groups.length === 0 && <div className={css.shareEmpty}>{t('sharedGroupsEmpty')}</div>}
+            {groupWorking !== 'load' && groups.length > 0 && (
+              <div className={css.sharedBotList} aria-label={t('sharedGroupsTitle')}>
+                {groups.map(group => (
+                  <button
+                    type="button"
+                    className={String(group.id) === selectedGroupId ? css.sharedBotSelected : css.sharedBot}
+                    key={String(group.id)}
+                    onClick={() => { setGroupSelection(String(group.id)); void readGroup(String(group.id)) }}
+                  >
+                    <span aria-hidden="true" className={css.shareMemberDot} />
+                    <span><strong>{group.name}</strong><small>{group.bots.map(bot => bot.name).join(', ')}</small></span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedGroup !== undefined && (
+              <section className={css.sharedConversation} aria-label={selectedGroup.name}>
+                <header className={css.sharedConversationHeader}>
+                  <div><strong>{selectedGroup.name}</strong><small>{selectedGroup.bots.map(bot => bot.name).join(', ')}</small></div>
+                </header>
+                <div className={css.sharedTranscript}>
+                  <div className={css.sharedContextLabel}>{t('sharedGroupsTitle')}</div>
+                  {groupMessages.length === 0 && <span className={css.shareEmpty}>{t('sharedGroupTranscriptEmpty')}</span>}
+                  {groupMessages.map((messageRow) => {
+                    const sender = messageRow.sender.kind === 'bot'
+                      ? t('sharedGroupBotAuthor', { name: messageRow.sender.name })
+                      : messageRow.sender.principalId === undefined
+                        ? t('you')
+                        : t('sharedGroupAuthor', { id: String(messageRow.sender.principalId) })
+                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}</p>
+                  })}
+                </div>
+                <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>
+                  <Input
+                    value={groupDraft}
+                    placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
+                    aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
+                    onChange={(event) => { groupDraftRevisionRef.current += 1; setGroupDraft(event.currentTarget.value) }}
+                  />
+                  <Button
+                    variant="primary"
+                    type="submit"
+                    disabled={groupWorking !== null || working !== null || groupDraft.trim() === '' || hasPendingChat || hasPendingMemory}
+                    icon={<IconShareOutlineRegular size={14} />}
+                  >
+                    {groupWorking === 'send' ? t('sharedGroupSending') : t('sharedGroupSend')}
+                  </Button>
+                </form>
+              </section>
+            )}
+          </section>
         )}
       </Modal>
       <RiskConfirmation

@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { MockAdapter } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
+import { BotPrincipalId } from '../src/sharing.ts'
 import type { BotView } from '../src/types.ts'
 import { BotId } from '../src/types.ts'
 import '../src/collaboration.ts'
@@ -56,6 +57,61 @@ function waitFor<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
 }
 
 describe('Bot group delivery with a running Agent', () => {
+  it('keeps V1 user rows readable and binds shared author identity to idempotency', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-v1-alpha'), SessionId('session-v1-alpha'), 'V1 alpha')
+    const beta = botView(BotId('bot-v1-beta'), SessionId('session-v1-beta'), 'V1 beta')
+    try {
+      const service = new BotGroupService(storage.domain, {
+        listBots: async () => [alpha, beta],
+        deliverToBot: async () => 'accepted',
+      })
+      const group = await service.create({
+        id: BotGroupId('bot-group-v1-compatible'),
+        name: 'V1-compatible room',
+        botIds: [alpha.id, beta.id],
+      })
+      await storage.domain.table('messages').put(BotGroupMessageId('bot-group-message-v1'), {
+        id: BotGroupMessageId('bot-group-message-v1'),
+        groupId: group.group.id,
+        sender: { kind: 'user' },
+        text: 'Legacy transcript row',
+        createdAt: 1,
+      })
+      await expect(service.inspect({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Legacy transcript row' }],
+      })
+
+      const sharedMessageId = BotGroupMessageId('bot-group-message-shared-author')
+      await expect(service.sendAsPrincipal(BotPrincipalId('principal-alpha'), {
+        groupId: group.group.id,
+        text: 'Attributed collaborator note',
+        messageId: sharedMessageId,
+        targetBotIds: [beta.id],
+      })).resolves.toMatchObject({ status: 'accepted' })
+      await expect(service.sendAsPrincipal(BotPrincipalId('principal-alpha'), {
+        groupId: group.group.id,
+        text: 'Attributed collaborator note',
+        messageId: sharedMessageId,
+        targetBotIds: [beta.id],
+      })).resolves.toMatchObject({ status: 'duplicate' })
+      await expect(service.sendAsPrincipal(BotPrincipalId('principal-beta'), {
+        groupId: group.group.id,
+        text: 'Spoofed retry',
+        messageId: sharedMessageId,
+        targetBotIds: [beta.id],
+      })).rejects.toMatchObject({ code: 'invalid' })
+      await expect(service.inspect({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Legacy transcript row' },
+          { sender: { kind: 'user', principalId: 'principal-alpha' }, text: 'Attributed collaborator note' },
+        ],
+      })
+    } finally {
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
   it('does not hold the group serializer while pre-step and turn-end projections await it', async () => {
     const pool = new MemoryMediaPool()
     const storage = await openGroupDomain(pool)

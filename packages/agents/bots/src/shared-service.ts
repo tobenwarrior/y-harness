@@ -56,6 +56,21 @@ import {
   sharedMembershipSnapshotSchema,
 } from './storage.ts'
 import { projectBotTranscript, type BotCollaborationInspection } from './collaboration.ts'
+import {
+  BotGroupId,
+  BotGroupMessageId,
+  BotGroupError,
+  type BotGroupCreateRequest,
+  type BotGroupCreateValue,
+  type BotGroupInspectRequest,
+  type BotGroupInspectValue,
+  type BotGroupListValue,
+  type BotGroupSendRemoteRequest,
+  type BotGroupSendValue,
+  type BotGroupUpdateRequest,
+  type BotGroupUpdateValue,
+  type BotGroupView,
+} from './group-chat.ts'
 
 /** Exact endpoint allowlist mounted on the collaborator-only route. */
 export const SHARED_BOT_ENDPOINTS = [
@@ -67,6 +82,11 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/read-memory',
   'bots/share/write-memory',
   'bots/share/manage-memory',
+  'bots/share/list-groups',
+  'bots/share/create-group',
+  'bots/share/update-group',
+  'bots/share/inspect-group',
+  'bots/share/send-group-message',
 ] as const
 
 /** Safe profile projection returned to a collaborator. */
@@ -138,6 +158,20 @@ export interface SharedBotHost {
   readonly inspectPrivateSession: (sessionId: SessionId, signal: AbortSignal) => Promise<BotCollaborationInspection>
   /** Wait until a private Session's latest message is durably stored. */
   readonly flushPrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
+  /** List groups without exposing private Bot Sessions or operator-only groups. */
+  readonly listGroups?: (signal?: AbortSignal) => Promise<BotGroupListValue>
+  /** Create a durable group through the operator-owned group service. */
+  readonly createGroup?: (request: BotGroupCreateRequest, signal?: AbortSignal) => Promise<BotGroupCreateValue>
+  /** Update a durable group through the operator-owned group service. */
+  readonly updateGroup?: (request: BotGroupUpdateRequest, signal?: AbortSignal) => Promise<BotGroupUpdateValue>
+  /** Inspect a group transcript without private Session events. */
+  readonly inspectGroup?: (request: BotGroupInspectRequest, signal?: AbortSignal) => Promise<BotGroupInspectValue>
+  /** Send a group message attributed to the authenticated principal. */
+  readonly sendGroupMessage?: (
+    principalId: ReturnType<typeof BotPrincipalId>,
+    request: BotGroupSendRemoteRequest,
+    signal?: AbortSignal,
+  ) => Promise<BotGroupSendValue>
 }
 
 /** Result of one Host operation that requires a still-existing Bot row. */
@@ -201,12 +235,40 @@ const writeMemoryPayload = botIdPayload.extend({
 const manageMemoryPayload = botIdPayload.extend({
   enabled: z.boolean(),
 }).strict()
+const groupIdPayload = z.object({
+  groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId),
+}).strict()
+const groupBotIds = z.array(botIdPayload.shape.botId).min(2).max(6).refine(
+  botIds => new Set(botIds.map(String)).size === botIds.length,
+  'group Bot members must be unique',
+)
+const groupCreatePayload = z.object({
+  id: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId).optional(),
+  name: z.string().min(1).max(80).refine(value => value.trim() === value),
+  botIds: groupBotIds,
+}).strict()
+const groupUpdatePayload = groupIdPayload.extend({
+  name: z.string().min(1).max(80).refine(value => value.trim() === value),
+  botIds: groupBotIds,
+}).strict()
+const groupSendPayload = groupIdPayload.extend({
+  text: z.string().min(1).max(16_000).refine(value => value.trim() === value),
+  messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
+  targetBotIds: z.array(botIdPayload.shape.botId).min(1).max(6).refine(
+    botIds => new Set(botIds.map(String)).size === botIds.length,
+    'group Bot targets must be unique',
+  ).optional(),
+}).strict()
 
 type BotIdPayload = z.infer<typeof botIdPayload>
 type ChatPayload = z.infer<typeof chatPayload>
 type ManageMembersPayload = z.infer<typeof manageMembersPayload>
 type WriteMemoryPayload = z.infer<typeof writeMemoryPayload>
 type ManageMemoryPayload = z.infer<typeof manageMemoryPayload>
+type GroupIdPayload = z.infer<typeof groupIdPayload>
+type GroupCreatePayload = z.infer<typeof groupCreatePayload>
+type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
+type GroupSendPayload = z.infer<typeof groupSendPayload>
 
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
@@ -485,13 +547,15 @@ export class SharedBotService {
           createdAt: now,
           updatedAt: now,
         }
+        let existingMembership: SharedMembershipRecord | undefined
         try {
           await this.memberships.put(membershipKey(membership.botId, membership.principalId), membership)
           await this.updateMemberships((memberships) => {
             const existing = memberships.find(member =>
               member.botId === membership.botId && member.principalId === membership.principalId)
             if (existing !== undefined) {
-              throw new SharedServiceFault('gateway/bad-request', 'shared Bot principal is already enrolled')
+              existingMembership = existing
+              return { memberships, value: undefined }
             }
             if (membership.role === 'owner' && memberships.some(member =>
               member.botId === membership.botId && member.role === 'owner')) {
@@ -499,8 +563,28 @@ export class SharedBotService {
             }
             return { memberships: [...memberships, membership], value: undefined }
           })
+          if (existingMembership !== undefined) {
+            // The durable table write precedes the cross-host extension lock;
+            // restore the authoritative row when another invite won the race.
+            await this.memberships.put(
+              membershipKey(existingMembership.botId, existingMembership.principalId),
+              existingMembership,
+            )
+            if (existingMembership.role !== pending.role) {
+              await this.invites.delete(digest)
+              throw new SharedServiceFault('gateway/bad-request', 'shared Bot principal is already enrolled with a different role')
+            }
+          }
           await this.invites.delete(digest)
         } catch (error) {
+          if (existingMembership !== undefined) {
+            await this.memberships.put(
+              membershipKey(existingMembership.botId, existingMembership.principalId),
+              existingMembership,
+            ).catch(() => undefined)
+            if (error instanceof SharedServiceFault) throw error
+            throw new SharedServiceFault('gateway/internal', 'shared Bot enrollment could not restore its existing membership')
+          }
           await this.memberships.delete(membershipKey(membership.botId, membership.principalId)).catch(() => undefined)
           await this.removeMembershipSnapshot(membership.botId, membership.principalId).catch(() => undefined)
           await this.invites.delete(digest).catch(() => undefined)
@@ -757,6 +841,16 @@ export class SharedBotService {
         return this.writeMemory(parsePayload(writeMemoryPayload, payload), signal, principalId)
       case 'bots/share/manage-memory':
         return this.manageMemory(parsePayload(manageMemoryPayload, payload), signal, principalId)
+      case 'bots/share/list-groups':
+        return this.listGroups(signal, principalId)
+      case 'bots/share/create-group':
+        return this.createGroup(parsePayload(groupCreatePayload, payload), signal, principalId)
+      case 'bots/share/update-group':
+        return this.updateGroup(parsePayload(groupUpdatePayload, payload), signal, principalId)
+      case 'bots/share/inspect-group':
+        return this.inspectGroup(parsePayload(groupIdPayload, payload), signal, principalId)
+      case 'bots/share/send-group-message':
+        return this.sendGroupMessage(parsePayload(groupSendPayload, payload), signal, principalId)
       default:
         return failure('gateway/forbidden', 'shared Bot endpoint is not allowed')
     }
@@ -954,6 +1048,195 @@ export class SharedBotService {
     )
     await this.requireBot(payload.botId, signal)
     return { ok: true, value }
+  }
+
+  private async listGroups(
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const host = this.groupHost()
+    return this.withSharedGroupLock(principalId, signal, async (memberships) => {
+      const catalog = await host.listGroups(signal)
+      signal.throwIfAborted()
+      const groups = catalog.groups.filter(group => this.hasGroupAccessForMemberships(
+        memberships, group, principalId, 'read-group',
+      ))
+      if (!memberships.some(member => member.principalId === principalId)) {
+        throw new SharedServiceFault('gateway/forbidden', 'shared Bot membership is required')
+      }
+      return { ok: true, value: { groups } }
+    })
+  }
+
+  private async createGroup(
+    payload: GroupCreatePayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const host = this.groupHost()
+    const request: BotGroupCreateRequest = {
+      ...(payload.id === undefined ? {} : { id: payload.id }),
+      name: payload.name,
+      botIds: payload.botIds,
+    }
+    const created = await this.withSharedGroupWriteLock(principalId, signal, async (memberships) => {
+      this.requireGroupBotAccess(memberships, payload.botIds, principalId, 'write-group')
+      const result = await host.createGroup(request, signal)
+      signal.throwIfAborted()
+      this.requireGroupAccessForMemberships(memberships, result.group, principalId, 'write-group')
+      return result
+    })
+    return { ok: true, value: created }
+  }
+
+  private async updateGroup(
+    payload: GroupUpdatePayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const host = this.groupHost()
+    const request: BotGroupUpdateRequest = { groupId: payload.groupId, name: payload.name, botIds: payload.botIds }
+    const updated = await this.withSharedGroupWriteLock(principalId, signal, async (memberships) => {
+      const catalog = await host.listGroups(signal)
+      const current = catalog.groups.find(group => group.id === payload.groupId)
+      if (current === undefined) throw new SharedServiceFault('gateway/not-found', 'shared Bot group was not found')
+      this.requireGroupAccessForMemberships(memberships, current, principalId, 'write-group')
+      this.requireGroupBotAccess(memberships, payload.botIds, principalId, 'write-group')
+      const result = await host.updateGroup(request, signal)
+      signal.throwIfAborted()
+      this.requireGroupAccessForMemberships(memberships, result.group, principalId, 'write-group')
+      return result
+    })
+    return { ok: true, value: updated }
+  }
+
+  private async inspectGroup(
+    payload: GroupIdPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const host = this.groupHost()
+    return this.withSharedGroupLock(principalId, signal, async (memberships) => {
+      const catalog = await host.listGroups(signal)
+      const current = catalog.groups.find(group => group.id === payload.groupId)
+      if (current === undefined) throw new SharedServiceFault('gateway/not-found', 'shared Bot group was not found')
+      this.requireGroupAccessForMemberships(memberships, current, principalId, 'read-group')
+      const result = await host.inspectGroup({ groupId: current.id }, signal)
+      signal.throwIfAborted()
+      this.requireGroupAccessForMemberships(memberships, result.group, principalId, 'read-group')
+      if (result.group.id !== current.id) throw new SharedServiceFault('gateway/conflict', 'shared Bot group changed during inspection')
+      return { ok: true, value: result }
+    })
+  }
+
+  private async sendGroupMessage(
+    payload: GroupSendPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const host = this.groupHost()
+    const result = await this.withSharedGroupWriteLock(principalId, signal, async (memberships) => {
+      const catalog = await host.listGroups(signal)
+      const current = catalog.groups.find(group => group.id === payload.groupId)
+      if (current === undefined) throw new SharedServiceFault('gateway/not-found', 'shared Bot group was not found')
+      this.requireGroupAccessForMemberships(memberships, current, principalId, 'write-group')
+      if (payload.targetBotIds !== undefined) {
+        for (const botId of payload.targetBotIds) {
+          if (!current.botIds.includes(botId)) throw new SharedServiceFault('gateway/forbidden', 'shared Bot group target is not a member')
+        }
+      }
+      const request: BotGroupSendRemoteRequest = {
+        groupId: payload.groupId,
+        text: payload.text,
+        ...(payload.messageId === undefined ? {} : { messageId: payload.messageId }),
+        ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
+      }
+      const sent = await host.sendGroupMessage(principalId, request, signal)
+      signal.throwIfAborted()
+      return sent
+    })
+    return { ok: true, value: result }
+  }
+
+  private groupHost(): {
+    readonly listGroups: NonNullable<SharedBotHost['listGroups']>
+    readonly createGroup: NonNullable<SharedBotHost['createGroup']>
+    readonly updateGroup: NonNullable<SharedBotHost['updateGroup']>
+    readonly inspectGroup: NonNullable<SharedBotHost['inspectGroup']>
+    readonly sendGroupMessage: NonNullable<SharedBotHost['sendGroupMessage']>
+  } {
+    const { listGroups, createGroup, updateGroup, inspectGroup, sendGroupMessage } = this.host
+    if (listGroups === undefined || createGroup === undefined || updateGroup === undefined
+      || inspectGroup === undefined || sendGroupMessage === undefined) {
+      throw new SharedServiceFault('gateway/unavailable', 'shared Bot group capability is unavailable')
+    }
+    return { listGroups, createGroup, updateGroup, inspectGroup, sendGroupMessage }
+  }
+
+  private hasGroupAccessForMemberships(
+    memberships: readonly SharedMembershipRecord[],
+    group: BotGroupView,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    operation: BotShareOperation,
+  ): boolean {
+    try {
+      this.requireGroupAccessForMemberships(memberships, group, principalId, operation)
+      return true
+    } catch (error: unknown) {
+      if (error instanceof SharedServiceFault && error.code === 'gateway/forbidden') return false
+      throw error
+    }
+  }
+
+  private requireGroupBotAccess(
+    memberships: readonly SharedMembershipRecord[],
+    botIds: readonly BotId[],
+    principalId: ReturnType<typeof BotPrincipalId>,
+    operation: BotShareOperation,
+  ): void {
+    for (const botId of botIds) this.requireAuthorizationForMemberships(memberships, botId, principalId, operation)
+  }
+
+  private async withSharedGroupLock<T>(
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+    work: (memberships: readonly SharedMembershipRecord[]) => Promise<T>,
+  ): Promise<T> {
+    signal.throwIfAborted()
+    return this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current, authorityState) => {
+      const snapshot = parseMembershipSnapshot(current)
+      const authorityPrincipal = authorityState.principals.find(candidate => String(candidate.id) === String(principalId))
+      if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+        throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+      }
+      signal.throwIfAborted()
+      const value = await work(snapshot.memberships)
+      signal.throwIfAborted()
+      this.membershipSnapshot = snapshot.memberships
+      return { value, next: snapshot }
+    })
+  }
+
+  private requireGroupAccessForMemberships(
+    memberships: readonly SharedMembershipRecord[],
+    group: BotGroupView,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    operation: BotShareOperation,
+  ): void {
+    if (group.botIds.length < 2 || group.bots.length !== group.botIds.length
+      || group.bots.some(bot => !group.botIds.includes(bot.id))
+      || group.botIds.some(botId => !group.bots.some(bot => bot.id === botId))) {
+      throw new SharedServiceFault('gateway/forbidden', 'shared Bot group membership is not valid')
+    }
+    this.requireGroupBotAccess(memberships, group.botIds, principalId, operation)
+  }
+
+  private async withSharedGroupWriteLock<T>(
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+    work: (memberships: readonly SharedMembershipRecord[]) => Promise<T>,
+  ): Promise<T> {
+    return this.withSharedGroupLock(principalId, signal, work)
   }
 
   private async chat(
@@ -1860,5 +2143,15 @@ function failure(code: string, message: string): ConnectionRpcHandlerResult {
 
 function faultResult(error: unknown): ConnectionRpcHandlerResult {
   if (error instanceof SharedServiceFault) return failure(error.code, error.message)
+  if (error instanceof BotGroupError) {
+    const code = error.code === 'invalid'
+      ? 'gateway/bad-request'
+      : error.code === 'not-found'
+        ? 'gateway/not-found'
+        : error.code === 'member-not-found'
+          ? 'gateway/forbidden'
+          : 'gateway/unavailable'
+    return failure(code, error.message)
+  }
   return failure('gateway/internal', 'shared Bot request failed')
 }
