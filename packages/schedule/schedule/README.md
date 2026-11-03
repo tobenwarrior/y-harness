@@ -92,7 +92,7 @@ The `schedule.archiveAdmission()` effect answers the Workspace registry's archiv
 
 #### What the model sees
 
-The [generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-schedule) contains the descriptions and schemas for `schedule_create`, `schedule_list`, `schedule_delete`, and `schedule_update`, which [`@yharness/tool-schedule`](../tool-schedule/README.md) contributes to the presets that mount it.
+The [generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-schedule) contains the descriptions and schemas for the seven `schedule_*` tools, which [`@yharness/tool-schedule`](../tool-schedule/README.md) contributes to the presets that mount it.
 
 #### Token effect
 
