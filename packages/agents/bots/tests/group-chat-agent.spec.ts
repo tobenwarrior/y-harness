@@ -7,6 +7,7 @@ import SessionStore, { Session, SessionId } from '@yharness/session'
 import Storage from '@yharness/storage'
 import type { StorageBackend } from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
+import type { Domain } from '@yharness/storage-domain'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
@@ -21,7 +22,7 @@ const MISSING_CREDENTIALS = 'This Bot could not reply because its provider crede
 
 async function openGroupDomain(pool: MemoryMediaPool): Promise<{
   readonly ctx: Context
-  readonly domain: Awaited<ReturnType<DomainFacility['open']>>
+  readonly domain: Domain<typeof botGroupDomain>
 }> {
   const ctx = new Context()
   await ctx.plugin(Storage)

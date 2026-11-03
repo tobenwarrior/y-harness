@@ -18,7 +18,8 @@ import {
 import type { ContextFormed } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
-import type { Domain, StorageBackend } from '@yharness/storage-domain'
+import type { Domain } from '@yharness/storage-domain'
+import type { StorageBackend } from '@yharness/storage'
 import * as StorageJson from '@yharness/storage-json'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
@@ -2319,7 +2320,7 @@ describe('durable Bot roster', () => {
       h.inspect.mockImplementation(async (sessionId) => {
         const inspection = await originalInspect(sessionId)
         if (!blocked && sessionId === target.bot.sessionId
-          && inspection.events.some(event => event.type === 'assistant/message' && event.data.message.id === staleAssistantId)) {
+          && inspection.events.some((event: SessionEvent) => event.type === 'assistant/message' && event.data.message.id === staleAssistantId)) {
           blocked = true
           inspectionStarted.resolve(undefined)
           await releaseInspection.promise
@@ -2417,7 +2418,7 @@ describe('durable Bot roster', () => {
       h.inspect.mockImplementation(async (sessionId) => {
         const inspection = await originalInspect(sessionId)
         if (!blocked && sessionId === target.bot.sessionId
-          && inspection.events.some(event => event.type === 'turn/end' && event.data.turn === 41)) {
+          && inspection.events.some((event: SessionEvent) => event.type === 'turn/end' && event.data.turn === 41)) {
           blocked = true
           inspectionStarted.resolve(undefined)
           await releaseInspection.promise
@@ -2456,7 +2457,7 @@ describe('durable Bot roster', () => {
     await close(first.ctx)
 
     const h = await harness(
-      pool, undefined, undefined, [String(created.bot.sessionId)], false, [], new Map(), new Map(), new Map(), 4, 1,
+      pool, undefined, undefined, [String(created.bot.sessionId)], false, [], new Map(), new Map(), new Map(), {}, undefined, false, 4, 1,
     )
     try {
       expect(h.inspect.mock.calls.length).toBeGreaterThanOrEqual(5)
@@ -3529,7 +3530,7 @@ describe('durable Bot roster', () => {
       // (routine, peer, and group cancellation repair) precede admission.
       reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
         [String(created.bot.sessionId), seed],
-      ]), new Map(), new Map(), 5, 2)
+      ]), new Map(), new Map(), {}, undefined, false, 5, 2)
       await vi.waitFor(() => { expect(reopened!.followups[0]).toHaveBeenCalledOnce() }, { timeout: 3_000 })
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
@@ -4260,7 +4261,7 @@ describe('durable Bot roster', () => {
       const reopenedHistory = reopenedTools.find(tool => tool.name === 'schedule_history')
       if (resume === undefined || reopenedHistory === undefined) throw new Error('reopened event routine tools missing')
       expect(await resume.execute({ id: routine.id }, { ...context, callId: 'paused-event-resume' })).toMatchObject({ success: true })
-      await vi.waitFor(() => { expect(reopened.followups[0]).toHaveBeenCalledOnce() })
+      await vi.waitFor(() => { expect(reopened!.followups[0]).toHaveBeenCalledOnce() })
       expect(reopened.flush).toHaveBeenCalled()
       const recovered = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'paused-event-recovered' })
       expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
@@ -4461,7 +4462,7 @@ describe('durable Bot roster', () => {
           && events.some(event => event.type === 'bot/collaboration' && event.data.messageId === messageId && event.data.status === 'accepted')
           && events.some(event => event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled')) {
           heldRepairSnapshot = true
-          repairStarted.resolve()
+          repairStarted.resolve(undefined)
           await releaseRepair.promise
         }
         return { events: [...events] }
@@ -4473,7 +4474,7 @@ describe('durable Bot roster', () => {
         targetBotId: target.bot.id, text: 'The retry must remain accepted.', messageId,
       })).resolves.toMatchObject({ status: 'accepted', messageId })
       const inspectionsBeforeRepairRelease = h.inspect.mock.calls.length
-      releaseRepair.resolve()
+      releaseRepair.resolve(undefined)
 
       await vi.waitFor(() => {
         expect(h.inspect.mock.calls.length).toBeGreaterThan(inspectionsBeforeRepairRelease)

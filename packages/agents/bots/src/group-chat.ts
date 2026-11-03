@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { brandString, type Branded } from '@yharness/brand'
 import { MessageId } from '@yharness/llm'
-import type { SessionEvent } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session/types'
 import type { Domain } from '@yharness/storage-domain'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { BotId } from './types.ts'

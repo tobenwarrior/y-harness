@@ -190,9 +190,11 @@ describe('shared Schedule management', () => {
     if (domain === undefined) throw new Error('Schedule domain not initialized')
     const tasks = domain.table('tasks')
     const operations = domain.table('create_operations')
-    const operationEntry = [...operations.entries()].find(([, operation]) => operation.idempotencyKey === 'lost-create')
+    const operationEntry = [...operations.entries()].find(([, operation]) =>
+      scheduleDomain.tables.create_operations.valueSchema.parse(operation).idempotencyKey === 'lost-create')
     if (operationEntry === undefined) throw new Error('Create operation was not recorded')
-    const [operationKey, operation] = operationEntry
+    const [operationKey, storedOperation] = operationEntry
+    const operation = scheduleDomain.tables.create_operations.valueSchema.parse(storedOperation)
     const { record: _record, ...pending } = operation
     await tasks.delete(seeded.id)
     await operations.put(operationKey, { ...pending, status: 'pending' })
