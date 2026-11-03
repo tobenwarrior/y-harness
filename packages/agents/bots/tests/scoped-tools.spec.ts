@@ -10,6 +10,8 @@ import {
   BotMessageId,
   type BotCollaborationClient,
 } from '../src/collaboration.ts'
+import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
+import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
 import { installBotCollaborationTools } from '../src/scoped-tools.ts'
 
@@ -28,7 +30,7 @@ function client(): BotCollaborationClient {
   }
 }
 
-async function harness(withManagement = false) {
+async function harness(withManagement = false, withGroups = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -40,8 +42,19 @@ async function harness(withManagement = false) {
   }, { inject: ['tools', 'systemPrompt'] }))
   const bound = client()
   const manage = vi.fn(async () => ({ id: 'bot-created' }))
-  const dispose = installBotCollaborationTools(agent.ctx, async () => bound, withManagement ? manage : undefined)
-  return { ctx, agent, bound, dispose, manage }
+  const groupTools: BotGroupToolHost = {
+    list: vi.fn(async () => ({ groups: [] })),
+    inspect: vi.fn(async request => ({ group: { id: request.groupId, name: 'Room', botIds: [], bots: [], createdAt: 1, updatedAt: 1 }, messages: [] })),
+    create: vi.fn(async request => ({ group: { id: request.id ?? BotGroupId('bot-group-created'), name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1 } })),
+    send: vi.fn(async request => ({ messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: 'accepted' as const, deliveries: [] })),
+  }
+  const dispose = installBotCollaborationTools(
+    agent.ctx,
+    async () => bound,
+    withManagement ? manage : undefined,
+    withGroups ? async () => groupTools : undefined,
+  )
+  return { ctx, agent, bound, dispose, manage, groupTools }
 }
 
 async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown) {
@@ -96,5 +109,21 @@ describe('scoped Bot collaboration tools', () => {
     h.dispose()
     expect(h.ctx.tools.schemas(h.agent)).toEqual([])
     await h.ctx.fiber.dispose()
+  })
+
+  it('exposes group inspection, creation, and sender-bound delivery tools', async () => {
+    const h = await harness(false, true)
+    try {
+      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual(expect.arrayContaining([
+        'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'send_bot_group_message',
+      ]))
+      await expect(execute(h.ctx, h.agent, 'list_bot_groups', {})).resolves.toMatchObject({ isError: false })
+      const denied = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' })
+      expect(denied.isError).toBe(true)
+      expect(h.groupTools.send).not.toHaveBeenCalled()
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
   })
 })

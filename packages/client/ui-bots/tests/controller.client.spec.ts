@@ -3,7 +3,8 @@ import type {
   SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
 } from '@yharness/api-session-controller/client'
 import type { SessionId } from '@yharness/session/types'
-import { BotId, type BotView } from '@yharness/bots/client'
+import { BotId, type BotGroupId, type BotGroupInspectValue, type BotGroupView, type BotView } from '@yharness/bots/client'
+import { brandString } from '@yharness/brand'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
 function bot(id: string, sessionId: string, patch: Partial<BotView> = {}): BotView {
@@ -72,6 +73,16 @@ function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
   return {
     list: vi.fn(async () => ({ ok: true as const, value: { bots: rows } })),
     create,
+  }
+}
+
+function groupView(id: string, name: string, bots: readonly BotView[]): BotGroupView {
+  return {
+    id: brandString<BotGroupId>(id), name, botIds: bots.map(bot => bot.id), createdAt: 1, updatedAt: 1,
+    bots: bots.map(bot => ({
+      id: bot.id, name: bot.name, identity: bot.identity, accent: bot.accent,
+      availability: bot.availability, state: bot.state,
+    })),
   }
 }
 
@@ -360,5 +371,57 @@ describe('BotWorkspaceController', () => {
     expect(remote.create).toHaveBeenCalledOnce()
     expect(controller.face().reference()?.sessionId).toBe('session-lost')
     expect(controller.source.getSnapshot().error).toBeNull()
+  })
+
+  it('switches from a direct Bot Session to a persistent shared group transcript', async () => {
+    const first = bot('bot-first-group', 'session-first-group')
+    const second = bot('bot-second-group', 'session-second-group')
+    const group = groupView('bot-group-release', 'Release room', [first, second])
+    const detail: BotGroupInspectValue = {
+      group,
+      messages: [{ id: brandString('bot-group-message-1'), groupId: group.id, sender: { kind: 'user' }, text: 'Plan it.', createdAt: 1 }],
+    }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
+    remote.sendGroupMessage = vi.fn(async () => ({ ok: true as const, value: { messageId: brandString('bot-group-message-1'), status: 'accepted' as const, deliveries: [] } }))
+    const { retain, sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    await controller.load()
+    const directReference = controller.face().reference()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup?.name).toBe('Release room') })
+
+    expect(controller.source.getSnapshot().selectedBotId).toBeNull()
+    expect(controller.face().reference()).toBeUndefined()
+    expect(directReference?.release).toHaveBeenCalledOnce()
+    expect(remote.inspectGroup).toHaveBeenCalledWith({ groupId: group.id })
+
+    await controller.face().sendGroupMessage('Add owners.')
+    expect(remote.sendGroupMessage).toHaveBeenCalledWith({ groupId: group.id, text: 'Add owners.' })
+    expect(retain).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a group transcript visible when delivery is partial and exposes a retryable error', async () => {
+    const first = bot('bot-first-partial', 'session-first-partial')
+    const second = bot('bot-second-partial', 'session-second-partial')
+    const group = groupView('bot-group-partial', 'Partial room', [first, second])
+    const detail: BotGroupInspectValue = { group, messages: [] }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
+    remote.sendGroupMessage = vi.fn(async () => ({ ok: true as const, value: {
+      messageId: brandString('bot-group-message-partial'), status: 'partial' as const,
+      deliveries: [{ botId: first.id, status: 'accepted' as const }, { botId: second.id, status: 'failed' as const, error: 'offline' }],
+    } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response', undefined, () => 'Some Bots could not receive this message.')
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await expect(controller.face().sendGroupMessage('Try everyone.')).rejects.toThrow('Some Bots could not receive this message.')
+    expect(controller.source.getSnapshot().selectedGroup?.id).toBe(String(group.id))
+    expect(controller.source.getSnapshot().groupError).toBe('Some Bots could not receive this message.')
   })
 })

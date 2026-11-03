@@ -5,6 +5,7 @@ export type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
   BotGroupDeliveryView,
+  BotGroupId,
   BotGroupInspectRequest,
   BotGroupInspectValue,
   BotGroupListRequest,

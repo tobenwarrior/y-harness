@@ -27,6 +27,7 @@ export function apply(ctx: Context): void {
     ctx.sessions,
     () => ctx.locale.bind('bots')('unexpectedResponse'),
     ctx.get('remote.avatarGeneration') as typeof ctx.remote.avatarGeneration | undefined,
+    () => ctx.locale.bind('bots')('groupDeliveryFailure'),
   )
 
   ctx.effect(() => {

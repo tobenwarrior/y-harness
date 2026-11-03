@@ -23,7 +23,7 @@ Create a durable Bot roster whose rows keep one stable identity and one persiste
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, and edit Bots; a native provider may expose the same actions through its own tool bridge.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, and edit Bots, plus membership-scoped group inspection, creation, and delivery; a native provider may expose the individual Bot actions through its own tool bridge.
 
 ### When to choose it
 
@@ -90,7 +90,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, and `edit_bot_profile` are approval-gated actions. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection, together with `list_bot_groups`, `inspect_bot_group`, `create_bot_group`, and `send_bot_group_message` for groups that include the calling Bot. `send_bot_message`, `create_bot`, `edit_bot_profile`, `create_bot_group`, and `send_bot_group_message` are approval-gated actions. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 
@@ -138,7 +138,7 @@ The collaboration tool set is stable for a Bot scope. A roster or tool-schema ch
 
 #### What the model sees
 
-The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A human group message is delivered as a normal user-role message to every member's existing Session; it never routes all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn and step, and only when that delivery is the sole user input in the step.
+The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A human group message is delivered as a normal user-role message to every member's existing Session; it never routes all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn, with the final response allowed in a later step of that turn, and only when that delivery is the sole user input in the step.
 
 #### Token effect
 
@@ -157,7 +157,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
-- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn and step match the assistant event. Mixed private/group inputs and concurrent group deliveries are left unprojected rather than guessed. Claims are rebuilt from the persisted Session inspection after restart, so a process loss does not make the Host attribute the next unrelated response to an old group message.
+- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs and concurrent group deliveries are left unprojected rather than guessed. Claims are rebuilt from the persisted Session inspection after restart, so a process loss does not make the Host attribute the next unrelated response to an old group message.
 - **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 
 <a id="dev-note"></a>

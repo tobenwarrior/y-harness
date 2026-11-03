@@ -320,7 +320,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('attributes a response to the group delivery claimed in that exact step', async () => {
+  it('attributes a final response to the group delivery claimed earlier in the same turn', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
@@ -348,7 +348,7 @@ describe('durable Bot roster', () => {
       betaAgent.session.append('user/message', groupBDelivery, { surfaceOp: 'append' })
       const responseEvent = betaAgent.session.append('assistant/message', {
         turn: 2,
-        step: 1,
+        step: 2,
         message: freezeMessage({
           id: MessageId('assistant-beta-group-b'),
           role: 'assistant',
@@ -423,6 +423,142 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('does not project a later private step as a group response in the same turn', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Private guard room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Shared request.', messageId: 'bot-group-message-private-guard' })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('private-guard delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 4, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+
+      const privateMessage = freezeMessage({
+        id: MessageId('private-followup'), role: 'user' as const,
+        content: [{ type: 'text' as const, text: 'Keep this private.' }], source: { kind: 'user' as const },
+      })
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [privateMessage], turn: 4, step: 2, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [privateMessage] }))
+      betaAgent.session.append('user/message', privateMessage, { surfaceOp: 'append' })
+      const responseEvent = betaAgent.session.append('assistant/message', {
+        turn: 4, step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-private'), role: 'assistant',
+          content: [{ type: 'text', text: 'Private response.' }], source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, responseEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Shared request.' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('ignores a compacted user-message replacement while rebuilding group claims', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Compaction room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Rebuild this turn.', messageId: 'bot-group-message-compaction' })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('compaction delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 5 })
+      resumedBeta.session.append('step/start', { turn: 5, step: 1 })
+      const admitted = resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('user/message', freezeMessage({
+        id: MessageId('compacted-input'), role: 'user',
+        content: [{ type: 'text', text: 'A compacted view of the turn.' }], source: { kind: 'user' },
+      }), {
+        surfaceOp: { op: 'replace', startSeq: admitted.seq, endSeq: admitted.seq },
+        sourceEventSeqs: [admitted.seq],
+      })
+      resumedBeta.session.append('assistant/message', {
+        turn: 5,
+        step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-after-compaction'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The compacted turn is restored.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Rebuild this turn.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The compacted turn is restored.' },
+        ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('keeps same-source responses from different Bots as separate transcript rows', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Same source room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Answer separately.', messageId: 'bot-group-message-same-source' })
+      for (const [index, agent] of h.agents.entries()) {
+        const delivered = h.followups[index]?.mock.calls[0]?.[0]
+        if (delivered === undefined) throw new Error('same-source delivery was not admitted')
+        const turn = index + 1
+        await agentEvents(h.ctx, agent).waterfall('agent/pre-step', {
+          messages: [delivered], turn, step: 1, signal: new AbortController().signal,
+        }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+        agent.session.append('user/message', delivered, { surfaceOp: 'append' })
+        const responseEvent = agent.session.append('assistant/message', {
+          turn, step: 1,
+          message: freezeMessage({
+            id: MessageId('same-assistant-source'), role: 'assistant',
+            content: [{ type: 'text', text: `${agent.id} response.` }], source: { kind: 'model', provider: 'test', model: 'test' },
+          }), stream: [],
+        }, { surfaceOp: 'append' })
+        h.ctx.emit('session/event', agent.session, responseEvent)
+      }
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Answer separately.' },
+          { sender: { kind: 'bot', botId: alpha.bot.id } },
+          { sender: { kind: 'bot', botId: beta.bot.id } },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
     }
   })
 

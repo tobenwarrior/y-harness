@@ -215,6 +215,8 @@ export interface BotGroupSendValue {
 export interface BotGroupDeliveryHost {
   /** Read the current durable Bot roster. */
   readonly listBots: () => Promise<readonly BotView[]>
+  /** Notify the owning runtime after a durable group mutation. */
+  readonly changed?: () => void
   /** Queue a model-visible message in one target Bot Session and flush it. */
   readonly deliverToBot: (request: {
     readonly targetBotId: BotId
@@ -339,9 +341,9 @@ function normalizeText(value: string, label: string, max: number): string {
   return text
 }
 
-/** Create one deterministic message id from a group and source message identity. */
-function responseMessageId(groupId: BotGroupId, sourceId: string): BotGroupMessageId {
-  const digest = createHash('sha256').update(`${String(groupId)}:${sourceId}`).digest('hex')
+/** Create one deterministic message id from a group, Bot, and source message identity. */
+function responseMessageId(groupId: BotGroupId, botId: BotId, sourceId: string): BotGroupMessageId {
+  const digest = createHash('sha256').update(`${String(groupId)}:${String(botId)}:${sourceId}`).digest('hex')
   return BotGroupMessageId(`bot-group-message-${digest}`)
 }
 
@@ -394,6 +396,7 @@ export class BotGroupService {
       const now = Date.now()
       const record: BotGroupRecord = { id, name, botIds, createdAt: now, updatedAt: now }
       await groups.put(id, record)
+      this.host.changed?.()
       return { group: this.view(record, bots) }
     })
   }
@@ -435,6 +438,7 @@ export class BotGroupService {
         : this.sender(group, senderBotId, bots)
       const messageId = normalizeMessageId(request.messageId)
       const messages = this.domain.table('messages')
+      let changed = false
       const existing = messages.get(messageId)
       if (existing !== undefined) {
         if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
@@ -445,6 +449,7 @@ export class BotGroupService {
         await messages.put(messageId, {
           id: messageId, groupId, sender, text, createdAt: Date.now(),
         })
+        changed = true
       }
       const deliveries = this.domain.table('deliveries')
       const outcomes: BotGroupDeliveryView[] = []
@@ -461,6 +466,7 @@ export class BotGroupService {
           id, groupId, messageId, botId, status: 'pending', updatedAt: Date.now(),
         }
         if (current === undefined) await deliveries.put(id, pending)
+        if (current === undefined) changed = true
         try {
           const result = await this.host.deliverToBot({
             targetBotId: botId,
@@ -472,18 +478,24 @@ export class BotGroupService {
           })
           const next: BotGroupDeliveryRecord = { ...pending, status: 'accepted', updatedAt: Date.now() }
           await deliveries.put(id, next)
+          changed = true
           outcomes.push({ botId, status: result })
           admitted ||= result === 'accepted'
         } catch (error: unknown) {
           const detail = error instanceof Error ? error.message : String(error)
           await deliveries.put(id, { ...pending, status: 'failed', error: detail.slice(0, 400), updatedAt: Date.now() })
+          changed = true
           outcomes.push({ botId, status: 'failed', error: detail.slice(0, 400) })
         }
       }
       const hasFailure = outcomes.some(outcome => outcome.status === 'failed')
       const status = hasFailure ? 'partial' : admitted ? 'accepted' : 'duplicate'
       const updatedAt = Date.now()
-      if (updatedAt > group.updatedAt) await this.domain.table('groups').put(group.id, { ...group, updatedAt })
+      if (updatedAt > group.updatedAt) {
+        await this.domain.table('groups').put(group.id, { ...group, updatedAt })
+        changed = true
+      }
+      if (changed) this.host.changed?.()
       return { messageId, status, deliveries: outcomes }
     })
   }
@@ -495,26 +507,51 @@ export class BotGroupService {
     turn: number,
     step: number,
     isolated: boolean,
+    competingInput = false,
   ): Promise<void> {
     return this.serialize(async () => {
       if (!Number.isSafeInteger(turn) || turn < 0 || !Number.isSafeInteger(step) || step < 0) {
         throw new BotGroupError('invalid', 'Bot group claims require nonnegative safe turn and step numbers')
       }
-      if (claims.length === 0) return
       const groups = this.domain.table('groups')
       const deliveries = this.domain.table('deliveries')
       const now = Date.now()
+      let changed = false
+      if (competingInput) {
+        for (const [id, delivery] of deliveries.entries()) {
+          if (delivery.botId !== botId || delivery.claim?.turn !== turn || delivery.claim.isolated === false) continue
+          await deliveries.put(id, { ...delivery, claim: { ...delivery.claim, isolated: false }, updatedAt: now })
+          changed = true
+        }
+      }
       for (const claim of claims) {
         const group = groups.get(claim.groupId)
         if (group === undefined || !group.botIds.includes(botId)) continue
         const id = deliveryId(claim.messageId, botId)
         const delivery = deliveries.get(id)
-        if (delivery === undefined || (delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
+        if (delivery === undefined
+          || delivery.groupId !== claim.groupId
+          || delivery.messageId !== claim.messageId
+          || delivery.botId !== botId
+          || (delivery.status !== 'accepted' && delivery.status !== 'responded')) continue
         const nextClaim: BotGroupDeliveryClaim = { turn, step, isolated }
         if (delivery.claim?.turn === turn && delivery.claim.step === step && delivery.claim.isolated === isolated) continue
         await deliveries.put(id, { ...delivery, claim: nextClaim, updatedAt: now })
+        changed = true
         if (now > group.updatedAt) await groups.put(group.id, { ...group, updatedAt: now })
       }
+      const sameTurnClaims = [...deliveries.entries()]
+        .map(([, delivery]) => delivery)
+        .filter(delivery => delivery.botId === botId && delivery.claim?.turn === turn && delivery.claim.isolated)
+      if (sameTurnClaims.length > 1) {
+        for (const delivery of sameTurnClaims) {
+          const claim = delivery.claim
+          if (claim === undefined) continue
+          await deliveries.put(delivery.id, { ...delivery, claim: { ...claim, isolated: false }, updatedAt: now })
+          changed = true
+        }
+      }
+      if (changed) this.host.changed?.()
     })
   }
 
@@ -533,8 +570,8 @@ export class BotGroupService {
         .filter(delivery => delivery.botId === botId
           && delivery.status === 'accepted'
           && delivery.claim?.turn === turn
-          && delivery.claim.step === step
           && delivery.claim.isolated)
+        .filter(delivery => delivery.claim !== undefined && delivery.claim.step <= step)
       if (candidates.length !== 1) return
       const pending = candidates[0]
       if (pending === undefined) return
@@ -542,16 +579,21 @@ export class BotGroupService {
       if (group === undefined || !group.botIds.includes(botId)) return
       const source = messages.get(pending.messageId)
       if (source === undefined) return
-      const messageId = responseMessageId(group.id, sourceMessageId)
+      if (source.groupId !== pending.groupId || source.sender.kind !== 'user') return
+      const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
+      let changed = false
       if (messages.get(messageId) === undefined) {
         await messages.put(messageId, {
           id: messageId, groupId: group.id, sender: { kind: 'bot', botId }, text: messageText, createdAt: now,
         })
+        changed = true
       }
       await deliveries.put(pending.id, {
         ...pending, status: 'responded', responseMessageId: messageId, updatedAt: now,
       })
+      changed = true
+      if (changed) this.host.changed?.()
     })
   }
 

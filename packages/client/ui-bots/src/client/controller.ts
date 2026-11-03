@@ -8,6 +8,16 @@ import type {
   BotAvatarUpdateValue,
   BotCreateRequest,
   BotId as BotIdType,
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupId as BotGroupIdType,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+  BotGroupView,
   BotListRequest,
   BotView,
 } from '@yharness/bots/client'
@@ -22,12 +32,19 @@ import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
-import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity } from './types.ts'
+import type {
+  BotAccent, BotAvatarEditorActions, BotCreation, BotGroupCreation, BotGroupDetailData,
+  BotGroupSummary, BotIdentity,
+} from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
+  listGroups?: (request: BotGroupListRequest) => Promise<RemoteResult<BotGroupListValue>>
+  createGroup?: (request: BotGroupCreateRequest) => Promise<RemoteResult<BotGroupCreateValue>>
+  inspectGroup?: (request: BotGroupInspectRequest) => Promise<RemoteResult<BotGroupInspectValue>>
+  sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<RemoteResult<BotGroupSendValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
@@ -45,6 +62,11 @@ export interface BotWorkspaceState {
   readonly phase: 'idle' | 'loading' | 'ready' | 'error'
   readonly bots: readonly BotView[]
   readonly selectedBotId: BotIdType | null
+  readonly groups: readonly BotGroupSummary[]
+  readonly selectedGroupId: string | null
+  readonly selectedGroup: BotGroupDetailData | null
+  readonly groupPhase: 'idle' | 'loading' | 'ready' | 'error'
+  readonly groupError: string | null
   readonly error: string | null
 }
 
@@ -53,7 +75,11 @@ export interface BotWorkspaceFace {
   readonly hooks: { readonly workspace: HostObservable<BotWorkspaceState> }
   readonly reference: () => SessionReference | undefined
   readonly select: (id: string) => void
+  readonly selectGroup: (id: string) => void
   readonly create: (creation: BotCreation) => Promise<void>
+  readonly createGroup: (creation: BotGroupCreation) => Promise<void>
+  readonly sendGroupMessage: (text: string) => Promise<void>
+  readonly retryGroup: () => void
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
@@ -70,6 +96,11 @@ const INITIAL_STATE: BotWorkspaceState = {
   phase: 'idle',
   bots: [],
   selectedBotId: null,
+  groups: [],
+  selectedGroupId: null,
+  selectedGroup: null,
+  groupPhase: 'idle',
+  groupError: null,
   error: null,
 }
 
@@ -90,6 +121,7 @@ export class BotWorkspaceController {
     private readonly sessions: ISessions,
     private readonly unexpectedResponse: () => string,
     private readonly avatarGeneration?: BotAvatarGenerationRemote,
+    private readonly groupDeliveryFailure: () => string = unexpectedResponse,
   ) {}
 
   /** Stop asynchronous reads and release the selected Session. */
@@ -109,7 +141,15 @@ export class BotWorkspaceController {
       hooks: { workspace: this.source },
       reference: () => this.selectedReference,
       select: (id) => { this.select(id) },
+      selectGroup: (id) => { this.selectGroup(id) },
       create: creation => this.create(creation),
+      createGroup: creation => this.createGroup(creation),
+      sendGroupMessage: text => this.sendGroupMessage(text),
+      retryGroup: () => {
+        void this.retryGroup().catch((error: unknown) => {
+          this.setGroupError(error instanceof Error ? error.message : String(error))
+        })
+      },
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined
@@ -152,6 +192,33 @@ export class BotWorkspaceController {
       this.fail(result.error.message)
       return
     }
+    const groupsResult = await this.readGroups()
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    const groups = groupsResult.groups
+    const selectedGroupId = current.selectedGroupId !== null && groups.some(group => group.id === current.selectedGroupId)
+      ? current.selectedGroupId
+      : null
+    if (selectedGroupId !== current.selectedGroupId) this.selectionGeneration++
+    if (selectedGroupId !== null) {
+      this.selectedReference?.release()
+      this.selectedReference = undefined
+      const selectionGeneration = this.selectionGeneration
+      this.source.set({
+        ...current,
+        phase: 'ready',
+        bots: result.value.bots,
+        groups,
+        selectedBotId: null,
+        selectedGroupId,
+        selectedGroup: current.selectedGroupId === selectedGroupId ? current.selectedGroup : null,
+        groupPhase: current.selectedGroupId === selectedGroupId && current.selectedGroup !== null ? 'ready' : 'loading',
+        groupError: groupsResult.error,
+        error: null,
+      })
+      if (this.remote.inspectGroup !== undefined) await this.refreshGroup(selectedGroupId, selectionGeneration)
+      return
+    }
     try {
       await this.sessions.refresh()
     } catch (error: unknown) {
@@ -159,7 +226,6 @@ export class BotWorkspaceController {
       return
     }
     if (this.disposed) return
-    const current = this.source.getSnapshot()
     const pendingBot = this.pendingCreation === undefined
       ? undefined
       : result.value.bots.find(bot => bot.id === this.pendingCreation?.id)
@@ -191,9 +257,27 @@ export class BotWorkspaceController {
     this.source.set({
       phase: 'ready',
       bots: result.value.bots,
+      groups,
       selectedBotId: selected,
+      selectedGroupId: null,
+      selectedGroup: null,
+      groupPhase: 'idle',
+      groupError: groupsResult.error,
       error: referenceError ?? null,
     })
+  }
+
+  private async readGroups(): Promise<{ readonly groups: readonly BotGroupSummary[]; readonly error: string | null }> {
+    const listGroups = this.remote.listGroups
+    const current = this.source.getSnapshot()
+    if (listGroups === undefined) return { groups: current.groups, error: null }
+    try {
+      const result = await listGroups({})
+      if (!result.ok) return { groups: current.groups, error: result.error.message }
+      return { groups: result.value.groups.map(groupSummary), error: null }
+    } catch (error: unknown) {
+      return { groups: current.groups, error: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   private fail(message: string): void {
@@ -206,13 +290,165 @@ export class BotWorkspaceController {
     if (this.disposed) return
     const current = this.source.getSnapshot()
     const bot = current.bots.find(candidate => candidate.id === id)
-    if (bot === undefined || bot.id === current.selectedBotId) return
+    if (bot === undefined || (bot.id === current.selectedBotId && current.selectedGroupId === null)) return
     const selectionGeneration = ++this.selectionGeneration
     const referenceError = this.retainSelected(bot.id, current.bots)
-    this.source.set({ ...current, selectedBotId: bot.id, error: referenceError ?? null })
+    this.source.set({
+      ...current,
+      selectedBotId: bot.id,
+      selectedGroupId: null,
+      selectedGroup: null,
+      groupPhase: 'idle',
+      groupError: null,
+      error: referenceError ?? null,
+    })
     if (this.shouldRefreshCatalog(bot.id, current.bots, referenceError)) {
       void this.retrySelectionAfterCatalogRefresh(bot.id, selectionGeneration)
     }
+  }
+
+  private selectGroup(id: string): void {
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    if (!current.groups.some(group => group.id === id) || current.selectedGroupId === id) return
+    const selectionGeneration = ++this.selectionGeneration
+    this.selectedReference?.release()
+    this.selectedReference = undefined
+    this.source.set({
+      ...current,
+      selectedBotId: null,
+      selectedGroupId: id,
+      selectedGroup: null,
+      groupPhase: 'loading',
+      groupError: null,
+      error: null,
+    })
+    void this.refreshGroup(id, selectionGeneration)
+  }
+
+  private async refreshGroup(id: string, selectionGeneration: number): Promise<void> {
+    const inspectGroup = this.remote.inspectGroup
+    if (inspectGroup === undefined) {
+      this.setGroupError(this.unexpectedResponse(), id, selectionGeneration)
+      return
+    }
+    let result: RemoteResult<BotGroupInspectValue>
+    try {
+      result = await inspectGroup({ groupId: brandString<BotGroupIdType>(id) })
+    } catch (error: unknown) {
+      this.setGroupError(error instanceof Error ? error.message : String(error), id, selectionGeneration)
+      return
+    }
+    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    const current = this.source.getSnapshot()
+    if (current.selectedGroupId !== id) return
+    if (!result.ok) {
+      this.setGroupError(result.error.message, id, selectionGeneration)
+      return
+    }
+    const selectedGroup = groupDetail(result.value)
+    const groups = current.groups.some(group => group.id === selectedGroup.id)
+      ? current.groups.map(group => group.id === selectedGroup.id ? selectedGroup : group)
+      : [...current.groups, selectedGroup]
+    this.source.set({
+      ...current,
+      groups,
+      selectedGroup,
+      groupPhase: 'ready',
+      groupError: null,
+    })
+  }
+
+  private setGroupError(message: string, id?: string, selectionGeneration?: number): void {
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    if (id !== undefined && (current.selectedGroupId !== id || selectionGeneration !== this.selectionGeneration)) return
+    this.source.set({ ...current, groupPhase: 'error', groupError: message })
+  }
+
+  private async createGroup(creation: BotGroupCreation): Promise<void> {
+    if (this.disposed) return
+    const createGroup = this.remote.createGroup
+    if (createGroup === undefined) {
+      const message = this.unexpectedResponse()
+      this.setGroupError(message)
+      throw new Error(message)
+    }
+    const name = creation.name.trim()
+    const request: BotGroupCreateRequest = {
+      id: brandString<BotGroupIdType>(`bot-group-${randomUUID()}`),
+      name,
+      botIds: creation.botIds.map(id => brandString<BotIdType>(id)),
+    }
+    let result: RemoteResult<BotGroupCreateValue>
+    try {
+      result = await createGroup(request)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.setGroupError(message)
+      throw new Error(message)
+    }
+    if (this.disposed) return
+    if (!result.ok) {
+      this.setGroupError(result.error.message)
+      throw new Error(result.error.message)
+    }
+    const created = groupSummary(result.value.group)
+    const current = this.source.getSnapshot()
+    const groups = current.groups.some(group => group.id === created.id)
+      ? current.groups.map(group => group.id === created.id ? created : group)
+      : [...current.groups, created]
+    const selectionGeneration = ++this.selectionGeneration
+    this.selectedReference?.release()
+    this.selectedReference = undefined
+    this.source.set({
+      ...current,
+      phase: 'ready',
+      bots: current.bots,
+      groups,
+      selectedBotId: null,
+      selectedGroupId: created.id,
+      selectedGroup: null,
+      groupPhase: 'loading',
+      groupError: null,
+      error: null,
+    })
+    await this.refreshGroup(created.id, selectionGeneration)
+  }
+
+  private async sendGroupMessage(text: string): Promise<void> {
+    const sendGroupMessage = this.remote.sendGroupMessage
+    const current = this.source.getSnapshot()
+    if (current.selectedGroupId === null || sendGroupMessage === undefined) {
+      const message = this.unexpectedResponse()
+      this.setGroupError(message)
+      throw new Error(message)
+    }
+    let result: RemoteResult<BotGroupSendValue>
+    try {
+      result = await sendGroupMessage({ groupId: brandString<BotGroupIdType>(current.selectedGroupId), text: text.trim() })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.setGroupError(message)
+      throw new Error(message)
+    }
+    if (this.disposed) return
+    if (!result.ok) {
+      this.setGroupError(result.error.message)
+      throw new Error(result.error.message)
+    }
+    if (result.value.status === 'partial') {
+      const message = this.groupDeliveryFailure()
+      this.setGroupError(message)
+      throw new Error(message)
+    }
+    await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
+  }
+
+  private retryGroup(): Promise<void> {
+    const current = this.source.getSnapshot()
+    if (current.selectedGroupId === null) return this.load()
+    return this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
   }
 
   private async retrySelectionAfterCatalogRefresh(id: BotIdType, selectionGeneration: number): Promise<void> {
@@ -433,7 +669,17 @@ export class BotWorkspaceController {
     )
     if (this.disposed || this.selectionGeneration !== selectionGeneration) return
     this.pendingCreation = result.value.bot.state === 'active' ? undefined : request
-    this.source.set({ phase: 'ready', bots, selectedBotId: result.value.bot.id, error: referenceError ?? null })
+    this.source.set({
+      phase: 'ready',
+      bots,
+      groups: current.groups,
+      selectedBotId: result.value.bot.id,
+      selectedGroupId: null,
+      selectedGroup: null,
+      groupPhase: 'idle',
+      groupError: null,
+      error: referenceError ?? null,
+    })
   }
 
   private async reconcileCreate(request: BotCreateRequest): Promise<boolean> {
@@ -454,5 +700,38 @@ function requestFromBot(bot: BotView): BotCreateRequest {
     accent: bot.accent,
     cwd: bot.cwd,
     ...(bot.agentPreset === undefined ? {} : { agentPreset: bot.agentPreset }),
+  }
+}
+
+function groupSummary(group: BotGroupView): BotGroupSummary {
+  return {
+    id: String(group.id),
+    name: group.name,
+    bots: group.bots.map(member => ({
+      id: String(member.id),
+      name: member.name,
+      ...(member.description === undefined ? {} : { description: member.description }),
+      identity: member.identity,
+      accent: member.accent,
+      ...(member.avatar === undefined ? {} : { avatar: member.avatar }),
+      status: member.state === 'provisioning'
+        ? 'preparing'
+        : member.availability === 'running' ? 'working' : member.availability,
+    })),
+  }
+}
+
+function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {
+  const summary = groupSummary(value.group)
+  return {
+    ...summary,
+    messages: value.messages.map(message => ({
+      id: String(message.id),
+      sender: message.sender.kind === 'bot'
+        ? { kind: 'bot' as const, botId: String(message.sender.botId), name: message.sender.name }
+        : { kind: 'user' as const },
+      text: message.text,
+      createdAt: message.createdAt,
+    })),
   }
 }

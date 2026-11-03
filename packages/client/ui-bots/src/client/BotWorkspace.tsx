@@ -1,17 +1,21 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconEditOutlineRegular, IconLinkOutlineRegular,
+  IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
-  Input, Modal, StateDot, Tag, Tooltip,
+  IconUsersOutlineRegular, Input, Modal, StateDot, Tag, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import css from './BotWorkspace.module.css'
-import type { BotAccent, BotIdentity, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
+import type {
+  BotAccent, BotGroupCreation, BotGroupDetailData, BotGroupSummary, BotIdentity, BotStatus, BotSummary,
+  BotWorkspaceProps,
+} from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
 
@@ -104,6 +108,231 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar }: {
     </button>
   )
 }
+
+function GroupAvatarStack({ group, loadAvatar }: { group: BotGroupSummary; loadAvatar: BotWorkspaceProps['loadAvatar'] }) {
+  return (
+    <span className={css.groupAvatarStack} aria-hidden="true">
+      {group.bots.slice(0, 3).map((bot, index) => (
+        <span className={css.groupAvatar} key={bot.id} style={{ zIndex: 3 - index }}>
+          <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" status={bot.status} />
+        </span>
+      ))}
+      {group.bots.length > 3 && <span className={css.groupAvatarMore}>+{group.bots.length - 3}</span>}
+    </span>
+  )
+}
+
+function GroupRow({ group, selected, onSelect, loadAvatar, t }: {
+  group: BotGroupSummary
+  selected: boolean
+  onSelect: () => void
+  loadAvatar: BotWorkspaceProps['loadAvatar']
+  t: BotWorkspaceViewProps['t']
+}) {
+  return (
+    <button
+      type="button"
+      className={clsx(css.groupRow, selected && css.groupRowSelected)}
+      aria-current={selected ? 'page' : undefined}
+      aria-label={`${group.name}, ${t('groupMemberNames', { count: group.bots.length })}`}
+      onClick={onSelect}
+    >
+      <GroupAvatarStack group={group} loadAvatar={loadAvatar} />
+      <span className={css.groupRowCopy}>
+        <span className={css.groupRowName}>{group.name}</span>
+        <span className={css.groupRowMeta}>{t('groupMemberNames', { count: group.bots.length })}</span>
+      </span>
+    </button>
+  )
+}
+
+function NewGroupDialog({ open, onClose, onCreate, bots, error, t }: {
+  open: boolean
+  onClose: () => void
+  onCreate: ((creation: BotGroupCreation) => Promise<void>) | undefined
+  bots: readonly BotSummary[]
+  error: string | null
+  t: BotWorkspaceViewProps['t']
+}) {
+  const [name, setName] = useState('')
+  const [selected, setSelected] = useState<readonly string[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    setName('')
+    setSelected([])
+    setSubmitting(false)
+  }, [open])
+  const toggle = (id: string, checked: boolean): void => {
+    setSelected(current => checked ? [...current, id] : current.filter(value => value !== id))
+  }
+  const submit = async (): Promise<void> => {
+    const trimmed = name.trim()
+    if (onCreate === undefined || trimmed === '' || selected.length < 2 || selected.length > 6 || submitting) return
+    setSubmitting(true)
+    try {
+      await onCreate({ name: trimmed, botIds: selected })
+      onClose()
+    } catch {
+      // The owner publishes the durable failure; retain the choices for a retry.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('newGroupTitle')}
+      description={t('newGroupDescription')}
+      closeLabel={t('cancel')}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="primary" onClick={() => { void submit() }} disabled={name.trim() === '' || selected.length < 2 || selected.length > 6 || submitting}>
+            {submitting ? t('groupCreating') : t('groupCreate')}
+          </Button>
+        </>
+      )}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      <div className={css.dialogField} aria-busy={submitting}>
+        <label className={css.dialogLabel} htmlFor="yharness-bots-new-group-name">{t('groupName')}</label>
+        <Input
+          id="yharness-bots-new-group-name"
+          data-modal-autofocus
+          value={name}
+          placeholder={t('groupNamePlaceholder')}
+          onChange={(event) => { setName(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void submit()
+            }
+          }}
+        />
+      </div>
+      <div className={css.dialogField}>
+        <div className={css.dialogLabel}>{t('groupMembers')} · {t('groupMemberCount', { count: selected.length })}</div>
+        {bots.length === 0
+          ? <div className={css.groupNoBots}>{t('groupNoBots')}</div>
+          : <div className={css.groupMemberChoices}>
+            {bots.map((bot) => {
+              const checked = selected.includes(bot.id)
+              const disabled = !checked && selected.length >= 6
+              return (
+                <label className={clsx(css.groupMemberChoice, checked && css.groupMemberChoiceSelected)} key={bot.id}>
+                  <input type="checkbox" checked={checked} disabled={disabled || submitting} aria-label={bot.name} onChange={(event) => { toggle(bot.id, event.currentTarget.checked) }} />
+                  <BotAvatar
+                    name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+                    botId={bot.id} loadAvatar={undefined}
+                  />
+                  <span className={css.groupMemberCopy}>
+                    <span className={css.groupMemberName}>{bot.name}</span>
+                    {bot.description !== undefined && <span className={css.groupMemberDescription}>{bot.description}</span>}
+                  </span>
+                </label>
+              )
+            })}
+          </div>}
+        {bots.length > 0 && selected.length < 2 && <span className={css.groupHelper}>{t('groupMinMembers')}</span>}
+      </div>
+    </Modal>
+  )
+}
+
+/** Render a persistent shared group transcript without creating a second Bot Session. */
+export function BotGroupDetail({ group, loading, error, onRetry, onSend, loadAvatar, t }: {
+  group: BotGroupDetailData | undefined
+  loading: boolean
+  error: string | null
+  onRetry: () => void
+  onSend: (text: string) => Promise<void>
+  loadAvatar: BotWorkspaceProps['loadAvatar']
+  t: BotWorkspaceViewProps['t']
+}): ReactNode {
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const transcript = useMemo(() => group?.messages ?? [], [group])
+  const transcriptRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const node = transcriptRef.current
+    if (node !== null) node.scrollTop = node.scrollHeight
+  }, [transcript.length, transcriptRef])
+  const submit = async (): Promise<void> => {
+    const text = draft.trim()
+    if (text === '' || sending) return
+    setSending(true)
+    try {
+      await onSend(text)
+      setDraft('')
+    } catch {
+      // Keep the draft visible while the owner exposes a retryable failure.
+    } finally {
+      setSending(false)
+    }
+  }
+  if (group === undefined) {
+    return (
+      <section className={css.detailEmpty} aria-labelledby="yharness-bots-group-loading-title">
+        <span className={css.emptyMark} aria-hidden="true"><IconUsersOutlineRegular size={24} /></span>
+        <h2 id="yharness-bots-group-loading-title" className={css.emptyTitle}>{loading ? t('groupLoadingTitle') : t('chooseGroupTitle')}</h2>
+        <p className={css.emptyDescription}>{loading ? t('groupLoadingDescription') : t('chooseGroupDescription')}</p>
+        {error !== '' && error !== null && <div className={css.loadNotice} role="alert"><span>{error}</span><Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button></div>}
+      </section>
+    )
+  }
+  const botsById = new Map(group.bots.map(bot => [bot.id, bot]))
+  return (
+    <section className={css.detail} aria-label={group.name}>
+      <header className={css.detailHeader}>
+        <span className={css.detailIdentity}>
+          <GroupAvatarStack group={group} loadAvatar={loadAvatar} />
+          <span className={css.detailIdentityCopy}>
+            <span className={css.detailName}>{group.name}</span>
+            <span className={css.detailRole}>{t('groupMemberNames', { count: group.bots.length })}</span>
+          </span>
+        </span>
+        <span className={css.detailActions}><Tag tone="neutral"><IconUsersOutlineRegular size={13} />{group.bots.length}</Tag></span>
+      </header>
+      {error !== '' && error !== null && <div className={css.groupNotice} role="alert"><span>{error}</span><Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button></div>}
+      <div className={css.groupThread} ref={(node) => { transcriptRef.current = node }} aria-live="polite">
+        {transcript.length === 0
+          ? <div className={css.threadEmpty}><p>{t('groupEmptyDescription')}</p></div>
+          : transcript.map((message) => {
+            const bot = message.sender.kind === 'bot' ? botsById.get(message.sender.botId) : undefined
+            return (
+              <article className={clsx(css.groupMessage, message.sender.kind === 'user' && css.groupMessageUser)} key={message.id}>
+                {message.sender.kind === 'bot' && <BotAvatar name={message.sender.name} identity={bot?.identity} accent={bot?.accent} avatar={bot?.avatar} botId={bot?.id} loadAvatar={loadAvatar} size="small" status={bot?.status} />}
+                <div className={css.groupMessageBody}>
+                  <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
+                  <p>{message.text}</p>
+                </div>
+              </article>
+            )
+          })}
+      </div>
+      <div className={css.groupComposerWrap}>
+        <textarea
+          className={css.groupComposer}
+          aria-label={t('groupMessagePlaceholder', { name: group.name })}
+          placeholder={t('groupMessagePlaceholder', { name: group.name })}
+          value={draft}
+          disabled={sending}
+          onChange={(event) => { setDraft(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              void submit()
+            }
+          }}
+        />
+        <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={draft.trim() === '' || sending} onClick={() => { void submit() }} />
+      </div>
+    </section>
+  )
+}
+
 function NewBotDialog({ open, onClose, onCreate, error, t }: {
   open: boolean
   onClose: () => void
@@ -247,10 +476,12 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, loading 
  */
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
+  groups: sharedGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
   onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
+  const [newGroupOpen, setNewGroupOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
@@ -259,6 +490,11 @@ export function BotRoster({
       .some(value => value?.toLocaleLowerCase().includes(normalizedQuery)))
   }, [bots, normalizedQuery])
   const groups = useMemo(() => groupBots(filteredBots, t('defaultGroup')), [filteredBots, t])
+  const filteredSharedGroups = useMemo(() => {
+    if (normalizedQuery === '') return sharedGroups
+    return sharedGroups.filter(group => [group.name, ...group.bots.map(bot => bot.name)]
+      .some(value => value.toLocaleLowerCase().includes(normalizedQuery)))
+  }, [sharedGroups, normalizedQuery])
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
   const openNewBot = (): void => {
@@ -268,6 +504,10 @@ export function BotRoster({
   const openAvatarEditor = (): void => {
     if (!wide) expandSidebar?.()
     setAvatarEditorOpen(true)
+  }
+  const openNewGroup = (): void => {
+    if (!wide) expandSidebar?.()
+    setNewGroupOpen(true)
   }
 
   return (
@@ -320,6 +560,33 @@ export function BotRoster({
                   </div>
                 </section>
               ))}
+              {onCreateGroup !== undefined && (
+                <section className={css.group} aria-labelledby="yharness-bots-shared-groups">
+                  <div className={css.groupHeadingRow}>
+                    <h2 id="yharness-bots-shared-groups" className={css.groupLabel}>{t('sharedGroups')}</h2>
+                    <Tooltip label={t('newGroup')} side="bottom" portal>
+                      <Button variant="ghost" size="sm" aria-label={t('newGroup')} icon={<IconPlusOutlineRegular size={14} />} onClick={openNewGroup} />
+                    </Tooltip>
+                  </div>
+                  {selectedGroupId === null && groupError !== null && (
+                    <div className={css.groupNotice} role="alert">
+                      <span>{groupError || t('groupLoadError')}</span>
+                      {onRetry !== undefined && <Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button>}
+                    </div>
+                  )}
+                  {!loading && filteredSharedGroups.length > 0 && (
+                    <div className={css.groupRows}>
+                      {filteredSharedGroups.map(group => (
+                        <GroupRow
+                          key={group.id} group={group} selected={group.id === selectedGroupId}
+                          onSelect={() => { onSelectGroup?.(group.id) }} loadAvatar={loadAvatar} t={t}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {!loading && sharedGroups.length > 0 && filteredSharedGroups.length === 0 && <div className={css.groupNoResults}>{t('noSearchResults')}</div>}
+                </section>
+              )}
               {!loading && hasRows && groups.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
               {!loading && !hasRows && error === null && (
                 <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconSidebarBotsOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconSidebarBotAddOutlineRegular size={14} />}>{t('newBot')}</Button></div>
@@ -361,9 +628,27 @@ export function BotRoster({
                 </Tooltip>
               )
             })}
+            {onCreateGroup !== undefined && (
+              <>
+                <Tooltip label={t('newGroup')} side="right" delayMs={500}>
+                  <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('newGroup')} icon={<IconPlusOutlineRegular size={18} />} onClick={openNewGroup} />
+                </Tooltip>
+                {sharedGroups.map(group => (
+                  <Tooltip key={group.id} label={group.name} side="right" delayMs={500}>
+                    <button type="button" className={clsx(css.botRailRow, group.id === selectedGroupId && css.botRailRowSelected)} aria-current={group.id === selectedGroupId ? 'page' : undefined} aria-label={group.name} onClick={() => { onSelectGroup?.(group.id) }}>
+                      <GroupAvatarStack group={group} loadAvatar={loadAvatar} />
+                    </button>
+                  </Tooltip>
+                ))}
+              </>
+            )}
           </div>
         )}
       <NewBotDialog open={newBotOpen} onClose={() => { setNewBotOpen(false) }} onCreate={onCreateBot} error={error} t={t} />
+      <NewGroupDialog
+        open={newGroupOpen} onClose={() => { setNewGroupOpen(false) }} onCreate={onCreateGroup}
+        bots={bots} error={groupError} t={t}
+      />
       {selectedBot !== undefined && avatarEditor !== undefined && (
         <BotAvatarEditor
           bot={selectedBot}
