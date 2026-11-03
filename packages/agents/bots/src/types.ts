@@ -426,6 +426,8 @@ declare module '@yharness/typert-protocol' {
     'bot/avatar-missing': { readonly botId: BotId }
     /** The requested connected MCP app is not currently available. */
     'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
+    /** The configured storage backend cannot fence Bot profile writers. */
+    'bot/profile-coordination-unavailable': { readonly botId?: BotId; readonly operation: string }
     /** A Bot skill policy replacement was based on an older revision. */
     'bot/skill-policy-conflict': {
       readonly botId: BotId

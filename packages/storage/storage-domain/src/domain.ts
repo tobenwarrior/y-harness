@@ -40,12 +40,22 @@ export interface DomainGlobal<G> {
  * be mutated in place — replace via `put`/`update`.
  */
 export interface KvTable<K extends string, V> {
+  /** Whether fresh reads, atomic updates, and atomic inserts are available. */
+  readonly supportsDurableCoordination: boolean
+
   /**
    * Read one record, synchronously from memory.
    * @param key - Record key.
    * @returns the record, or `undefined` when absent.
    */
   get(key: K): V | undefined
+
+  /**
+   * Read one record from the current durable medium state.
+   * @param key - Record key.
+   * @returns the current record, or `undefined` when absent.
+   */
+  getFresh(key: K): Promise<V | undefined>
 
   /**
    * Snapshot iterator over `[key, record]` pairs. A snapshot, not a live
@@ -87,6 +97,15 @@ export interface KvTable<K extends string, V> {
    * @returns the stored next record.
    */
   update(key: K, fn: (current: V) => V): Promise<V>
+
+  /**
+   * Insert one record only when the key is absent at the backend's current
+   * medium state. The operation is queued and emits a put only when inserted.
+   * @param key - Record key.
+   * @param value - Full record to insert.
+   * @returns `true` when inserted, `false` when another writer already owns the key.
+   */
+  insert(key: K, value: V): Promise<boolean>
 }
 
 /** Global handle of a spec: typed when declared, `never` (inaccessible) when not. */
@@ -284,9 +303,22 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
     private readonly records: Map<string, unknown>,
   ) {}
 
+  get supportsDurableCoordination(): boolean {
+    return typeof this.host.unit.getRecord === 'function'
+      && typeof this.host.unit.updateRecord === 'function'
+      && typeof this.host.unit.insertRecord === 'function'
+  }
+
   get(key: K): V | undefined {
     this.host.assertReadable()
     return this.records.get(key) as V | undefined
+  }
+
+  getFresh(key: K): Promise<V | undefined> {
+    const getRecord = this.host.unit.getRecord
+    return getRecord === undefined
+      ? Promise.resolve(this.get(key))
+      : getRecord.call(this.host.unit, this.tableName, key).then(value => value as V | undefined)
   }
 
   entries(): IterableIterator<[K, V]> {
@@ -331,17 +363,49 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
 
   update(key: K, fn: (current: V) => V): Promise<V> {
     return this.host.enqueue(async () => {
-      if (!this.records.has(key)) {
+      const updateRecord = this.host.unit.updateRecord
+      if (updateRecord === undefined) {
+        if (!this.records.has(key)) {
+          throw new DomainError(
+            'missing-key',
+            `domain '${this.host.domainName}' table '${this.tableName}' has no record '${key}' to update`,
+          )
+        }
+        const next = fn(this.records.get(key) as V)
+        await this.host.unit.putRecord(this.tableName, key, next)
+        this.records.set(key, next)
+        this.emitPut(key, next)
+        return next
+      }
+      const result = await updateRecord.call(this.host.unit, this.tableName, key, current => fn(current as V))
+      if (!result.found) {
         throw new DomainError(
           'missing-key',
           `domain '${this.host.domainName}' table '${this.tableName}' has no record '${key}' to update`,
         )
       }
-      const next = fn(this.records.get(key) as V)
-      await this.host.unit.putRecord(this.tableName, key, next)
+      const next = result.value as V
       this.records.set(key, next)
       this.emitPut(key, next)
       return next
+    })
+  }
+
+  insert(key: K, value: V): Promise<boolean> {
+    return this.host.enqueue(async () => {
+      const insertRecord = this.host.unit.insertRecord
+      if (insertRecord === undefined) {
+        if (this.records.has(key)) return false
+        await this.host.unit.putRecord(this.tableName, key, value)
+        this.records.set(key, value)
+        this.emitPut(key, value)
+        return true
+      }
+      const inserted = await insertRecord.call(this.host.unit, this.tableName, key, value)
+      if (!inserted) return false
+      this.records.set(key, value)
+      this.emitPut(key, value)
+      return true
     })
   }
 

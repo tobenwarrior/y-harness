@@ -67,7 +67,7 @@ The backend is a document-per-row layout over one `node:sqlite` connection, desi
 ### Design concept
 
 - **Document per row.** Each unit table becomes a physical STRICT table `u_<unit>_<table> (key TEXT PRIMARY KEY, value TEXT)` whose `value` column holds the record's JSON text; the global singleton lives in a shared `unit_globals` table. One key update touches exactly one row — the reason to route a high-churn domain here.
-- **Single-statement atomicity.** Every write primitive is one prepared statement, so SQLite's per-statement atomicity satisfies the KV contract without explicit transactions; write ordering stays the caller's responsibility (the domain layer's write chain).
+- **Fenced point operations.** Ordinary writes remain one prepared statement, while `updateRecord` uses `BEGIN IMMEDIATE` and `insertRecord` uses `INSERT OR IGNORE` so a consumer can read and replace one current row across SQLite connections without a stale in-memory cache.
 - **Names validated before DDL.** Unit and table names must match `UNIT_NAME_RE` before they reach DDL, so no external input is ever interpolated into SQL identifiers.
 - **Versions fail loud.** The physical layout version lives in `PRAGMA user_version` (fresh databases stamp it last); unit format versions live in the `units` table. Any other stamped value rejects — no migrations.
 
@@ -123,7 +123,7 @@ None — the backend never touches live request prefixes.
 These limits define when this backend is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 
 - **Synchronous driver blocks the event loop** — each write is a synchronous `DatabaseSync` call; the block lasts a single statement, which is acceptable at domain-data scale.
-- **No busy-wait or retry policy** — a competing connection holding a write lock rejects the operation immediately instead of waiting; the domain layer's write chain serializes writes within one process, and cross-process coordination is out of scope.
+- **No busy-wait or retry policy** — a competing connection holding a write lock rejects the operation immediately instead of waiting; callers can retry the durable operation after observing the failure.
 - **Only the current physical layout version opens** — any other stamped `user_version` is rejected rather than migrated (pre-release stance).
 - **Open sequence duplicated with the query provider** — `openDatabase` and `session-query-sqlite` both enforce SQLite file ownership, but each package owns a distinct application identity and schema; no shared medium helper couples them.
 

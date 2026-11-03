@@ -50,6 +50,20 @@ describe('sqlite backend specifics', () => {
     await backend.close()
   })
 
+  it('fences current updates and claims absent keys', async () => {
+    const backend = backendAt(':memory:')
+    const unit = await backend.kv.open(DESCRIPTOR)
+    await unit.putRecord('records', 'counter', { n: 0 })
+    const first = await unit.updateRecord!('records', 'counter', value => ({ n: (value as { n: number }).n + 1 }))
+    const second = await unit.updateRecord!('records', 'counter', value => ({ n: (value as { n: number }).n + 1 }))
+    expect(first).toEqual({ found: true, value: { n: 1 } })
+    expect(second).toEqual({ found: true, value: { n: 2 } })
+    expect(await unit.getRecord!('records', 'counter')).toEqual({ n: 2 })
+    expect(await unit.insertRecord!('records', 'claimed', { owner: 'first' })).toBe(true)
+    expect(await unit.insertRecord!('records', 'claimed', { owner: 'second' })).toBe(false)
+    await backend.close()
+  })
+
   it('materializes STRICT record tables and stamps the schema version', async () => {
     const path = await freshDbPath()
     const backend = backendAt(path)

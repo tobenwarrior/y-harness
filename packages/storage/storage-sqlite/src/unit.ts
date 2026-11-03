@@ -15,8 +15,10 @@ import { recordTableName } from './schema.ts'
 /** Prepared statements for one declared table. */
 interface TableStatements {
   upsert: StatementSync
+  insert: StatementSync
   remove: StatementSync
   selectAll: StatementSync
+  selectOne: StatementSync
 }
 
 /**
@@ -25,6 +27,7 @@ interface TableStatements {
  * primitive. Values are stored as JSON text in the `value` column.
  */
 export class SqliteKvUnit implements KvUnit {
+  private readonly db: DatabaseSync
   private readonly tables = new Map<string, TableStatements>()
   private readonly globalUpsert: StatementSync | undefined
   private readonly globalSelect: StatementSync | undefined
@@ -40,6 +43,7 @@ export class SqliteKvUnit implements KvUnit {
     private readonly descriptor: KvUnitDescriptor,
     private readonly onClose: () => void,
   ) {
+    this.db = db
     for (const table of descriptor.tables) {
       // Both name segments are validated against UNIT_NAME_RE by the backend,
       // so the physical identifier is safe to interpolate into statement text.
@@ -48,8 +52,10 @@ export class SqliteKvUnit implements KvUnit {
         upsert: db.prepare(
           `INSERT INTO "${physical}" (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         ),
+        insert: db.prepare(`INSERT OR IGNORE INTO "${physical}" (key, value) VALUES (?, ?)`),
         remove: db.prepare(`DELETE FROM "${physical}" WHERE key = ?`),
         selectAll: db.prepare(`SELECT key, value FROM "${physical}"`),
+        selectOne: db.prepare(`SELECT value FROM "${physical}" WHERE key = ?`),
       })
     }
     this.globalUpsert = descriptor.hasGlobal
@@ -60,6 +66,43 @@ export class SqliteKvUnit implements KvUnit {
     this.globalSelect = descriptor.hasGlobal
       ? db.prepare('SELECT value FROM unit_globals WHERE unit = ?')
       : undefined
+  }
+
+  getRecord(table: string, key: string): Promise<unknown | undefined> {
+    return this.settle(() => {
+      const statements = this.statementsFor(table)
+      const row = statements.selectOne.get(key) as { value: string } | undefined
+      return row === undefined ? undefined : this.parseValue(row.value, `table '${table}' key '${key}'`)
+    })
+  }
+
+  updateRecord(
+    table: string,
+    key: string,
+    update: (current: unknown) => unknown,
+  ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
+    return this.settle(() => {
+      const statements = this.statementsFor(table)
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        const row = statements.selectOne.get(key) as { value: string } | undefined
+        if (row === undefined) {
+          this.db.exec('ROLLBACK')
+          return { found: false }
+        }
+        const value = update(this.parseValue(row.value, `table '${table}' key '${key}'`))
+        statements.upsert.run(key, JSON.stringify(value))
+        this.db.exec('COMMIT')
+        return { found: true, value }
+      } catch (error: unknown) {
+        try { this.db.exec('ROLLBACK') } catch (rollbackError: unknown) { void rollbackError }
+        throw error
+      }
+    })
+  }
+
+  insertRecord(table: string, key: string, value: unknown): Promise<boolean> {
+    return this.settle(() => this.statementsFor(table).insert.run(key, JSON.stringify(value)).changes === 1)
   }
 
   loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }> {

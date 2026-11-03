@@ -720,11 +720,17 @@ function memoryView(memory: BotMemoryRecord): BotMemoryView {
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
   const bots = domain.table('bots')
+  if (!bots.supportsDurableCoordination) {
+    throw new Error('Bot profile persistence requires durable cross-process coordination')
+  }
   for (const [key, record] of bots.entries()) {
     if (record.avatar === undefined) continue
-    const { avatar: legacyAvatar, ...withoutAvatar } = record
-    void legacyAvatar
-    await bots.put(key, withoutAvatar)
+    await bots.update(key, (current) => {
+      if (current.avatar === undefined) return current
+      const { avatar: ignoredAvatar, ...withoutAvatar } = current
+      void ignoredAvatar
+      return withoutAvatar
+    })
   }
   await domain.global.set({ animatedAvatarVersion: BOT_APPEARANCE_MIGRATION_VERSION })
 }
@@ -1195,10 +1201,10 @@ export class BotService extends TypertRemoteService {
     bots: KvTable<BotRecord['id'], BotStoredRecord>,
     intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
   ): Promise<BotStoredRecord> {
-    const next: BotStoredRecord = { ...record, pendingMemoryUpdate: intent }
-    await bots.put(record.id, next)
-    this.recordsBySession.set(String(next.sessionId), next)
-    return next
+    return this.updateProfileRecord(bots, record.id, 'save-memory-recovery', current => ({
+      ...current,
+      pendingMemoryUpdate: intent,
+    }))
   }
 
   /** Remove a completed edit intent without changing the public Bot row. */
@@ -1207,13 +1213,19 @@ export class BotService extends TypertRemoteService {
     bots: KvTable<BotRecord['id'], BotStoredRecord>,
     intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
   ): Promise<void> {
-    const latest = bots.get(record.id)
+    this.requireProfileCoordination(bots, 'clear-memory-recovery', record.id)
+    const latest = await bots.getFresh(record.id)
     if (latest === undefined || latest.pendingMemoryUpdate === undefined) return
     if (latest.pendingMemoryUpdate.memoryId !== intent.memoryId || latest.pendingMemoryUpdate.text !== intent.text) return
-    const { pendingMemoryUpdate: ignored, ...withoutPending } = latest
-    void ignored
     try {
-      await bots.put(record.id, withoutPending)
+      await this.updateProfileRecord(bots, record.id, 'clear-memory-recovery', (current) => {
+        if (current.pendingMemoryUpdate === undefined
+          || current.pendingMemoryUpdate.memoryId !== intent.memoryId
+          || current.pendingMemoryUpdate.text !== intent.text) return current
+        const { pendingMemoryUpdate: ignored, ...withoutPending } = current
+        void ignored
+        return withoutPending
+      })
     } catch (error: unknown) {
       throw new BotMemoryError(
         'durability-failed',
@@ -1221,7 +1233,6 @@ export class BotService extends TypertRemoteService {
         { cause: error },
       )
     }
-    this.recordsBySession.set(String(withoutPending.sessionId), withoutPending)
   }
 
   /** Append one memory mutation, update the live projection, and await durability. */
@@ -1435,8 +1446,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const current = bots.get(id)
-    if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const current = await this.freshBotRecord(bots, id, 'connected-app-policy')
     return { bot: this.view(current), apps: this.connectedAppsFor(current) }
   }
 
@@ -1453,29 +1463,28 @@ export class BotService extends TypertRemoteService {
       const appId = normalizeConnectedAppId(request.appId)
       if (typeof request.allowed !== 'boolean') return badRequest('Connected-app allowed must be a boolean')
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const current = await this.freshBotRecord(bots, id, 'connected-app-policy')
       const app = this.connectedAppsFor(current).find(candidate => candidate.id === appId)
       if (app === undefined) {
         throw new RemoteError('bot/app-not-found', `Connected app "${appId}" is not available`, { botId: id, appId })
       }
-      const next: BotRecord = current.connectedAppIds === undefined
-        ? {
-          ...current,
-          connectedAppDenyIds: request.allowed
-            ? (current.connectedAppDenyIds ?? []).filter(candidate => candidate !== appId)
-            : [...new Set([...(current.connectedAppDenyIds ?? []), appId])],
-          updatedAt: Math.max(Date.now(), current.updatedAt),
-        }
-        : {
-          ...current,
-          connectedAppIds: request.allowed
-            ? [...new Set([...current.connectedAppIds, appId])]
-            : current.connectedAppIds.filter(candidate => candidate !== appId),
-          updatedAt: Math.max(Date.now(), current.updatedAt),
-        }
-      await bots.put(id, next)
-      this.recordsBySession.set(String(next.sessionId), next)
+      const next = await this.updateProfileRecord(bots, id, 'connected-app-policy', currentRecord => (
+        currentRecord.connectedAppIds === undefined
+          ? {
+            ...currentRecord,
+            connectedAppDenyIds: request.allowed
+              ? (currentRecord.connectedAppDenyIds ?? []).filter(candidate => candidate !== appId)
+              : [...new Set([...(currentRecord.connectedAppDenyIds ?? []), appId])],
+            updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
+          }
+          : {
+            ...currentRecord,
+            connectedAppIds: request.allowed
+              ? [...new Set([...currentRecord.connectedAppIds, appId])]
+              : currentRecord.connectedAppIds.filter(candidate => candidate !== appId),
+            updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
+          }
+      ))
       const committed = this.connectedAppsFor(next).find(candidate => candidate.id === appId)
       if (committed === undefined) throw new Error('Connected-app policy disappeared during commit')
       this.emitChanged()
@@ -1494,8 +1503,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const record = bots.get(id)
-    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const record = await this.freshBotRecord(bots, id, 'skill-policy')
     const policy = normalizeBotSkillPolicy(record.skillPolicy)
     const revision = record.skillPolicyRevision ?? 0
     const agent = this.ctx.agents.get(record.sessionId)
@@ -1543,36 +1551,36 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      await this.freshBotRecord(bots, id, 'skill-policy')
       if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
         return badRequest('Bot skill policy revision must be a non-negative safe integer')
-      }
-      const currentRevision = current.skillPolicyRevision ?? 0
-      if (request.expectedRevision !== currentRevision) {
-        throw new RemoteError(
-          'bot/skill-policy-conflict',
-          `Bot "${id}" skill policy changed while it was being edited`,
-          { botId: id, expectedRevision: request.expectedRevision, actualRevision: currentRevision },
-        )
-      }
-      if (currentRevision === Number.MAX_SAFE_INTEGER) {
-        return badRequest('Bot skill policy revision limit reached')
       }
       const policy = normalizeRequestedBotSkillPolicy({
         mode: request.mode,
         enabled: request.enabled,
         disabled: request.disabled,
       })
-      const revision = currentRevision + 1
-      const updated: BotRecord = {
-        ...current,
-        skillPolicy: policy,
-        skillPolicyRevision: revision,
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
-      await bots.put(id, updated)
-      this.recordsBySession.set(String(updated.sessionId), updated)
+      let revision = 0
+      const updated = await this.updateProfileRecord(bots, id, 'skill-policy', (current) => {
+        const currentRevision = current.skillPolicyRevision ?? 0
+        if (request.expectedRevision !== currentRevision) {
+          throw new RemoteError(
+            'bot/skill-policy-conflict',
+            `Bot "${id}" skill policy changed while it was being edited`,
+            { botId: id, expectedRevision: request.expectedRevision, actualRevision: currentRevision },
+          )
+        }
+        if (currentRevision === Number.MAX_SAFE_INTEGER) {
+          throw new RemoteError('gateway/bad-request', 'Bot skill policy revision limit reached', {})
+        }
+        revision = currentRevision + 1
+        return {
+          ...current,
+          skillPolicy: policy,
+          skillPolicyRevision: revision,
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+      })
       this.skillPolicyInvalidators.get(String(updated.sessionId))?.()
       this.emitChanged()
       return { bot: this.view(updated), policy, revision }
@@ -1611,12 +1619,13 @@ export class BotService extends TypertRemoteService {
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(botId)
-      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
-      const next = { ...current, description, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      await this.freshBotRecord(bots, botId, 'description')
       signal?.throwIfAborted()
-      await bots.put(botId, next)
-      this.recordsBySession.set(String(next.sessionId), next)
+      await this.updateProfileRecord(bots, botId, 'description', current => ({
+        ...current,
+        description,
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }))
       this.emitChanged()
     })
   }
@@ -1667,8 +1676,7 @@ export class BotService extends TypertRemoteService {
       const botId = normalizeBotId(request.botId)
       if (botId === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const source = bots.get(botId)
-      if (source === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      const source = await this.freshBotRecord(bots, botId, 'template-publish')
       if (source.ownerId !== this.ownerId) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
       const name = request.name === undefined ? source.name : normalizeName(request.name)
       const description = request.description === undefined
@@ -2044,8 +2052,7 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const record = bots.get(id)
-      if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const record = await this.freshBotRecord(bots, id, 'memory-list')
       const memories = await this.readMemoryForSession(record.sessionId)
       return { memories: memories.map(memoryView) }
     })
@@ -2061,8 +2068,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const record = bots.get(id)
-    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const record = await this.freshBotRecord(bots, id, 'memory-update')
     const memoryId = parseBotMemoryId(request.memoryId)
     const memory = await this.updateMemoryForSession(record.sessionId, { memoryId, text: request.text })
     return { memory: memoryView(memory) }
@@ -2078,8 +2084,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const record = bots.get(id)
-    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const record = await this.freshBotRecord(bots, id, 'memory-forget')
     const memoryId = parseBotMemoryId(request.memoryId)
     await this.forgetMemoryForSession(record.sessionId, { memoryId })
     return { removed: true }
@@ -2113,16 +2118,19 @@ export class BotService extends TypertRemoteService {
     const bots = (await this.getDomain()).table('bots')
     signal?.throwIfAborted()
     const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
-    const existing = bots.get(id)
+    this.requireProfileCoordination(bots, 'create', id)
+    const existing = await bots.getFresh(id)
     if (existing !== undefined) {
       if (existing.ownerId !== this.ownerId) {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
         if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
-        const next: BotRecord = { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
-        await bots.put(id, next)
-        this.recordsBySession.set(String(next.sessionId), next)
+        const next = await this.updateProfileRecord(bots, id, 'create-avatar-retry', current => ({
+          ...current,
+          ...(current.avatar === undefined ? { avatar } : {}),
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }))
         this.emitChanged()
         return { bot: this.view(next) }
       }
@@ -2138,11 +2146,11 @@ export class BotService extends TypertRemoteService {
       }
       const pending = avatar === undefined || existing.avatar !== undefined
         ? existing
-        : { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
-      if (pending !== existing) {
-        await bots.put(id, pending)
-        this.recordsBySession.set(String(pending.sessionId), pending)
-      }
+        : await this.updateProfileRecord(bots, id, 'create-avatar-retry', current => ({
+          ...current,
+          ...(current.avatar === undefined ? { avatar } : {}),
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }))
       const active = await this.provision(pending, bots)
       return { bot: this.view(active) }
     }
@@ -2174,7 +2182,10 @@ export class BotService extends TypertRemoteService {
       createdAt: now,
       updatedAt: now,
     }
-    await bots.put(id, record)
+    // A caller-supplied id can race another Host's first create. Insert is
+    // fenced by the durable medium; the losing Host re-reads the winner and
+    // follows the same idempotent/conflict path above.
+    if (!await bots.insert(id, record)) return this.createRecord(request, signal, avatar)
     this.recordsBySession.set(String(record.sessionId), record)
     this.emitChanged()
     const active = await this.provision(record, bots)
@@ -2197,14 +2208,13 @@ export class BotService extends TypertRemoteService {
       if (id === undefined) return badRequest('Bot id is required')
       const name = normalizeName(request.name)
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
+      await this.freshBotRecord(bots, id, 'rename')
       signal?.throwIfAborted()
-      await bots.put(id, next)
-      this.recordsBySession.set(String(next.sessionId), next)
+      const next = await this.updateProfileRecord(bots, id, 'rename', current => ({
+        ...current,
+        name,
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }))
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -2237,23 +2247,20 @@ export class BotService extends TypertRemoteService {
       }
 
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const { group: currentGroup, ...currentWithoutGroup } = current
-      const next: BotRecord = {
-        ...(hasGroup ? currentWithoutGroup : current),
-        pinned: pinned ?? current.pinned ?? false,
-        hidden: hidden ?? current.hidden ?? false,
-        ...(hasGroup
-          ? group === undefined ? {} : { group }
-          : currentGroup === undefined ? {} : { group: currentGroup }),
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
+      await this.freshBotRecord(bots, id, 'organization')
       signal?.throwIfAborted()
-      await bots.put(id, next)
-      this.recordsBySession.set(String(next.sessionId), next)
+      const next = await this.updateProfileRecord(bots, id, 'organization', (current) => {
+        const { group: currentGroup, ...currentWithoutGroup } = current
+        return {
+          ...(hasGroup ? currentWithoutGroup : current),
+          pinned: pinned ?? current.pinned ?? false,
+          hidden: hidden ?? current.hidden ?? false,
+          ...(hasGroup
+            ? group === undefined ? {} : { group }
+            : currentGroup === undefined ? {} : { group: currentGroup }),
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+      })
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -2284,27 +2291,20 @@ export class BotService extends TypertRemoteService {
       }
 
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const updatedAt = Math.max(Date.now(), current.updatedAt)
-      const withAppearance: BotRecord = {
-        ...current,
-        ...(identity === undefined ? {} : { identity }),
-        ...(accent === undefined ? {} : { accent }),
-        updatedAt,
-      }
-      let next: BotRecord
-      if (clearAvatar) {
+      await this.freshBotRecord(bots, id, 'appearance')
+      signal?.throwIfAborted()
+      const next = await this.updateProfileRecord(bots, id, 'appearance', (current) => {
+        const withAppearance: BotStoredRecord = {
+          ...current,
+          ...(identity === undefined ? {} : { identity }),
+          ...(accent === undefined ? {} : { accent }),
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+        if (!clearAvatar) return withAppearance
         const { avatar: ignoredAvatar, ...withoutAvatar } = withAppearance
         void ignoredAvatar
-        next = withoutAvatar
-      } else {
-        next = withAppearance
-      }
-      signal?.throwIfAborted()
-      await bots.put(id, next)
+        return withoutAvatar
+      })
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -2333,7 +2333,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    if (bots.get(id) === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    await this.freshBotRecord(bots, id, 'avatar-upload')
     const [avatar] = await admitEncodedImages(this.ctx.attachments, [{ data: request.data, mediaType: request.mediaType }])
     if (avatar === undefined) throw new Error('Avatar attachment was not stored')
     return this.updateAvatarImpl({ botId: id, avatar })
@@ -2345,22 +2345,18 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
+      await this.freshBotRecord(bots, id, 'avatar')
       const avatar = request.avatar === null ? undefined : await this.admitAvatar(id, request.avatar)
-      const updatedAt = Math.max(Date.now(), current.updatedAt)
-      let next: BotRecord
-      if (request.avatar === null) {
-        const { avatar: ignoredAvatar, ...withoutAvatar } = current
-        void ignoredAvatar
-        next = { ...withoutAvatar, updatedAt }
-      } else {
-        next = { ...current, avatar, updatedAt }
-      }
       signal?.throwIfAborted()
-      await bots.put(id, next)
+      const next = await this.updateProfileRecord(bots, id, 'avatar', (current) => {
+        const updatedAt = Math.max(Date.now(), current.updatedAt)
+        if (request.avatar === null) {
+          const { avatar: ignoredAvatar, ...withoutAvatar } = current
+          void ignoredAvatar
+          return { ...withoutAvatar, updatedAt }
+        }
+        return { ...current, avatar, updatedAt }
+      })
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -2378,10 +2374,7 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
+      const current = await this.freshBotRecord(bots, id, 'avatar-read')
       if (current.avatar === undefined) {
         throw new RemoteError('bot/avatar-missing', `Bot "${id}" has no generated avatar`, { botId: id })
       }
@@ -2458,13 +2451,13 @@ export class BotService extends TypertRemoteService {
         { cause: error },
       )
     }
-    const active: BotRecord = {
-      ...record,
-      state: 'active',
-      updatedAt: Math.max(Date.now(), record.updatedAt),
-    }
+    let active: BotStoredRecord
     try {
-      await bots.put(record.id, active)
+      active = await this.updateProfileRecord(bots, record.id, 'session-provisioning', current => ({
+        ...current,
+        state: 'active',
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }))
     } catch (error: unknown) {
       throw new RemoteError(
         'bot/provisioning-failed',
@@ -2533,7 +2526,7 @@ export class BotService extends TypertRemoteService {
           return createBotSkillPolicyProvider(
             skillScope.skills,
             parentScope,
-            () => normalizeBotSkillPolicy(this.recordsBySession.get(sessionKey)?.skillPolicy),
+            () => this.readBotSkillPolicy(sessionKey),
           )
         })
         skillScope.effect(() => () => {
@@ -2751,6 +2744,58 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  /** Reject profile writes when the routed medium cannot fence other Hosts. */
+  private requireProfileCoordination(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    operation: string,
+    botId?: BotRecord['id'],
+  ): void {
+    if (bots.supportsDurableCoordination) return
+    throw new RemoteError(
+      'bot/profile-coordination-unavailable',
+      'Bot profile changes require a storage backend with cross-process coordination.',
+      { operation, ...(botId === undefined ? {} : { botId }) },
+    )
+  }
+
+  /** Read one Bot row from the current durable medium and refresh the local index. */
+  private async freshBotRecord(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    id: BotRecord['id'],
+    operation: string,
+  ): Promise<BotStoredRecord> {
+    this.requireProfileCoordination(bots, operation, id)
+    const current = await bots.getFresh(id)
+    if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    this.recordsBySession.set(String(current.sessionId), current)
+    return current
+  }
+
+  /** Apply one profile transform against the medium's current row. */
+  private async updateProfileRecord(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    id: BotRecord['id'],
+    operation: string,
+    update: (current: BotStoredRecord) => BotStoredRecord,
+  ): Promise<BotStoredRecord> {
+    this.requireProfileCoordination(bots, operation, id)
+    const next = await bots.update(id, update)
+    this.recordsBySession.set(String(next.sessionId), next)
+    return next
+  }
+
+  /** Read the current skill policy for every scoped discovery or load. */
+  private async readBotSkillPolicy(sessionKey: string): Promise<BotSkillPolicy> {
+    const known = this.recordsBySession.get(sessionKey)
+    if (known === undefined) throw new Error(`Bot Session "${sessionKey}" is no longer owned by a Bot`)
+    const bots = (await this.getDomain()).table('bots')
+    this.requireProfileCoordination(bots, 'skill-policy', known.id)
+    const current = await bots.getFresh(known.id)
+    if (current === undefined) throw new Error(`Bot "${known.id}" is no longer present`)
+    this.recordsBySession.set(sessionKey, current)
+    return normalizeBotSkillPolicy(current.skillPolicy)
   }
 
   private async activeTemplate(

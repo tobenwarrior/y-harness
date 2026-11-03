@@ -129,6 +129,8 @@ describe('DomainFacility.open', () => {
       kv: {
         open: async () => ({
           loadAll: async () => ({ tables: {}, global: null }),
+          getRecord: async () => undefined,
+          updateRecord: async () => ({ found: false as const }),
           putRecord: async () => {},
           deleteRecord: async () => {},
           setGlobal: async () => {},
@@ -257,6 +259,18 @@ describe('table and snapshot reads', () => {
 })
 
 describe('KvTable writes', () => {
+  it('fences concurrent inserts and exposes an authoritative fresh read', async () => {
+    const { facility } = await harness()
+    const table = (await facility.open(spec)).table('items')
+    expect(table.supportsDurableCoordination).toBe(true)
+    const inserted = await Promise.all([
+      table.insert('once', { label: 'first', count: 1 }),
+      table.insert('once', { label: 'second', count: 2 }),
+    ])
+    expect(inserted.sort()).toEqual([false, true])
+    expect(await table.getFresh('once')).toEqual(expect.objectContaining({ label: expect.stringMatching(/first|second/) }))
+  })
+
   it('serializes concurrent updates on one key without losing increments', async () => {
     const { facility } = await harness()
     const table = (await facility.open(spec)).table('items')

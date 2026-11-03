@@ -3892,6 +3892,78 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('rejects one of two concurrent Host skill writes against the same durable row', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Two host owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool)
+    const hostB = await harness(pool)
+    try {
+      const results = await Promise.allSettled([
+        hostA.service.updateSkills({
+          botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
+        }),
+        hostB.service.updateSkills({
+          botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['code-review'],
+        }),
+      ])
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1)
+      const rejected = results.find(result => result.status === 'rejected')
+      expect(rejected).toMatchObject({ reason: { code: 'bot/skill-policy-conflict' } })
+      await expect(hostA.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({ revision: 1 })
+      await expect(hostB.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({ revision: 1 })
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
+  it('rechecks a durable policy after a delayed body load on another Host revokes it', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Delayed two host owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const hostB = await harness(pool)
+    const bodyRequested = vi.fn()
+    let releaseBody!: (definition: SkillDefinition) => void
+    const body = new Promise<SkillDefinition>((resolve) => { releaseBody = resolve })
+    hostA.ctx.skills.registerProvider(() => ({
+      name: 'two-host-delayed',
+      list: () => Promise.resolve([{
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'two-host-delayed', source: 'bundled', rank: 600, locator: 'release-notes',
+      }]),
+      get: async (candidate): Promise<SkillDefinition> => {
+        bodyRequested()
+        return body.then(definition => ({ ...candidate, ...definition }))
+      },
+    }))
+    const agent = hostA.agents[0]
+    if (agent === undefined) throw new Error('two-host delayed test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('two-host delayed test Agent has no scope')
+    try {
+      const loading = hostA.ctx.skills.get('release-notes', { scope })
+      await vi.waitFor(() => { expect(bodyRequested).toHaveBeenCalledOnce() })
+      await hostB.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['release-notes'],
+      })
+      releaseBody({
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'two-host-delayed', source: 'bundled', content: 'revoked body',
+      })
+      await expect(loading).resolves.toMatchObject({ content: '', invocation: { modelInvocable: false, userInvocable: false } })
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
   it('reads cold Bot skill metadata through its selected preset scope', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

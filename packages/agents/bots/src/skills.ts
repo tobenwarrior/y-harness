@@ -118,6 +118,18 @@ function deniedDefinition(candidate: Pick<SkillCandidate, 'name' | 'description'
   }
 }
 
+const DENY_ALL_BOT_SKILLS: BotSkillPolicy = { mode: 'selected', enabled: [], disabled: [] }
+
+async function readPolicy(source: () => BotSkillPolicy | Promise<BotSkillPolicy>): Promise<BotSkillPolicy> {
+  try {
+    return await source()
+  } catch {
+    // A durable policy read that cannot be refreshed must not fall back to a
+    // cached allow decision while another Host may have revoked the skill.
+    return DENY_ALL_BOT_SKILLS
+  }
+}
+
 /**
  * Build a scoped provider that enforces one Bot's skill policy before bodies load.
  * @param registry - registry used to read inherited host and preset skills.
@@ -128,25 +140,26 @@ function deniedDefinition(candidate: Pick<SkillCandidate, 'name' | 'description'
 export function createBotSkillPolicyProvider(
   registry: SkillRegistryRead,
   parentScope: ScopeKey | undefined,
-  policy: () => BotSkillPolicy,
+  policy: () => BotSkillPolicy | Promise<BotSkillPolicy>,
 ): SkillProvider {
   const parentOptions = (options: SkillLookupOptions): SkillViewOptions => ({ ...options, scope: parentScope })
   return {
     name: 'bot-skill-policy',
     async list(options) {
       const summaries = await registry.list(parentOptions(options))
+      const currentPolicy = await readPolicy(policy)
       return summaries.map((summary, index) => {
         const candidate = candidateFromSummary(summary, index)
-        return projectedCandidate(candidate, botSkillPolicyAllows(policy(), candidate.name))
+        return projectedCandidate(candidate, botSkillPolicyAllows(currentPolicy, candidate.name))
       })
     },
     async get(candidate, options) {
-      const currentPolicy = policy()
+      const currentPolicy = await readPolicy(policy)
       if (!botSkillPolicyAllows(currentPolicy, candidate.name)) {
         return deniedDefinition(candidate)
       }
       const definition = await registry.get(candidate.name, parentOptions(options))
-      return botSkillPolicyAllows(policy(), candidate.name)
+      return botSkillPolicyAllows(await readPolicy(policy), candidate.name)
         ? definition
         : deniedDefinition(candidate)
     },
