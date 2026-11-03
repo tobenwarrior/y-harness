@@ -49,11 +49,54 @@ export interface BotSummary {
   readonly avatar?: SharedBotAvatar
 }
 
+
 /** Roster placement fields changed by the organization menu. */
 export interface BotOrganizationPatch {
   readonly pinned?: boolean
   readonly hidden?: boolean
   readonly group?: string | null
+}
+
+
+/** One existing Bot shown as a member of a shared group. */
+export interface BotGroupSummary {
+  /** Durable group identity. */
+  readonly id: string
+  /** Human-facing group name. */
+  readonly name: string
+  /** Existing Bots in their durable display order. */
+  readonly bots: readonly BotSummary[]
+}
+
+/** A group transcript row projected for the Bot workspace. */
+export interface BotGroupMessageSummary {
+  /** Durable transcript message identity. */
+  readonly id: string
+  /** Human or Bot author. */
+  readonly sender:
+    | { readonly kind: 'user' }
+    | { readonly kind: 'bot'; readonly botId: string; readonly name: string }
+  /** User-visible message text. */
+  readonly text: string
+  /** Unix timestamp used for stable transcript ordering. */
+  readonly createdAt: number
+}
+
+/** Selected shared group plus its durable transcript. */
+export interface BotGroupDetailData extends BotGroupSummary {
+  /** Chronological transcript rows. */
+  readonly messages: readonly BotGroupMessageSummary[]
+}
+
+/** User choice passed to the owner when creating a shared group. */
+export interface BotGroupCreation {
+  /** Group name. */
+  readonly name: string
+  /** Two through six existing Bot ids. */
+  readonly botIds: readonly string[]
+  /** Optional explicit retry/new-operation identity. */
+  readonly groupId?: string
+
 }
 
 /** User choice passed to the owner when creating a bot. */
@@ -87,14 +130,27 @@ export interface BotAvatarEditorActions {
 export interface BotWorkspaceProps {
   /** Available bots in the owner's stable order. */
   readonly bots: readonly BotSummary[]
+  /** Durable shared groups shown below the Bot roster. */
+  readonly groups?: readonly BotGroupSummary[]
+  /** Selected shared group id, or null when a direct Bot is selected. */
+  readonly selectedGroupId?: string | null | undefined
+  /** Selected group loading or delivery failure, retained beside its transcript. */
+  readonly groupError?: string | null | undefined
   /** Selected bot id, or null when no bot is selected. */
   readonly selectedBotId: string | null
   /** Select a bot and let the owner open its persistent Session. */
   readonly onSelectBot: (id: string) => void
+  /** Select a shared group without creating another Bot Session. */
+  readonly onSelectGroup?: ((id: string) => void) | undefined
   /** Provision one Bot; rejects while the same request remains retryable. */
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
+
   /** Persist a Bot's pinned, hidden, or section placement. */
   readonly onOrganizeBot?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined
+
+  /** Create a shared group from existing Bot identities. */
+  readonly onCreateGroup?: ((creation: BotGroupCreation) => Promise<void>) | undefined
+
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined
   /** Optional settings deep-link for configuring the avatar provider. */

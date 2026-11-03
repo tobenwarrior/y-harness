@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Roster organization keeps pinned and hidden state plus an optional user-defined section without changing the Session binding. Bot-scoped memory is stored as required Session events, survives a cold Session, and is included in later Bot prompts as untrusted reference data.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Roster organization keeps pinned and hidden state plus an optional user-defined section without changing the Session binding. Bot-scoped memory is stored as required Session events, survives a cold Session, and is included in later Bot prompts as untrusted reference data. Durable multi-Bot groups keep membership and transcript state while delivering each human message to every real member Session.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Create a durable Bot roster whose rows keep one stable identity and one persiste
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory; a native provider may expose the same actions through its own tool bridge.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory, plus membership-scoped group inspection, creation, and delivery; a native provider exposes the same actions for a live Bot Session.
 
 ### When to choose it
 
@@ -61,12 +61,13 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns one storage-domain table and serializes writes that can allocate or update a Bot. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project the stored row without waking a cold Session. `bots.list` omits hidden rows unless `includeHidden` is true and orders pinned rows before the stable creation-time order; `updateOrganization` changes pin, hidden, and section placement atomically.
+The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project the stored row without waking a cold Session. `bots.list` omits hidden rows unless `includeHidden` is true and orders pinned rows before the stable creation-time order; `updateOrganization` changes pin, hidden, and section placement atomically. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions. Scoped group tools derive retry identities from the authenticated Bot and request contents rather than an ephemeral tool call id, while the Client persists pending operation ids and reconciles only the exact pending id before a retry.
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, scoped prompt/tools, and attachment admission. |
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
+| [`src/group-chat.ts`](src/group-chat.ts) | Durable 2–6-member groups, transcript projection, per-recipient delivery state, and response projection. |
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
@@ -94,7 +95,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, `edit_bot_profile`, `remember_bot_memory`, and `forget_bot_memory` are approval-gated actions. `list_bot_memory` is read-only. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope and the native Codex provider expose `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection, together with `list_bot_groups`, `inspect_bot_group`, `create_bot_group`, and `send_bot_group_message` for groups that include the calling Bot. `send_bot_message`, `create_bot`, `edit_bot_profile`, `remember_bot_memory`, `forget_bot_memory`, `create_bot_group`, and `send_bot_group_message` are approval-gated actions. `list_bot_memory` is read-only. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 
@@ -122,12 +123,12 @@ The identity text stays prefix-stable until the Bot name or role description cha
 
 #### What the model sees
 
-The service derives the sending identity from the live Bot Agent and rechecks the durable roster for every operation. Inspection excludes reasoning and tool blocks. A delivered message is framed with the sender's current name and persisted in the recipient's existing Session as an `agent-message`, so it becomes ordinary user context on the recipient's next turn. Native Codex actions also persist a required `bot/dynamic-tool` lifecycle record with the exact model-visible result. When a native cursor is lost, the Codex bridge replays a bounded, explicitly disclosed excerpt of those records before the next request; a missing settlement remains an uncertain delivery and is never treated as proof that no message was sent.
+The service derives the sending identity from the live Bot Agent and rechecks the durable roster for every operation. Inspection excludes reasoning and tool blocks, and generic peer inspection removes group-origin turns and their assistant replies; use membership-scoped group inspection for that transcript. Group inspection frames every message as untrusted quoted data. A delivered message is framed with the sender's current name and persisted in the recipient's existing Session as an `agent-message`, so it becomes ordinary user context on the recipient's next turn. Native Codex actions also persist a required `bot/dynamic-tool` lifecycle record with the exact model-visible result. When a native cursor is lost, the Codex bridge replays a bounded, explicitly disclosed excerpt of those records before the next request; a missing settlement remains an uncertain delivery and is never treated as proof that no message was sent.
 
 ##### Native send retry contract
 
 ```markdown
-If a native send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. Messaging follows the Session approval policy.
+If a native Bot or group send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. A group result with `status: "partial"` is returned as an explicit `partial-delivery` failure and includes each recipient's outcome; a retry without the returned messageId is rejected as uncertain, while a retry with that id resumes only failed recipients. Scoped tools derive a stable group id or message id from the authenticated Bot and request contents when the model omits one, so a fresh tool call cannot fan out a second copy. Remote callers should provide a stable `id` or `messageId`; the Client persists and reuses those ids after a lost or partial response, and fails closed when it cannot reconcile an untracked operation. Group creation reports an uncertain outcome instead of guessing after a lost settlement. Messaging follows the Session approval policy.
 ```
 
 #### Token effect
@@ -152,6 +153,20 @@ The memory tool schemas add a small fixed prefix cost. Each active memory contri
 
 The memory section is stable until a memory mutation. Remembering or logically forgetting changes the later system-prompt suffix while preserving earlier identity and deployment sections; prior persisted prompt events remain unchanged.
 
+### Bot groups
+
+#### What the model sees
+
+The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. Live Bot Agents also receive the membership-scoped group tools, and the native Codex provider exposes the same operations. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A Bot-created group request names one to five other Bots from `list_bots`; the live calling Bot is added from its authenticated Session identity, so model arguments cannot omit or spoof membership. Human and Bot-authored group messages are delivered as normal user-role messages to every other member's existing Session, framed with the originating Bot name when applicable; they never route all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn, with the final response allowed in a later step of that turn, and only when that delivery is the sole user input in the step.
+
+#### Token effect
+
+Group membership and transcript rows add tokens only when a Client or model-facing surface reads them. A group send adds the framed user message to each recipient's next request independently.
+
+#### KV Cache effect
+
+Group metadata does not change a Bot's prompt prefix. A delivered group message invalidates only the receiving Bot Session's later request prefix.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -162,6 +177,8 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Sections are user-defined labels** — the roster supports one optional section name per Bot, plus pin, hide, and restore; it does not provide nested folders or cross-user shared roster state.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs, synthetic context, and concurrent group deliveries are left unprojected rather than guessed. Tool-call intermediate messages stay open until the final assistant response. Claims are rebuilt from raw durable inbox splices after restart, so surface replacements or later synthetic notices cannot make the Host attribute the next unrelated response to an old group message. Legacy logs without inbox splices retain their append-only compatibility fallback.
+- **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 
 <a id="dev-note"></a>
 ### Dev Note

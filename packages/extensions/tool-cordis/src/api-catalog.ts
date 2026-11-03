@@ -593,6 +593,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
+        signature: '@Remote(\'listGroups\') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>',
+        description: 'List durable multi-Bot groups and current member projections.',
+        parameters: [{ name: 'request', description: 'Group list request.' }],
+        returns: 'The available groups and their members.',
+      },
+      {
+        signature: '@Remote(\'createGroup\') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>',
+        description: 'Create or idempotently reuse one durable multi-Bot group.',
+        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
+        returns: 'The created or existing group.',
+      },
+      {
+        signature: '@Remote(\'inspectGroup\') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>',
+        description: 'Read one durable group transcript.',
+        parameters: [{ name: 'request', description: 'Group identity.' }],
+        returns: 'The group and its transcript.',
+      },
+      {
+        signature: '@Remote(\'sendGroupMessage\') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>',
+        description: 'Persist and fan out one human group message to every member Bot.',
+        parameters: [{ name: 'request', description: 'Group identity, message identity, and text.' }],
+        returns: 'The updated group transcript.',
+      },
+      {
         signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
         description: 'Create one durable Bot and its exactly-one ordinary Session.\n\nA provisioning row is committed before Session creation. If Session creation or activation cannot finish, the row remains visible and the same Bot id can be retried safely; no second Session is allocated for that Bot.',
         parameters: [{ name: 'request', description: 'Name, visual identity, optional working directory, and preset.' }],
@@ -5408,6 +5432,70 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotCreateValue',
     declaration: 'export interface BotCreateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotGroupCreateRequest',
+    declaration: 'export interface BotGroupCreateRequest {\n    readonly id?: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
+  },
+  {
+    name: 'BotGroupCreateValue',
+    declaration: 'export interface BotGroupCreateValue {\n    readonly group: BotGroupView;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryView',
+    declaration: 'export interface BotGroupDeliveryView {\n    readonly botId: BotId;\n    readonly status: \'accepted\' | \'duplicate\' | \'failed\';\n    readonly error?: string;\n}',
+  },
+  {
+    name: 'BotGroupId',
+    declaration: 'export type BotGroupId = Branded<\'BotGroupId\'>;',
+  },
+  {
+    name: 'BotGroupInspectRequest',
+    declaration: 'export interface BotGroupInspectRequest {\n    readonly groupId: BotGroupId;\n}',
+  },
+  {
+    name: 'BotGroupInspectValue',
+    declaration: 'export interface BotGroupInspectValue {\n    readonly group: BotGroupView;\n    readonly messages: readonly BotGroupMessageView[];\n}',
+  },
+  {
+    name: 'BotGroupListRequest',
+    declaration: 'export interface BotGroupListRequest {\n    readonly cursor?: string;\n}',
+  },
+  {
+    name: 'BotGroupListValue',
+    declaration: 'export interface BotGroupListValue {\n    readonly groups: readonly BotGroupView[];\n}',
+  },
+  {
+    name: 'BotGroupMemberView',
+    declaration: 'export type BotGroupMemberView = Pick<BotView, \'id\' | \'name\' | \'description\' | \'identity\' | \'accent\' | \'avatar\' | \'availability\' | \'state\'>;',
+  },
+  {
+    name: 'BotGroupMessageId',
+    declaration: 'export type BotGroupMessageId = Branded<\'BotGroupMessageId\'>;',
+  },
+  {
+    name: 'BotGroupMessageSenderView',
+    declaration: 'export type BotGroupMessageSenderView = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'bot\';\n    readonly botId: BotId;\n    readonly name: string;\n};',
+  },
+  {
+    name: 'BotGroupMessageView',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotGroupRecord',
+    declaration: 'export interface BotGroupRecord {\n    readonly id: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotGroupSendRemoteRequest',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n}',
+  },
+  {
+    name: 'BotGroupSendValue',
+    declaration: 'export interface BotGroupSendValue {\n    readonly messageId: BotGroupMessageId;\n    readonly status: \'accepted\' | \'duplicate\' | \'partial\';\n    readonly deliveries: readonly BotGroupDeliveryView[];\n}',
+  },
+  {
+    name: 'BotGroupView',
+    declaration: 'export interface BotGroupView extends Omit<BotGroupRecord, \'botIds\'> {\n    readonly botIds: readonly BotId[];\n    readonly bots: readonly BotGroupMemberView[];\n}',
   },
   {
     name: 'BotId',

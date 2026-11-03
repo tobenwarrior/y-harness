@@ -69,6 +69,34 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
+ * List durable multi-Bot groups and current member projections.
+ * @param request - Group list request.
+ * @returns The available groups and their members.
+ */
+@Remote('listGroups') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>
+
+/**
+ * Create or idempotently reuse one durable multi-Bot group.
+ * @param request - Group identity, name, and members.
+ * @returns The created or existing group.
+ */
+@Remote('createGroup') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>
+
+/**
+ * Read one durable group transcript.
+ * @param request - Group identity.
+ * @returns The group and its transcript.
+ */
+@Remote('inspectGroup') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>
+
+/**
+ * Persist and fan out one human group message to every member Bot.
+ * @param request - Group identity, message identity, and text.
+ * @returns The updated group transcript.
+ */
+@Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
+
+/**
  * Create one durable Bot and its exactly-one ordinary Session.
  *
  * A provisioning row is committed before Session creation. If Session creation

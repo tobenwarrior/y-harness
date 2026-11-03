@@ -8,6 +8,7 @@ import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
+import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
@@ -15,7 +16,7 @@ import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
-import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
+import { BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
 import {
   BOT_MEMORY_ENTRY_LIMIT,
@@ -32,9 +33,22 @@ import type {
   BotMemoryRecord,
   BotMemoryRememberRequest,
 } from './memory.ts'
+import { BotGroupService, botGroupDomain } from './group-chat.ts'
+import type {
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupDeliveryClaimInput,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+} from './group-chat.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
+import type { BotGroupToolHost } from './scoped-tools.ts'
 import type {
   BotAvailability,
   BotAccent,
@@ -96,10 +110,46 @@ export type {
   BotCollaborationTranscriptEntry,
   BotDynamicToolEvent,
   BotDynamicToolEventResult,
+  BotGroupMessageSource,
   BotMessageSource,
   SendBotMessageRequest,
   SendBotMessageResult,
+  SendExternalBotMessageRequest,
 } from './collaboration.ts'
+export {
+  BotGroupError,
+  BotGroupId,
+  BotGroupMessageId,
+  BotGroupService,
+  botGroupDomain,
+  botGroupRecordSchema,
+  botGroupMessageRecordSchema,
+  botGroupDeliveryRecordSchema,
+} from './group-chat.ts'
+export type {
+  BotGroupCreateRequest,
+  BotGroupCreateValue,
+  BotGroupDeliveryClaim,
+  BotGroupDeliveryClaimInput,
+  BotGroupDeliveryHost,
+  BotGroupDeliveryRecord,
+  BotGroupDeliveryView,
+  BotGroupDomain,
+  BotGroupInspectRequest,
+  BotGroupInspectValue,
+  BotGroupListRequest,
+  BotGroupListValue,
+  BotGroupMemberView,
+  BotGroupMessageRecord,
+  BotGroupMessageSender,
+  BotGroupMessageSenderView,
+  BotGroupMessageView,
+  BotGroupRecord,
+  BotGroupSendRequest,
+  BotGroupSendRemoteRequest,
+  BotGroupSendValue,
+  BotGroupView,
+} from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
 
@@ -123,7 +173,20 @@ interface NormalizedCreate {
   readonly agentPreset?: string
 }
 
+function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
+  return messages.flatMap((message): BotGroupDeliveryClaimInput[] => {
+    if (message.source.kind !== 'bot-group-message') return []
+    return [{ groupId: message.source.groupId, messageId: message.source.messageId }]
+  })
+}
+
+function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonly BotGroupDeliveryClaimInput[]): boolean {
+  const only = messages[0]
+  return messages.length === 1 && claims.length === 1 && only?.source.kind === 'bot-group-message'
+}
+
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
+const RUNTIME_CONTEXT_SOURCE: string = 'runtime-context'
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -249,6 +312,7 @@ function botIdentityPrompt(record: BotRecord): string {
   return [
     'You are a named Bot in Y Harness.',
     `Your Bot name is ${JSON.stringify(record.name)}.`,
+    `Your Bot id is ${JSON.stringify(record.id)}.`,
     'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
     ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
   ].join('\n\n')
@@ -284,6 +348,8 @@ export class BotService extends TypertRemoteService {
   static Config = Config
 
   private readonly ready: Promise<Domain<typeof botDomain>>
+  private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
+  private readonly groupService: Promise<BotGroupService>
   private readonly initialized: PromiseLike<unknown>
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
@@ -351,12 +417,74 @@ export class BotService extends TypertRemoteService {
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
     })
+    this.groupDomain = ctx.storageDomain.open(botGroupDomain)
+    this.groupService = this.groupDomain.then(domain => new BotGroupService(domain, {
+      listBots: async () => (await this.list({ includeHidden: true })).bots,
+      deliverToBot: async request => this.collaboration.sendExternal({
+        targetBotId: request.targetBotId,
+        groupId: request.groupId,
+        groupName: request.groupName,
+        ...(request.senderName === undefined ? {} : { senderName: request.senderName }),
+        text: request.text,
+        messageId: BotMessageId(String(request.messageId)),
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      }),
+      changed: () => this.emitChanged(),
+    }))
+    ctx.on('session/event', (session, event) => {
+      if (event.type !== 'assistant/message') return
+      const record = this.recordsBySession.get(String(session.id))
+      if (record === undefined) return
+      const text = event.data.message.content
+        .flatMap(block => block.type === 'text' ? [block.text] : [])
+        .join('\n')
+        .trim()
+      // Tool-call assistant messages are intermediate model steps. Keep the
+      // delivery open until the first assistant message without a tool call.
+      if (text === '' || event.data.message.content.some(block => block.type === 'tool-call')) return
+      void this.groupService.then(service => service.recordBotResponse(
+        record.id,
+        event.data.turn,
+        event.data.step,
+        text,
+        String(event.data.message.id),
+      ))
+        .catch((error: unknown) => {
+          ctx.logger.warn(`bots: group response projection failed: ${error instanceof Error ? error.message : String(error)}`)
+        })
+    })
+    ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
+      const decision = await next()
+      const record = this.recordsBySession.get(String(agent.id))
+      const claims = groupDeliveryClaims(messages)
+      if (record !== undefined && decision.kind === 'enter') {
+        await this.groupService.then(service => service.recordBotMessageClaims(
+          record.id,
+          claims,
+          turn,
+          step,
+          isolatedGroupDelivery(messages, claims),
+          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
+        ))
+      }
+      return decision
+    })
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
         if (agent === undefined) return undefined
         try {
           return await this.collaborationFor(agent)
+        } catch (error: unknown) {
+          if (error instanceof BotCollaborationError && error.code === 'sender-not-bot') return undefined
+          throw error
+        }
+      },
+      groups: async (sessionId) => {
+        const agent = ctx.get('agents')?.get(sessionId)
+        if (agent === undefined) return undefined
+        try {
+          return await this.groupToolsFor(agent)
         } catch (error: unknown) {
           if (error instanceof BotCollaborationError && error.code === 'sender-not-bot') return undefined
           throw error
@@ -437,26 +565,39 @@ export class BotService extends TypertRemoteService {
         return inspection.events.flatMap(event => event.type === 'bot/dynamic-tool' ? [event.data] : [])
       },
     }))
-    ctx.on('agent/created', async ({ agent }) => { await this.installPrompt(agent) })
+    ctx.on('agent/created', async ({ agent }) => {
+      await this.installPrompt(agent)
+      await this.reconcileGroupSession(agent)
+    })
     ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {
-      const domain = await this.ready
+      let domain: Domain<typeof botDomain> | undefined
+      let groupDomain: Domain<typeof botGroupDomain> | undefined
       let cleanup: () => Promise<void>
       try {
+        domain = await this.ready
+        groupDomain = await this.groupDomain
+        const openedDomain = domain
+        const openedGroupDomain = groupDomain
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
+          await this.groupService.then(service => service.whenIdle())
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
+            openedDomain.close(),
+            openedGroupDomain.close(),
           ])
-          await domain.close()
         })
       } catch (error) {
         this.stopping = true
-        await domain.close()
+        await Promise.all([
+          ...(domain === undefined ? [] : [domain.close()]),
+          ...(groupDomain === undefined ? [] : [groupDomain.close()]),
+        ])
         throw error
       }
       return cleanup
@@ -465,7 +606,10 @@ export class BotService extends TypertRemoteService {
 
   async [Service.init](): Promise<void> {
     await this.initialized
-    await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+    await Promise.all(this.ctx.agents.list().map(async (agent) => {
+      await this.installPrompt(agent)
+      await this.reconcileGroupSession(agent)
+    }))
   }
 
   /**
@@ -701,6 +845,46 @@ export class BotService extends TypertRemoteService {
         .filter(bot => includeHidden || !bot.hidden)
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
     }
+  }
+
+  /**
+   * List durable multi-Bot groups and current member projections.
+   * @param request - Group list request.
+   * @returns The available groups and their members.
+   */
+  @Remote('listGroups')
+  async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue> {
+    return (await this.getGroupService()).list(request)
+  }
+
+  /**
+   * Create or idempotently reuse one durable multi-Bot group.
+   * @param request - Group identity, name, and members.
+   * @returns The created or existing group.
+   */
+  @Remote('createGroup')
+  async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
+    return (await this.getGroupService()).create(request)
+  }
+
+  /**
+   * Read one durable group transcript.
+   * @param request - Group identity.
+   * @returns The group and its transcript.
+   */
+  @Remote('inspectGroup')
+  async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
+    return (await this.getGroupService()).inspect(request)
+  }
+
+  /**
+   * Persist and fan out one human group message to every member Bot.
+   * @param request - Group identity, message identity, and text.
+   * @returns The updated group transcript.
+   */
+  @Remote('sendGroupMessage')
+  async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
+    return (await this.getGroupService()).send(request)
   }
 
   /**
@@ -1094,10 +1278,120 @@ export class BotService extends TypertRemoteService {
         // Memory text is data, not a template.
         interpolate: false,
       })
-      installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
+      installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots, () => this.groupToolsFor(agent))
     })
     this.promptFibers.set(agent, fiber)
     await fiber
+  }
+
+  /** Rebuild group delivery claims and response projections from a resumed Bot Session. */
+  private async reconcileGroupSession(agent: Agent): Promise<void> {
+    const record = this.recordsBySession.get(String(agent.id))
+    if (record === undefined) return
+    const inputs = new Map<string, { readonly turn: number; readonly step: number; readonly messages: UserMessage[] }>()
+    const inbox: { 'next-turn': UserMessage[]; 'next-step': UserMessage[] } = {
+      'next-turn': [],
+      'next-step': [],
+    }
+    let rawInboxSeen = false
+    let claimedForStep: UserMessage[] = []
+    let turn = 0
+    let step = 0
+    const inspection = await this.ctx.sessionController.inspect(agent.id)
+    for (const event of inspection.events) {
+      if (event.type === 'agent/inbox/spliced') {
+        rawInboxSeen = true
+        const queue = inbox[event.data.target]
+        const removed = queue.splice(
+          event.data.start,
+          event.data.removedCount ?? 0,
+          ...event.data.inserted,
+        )
+        if ((event.data.removedCount ?? 0) > 0
+          && event.data.inserted.length === 0
+          && event.data.outcome === undefined) {
+          claimedForStep.push(...removed)
+        }
+        continue
+      }
+      if (event.type === 'turn/start') {
+        if (rawInboxSeen) claimedForStep = []
+        turn = event.data.turn
+        step = 0
+        continue
+      }
+      if (event.type === 'step/start') {
+        turn = event.data.turn
+        step = event.data.step
+        inputs.set(`${String(turn)}:${String(step)}`, {
+          turn,
+          step,
+          messages: rawInboxSeen ? claimedForStep.splice(0) : [],
+        })
+        continue
+      }
+      if (event.type === 'user/message') {
+        // When inbox events are present, the pure deletion that admitted the
+        // step is authoritative. Surface appends can include synthetic notices
+        // or rewritten history that did not belong to that claim. Older logs
+        // without inbox events retain the append-only fallback for migration.
+        if (rawInboxSeen || event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
+        const current = inputs.get(`${String(turn)}:${String(step)}`)
+        if (current !== undefined) current.messages.push(event.data)
+        continue
+      }
+      if (event.type !== 'assistant/message') continue
+      const current = inputs.get(`${String(event.data.turn)}:${String(event.data.step)}`)
+      if (current === undefined) continue
+      const claims = groupDeliveryClaims(current.messages)
+      await this.groupService.then(async (service) => {
+        await service.recordBotMessageClaims(
+          record.id,
+          claims,
+          event.data.turn,
+          event.data.step,
+          isolatedGroupDelivery(current.messages, claims),
+          current.messages.length > 0 && !isolatedGroupDelivery(current.messages, claims),
+        )
+        if (claims.length === 0) return
+        const text = event.data.message.content
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')
+          .trim()
+        if (text !== '' && !event.data.message.content.some(block => block.type === 'tool-call')) {
+          await service.recordBotResponse(record.id, event.data.turn, event.data.step, text, String(event.data.message.id))
+        }
+      })
+    }
+  }
+
+  private async groupToolsFor(agent: Pick<Agent, 'id'>): Promise<BotGroupToolHost> {
+    const record = this.recordsBySession.get(String(agent.id))
+    if (record === undefined) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot')
+    const service = await this.getGroupService()
+    const memberGroup = async (groupId: BotGroupInspectRequest['groupId']): Promise<void> => {
+      const listed = await service.list({})
+      const group = listed.groups.find(candidate => candidate.id === groupId)
+      if (group === undefined || !group.botIds.includes(record.id)) throw new Error(`Bot is not a member of group "${String(groupId)}"`)
+    }
+    return {
+      list: async () => {
+        const listed = await service.list({})
+        return { groups: listed.groups.filter(group => group.botIds.includes(record.id)) }
+      },
+      inspect: async (request) => {
+        await memberGroup(request.groupId)
+        return service.inspect(request)
+      },
+      create: async (request) => {
+        const botIds = [record.id, ...request.botIds.filter(botId => botId !== record.id)]
+        return service.create({ ...request, botIds })
+      },
+      send: async (request) => {
+        await memberGroup(request.groupId)
+        return service.sendAsBot(record.id, request)
+      },
+    }
   }
 
   /** Release one Agent's scoped identity registration after its lifecycle ends. */
@@ -1123,6 +1417,11 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  private async getGroupService(): Promise<BotGroupService> {
+    await this.initialized
+    return await this.groupService
   }
 
   private emitChanged(): void {

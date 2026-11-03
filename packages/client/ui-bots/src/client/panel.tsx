@@ -6,7 +6,7 @@ import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime,
 import type {} from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
-import { BotDetail, BotRoster } from './BotWorkspace.tsx'
+import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
@@ -64,7 +64,10 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
-  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry, loadAvatar, avatarEditor, t,
+
+  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
+  create, createGroup, organize, retry, loadAvatar, avatarEditor, t,
+
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -72,10 +75,18 @@ export function BotsRoster({
   return (
     <BotRoster
       bots={bots}
+      groups={state.groups}
       selectedBotId={state.selectedBotId}
+      selectedGroupId={state.selectedGroupId}
       onSelectBot={select}
+      onSelectGroup={selectGroup}
       onCreateBot={create}
+
       onOrganizeBot={organize}
+
+      onCreateGroup={createGroup}
+      groupError={state.groupError}
+
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}
@@ -90,7 +101,9 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, loadAvatar, rename, SessionProvider, renderSlot, t,
+
+  useWorkspace, useSessionStatus, reference, retryGroup, sendGroupMessage, loadAvatar, rename, SessionProvider, renderSlot, t,
+
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -103,6 +116,19 @@ export function BotsPanel({
         {renderSlot('bots.conversation', {})}
       </SessionProvider>
     )
+  if (state.selectedGroupId !== null) {
+    return (
+      <BotGroupDetail
+        group={state.selectedGroup ?? undefined}
+        loading={state.groupPhase === 'loading'}
+        error={state.groupError}
+        onRetry={retryGroup}
+        onSend={sendGroupMessage}
+        loadAvatar={loadAvatar}
+        t={t}
+      />
+    )
+  }
   return (
     <BotDetail
       bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
