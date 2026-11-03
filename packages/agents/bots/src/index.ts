@@ -435,7 +435,9 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
       const decision = await next()
       const record = this.recordsBySession.get(String(agent.id))
-      const admittedMessages = decision.kind === 'enter' ? decision.messages : messages
+      const admittedMessages = decision.kind === 'enter'
+        ? decision.messages.filter(message => message.source.kind !== RUNTIME_CONTEXT_SOURCE)
+        : messages
       const claims = groupDeliveryClaims(admittedMessages)
       if (record !== undefined) {
         await this.groupService.then(service => service.recordBotMessageClaims(
@@ -988,19 +990,32 @@ export class BotService extends TypertRemoteService {
   private async reconcileGroupSession(agent: Agent): Promise<void> {
     const record = this.recordsBySession.get(String(agent.id))
     if (record === undefined) return
-    const inputs = new Map<string, { readonly turn: number; readonly step: number; readonly messages: UserMessage[] }>()
+    const inputs = new Map<string, {
+      readonly turn: number
+      readonly step: number
+      readonly rawMessages: UserMessage[]
+      readonly messages: UserMessage[]
+    }>()
     const inbox: { 'next-turn': UserMessage[]; 'next-step': UserMessage[] } = {
       'next-turn': [],
       'next-step': [],
     }
-    let rawInboxSeen = false
     let claimedForStep: UserMessage[] = []
     let turn = 0
     let step = 0
+    const admittedMessages = (input: {
+      readonly rawMessages: readonly UserMessage[]
+      readonly messages: readonly UserMessage[]
+    }): readonly UserMessage[] => {
+      if (input.messages.length === 0) return input.rawMessages
+      const hasUnloggedRawCompetingInput = input.messages.length === 1
+        && groupDeliveryClaims(input.messages).length > 0
+        && input.rawMessages.some(message => message.source.kind !== 'bot-group-message')
+      return hasUnloggedRawCompetingInput ? input.rawMessages : input.messages
+    }
     const inspection = await this.ctx.sessionController.inspect(agent.id)
     for (const event of inspection.events) {
       if (event.type === 'agent/inbox/spliced') {
-        rawInboxSeen = true
         const queue = inbox[event.data.target]
         const removed = queue.splice(
           event.data.start,
@@ -1015,7 +1030,7 @@ export class BotService extends TypertRemoteService {
         continue
       }
       if (event.type === 'turn/start') {
-        if (rawInboxSeen) claimedForStep = []
+        claimedForStep = []
         turn = event.data.turn
         step = 0
         continue
@@ -1026,16 +1041,16 @@ export class BotService extends TypertRemoteService {
         inputs.set(`${String(turn)}:${String(step)}`, {
           turn,
           step,
-          messages: rawInboxSeen ? claimedForStep.splice(0) : [],
+          rawMessages: claimedForStep.splice(0),
+          messages: [],
         })
         continue
       }
       if (event.type === 'user/message') {
-        // When inbox events are present, the pure deletion that admitted the
-        // step is authoritative. Surface appends can include synthetic notices
-        // or rewritten history that did not belong to that claim. Older logs
-        // without inbox events retain the append-only fallback for migration.
-        if (rawInboxSeen || event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
+        // Runtime context and surface replacements are not admitted user input.
+        // Non-context appends identify a pre-step replacement that superseded
+        // the raw inbox claim, so they must win over the raw fallback.
+        if (event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
         const current = inputs.get(`${String(turn)}:${String(step)}`)
         if (current !== undefined) current.messages.push(event.data)
         continue
@@ -1044,17 +1059,21 @@ export class BotService extends TypertRemoteService {
         const failure = groupTurnFailure(event.data.reason)
         if (failure === undefined) continue
         const turnInputs = [...inputs.values()].filter(input => input.turn === event.data.turn)
+        if (claimedForStep.length > 0) {
+          turnInputs.push({ turn: event.data.turn, step: 0, rawMessages: claimedForStep, messages: [] })
+        }
         await this.groupService.then(async (service) => {
           for (const input of turnInputs) {
-            const claims = groupDeliveryClaims(input.messages)
-            if (claims.length === 0) continue
+            const messages = admittedMessages(input)
+            if (messages.length === 0) continue
+            const claims = groupDeliveryClaims(messages)
             await service.recordBotMessageClaims(
               record.id,
               claims,
               input.turn,
               input.step,
-              isolatedGroupDelivery(input.messages, claims),
-              input.messages.length > 0 && !isolatedGroupDelivery(input.messages, claims),
+              isolatedGroupDelivery(messages, claims),
+              messages.length > 0 && !isolatedGroupDelivery(messages, claims),
             )
           }
           await service.recordBotTurnFailure(record.id, event.data.turn, failure)
@@ -1064,15 +1083,16 @@ export class BotService extends TypertRemoteService {
       if (event.type !== 'assistant/message') continue
       const current = inputs.get(`${String(event.data.turn)}:${String(event.data.step)}`)
       if (current === undefined) continue
-      const claims = groupDeliveryClaims(current.messages)
+      const messages = admittedMessages(current)
+      const claims = groupDeliveryClaims(messages)
       await this.groupService.then(async (service) => {
         await service.recordBotMessageClaims(
           record.id,
           claims,
           event.data.turn,
           event.data.step,
-          isolatedGroupDelivery(current.messages, claims),
-          current.messages.length > 0 && !isolatedGroupDelivery(current.messages, claims),
+          isolatedGroupDelivery(messages, claims),
+          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
         )
         if (claims.length === 0) return
         const text = event.data.message.content

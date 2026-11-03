@@ -706,6 +706,88 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('reconciles a blocked pre-step from raw inbox events without a step start', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw blocked restart room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'This raw claim is blocked.', messageId: 'bot-group-message-raw-blocked' })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw blocked delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [delivered] })
+      resumedBeta.session.append('turn/start', { turn: 20 })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      resumedBeta.session.append('turn/end', { turn: 20, reason: { kind: 'blocked' } })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-raw-blocked', botId: beta.bot.id,
+            status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('does not attribute a private response to a removed raw group input after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw private replacement room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'The group input is replaced.', messageId: 'bot-group-message-raw-replaced' })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw replacement delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      const privateMessage = freezeMessage({
+        id: MessageId('private-restart-replacement'), role: 'user',
+        content: [{ type: 'text', text: 'This replacement is private.' }], source: { kind: 'user' },
+      })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [delivered] })
+      resumedBeta.session.append('turn/start', { turn: 21 })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      resumedBeta.session.append('step/start', { turn: 21, step: 1 })
+      resumedBeta.session.append('user/message', privateMessage, { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 21, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-private-restart-replacement'), role: 'assistant',
+          content: [{ type: 'text', text: 'This private response must stay private.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'The group input is replaced.' }],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('ignores synthetic runtime context while reconciling a claimed group turn after restart', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
