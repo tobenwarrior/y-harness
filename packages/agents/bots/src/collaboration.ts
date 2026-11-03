@@ -24,6 +24,16 @@ export function BotMessageId(value: string): BotMessageId {
 /** Durable source attached to every peer message in the target Session log. */
 export type BotMessageSource = AgentMessageSource
 
+/** Durable lifecycle status for one peer-Bot message in the target Session. */
+export interface BotCollaborationDeliveryEvent {
+  /** Stable peer message identity. */
+  readonly messageId: BotMessageId
+  /** Bot Session that authored the peer message. */
+  readonly senderSessionId: SessionId
+  /** Receipt status at the time of this lifecycle record. */
+  readonly status: 'accepted' | 'canceled'
+}
+
 /** Durable context used to stop event-routine relays from forming an unbounded Bot loop. */
 export interface BotEventRelayContext {
   /** Stable identity for one chain of routine-triggered peer messages. */
@@ -76,6 +86,11 @@ export interface BotCollaborationHost {
   readonly resolveAgent: (sessionId: SessionId) => Promise<{ readonly agent: BotCollaborationAgent } | { readonly error: Error }>
   /** Flush a target Session after inbox admission; the call must resolve only after durable storage accepts it. */
   readonly flushSession: (sessionId: SessionId) => Promise<void>
+  /** Persist peer-message acceptance or a later cancellation in the target Session. */
+  readonly recordDelivery?: (
+    sessionId: SessionId,
+    event: BotCollaborationDeliveryEvent,
+  ) => Promise<'accepted' | 'canceled'>
   /** Return the active event-routine relay context for one Bot turn, when any. */
   readonly eventRoutineContext?: (sessionId: SessionId) => BotEventRelayContext | undefined
 }
@@ -106,6 +121,8 @@ declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Native Bot collaboration action lifecycle; log-only but required for native replay. */
     'bot/dynamic-tool': BotDynamicToolEvent
+    /** Peer-Bot delivery lifecycle; accepted messages may later be canceled durably. */
+    'bot/collaboration': BotCollaborationDeliveryEvent
   }
 }
 
@@ -324,6 +341,39 @@ export class BotCollaborationService {
     }
   }
 
+  /** Persist the peer receipt status when the Host owns a durable lifecycle log. */
+  private async recordDelivery(
+    sessionId: SessionId,
+    targetName: string,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<'accepted' | 'canceled'> {
+    if (this.host.recordDelivery === undefined) return event.status
+    try {
+      return await this.host.recordDelivery(sessionId, event)
+    } catch (error: unknown) {
+      throw new BotCollaborationError(
+        'durability-failed',
+        `Bot "${targetName}" receipt status was not durably recorded`,
+        { cause: error },
+      )
+    }
+  }
+
+  /** Record an accepted receipt and reject if cancellation won before that record. */
+  private async acknowledgeDelivery(
+    sessionId: SessionId,
+    targetName: string,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<void> {
+    const status = await this.recordDelivery(sessionId, targetName, event)
+    if (status === 'canceled') {
+      throw new BotCollaborationError(
+        'durability-failed',
+        `Bot "${targetName}" canceled the message before acknowledgment`,
+      )
+    }
+  }
+
   /**
    * Admit one explicit message to a target Bot's next turn.
    *
@@ -364,6 +414,11 @@ export class BotCollaborationService {
           messageId,
           `Bot "${target.name}" no longer has the message receipt`,
         )
+        await this.acknowledgeDelivery(target.sessionId, target.name, {
+          messageId,
+          senderSessionId: sender.sessionId,
+          status: 'accepted',
+        })
         return { messageId, status: 'duplicate' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
       }
       const resolved = await this.host.resolveAgent(target.sessionId)
@@ -389,6 +444,11 @@ export class BotCollaborationService {
         messageId,
         `Bot "${target.name}" did not retain the message receipt`,
       )
+      await this.acknowledgeDelivery(target.sessionId, target.name, {
+        messageId,
+        senderSessionId: sender.sessionId,
+        status: 'accepted',
+      })
       return { messageId, status: 'accepted' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
     })
     const tail = run.then(() => undefined, () => undefined)

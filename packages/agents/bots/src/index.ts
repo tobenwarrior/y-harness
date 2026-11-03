@@ -31,7 +31,7 @@ import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharne
 import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
-import type { BotEventRelayContext } from './collaboration.ts'
+import type { BotCollaborationDeliveryEvent, BotEventRelayContext } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
@@ -110,6 +110,7 @@ export type {
   BotCollaborationHost,
   BotCollaborationInspection,
   BotCollaborationInspectionValue,
+  BotCollaborationDeliveryEvent,
   BotCollaborationRosterEntry,
   BotCollaborationTranscriptEntry,
   BotDynamicToolEvent,
@@ -704,6 +705,7 @@ export class BotService extends TypertRemoteService {
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
       eventRoutineContext: sessionId => this.eventRoutineContext(sessionId),
+      recordDelivery: (sessionId, event) => this.recordCollaborationDelivery(sessionId, event),
     })
     ctx.on('session/event', (session, event) => {
       void this.ready.then(() => {
@@ -910,6 +912,7 @@ export class BotService extends TypertRemoteService {
   async [Service.init](): Promise<void> {
     await this.initialized
     await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+    await this.reconcileCanceledDeliveriesOnStartup()
     await this.recoverPendingEventRoutines()
     await this.recoverEventRoutineResults()
   }
@@ -925,6 +928,40 @@ export class BotService extends TypertRemoteService {
    */
   collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient> {
     return this.collaboration.bind(agent)
+  }
+
+  /** Persist a peer-message receipt status and recheck cancellation before acknowledging it. */
+  private async recordCollaborationDelivery(
+    sessionId: SessionId,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<'accepted' | 'canceled'> {
+    return this.serialize(async () => {
+      const inspection = await this.ctx.sessionController.inspect(sessionId)
+      const surface = inspection.events.some(candidate => candidate.type === 'user/message'
+        && candidate.data.id === event.messageId)
+      const inbox = botInboxMessageState(inspection.events, event.messageId)
+      const status: BotCollaborationDeliveryEvent['status'] = event.status === 'accepted'
+        && !surface
+        && inbox?.disposition === 'canceled'
+        ? 'canceled'
+        : event.status
+      const latest = [...inspection.events].reverse().find(candidate => candidate.type === 'bot/collaboration'
+        && candidate.data.messageId === event.messageId)
+      if (latest?.type === 'bot/collaboration' && latest.data.status === status) return status
+
+      let session = this.ctx.sessions.get(sessionId)
+      if (session === undefined) {
+        const resolved = await this.ctx.sessionController.resolveAgent(sessionId)
+        if (!('agent' in resolved)) throw resolved.error
+        session = this.ctx.sessions.get(resolved.agent.id)
+      }
+      if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
+      session.append('bot/collaboration', { ...event, status })
+      if (!await this.ctx.sessions.flush(session)) {
+        throw new Error('Bot Session has no durable persistence listener.')
+      }
+      return status
+    })
   }
 
   /**
@@ -1253,18 +1290,21 @@ export class BotService extends TypertRemoteService {
 
   /** Observe Bot-owned message routines and retain only the turn facts needed for results. */
   private observeEventRoutineSessionEvent(sessionId: SessionId, event: SessionEvent): void {
-    if (this.recordsBySession.get(String(sessionId))?.eventRoutines === undefined) return
+    const record = this.recordsBySession.get(String(sessionId))
+    if (record === undefined) return
+    if (event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled') {
+      queueMicrotask(() => {
+        if (record.eventRoutines !== undefined) void this.reconcileCanceledEventRoutines(sessionId)
+        void this.reconcileCanceledCollaborations(sessionId)
+      })
+      return
+    }
+    if (record.eventRoutines === undefined) return
     const turnKey = `${String(sessionId)}:${event.type === 'turn/start' || event.type === 'turn/end' || event.type === 'assistant/message'
       ? event.data.turn
       : ''}`
     if (event.type === 'turn/start') {
       this.eventRoutineTurns.set(turnKey, { turn: event.data.turn, runs: new Map(), output: [] })
-      return
-    }
-    if (event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled') {
-      queueMicrotask(() => {
-        void this.reconcileCanceledEventRoutines(sessionId)
-      })
       return
     }
     // Inbox splices are pending admission and may be canceled. A routine only
@@ -1284,6 +1324,15 @@ export class BotService extends TypertRemoteService {
     queueMicrotask(() => {
       void this.recordEventRoutineResults(sessionId, turn, event)
     })
+  }
+
+  /** Reconcile canceled routine and peer deliveries before restart recovery dispatches work. */
+  private async reconcileCanceledDeliveriesOnStartup(): Promise<void> {
+    for (const [sessionKey, record] of this.recordsBySession) {
+      const sessionId = SessionId(sessionKey)
+      if (record.eventRoutines !== undefined) await this.reconcileCanceledEventRoutines(sessionId)
+      await this.reconcileCanceledCollaborations(sessionId)
+    }
   }
 
   /** Handle one queued or surface message, deduplicating its two durable views. */
@@ -1604,6 +1653,27 @@ export class BotService extends TypertRemoteService {
       })
     } catch (error: unknown) {
       this.ctx.logger.warn(`bots: canceled event routine repair failed: ${String(error)}`)
+    }
+  }
+
+  /** Persist cancellation for peer receipts accepted before a restart or late inbox splice. */
+  private async reconcileCanceledCollaborations(sessionId: SessionId): Promise<void> {
+    try {
+      const inspection = await this.ctx.sessionController.inspect(sessionId)
+      const surfaceIds = new Set(inspection.events.flatMap(event => event.type === 'user/message' ? [String(event.data.id)] : []))
+      const latest = new Map<string, BotCollaborationDeliveryEvent>()
+      for (const event of inspection.events) {
+        if (event.type === 'bot/collaboration') latest.set(String(event.data.messageId), event.data)
+      }
+      const canceled = [...latest.values()].filter((event) => {
+        if (event.status !== 'accepted' || surfaceIds.has(String(event.messageId))) return false
+        return botInboxMessageState(inspection.events, event.messageId)?.disposition === 'canceled'
+      })
+      for (const event of canceled) {
+        await this.recordCollaborationDelivery(sessionId, { ...event, status: 'canceled' })
+      }
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`bots: canceled peer delivery repair failed: ${String(error)}`)
     }
   }
 

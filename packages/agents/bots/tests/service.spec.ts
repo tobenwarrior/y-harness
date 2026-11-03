@@ -4,7 +4,7 @@ import type { Agent } from '@yharness/agent'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
-import { createAssistantMessage, createUserMessage, ToolCallId, type UserMessage } from '@yharness/llm'
+import { createAssistantMessage, createUserMessage, MessageId, ToolCallId, type UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
@@ -682,6 +682,86 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('repairs a delivered routine canceled while offline and retries after a failed repair write', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Offline cancellation owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let failed: Awaited<ReturnType<typeof harness>> | undefined
+    let recovered: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'offline-cancel-create', threadId: 'offline-cancel-thread', turnId: 'offline-cancel-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Offline cancellation monitor', prompt: 'Review the latest user message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before the restart.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+      await vi.waitFor(async () => {
+        const delivered = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'offline-cancel-delivered' })
+        expect(JSON.parse(delivered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+      })
+      if (followup.mock.calls[0]?.[0] === undefined) throw new Error('routine follow-up was not captured')
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      const seed = owner.session.snapshotEvents()
+      await close(h.ctx)
+      initialClosed = true
+
+      pool.failNextWrites = 1
+      failed = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), seed],
+      ]))
+      const failedProvider = failed.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (failedProvider === undefined) throw new Error('failed-repair native provider was not mounted')
+      const failedHistory = (await failedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
+      if (failedHistory === undefined) throw new Error('failed-repair schedule_history missing')
+      const unrepaired = await failedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'offline-cancel-failed-repair' })
+      expect(JSON.parse(unrepaired.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+      await close(failed.ctx)
+      failed = undefined
+
+      recovered = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), seed],
+      ]))
+      await vi.waitFor(() => { expect(recovered!.followups[0]).toHaveBeenCalledOnce() })
+      const recoveredProvider = recovered.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (recoveredProvider === undefined) throw new Error('recovered native provider was not mounted')
+      const recoveredHistory = (await recoveredProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
+      if (recoveredHistory === undefined) throw new Error('recovered schedule_history missing')
+      await vi.waitFor(async () => {
+        const repaired = await recoveredHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'offline-cancel-recovered' })
+        expect(JSON.parse(repaired.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+      })
+    } finally {
+      if (recovered !== undefined) await close(recovered.ctx)
+      if (failed !== undefined) await close(failed.ctx)
+      if (!initialClosed) await close(h.ctx)
+    }
+  })
+
   it('retries an event routine after its inbox message was canceled', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -1131,7 +1211,44 @@ describe('durable Bot roster', () => {
       })
       expect(targetFollowup).toHaveBeenCalledTimes(1)
       expect(h.resolveAgent).toHaveBeenCalledWith(target.bot.sessionId)
-      expect(h.flush).toHaveBeenCalledTimes(1)
+      expect(h.flush).toHaveBeenCalledTimes(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('durably records accepted peer delivery and reconciles a later inbox cancellation', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Late sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Late target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    try {
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      if (senderAgent === undefined || targetAgent === undefined) throw new Error('late-race Bot agents were not created')
+      const messageId = MessageId('peer-late-accepted-then-canceled')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id, text: 'This delivery is accepted before a later cancellation.', messageId,
+      })).resolves.toMatchObject({ status: 'accepted', messageId })
+      await vi.waitFor(() => {
+        const accepted = targetAgent.session.snapshotEvents().some(event => event.type === 'bot/collaboration'
+          && event.data.messageId === messageId && event.data.status === 'accepted')
+        expect(accepted).toBe(true)
+      })
+      targetAgent.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => {
+        const lifecycle = targetAgent.session.snapshotEvents().filter(event => event.type === 'bot/collaboration')
+        expect(lifecycle.at(-1)).toMatchObject({ type: 'bot/collaboration', data: { messageId, status: 'canceled' } })
+      })
     } finally {
       await close(h.ctx)
     }
