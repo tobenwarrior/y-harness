@@ -28926,7 +28926,7 @@
       ],
       "sources": [
         "packages/agents/bots/src/group-chat.ts:12",
-        "packages/agents/bots/src/group-chat.ts:20",
+        "packages/agents/bots/src/group-chat.ts:23",
         "packages/agents/bots/src/memory.ts:8",
         "packages/agents/bots/src/types.ts:8",
         "packages/api/session-controller/src/types.ts:413",

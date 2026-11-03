@@ -11,7 +11,10 @@ import { z } from 'zod'
 /** Stable identity of one durable Bot group. */
 export type BotGroupId = Branded<'BotGroupId'>
 
-/** Apply the Bot group identity brand to a validated value. */
+/** Apply the Bot group identity brand to a validated value.
+ * @param value - Validated group identity text.
+ * @returns The branded Bot group identity.
+ */
 export function BotGroupId(value: string): BotGroupId {
   return brandString<BotGroupId>(value)
 }
@@ -19,7 +22,10 @@ export function BotGroupId(value: string): BotGroupId {
 /** Stable identity of one message in a Bot group transcript. */
 export type BotGroupMessageId = Branded<'BotGroupMessageId'>
 
-/** Apply the Bot group message identity brand to a validated value. */
+/** Apply the Bot group message identity brand to a validated value.
+ * @param value - Validated group message identity text.
+ * @returns The branded Bot group message identity.
+ */
 export function BotGroupMessageId(value: string): BotGroupMessageId {
   return brandString<BotGroupMessageId>(value)
 }
@@ -419,7 +425,10 @@ export class BotGroupService {
     private readonly host: BotGroupDeliveryHost,
   ) {}
 
-  /** List durable groups with current member projections. */
+  /** List durable groups with current member projections.
+   * @param _request - Reserved list request fields.
+   * @returns Current group projections.
+   */
   async list(_request: BotGroupListRequest): Promise<BotGroupListValue> {
     await this.chain
     const bots = await this.host.listBots()
@@ -430,7 +439,10 @@ export class BotGroupService {
     return { groups }
   }
 
-  /** Create or idempotently reuse one 2–6 Bot group. */
+  /** Create or idempotently reuse one 2–6 Bot group.
+   * @param request - Group name, members, and optional retry identity.
+   * @returns The created or reused group projection.
+   */
   async create(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
     return this.serialize(async () => {
       const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
@@ -459,12 +471,19 @@ export class BotGroupService {
     })
   }
 
-  /** Update a group from the human workspace while preserving its durable identity. */
+  /** Update a group from the human workspace while preserving its durable identity.
+   * @param request - Group identity, name, and member list.
+   * @returns The updated group projection.
+   */
   async update(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
     return this.updateInternal(request)
   }
 
-  /** Update a group from a live member Bot after re-checking membership. */
+  /** Update a group from a live member Bot after re-checking membership.
+   * @param senderBotId - Authenticated member Bot identity.
+   * @param request - Group identity, name, and member list.
+   * @returns The updated group projection.
+   */
   async updateAsBot(senderBotId: BotId, request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
     return this.updateInternal(request, senderBotId)
   }
@@ -501,13 +520,20 @@ export class BotGroupService {
     })
   }
 
-  /** Read one durable group transcript. */
+  /** Read one durable group transcript.
+   * @param request - Group identity to inspect.
+   * @returns Group metadata, transcript, and delivery statuses.
+   */
   async inspect(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
     await this.chain
     return this.inspectInternal(request)
   }
 
-  /** Read one durable group transcript while authorizing the live member atomically. */
+  /** Read one durable group transcript while authorizing the live member atomically.
+   * @param senderBotId - Authenticated member Bot identity.
+   * @param request - Group identity to inspect.
+   * @returns Group metadata, transcript, and delivery statuses.
+   */
   async inspectAsBot(senderBotId: BotId, request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
     return this.serialize(async () => this.inspectInternal(request, senderBotId))
   }
@@ -540,12 +566,19 @@ export class BotGroupService {
     return { group: this.view(group, bots), messages, deliveries }
   }
 
-  /** Persist one human or Bot message, then fan it out to every intended recipient. */
+  /** Persist one human or Bot message, then fan it out to every intended recipient.
+   * @param request - Group message and optional recipient or retry identity.
+   * @returns Fan-out status and each recipient's delivery result.
+   */
   async send(request: BotGroupSendRequest): Promise<BotGroupSendValue> {
     return this.sendInternal(request)
   }
 
-  /** Persist and fan out one message authored by the exact live Bot identity supplied by the Host. */
+  /** Persist and fan out one message authored by the exact live Bot identity supplied by the Host.
+   * @param senderBotId - Authenticated Bot author.
+   * @param request - Group message and optional recipient or retry identity.
+   * @returns Fan-out status and each recipient's delivery result.
+   */
   async sendAsBot(senderBotId: BotId, request: BotGroupSendRequest): Promise<BotGroupSendValue> {
     return this.sendInternal(request, senderBotId)
   }
@@ -719,7 +752,14 @@ export class BotGroupService {
     }
   }
 
-  /** Record the exact model turn and step that claimed one or more group messages. */
+  /** Record the exact model turn and step that claimed one or more group messages.
+   * @param botId - Authenticated Bot identity that claimed the messages.
+   * @param claims - Group deliveries claimed in the turn.
+   * @param turn - Durable model turn number.
+   * @param step - Model step that observed the claims.
+   * @param isolated - Whether the claims are the turn's isolated input.
+   * @param competingInput - Whether competing input makes prior isolated claims non-isolated.
+   */
   async recordBotMessageClaims(
     botId: BotId,
     claims: readonly BotGroupDeliveryClaimInput[],
@@ -810,7 +850,13 @@ export class BotGroupService {
     })
   }
 
-  /** Record one real Bot response against its one exact claimed group delivery. */
+  /** Record one real Bot response against its one exact claimed group delivery.
+   * @param botId - Authenticated Bot identity that produced the response.
+   * @param turn - Durable model turn number.
+   * @param step - Model step that produced the response.
+   * @param text - Visible response text.
+   * @param sourceMessageId - Source message identity used to derive the response id.
+   */
   async recordBotResponse(botId: BotId, turn: number, step: number, text: string, sourceMessageId: string): Promise<void> {
     await this.serialize(async () => {
       const messageText = normalizeText(text, 'Bot group response', MAX_MESSAGE_TEXT)

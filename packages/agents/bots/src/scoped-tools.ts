@@ -182,6 +182,7 @@ function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
  * @param scope - the exact Agent scope receiving the tools.
  * @param bind - resolves a collaboration client bound to that Agent.
  * @param manage - Host-owned Bot creation and profile editing operations.
+ * @param groups - Resolves membership-scoped group operations when groups are mounted.
  * @returns a disposer for the scoped tools and messaging approval listener.
  */
 export function installBotCollaborationTools(
