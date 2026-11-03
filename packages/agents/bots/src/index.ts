@@ -4057,6 +4057,7 @@ export class BotService extends TypertRemoteService {
         endpoints: SHARED_BOT_ENDPOINTS,
       })
       this.sharedService = service
+      await shared.recoverSharedGroupDeliveries()
       // Existing isolated group Sessions may contain a completed turn from
       // before this Host restarted. Rebuild only their shared-group receipts;
       // private Bot Sessions never enter this projection.

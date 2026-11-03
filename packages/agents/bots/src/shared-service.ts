@@ -631,6 +631,11 @@ export class SharedBotService {
     return this.groups.sessionBindings()
   }
 
+  /** Replay durable shared-group deliveries after a Host restart. */
+  async recoverSharedGroupDeliveries(signal?: AbortSignal): Promise<void> {
+    await this.groups.recoverPendingDeliveries(signal)
+  }
+
   /** Record one shared-group Session's exact model claim. */
   async recordSharedGroupMessageClaims(
     groupId: ReturnType<typeof BotGroupId>,
@@ -844,6 +849,7 @@ export class SharedBotService {
     await waitForTracked([...this.quarantinedSessions.values()])
     await waitForTracked(this.membershipRefresh === undefined ? [] : [this.membershipRefresh])
     await waitForTracked([this.chain])
+    await this.groups.dispose()
     await waitForTracked([this.domain.close()])
   }
 
