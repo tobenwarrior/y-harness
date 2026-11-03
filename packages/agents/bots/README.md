@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization, and recall untrusted memory stored in their Sessions. Retried creation reuses the requested Bot identity and Session.
+Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization, and recall untrusted memory stored in their Sessions. Retried creation reuses the requested Bot identity and Session. Per-Bot grants control access to connected apps.
 
 ## Table of Contents
 
@@ -24,6 +24,8 @@ Provide a named-Bot workspace with one durable Session per Bot, stable visual id
 ## Use this package
 
 Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory; a native provider may expose the same actions through its own tool bridge.
+
+The Bot Remote also exposes `listConnectedApps` and `setConnectedAppAccess`. The Client uses these methods for the selected Bot's Connected apps dialog. The catalog is derived from MCP tool definitions' Host-only source metadata and visible MCP resource servers; public names are not parsed because server and tool names may contain `__`. A grant is checked in the Bot Agent scope before approval, rechecked after approval, and checked again at the last-mile tool-body boundary after async wrappers settle, so hiding a control or revoking during a wait cannot bypass the policy.
 
 ### When to choose it
 
@@ -67,7 +69,7 @@ The service owns one storage-domain table and serializes writes that can allocat
 |---|---|
 | [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, scoped prompt/tools, and attachment admission. |
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
-| [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
+| [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration and connected-app tool schemas plus approval policy. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
@@ -108,7 +110,7 @@ The roster does not modify request prefixes until the scoped collaboration tools
 
 #### What the model sees
 
-When a Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name and optional role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history.
+When a Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name and optional role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history. The scoped MCP tool runtime exposes `list_connected_apps` so a Bot can explain why an app is unavailable; the native Codex action bridge does not expose that catalog because its actions cannot dispatch MCP app tools.
 
 #### Token effect
 
@@ -117,6 +119,20 @@ Each Bot request pays for the short identity section and optional role descripti
 #### KV Cache effect
 
 The identity text stays prefix-stable until the Bot name or role description changes. A rename changes the system prompt for later requests while preserving the reusable prefix before the changed section.
+
+### Connected-app access
+
+#### What the model sees
+
+The scoped model runtime can call `list_connected_apps` to see the MCP app catalog and each Bot's grant. An ordinary MCP tool or shared MCP resource operation whose named server is not granted fails before its body runs with a message that names the app and directs the user to Bot settings. The denial retains `BOT_APP_ACCESS_REQUIRED` structured metadata for Host routing while the model sees only the concise reason. The user can grant or revoke access from the connected-app dialog; the decision is durable and applies to later scoped MCP tool calls. Native Codex actions do not claim access to this catalog: their provider-independent action surface cannot dispatch an MCP app tool.
+
+#### Token effect
+
+The list tool and an access-denial message consume tokens only when the Bot calls an app or asks for the catalog. Access checks do not add a model-visible turn when a granted tool runs.
+
+#### KV Cache effect
+
+Changing a Bot grant does not rewrite Session history. The scoped tool set remains stable; only the result of a later app call changes.
 
 ### Bot collaboration
 
@@ -162,6 +178,8 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Sections are user-defined labels** — the roster supports one optional section name per Bot, plus pin, hide, and restore; it does not provide nested folders or cross-user shared roster state.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **MCP source metadata identifies connected apps** — this feature covers ordinary app tools and shared resource operations registered by the MCP bridge. The scoped model runtime and connected-app dialog can inspect and change this policy; native provider actions, browser integrations, and other non-MCP tools are not included, and native actions do not expose a misleading `list_connected_apps` action. The public `mcp__...` name is only a model-facing identifier and is never used to recover ownership. Registered server identifiers remain opaque, including valid names that begin with `_` or `-`.
+- **Revocation applies at the tool-body boundary** — a revoke blocks the next MCP operation, including a call paused in an async `tools/execute` wrapper, before its provider body starts. It cannot interrupt provider work that has already begun.
 
 <a id="dev-note"></a>
 ### Dev Note

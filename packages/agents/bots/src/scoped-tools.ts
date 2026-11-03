@@ -9,8 +9,17 @@ import {
 } from './collaboration.ts'
 import { BotMemoryId, normalizeBotMemoryText } from './memory.ts'
 import { defineTool } from '@yharness/tools'
-import type { InferValue, ValueSchemaSpec } from '@yharness/tools'
+import type {
+  InferValue,
+  PreToolDecision,
+  ToolDispatchDecision,
+  ToolDispatchExecution,
+  ToolExecution,
+  ToolGuard,
+  ValueSchemaSpec,
+} from '@yharness/tools'
 import type { BotNativeToolHost } from './native-tools.ts'
+import type { BotConnectedAppAccess } from './types.ts'
 
 const BOT_ENTRY_SCHEMA = {
   type: 'object',
@@ -73,6 +82,31 @@ function implicitMemoryId(senderId: string, text: string): BotMemoryId {
   return BotMemoryId(`memory-${digest}`)
 }
 
+const CONNECTED_APP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    name: { type: 'string', required: true },
+    description: { type: 'string' },
+    allowed: { type: 'boolean', required: true },
+  },
+} as const
+
+const CONNECTED_APPS_RESULT_SCHEMA = { type: 'array', items: CONNECTED_APP_SCHEMA } as const
+
+/** Host-owned connected-app catalog and access check for one Bot scope. */
+export interface BotConnectedAppToolHost {
+  /** Read the MCP apps and current access decisions visible to the current Bot. */
+  readonly list: () => Promise<readonly BotConnectedAppAccess[]>
+  /** Check one model tool before approval is requested. */
+  readonly check: (exec: ToolExecution) => PreToolDecision
+  /** Recheck one model tool immediately before dispatch after approval. */
+  readonly guard: ToolGuard
+  /** Recheck one model tool after async wrappers and immediately before its body. */
+  readonly beforeDispatch: (exec: Readonly<ToolDispatchExecution>) => ToolDispatchDecision
+}
+
 /** Shared JSON renderer for compact model-facing Bot results. */
 function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
   readonly schema: S
@@ -94,12 +128,14 @@ function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
  * @param scope - the exact Agent scope receiving the tools.
  * @param bind - resolves a collaboration client bound to that Agent.
  * @param manage - Host-owned Bot creation and profile editing operations.
+ * @param connectedApps - Host-owned connected MCP app catalog and enforcement gate.
  * @returns a disposer for the scoped tools and messaging approval listener.
  */
 export function installBotCollaborationTools(
   scope: Context,
   bind: () => Promise<BotCollaborationClient>,
   manage?: BotNativeToolHost['manage'],
+  connectedApps?: BotConnectedAppToolHost,
 ): () => void {
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
@@ -197,6 +233,22 @@ export function installBotCollaborationTools(
         return { forgotten: true }
       },
     })))
+    if (connectedApps !== undefined) {
+      register(scope.tools.register(defineTool({
+        name: 'list_connected_apps',
+        description: 'List the connected MCP apps available to this Bot and whether access is currently allowed. This only reads access policy.',
+        parameters: {},
+        output: jsonOutput(CONNECTED_APPS_RESULT_SCHEMA),
+        async execute() {
+          return (await connectedApps.list()).map(app => ({
+            id: app.id,
+            name: app.name,
+            allowed: app.allowed,
+            ...(app.description === undefined ? {} : { description: app.description }),
+          }))
+        },
+      })))
+    }
 
     for (const action of manage === undefined ? [] : ['create', 'edit'] as const) {
       register(scope.tools.register(defineTool({
@@ -231,9 +283,20 @@ export function installBotCollaborationTools(
         },
       })))
     }
-    register(scope.on('tools/pre-execute', (exec, next) => ['send_bot_message', 'create_bot', 'edit_bot_profile', 'remember_bot_memory', 'forget_bot_memory'].includes(exec.name)
-      ? Promise.resolve({ kind: 'ask', reason: 'This action changes a Bot or its durable Session.' as const })
-      : next()))
+    register(scope.on('tools/pre-execute', (exec, next) => {
+      const connectedAppDecision = connectedApps?.check(exec)
+      if (connectedAppDecision !== undefined && connectedAppDecision.kind !== 'allow') {
+        return Promise.resolve(connectedAppDecision)
+      }
+      if (['send_bot_message', 'create_bot', 'edit_bot_profile', 'remember_bot_memory', 'forget_bot_memory'].includes(exec.name)) {
+        return Promise.resolve({ kind: 'ask', reason: 'This action changes a Bot or its durable Session.' as const })
+      }
+      return next()
+    }))
+    if (connectedApps !== undefined) {
+      register(scope.tools.guard(connectedApps.guard))
+      register(scope.tools.beforeDispatch(connectedApps.beforeDispatch))
+    }
   } catch (error: unknown) {
     for (const dispose of disposers.reverse()) void dispose()
     throw error

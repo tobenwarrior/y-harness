@@ -6,7 +6,7 @@ Source: [`packages/core/tools/src/index.ts`](../../packages/core/tools/src/index
 
 ## `ToolDefinition` — a registered tool
 
-A `ToolSchema` (the model-facing fields) plus a mandatory canonical output declaration, the `execute` function, host-only scheduler metadata, an optional final-content callback, and optional UI presenters. The registry holds these; the loop dispatches calls through them. The registry's `schemas()` builds the model-facing `ToolSchema[]` by an explicit allowlist — `output`/`execute`/`projectContent`/`finalizeContent`/`timeoutMs`/`isConcurrencySafe`/`presentCall`/`presentResult` must never leak into a model request.
+A `ToolSchema` (the model-facing fields) plus provider source metadata, a mandatory canonical output declaration, the `execute` function, host-only scheduler metadata, an optional final-content callback, and optional UI presenters. The registry holds these; the loop dispatches calls through them. The registry's `schemas()` builds the model-facing `ToolSchema[]` by an explicit allowlist — `source`/`output`/`execute`/`projectContent`/`finalizeContent`/`timeoutMs`/`isConcurrencySafe`/`presentCall`/`presentResult` must never leak into a model request.
 
 ```ts type-equiv
 /** Tool-owned canonical output contract used after the body returns a JSON value. */
@@ -21,8 +21,35 @@ interface ToolOutputDefinition {
 ```
 
 ```ts type-equiv
+/**
+ * Provider-owned origin metadata for one registered tool.
+ *
+ * This metadata stays on the Host-side definition and is omitted from the
+ * model-facing {@link ToolSchema}. Consumers must use it instead of parsing
+ * a public tool name, whose separators can also occur in a provider name.
+ */
+interface ToolSource {
+  /** The provider family that owns the definition. */
+  readonly kind: 'mcp'
+  /** Stable configured MCP server namespace. */
+  readonly serverName: string
+}
+
+```
+
+```ts type-equiv
+/** Host-only origin for shared MCP resource tools whose server is an argument. */
+interface McpResourceToolSource {
+  /** Shared resource operation family. */
+  readonly kind: 'mcp-resource'
+}
+```
+
+```ts type-equiv
 /** A registered tool: its schema plus the execution function. */
 interface ToolDefinition extends ToolSchema {
+  /** Host-only provider origin; never projected into model-facing schemas. */
+  readonly source?: ToolSource | McpResourceToolSource
   /** Mandatory canonical output declaration. */
   readonly output: ToolOutputDefinition
   /**
@@ -177,7 +204,7 @@ interface ToolRestriction {
 
 ## Execution: extensible waterfalls plus monotonic policy
 
-`ctx.tools.execute()` accepts a caller-owned `ToolExecutionInput` with a required readonly `signal`, materializes its parsed JSON arguments once into a pipeline-owned `ToolExecution`, and runs that call through `tools/pre-execute` (the reorderable allow/deny/ask waterfall) → registered monotonic guards → `tools/execute` (around-dispatch wrappers) → `projectContent` → `tools/post-execute` (inspect/replace the result) → optional definition-owned `finalizeContent` → `tools/result` (the immutable authoritative outcome). Only the `tools/execute` view may replace the required signal. The outcome is a `ToolExecutionResult`.
+`ctx.tools.execute()` accepts a caller-owned `ToolExecutionInput` with a required readonly `signal`, materializes its parsed JSON arguments once into a pipeline-owned `ToolExecution`, and runs that call through `tools/pre-execute` (the reorderable allow/deny/ask waterfall) → registered monotonic guards → `tools/execute` (around-dispatch wrappers) → registered last-mile dispatch guards → the tool body → `projectContent` → `tools/post-execute` (inspect/replace the result) → optional definition-owned `finalizeContent` → `tools/result` (the immutable authoritative outcome). Only the `tools/execute` view may replace the required signal. The outcome is a `ToolExecutionResult`.
 
 ```ts type-equiv
 /** Opaque call identity that permits correlation without exposing mutable execution state. */
@@ -318,6 +345,34 @@ interface ToolDispatchExecution extends Omit<ToolExecution, 'signal'> {
 }
 ```
 
+```ts type-equiv
+/**
+ * Decision returned by a last-mile dispatch guard immediately before a tool
+ * body is invoked. Unlike {@link PreToolDecision}, this stage cannot request
+ * approval or rewrite the call because all around-dispatch work has already
+ * completed.
+ */
+type ToolDispatchDecision =
+  | { readonly kind: 'allow' }
+  | { readonly kind: 'deny'; readonly reason: string; readonly info?: ToolErrorInfo }
+
+```
+
+```ts type-equiv
+/**
+ * Synchronous policy check run after every `tools/execute` waterfall and
+ * immediately before the registered tool body. This closes revocation races
+ * where an earlier guard ran before an asynchronous wrapper yielded; keeping
+ * the final check synchronous makes the decision and body invocation one
+ * operation-boundary turn.
+ * @param execution - the caller identity, immutable arguments, and fused signal.
+ * @returns whether the body may run, with optional structured denial metadata.
+ */
+type ToolDispatchGuard = (
+  execution: Readonly<ToolDispatchExecution>,
+) => ToolDispatchDecision
+```
+
 `ToolExecutionToken` is an opaque runtime `Symbol` used only for identity comparison. Before policy, `execute()` materializes and freezes arguments, rejects non-JSON input, and assigns the token. Identity fields, the required caller signal, and the optional parent token remain readonly. A `ToolDispatchExecution` wrapper may replace but not remove the signal; the registry re-fuses the caller signal before invoking the body. Final observers receive the frozen execution identity.
 
 A `ToolGuard` is scope-aware final pre-dispatch policy. Its return type deliberately has no allow result: `undefined` preserves the waterfall decision, while a returned reason can only reduce permission, so a later listener cannot undo it.
@@ -333,6 +388,8 @@ A `ToolGuard` is scope-aware final pre-dispatch policy. Its return type delibera
  */
 type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined
 ```
+
+`ctx.tools.beforeDispatch()` registers the synchronous last-mile form. It runs after every `tools/execute` wrapper has settled and before the body starts, so revoking a capability while an async wrapper waits cannot let that body run. A denial can carry `ToolErrorInfo`; the registry keeps that structured identity in the result while the model sees only `Error: <reason>`.
 
 ```ts type-equiv
 /** Canonical failure detail; internal routing information remains optional. */
@@ -547,6 +604,19 @@ restrict(filter: ToolRestriction): () => void
  * @returns the exact disposer that unregisters the guard.
  */
 guard(guard: ToolGuard): () => void
+
+/**
+ * Register a synchronous last-mile guard immediately before a tool body.
+ * A plain-context guard applies globally; one registered through `agent.ctx`
+ * applies only to that Agent. This stage runs after every `tools/execute`
+ * waterfall has settled, so revoking a capability while an async wrapper is
+ * waiting cannot allow the body to start. Returning a denial preserves its
+ * structured error metadata in the tool result. The exact disposer is
+ * returned for ordered ownership and HMR cleanup.
+ * @param guard - synchronous allow/deny check for the final dispatch.
+ * @returns the exact disposer that unregisters the guard.
+ */
+beforeDispatch(guard: ToolDispatchGuard): () => void
 
 /**
  * Look up a tool as one scope sees it (scoped

@@ -104,6 +104,15 @@ export class McpResourceRuntime extends Service {
     return dispose
   }
 
+  /**
+   * List resource servers visible from one caller scope.
+   * @param scope - the viewing Agent scope, or undefined for global access.
+   * @returns visible configured server names in registration order.
+   */
+  servers(scope?: ScopeKey): readonly string[] {
+    return [...this.layers.merge(scope, layer => layer.servers).keys()]
+  }
+
   /** Own one scope's tools independently of its configured server plugins. */
   private registerTools(scope: ScopeKey | undefined): () => void | Promise<void> {
     const ctx = this.selfCtx

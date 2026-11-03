@@ -219,8 +219,30 @@ export interface ToolOutputDefinition {
   presentationMeta?(args: unknown, value: JsonValue): JsonValue
 }
 
+/**
+ * Provider-owned origin metadata for one registered tool.
+ *
+ * This metadata stays on the Host-side definition and is omitted from the
+ * model-facing {@link ToolSchema}. Consumers must use it instead of parsing
+ * a public tool name, whose separators can also occur in a provider name.
+ */
+export interface ToolSource {
+  /** The provider family that owns the definition. */
+  readonly kind: 'mcp'
+  /** Stable configured MCP server namespace. */
+  readonly serverName: string
+}
+
+/** Host-only origin for shared MCP resource tools whose server is an argument. */
+export interface McpResourceToolSource {
+  /** Shared resource operation family. */
+  readonly kind: 'mcp-resource'
+}
+
 /** A registered tool: its schema plus the execution function. */
 export interface ToolDefinition extends ToolSchema {
+  /** Host-only provider origin; never projected into model-facing schemas. */
+  readonly source?: ToolSource | McpResourceToolSource
   /** Mandatory canonical output declaration. */
   readonly output: ToolOutputDefinition
   /**
@@ -406,6 +428,29 @@ export interface ToolDispatchExecution extends Omit<ToolExecution, 'signal'> {
   /** Cancellation signal visible to the next wrapper or tool body. */
   signal: AbortSignal
 }
+
+/**
+ * Decision returned by a last-mile dispatch guard immediately before a tool
+ * body is invoked. Unlike {@link PreToolDecision}, this stage cannot request
+ * approval or rewrite the call because all around-dispatch work has already
+ * completed.
+ */
+export type ToolDispatchDecision =
+  | { readonly kind: 'allow' }
+  | { readonly kind: 'deny'; readonly reason: string; readonly info?: ToolErrorInfo }
+
+/**
+ * Synchronous policy check run after every `tools/execute` waterfall and
+ * immediately before the registered tool body. This closes revocation races
+ * where an earlier guard ran before an asynchronous wrapper yielded; keeping
+ * the final check synchronous makes the decision and body invocation one
+ * operation-boundary turn.
+ * @param execution - the caller identity, immutable arguments, and fused signal.
+ * @returns whether the body may run, with optional structured denial metadata.
+ */
+export type ToolDispatchGuard = (
+  execution: Readonly<ToolDispatchExecution>,
+) => ToolDispatchDecision
 
 /**
  * Runtime context handed to a tool implementation after the registry has
@@ -735,6 +780,7 @@ class ToolLayer implements ScopeLayer {
   readonly tools: NamedEntries<ToolDefinition>
   readonly restrictions = new AnonymousEntries<CompiledToolRestriction>()
   readonly guards = new AnonymousEntries<ToolGuard>()
+  readonly dispatchGuards = new AnonymousEntries<ToolDispatchGuard>()
   /**
    * Presentation this scope's agent declared for itself, shadowing the
    * deployment default. One cell rather than an entry table: two answers to
@@ -751,6 +797,7 @@ class ToolLayer implements ScopeLayer {
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
     return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
+      && this.dispatchGuards.isEmpty()
       && this.mode === undefined
   }
 
@@ -770,6 +817,15 @@ class ToolLayer implements ScopeLayer {
       if (reason !== undefined) return reason
     }
     return undefined
+  }
+
+  /** First last-mile denial from this layer's live synchronous guards. */
+  dispatchGuardDecision(exec: Readonly<ToolDispatchExecution>): ToolDispatchDecision {
+    for (const guard of this.dispatchGuards.values()) {
+      const decision = guard(exec)
+      if (decision.kind === 'deny') return decision
+    }
+    return { kind: 'allow' }
   }
 }
 
@@ -1141,6 +1197,25 @@ export class ToolRuntime extends Service {
     )
   }
 
+  /**
+   * Register a synchronous last-mile guard immediately before a tool body.
+   * A plain-context guard applies globally; one registered through `agent.ctx`
+   * applies only to that Agent. This stage runs after every `tools/execute`
+   * waterfall has settled, so revoking a capability while an async wrapper is
+   * waiting cannot allow the body to start. Returning a denial preserves its
+   * structured error metadata in the tool result. The exact disposer is
+   * returned for ordered ownership and HMR cleanup.
+   * @param guard - synchronous allow/deny check for the final dispatch.
+   * @returns the exact disposer that unregisters the guard.
+   */
+  beforeDispatch(guard: ToolDispatchGuard): () => void {
+    return this.layers.effect(
+      this.ctx,
+      layer => layer.dispatchGuards.append(guard),
+      { label: 'tools.beforeDispatch()', notify: false },
+    )
+  }
+
   /** First monotonic denial from the global then the scope chain's guard layers, farthest first. */
   private guardReason(exec: ToolExecution): string | undefined {
     const globalReason = this.layers.global.guardReason(exec)
@@ -1151,6 +1226,20 @@ export class ToolRuntime extends Service {
       if (reason !== undefined) return reason
     }
     return undefined
+  }
+
+  /** First last-mile denial from global then scope-chain dispatch guards. */
+  private dispatchGuardDecision(
+    exec: Readonly<ToolDispatchExecution>,
+  ): ToolDispatchDecision {
+    const globalDecision = this.layers.global.dispatchGuardDecision(exec)
+    if (globalDecision.kind === 'deny') return globalDecision
+    if (exec.agent === undefined) return globalDecision
+    for (const layer of this.layers.chainLayers(exec.agent)) {
+      const decision = layer.dispatchGuardDecision(exec)
+      if (decision.kind === 'deny') return decision
+    }
+    return { kind: 'allow' }
   }
 
   /**
@@ -1577,6 +1666,18 @@ export class ToolRuntime extends Service {
     try {
       const tool = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
       if (!tool) throw new ToolNotFoundError(exec.name)
+      const decision = this.dispatchGuardDecision(exec)
+      if (decision.kind === 'deny') {
+        return this.materializeFinalResult({
+          content: [{ type: 'text', text: `Error: ${decision.reason}` }],
+          isError: true,
+          error: {
+            message: decision.reason,
+            ...decision.info === undefined ? {} : { info: decision.info },
+          },
+        })
+      }
+      if (isAborted(signal)) return toolAbortedBeforeDispatchResult()
       state.bodyInvoked = true
       const returned = await tool.execute(exec.arguments, exec)
       const result = this.createSuccessResult(exec, tool, returned)

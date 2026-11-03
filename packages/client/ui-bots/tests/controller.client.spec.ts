@@ -109,6 +109,33 @@ describe('BotWorkspaceController', () => {
     expect(controller.source.getSnapshot().bots[0]?.name).toBe(updated.name)
     expect(controller.face().reference()).toBe(selected)
   })
+
+  it('loads and updates connected-app access for the selected Bot without changing its Session', async () => {
+    const original = bot('bot-one', 'session-one')
+    const remote = remoteFixture([original])
+    const listConnectedApps = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { bot: original, apps: [{ id: 'github', name: 'GitHub', allowed: false }] },
+    })
+    const setConnectedAppAccess = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { bot: { ...original, updatedAt: 2 }, app: { id: 'github', name: 'GitHub', allowed: true } },
+    })
+    remote.listConnectedApps = listConnectedApps
+    remote.setConnectedAppAccess = setConnectedAppAccess
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    await controller.load()
+
+    const face = controller.face()
+    await expect(face.loadConnectedApps?.(original.id)).resolves.toEqual([{ id: 'github', name: 'GitHub', allowed: false }])
+    await face.setConnectedAppAccess?.(original.id, 'github', true)
+
+    expect(listConnectedApps).toHaveBeenCalledWith({ botId: original.id })
+    expect(setConnectedAppAccess).toHaveBeenCalledWith({ botId: original.id, appId: 'github', allowed: true })
+    expect(controller.face().reference()?.sessionId).toBe(original.sessionId)
+    controller.dispose()
+  })
   it('switches retained Sessions before publishing the new selection and keeps it across refresh', async () => {
     const first = bot('bot-one', 'session-one')
     const second = bot('bot-two', 'session-two')

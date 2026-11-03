@@ -401,6 +401,23 @@ describe('Bot roster and detail', () => {
     expect(onConnectApps).toHaveBeenCalledOnce()
   })
 
+  it('loads connected apps for the selected Bot and exposes grant/revoke feedback', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+    ])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({ onLoadConnectedApps, onSetConnectedAppAccess })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect apps' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
+    expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
+    expect(within(dialog).getByText('Access not allowed')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('research', 'github', true) })
+    expect(within(dialog).getByText('Access allowed')).toBeTruthy()
+  })
+
   it('checks generation, previews the returned image, and commits the selected avatar', async () => {
     const generatedAvatar = {
       attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),

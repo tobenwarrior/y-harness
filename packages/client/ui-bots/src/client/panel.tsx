@@ -64,7 +64,20 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
-  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry, loadAvatar, avatarEditor, t,
+  wide,
+  expandSidebar,
+  useWorkspace,
+  useSessionStatus,
+  reference: _reference,
+  select,
+  create,
+  organize,
+  loadConnectedApps,
+  setConnectedAppAccess,
+  retry,
+  loadAvatar,
+  avatarEditor,
+  t,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -76,6 +89,8 @@ export function BotsRoster({
       onSelectBot={select}
       onCreateBot={create}
       onOrganizeBot={organize}
+      onLoadConnectedApps={loadConnectedApps}
+      onSetConnectedAppAccess={setConnectedAppAccess}
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}

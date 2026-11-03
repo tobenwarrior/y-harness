@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import LlmRuntime, { createUserMessage, ToolCallId, HarnessError, type ContentBlock  } from '@yharness/llm'
 import type { ContextFormed } from '@yharness/llm'
@@ -1775,6 +1775,39 @@ describe('ToolRuntime', () => {
     expect(result.isError).toBe(true)
     expect(result.content[0]).toMatchObject({ text: 'Error: nope' })
     expect(entered).toBe(false) // A denied call never enters the around-dispatch extension point.
+  })
+
+  it('runs beforeDispatch after async around work and preserves structured denial metadata', async () => {
+    const ctx = await setup()
+    const body = vi.fn(async () => 'called')
+    ctx.tools.register({ ...echoTool, name: 'dispatch-guarded', execute: body })
+
+    const executeEntered = Promise.withResolvers<undefined>()
+    const releaseExecute = Promise.withResolvers<undefined>()
+    ctx.on('tools/execute', async (_exec, next) => {
+      executeEntered.resolve(undefined)
+      await releaseExecute.promise
+      return next()
+    })
+    ctx.tools.beforeDispatch(() => ({
+      kind: 'deny',
+      reason: 'revoked while the wrapper was waiting',
+      info: { name: 'DispatchGuardError', code: 'ACCESS_REVOKED' },
+    }))
+
+    const running = ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('dispatch-guarded'), name: 'dispatch-guarded',
+      arguments: { text: 'hi' },
+    })
+    await executeEntered.promise
+    releaseExecute.resolve(undefined)
+
+    await expect(running).resolves.toMatchObject({
+      isError: true,
+      error: { message: 'revoked while the wrapper was waiting', info: { code: 'ACCESS_REVOKED' } },
+    })
+    expect(body).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
   })
 
   it('a thrown tool is normalized to an isError result BEFORE a tools/execute listener sees next()', async () => {

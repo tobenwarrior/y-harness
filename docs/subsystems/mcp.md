@@ -131,7 +131,16 @@ Scoped resource access plus three tools shared by configured MCP servers.
  * @returns the effect disposer for this exact registration.
  */
 register(server: string, provider: McpResourceProvider): () => void
+
+/**
+ * List resource servers visible from one caller scope.
+ * @param scope - the viewing Agent scope, or undefined for global access.
+ * @returns visible configured server names in registration order.
+ */
+servers(scope?: ScopeKey): readonly string[]
 ```
+
+Types: [ScopeKey](scope.md)
 
 Source: [`packages/mcp/mcp-resources/src/index.ts`](../../packages/mcp/mcp-resources/src/index.ts)
 <!-- END GENERATED cordis-surface -->

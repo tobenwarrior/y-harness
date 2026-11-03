@@ -194,6 +194,18 @@ describe('syncTools', () => {
     expect(ctx.tools.get('add')).toBeUndefined()
   })
 
+  it('keeps the configured server source separate from names containing separators', async () => {
+    const client = createMockClient([
+      { name: 'look__up', inputSchema: { type: 'object' } },
+    ])
+
+    await syncTools(client as never, ctx, { ...defaultOpts, serverName: 'team__alpha' }, new Map())
+
+    const definition = ctx.tools.get('mcp__team__alpha__look__up')
+    expect(definition?.source).toEqual({ kind: 'mcp', serverName: 'team__alpha' })
+    expect(ctx.tools.schemas().find(schema => schema.name === definition?.name)).not.toHaveProperty('source')
+  })
+
   it('lets two servers publish the same raw name side by side', async () => {
     const clientA = createMockClient([{ name: 'search', inputSchema: { type: 'object' } }])
     const clientB = createMockClient([{ name: 'search', inputSchema: { type: 'object' } }])

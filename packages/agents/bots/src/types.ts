@@ -74,6 +74,10 @@ export interface BotRecord {
   readonly accent: BotAccent
   /** Optional generated avatar selected by the user. */
   readonly avatar?: BotAvatar | undefined
+  /** Connected MCP app ids this Bot may use; absent means legacy rows retain all available apps. */
+  readonly connectedAppIds?: readonly string[] | undefined
+  /** Connected MCP app ids explicitly denied for a legacy allow-all Bot. */
+  readonly connectedAppDenyIds?: readonly string[] | undefined
   /** Whether the Bot is kept at the top of its roster view. */
   readonly pinned?: boolean | undefined
   /** Whether the Bot is excluded from the default visible roster. */
@@ -228,6 +232,50 @@ export interface BotAvatarReadValue {
   readonly data: string
 }
 
+/** One connected MCP app visible to a Bot, with its durable access decision. */
+export interface BotConnectedAppAccess {
+  /** Stable MCP server namespace used as the connected-app id. */
+  readonly id: string
+  /** Human-readable connected-app name. */
+  readonly name: string
+  /** Optional app-provided description of the MCP tools. */
+  readonly description?: string | undefined
+  /** Whether the selected Bot may call this app's tools. */
+  readonly allowed: boolean
+}
+
+/** Request the connected MCP apps visible to one Bot. */
+export interface BotConnectedAppsRequest {
+  /** Bot whose access policy should be returned. */
+  readonly botId: BotId
+}
+
+/** Connected MCP app catalog and current per-Bot grants. */
+export interface BotConnectedAppsValue {
+  /** Bot row whose policy was read. */
+  readonly bot: BotView
+  /** Available apps and their current access decisions. */
+  readonly apps: readonly BotConnectedAppAccess[]
+}
+
+/** Change one Bot's access to one connected MCP app. */
+export interface BotConnectedAppAccessRequest {
+  /** Bot whose policy should change. */
+  readonly botId: BotId
+  /** Stable MCP server namespace. */
+  readonly appId: string
+  /** Whether to permit this Bot to call the app. */
+  readonly allowed: boolean
+}
+
+/** Result of a connected MCP app access update. */
+export interface BotConnectedAppAccessValue {
+  /** Bot row whose policy was changed. */
+  readonly bot: BotView
+  /** Connected MCP app whose access changed. */
+  readonly app: BotConnectedAppAccess
+}
+
 declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
     /** The requested Bot id is absent from the durable roster. */
@@ -242,6 +290,8 @@ declare module '@yharness/typert-protocol' {
     'bot/avatar-invalid': { readonly botId: BotId; readonly reason: 'invalid-reference' | 'unreadable' }
     /** The Bot has no generated avatar to read. */
     'bot/avatar-missing': { readonly botId: BotId }
+    /** The requested connected MCP app is not currently available. */
+    'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
   }
 }
 

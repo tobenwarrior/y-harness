@@ -55,6 +55,8 @@ export { ReferenceIconMedium, ReferenceIconRegular } from './ReferenceIcon.tsx'
 export type { ReferenceIconKind, ReferenceIconProps } from './ReferenceIcon.tsx'
 export { LinkIconMedium, LinkIconRegular, classifyLinkPath } from './LinkIcon.tsx'
 export type { LinkIconKind, LinkIconProps } from './LinkIcon.tsx'
+export { connectedAppGlyph } from './SiteGlyph.tsx'
+export type { ConnectedAppGlyphProps } from './SiteGlyph.tsx'
 export { FileTypeIcon, classifyFileType, fileExtension } from './FileTypeIcon.tsx'
 export type {
   CodeFileType, FileType, FileTypeIconProps, FileTypeKind, FileTypeProjectContext,

@@ -56,6 +56,14 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  connectedAppIds: z.array(z.string().min(1).max(64)).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app ids must be unique' },
+  ).optional(),
+  connectedAppDenyIds: z.array(z.string().min(1).max(64)).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app deny ids must be unique' },
+  ).optional(),
   pinned: z.boolean().optional(),
   hidden: z.boolean().optional(),
   group: z.string().max(80).refine(value => value.trim() === value, {
@@ -87,8 +95,8 @@ export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 /** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 3,
-  compatibleVersions: [1, 2],
+  version: 5,
+  compatibleVersions: [1, 2, 3, 4],
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,
