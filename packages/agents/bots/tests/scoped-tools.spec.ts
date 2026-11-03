@@ -60,9 +60,9 @@ async function harness(withManagement = false, withApproval = false) {
   return { ctx, agent, bound, dispose, manage }
 }
 
-async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown) {
+async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
   return ctx.tools.execute({
-    callId: ToolCallId(`bot-call-${name}`), name, arguments: arguments_,
+    callId: ToolCallId(callId), name, arguments: arguments_,
     signal: new AbortController().signal, agent,
   })
 }
@@ -121,9 +121,9 @@ describe('scoped Bot collaboration tools', () => {
     try {
       const remember = vi.mocked(h.bound.memory!.remember)
       remember.mockImplementationOnce(async () => { throw new Error('flush result was uncertain') })
-      const first = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' })
+      const first = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' }, 'remember-call-1')
       expect(first.isError).toBe(true)
-      const second = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' })
+      const second = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' }, 'remember-call-2')
       expect(second.isError).toBe(false)
       const requests = remember.mock.calls.map(call => call[0])
       expect(requests).toHaveLength(2)

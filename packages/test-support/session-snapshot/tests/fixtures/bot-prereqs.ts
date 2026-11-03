@@ -6,6 +6,7 @@ import type {} from '@yharness/agent-default-model'
 import type { SessionEvent } from '@yharness/session'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
+import { BotMemoryId } from '../../../../agents/bots/src/memory.ts'
 import { BotId } from '../../../../agents/bots/src/types.ts'
 import { botDomain } from '../../../../agents/bots/src/storage.ts'
 
@@ -27,12 +28,6 @@ export async function apply(ctx: Context): Promise<void> {
       meta: { cwd },
       agentOptions: { provider: selection.provider, model: selection.model },
     }))
-  }
-  const sessionEvents = new Map<string, readonly SessionEvent[]>()
-  for (const handle of handles) {
-    const session = ctx.sessions.get(handle.agent.id)
-    if (session === undefined) throw new Error(`snapshot Bot Session "${handle.agent.id}" is not live`)
-    sessionEvents.set(String(handle.agent.id), session.snapshotEvents())
   }
   const domain = await ctx.storageDomain.open(botDomain)
   const bots = domain.table('bots')
@@ -64,6 +59,20 @@ export async function apply(ctx: Context): Promise<void> {
   ]
   for (const record of records) await bots.put(record.id, record)
   await domain.close()
+  const senderSession = ctx.sessions.get(SessionId('bot-session-sender'))
+  if (senderSession === undefined) throw new Error('snapshot Bot Session "bot-session-sender" is not live')
+  senderSession.append('bot/memory', {
+    botId: BotId('bot-sender'),
+    memoryId: BotMemoryId('memory-snapshot'),
+    operation: 'remember',
+    text: 'The release checklist must include rollback steps.',
+  })
+  const sessionEvents = new Map<string, readonly SessionEvent[]>()
+  for (const handle of handles) {
+    const session = ctx.sessions.get(handle.agent.id)
+    if (session === undefined) throw new Error(`snapshot Bot Session "${handle.agent.id}" is not live`)
+    sessionEvents.set(String(handle.agent.id), session.snapshotEvents())
+  }
   ctx.provide('snapshotBotAgents', handles as never)
   ctx.provide('sessionController', {
     create: async (request: { readonly sessionId?: string }) => {

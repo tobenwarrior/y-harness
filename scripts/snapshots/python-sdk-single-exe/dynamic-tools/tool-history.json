@@ -56,7 +56,6 @@
             "job_list",
             "job_output",
             "list_agents",
-            "load_workspace_dependencies",
             "read",
             "read_image",
             "search_skills",
@@ -87,7 +86,7 @@
     },
     {
       "type": "request/header",
-      "seq": 20,
+      "seq": 21,
       "time": 0,
       "data": {
         "header": {
@@ -113,7 +112,6 @@
             "job_list",
             "job_output",
             "list_agents",
-            "load_workspace_dependencies",
             "read",
             "read_image",
             "search_skills",
@@ -135,7 +133,7 @@
     },
     {
       "type": "developer/message",
-      "seq": 21,
+      "seq": 22,
       "time": 0,
       "data": {
         "turn": 1,
@@ -153,13 +151,13 @@
           "role": "developer",
           "id": "{{messageId}}"
         },
-        "headerSeq": 20
+        "headerSeq": 21
       },
       "surfaceOp": "append"
     },
     {
       "type": "request/header",
-      "seq": 28,
+      "seq": 29,
       "time": 0,
       "data": {
         "header": {
@@ -185,7 +183,6 @@
             "job_list",
             "job_output",
             "list_agents",
-            "load_workspace_dependencies",
             "read",
             "read_image",
             "search_skills",
@@ -206,7 +203,7 @@
     },
     {
       "type": "developer/message",
-      "seq": 29,
+      "seq": 30,
       "time": 0,
       "data": {
         "turn": 1,
@@ -226,6 +223,19 @@
         }
       },
       "surfaceOp": "append"
+    }
+  ],
+  "memoryEvents": [
+    {
+      "type": "bot/memory",
+      "seq": 17,
+      "time": 0,
+      "data": {
+        "botId": "bot-python-snapshot",
+        "memoryId": "memory-python-snapshot",
+        "operation": "remember",
+        "text": "The Python SDK projection keeps this active Bot memory."
+      }
     }
   ],
   "toolCalls": [

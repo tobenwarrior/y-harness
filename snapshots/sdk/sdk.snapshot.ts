@@ -1085,6 +1085,24 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
       const actualSnapshots = normalizeSessionSnapshots(ordered.map(log => log.content), actualContext, { nativeWriterOutput: true })
       const expectedSnapshots = normalizeSessionSnapshots(expectedContents, expectedContext, { nativeWriterOutput: true })
       expect(actualSnapshots.map(records), `${scenario.name}: sessions`).toEqual(expectedSnapshots.map(records))
+      if (scenario.name === 'bot-memory') {
+        const parent = ordered[0]
+        if (parent === undefined) throw new Error('bot-memory: no primary session log')
+        const memories = records(parent.content).filter(record => record.type === 'bot/memory')
+        expect(memories.map(memory => ({ type: memory.type, data: memory.data }))).toEqual([{
+          type: 'bot/memory',
+          data: {
+            botId: 'bot-snapshot',
+            memoryId: 'memory-sdk-snapshot',
+            operation: 'remember',
+            text: 'The SDK projection keeps this active Bot memory.',
+          },
+        }])
+        expect(records(expectedContents[0] ?? '').filter(record => record.type === 'bot/memory')
+          .map(memory => ({ type: memory.type, data: memory.data }))).toEqual(
+          memories.map(memory => ({ type: memory.type, data: memory.data })),
+        )
+      }
       await verifyHeaders(scenario, ordered, actualContext, assertions.dshSdkChild?.agentConfig)
 
       // Genuine SDK protocol cases retain their secondary wire projections.

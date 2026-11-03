@@ -7,7 +7,7 @@ import {
   BotMessageId,
   type BotCollaborationClient,
 } from './collaboration.ts'
-import { BotMemoryId } from './memory.ts'
+import { BotMemoryId, normalizeBotMemoryText } from './memory.ts'
 import { defineTool } from '@yharness/tools'
 import type { InferValue, ValueSchemaSpec } from '@yharness/tools'
 import type { BotNativeToolHost } from './native-tools.ts'
@@ -66,9 +66,10 @@ const MEMORY_RECEIPT_SCHEMA = {
 
 const MEMORY_LIST_RESULT_SCHEMA = { type: 'array', items: MEMORY_RECEIPT_SCHEMA } as const
 
-/** Derive the retry identity for one scoped remember call. */
-function implicitMemoryId(senderId: string, callId: string): BotMemoryId {
-  const digest = createHash('sha256').update(senderId).update('\0').update(callId).digest('hex')
+/** Derive a retry identity that survives a new model call id for the same memory text. */
+function implicitMemoryId(senderId: string, text: string): BotMemoryId {
+  const normalizedText = normalizeBotMemoryText(text)
+  const digest = createHash('sha256').update('remember-bot-memory\0').update(senderId).update('\0').update(normalizedText).digest('hex')
   return BotMemoryId(`memory-${digest}`)
 }
 
@@ -165,7 +166,7 @@ export function installBotCollaborationTools(
       description: 'Save one durable memory for this Bot when the user asks you to remember it. Future prompts use it as untrusted reference data; the result returns only its id and timestamp.',
       parameters: {
         text: { type: 'string', required: true, description: 'The concise fact or preference to remember.' },
-        memoryId: { type: 'string', description: 'Optional retry identity returned by a prior call; omitted calls use their stable tool-call identity.' },
+        memoryId: { type: 'string', description: 'Optional retry identity returned by a prior call; omitted calls use a stable sender-and-text recovery identity.' },
       },
       output: jsonOutput(MEMORY_RECEIPT_SCHEMA),
       async execute(args, exec) {
@@ -173,7 +174,7 @@ export function installBotCollaborationTools(
         const memory = client.memory
         if (memory === undefined) throw new Error('Bot memory is unavailable.')
         const memoryId = args.memoryId === undefined
-          ? implicitMemoryId(String(client.sender.id), String(exec.callId))
+          ? implicitMemoryId(String(client.sender.id), args.text)
           : BotMemoryId(args.memoryId)
         const result = await memory.remember({ text: args.text, memoryId, signal: exec.signal })
         return { id: result.id, createdAt: result.createdAt }

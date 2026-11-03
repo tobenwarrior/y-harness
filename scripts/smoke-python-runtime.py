@@ -1446,6 +1446,9 @@ def smoke_sdk_dynamic_tools(base_url: str, executable: Path, update_snapshots: b
             {"insert": [{
                 "id": "dynamic-tools",
                 "name": (Path(__file__).resolve().parent / "fixtures/python-sdk-dynamic-tools.mjs").as_uri(),
+            }, {
+                "id": "bot-memory-event",
+                "name": (Path(__file__).resolve().parent / "fixtures/python-sdk-bot-memory.mjs").as_uri(),
             }]},
         ])
         with YHarness(
@@ -2459,13 +2462,21 @@ def build_dynamic_tools_snapshot_files(
     cwd: Path,
 ) -> dict[str, str]:
     """Pin tool declarations, historical schema references, and Python SDK event delivery."""
-    selected_types = {"request/header", "request/context", "developer/message", "tool/call", "tool/result"}
+    selected_types = {"bot/memory", "request/header", "request/context", "developer/message", "tool/call", "tool/result"}
     events = [event for event in result.events if event.get("type") in selected_types]
     subscribed = [notification.payload["event"] for notification in result.notifications
                   if notification.method == "session.event"
                   and notification.payload.get("event", {}).get("type") in selected_types]
     assert subscribed == events, "SDK notifications differ from RunResult.events"
     assert [event for event in log if event.get("type") in selected_types] == events, "SDK events differ from persistence"
+    memories = [event for event in events if event["type"] == "bot/memory"]
+    assert len(memories) == 1, memories
+    assert memories[0]["data"] == {
+        "botId": "bot-python-snapshot",
+        "memoryId": "memory-python-snapshot",
+        "operation": "remember",
+        "text": "The Python SDK projection keeps this active Bot memory.",
+    }, memories
     headers = [event for event in events if event["type"] == "request/header"]
     assert len(headers) == 3, headers
     names = [[tool["name"] for tool in event["data"]["header"]["tools"]] for event in headers]
@@ -2502,6 +2513,7 @@ def build_dynamic_tools_snapshot_files(
         "declarations": declarations,
         "requestToolChanges": changes,
         "events": [event for event in events if event["type"] in {"request/header", "request/context", "developer/message"}],
+        "memoryEvents": memories,
         "toolCalls": calls,
         "pingResult": ping,
     }
