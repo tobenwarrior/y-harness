@@ -228,6 +228,8 @@ declare module '@yharness/typert-protocol' {
     'bot-template/untrusted': { readonly fingerprint: string }
     /** The approval did not match the currently inspected signed artifact. */
     'bot-template/approval-mismatch': { readonly fingerprint: string }
+    /** The target Host cannot resolve the preset required by the signed artifact. */
+    'bot-template/permissions-unavailable': { readonly preset: string }
     /** The local template row belongs to another configured owner. */
     'bot-template/forbidden': { readonly templateId: BotTemplateId }
     /** A portable avatar could not be admitted on the target Host. */

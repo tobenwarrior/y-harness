@@ -158,6 +158,13 @@ function mcpFixtureTool(name: string, serverName: string, execute: () => Promise
   }
 }
 
+function provideResolvedTemplatePreset(ctx: Context): void {
+  ctx.provide('agentPresets', {
+    defaultId: 'fixture-default',
+    acquireScope: async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }),
+  } as never)
+}
+
 describe('durable Bot roster', () => {
   it('stores an uploaded avatar without an image generation service', async () => {
     const h = await harness()
@@ -3074,6 +3081,7 @@ describe('durable Bot roster', () => {
         cwd: '/private/import-source', agentPreset: 'import-preset',
       })
       const published = await h.service.publishTemplate({ botId: source.bot.id, name: 'Import template' })
+      provideResolvedTemplatePreset(h.ctx)
       const first = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported one' })
       const second = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported two' })
 
@@ -3118,6 +3126,7 @@ describe('durable Bot roster', () => {
 
     const target = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), { ownerId: 'recipient-owner' })
     try {
+      provideResolvedTemplatePreset(target.ctx)
       const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
       expect(preview.template).toMatchObject({
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
@@ -3160,6 +3169,7 @@ describe('durable Bot roster', () => {
     }
     const importedAfterRevocation = await harness(new MemoryMediaPool())
     try {
+      provideResolvedTemplatePreset(importedAfterRevocation.ctx)
       await importedAfterRevocation.service.approveTemplate({
         shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
       })
@@ -3234,6 +3244,33 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('rejects an approved import when the target preset becomes unavailable', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission retry source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    let available = true
+    const acquireScope = vi.fn(async () => {
+      if (!available) throw new Error('preset removed')
+      return { key: {}, [Symbol.asyncDispose]: async () => {} }
+    })
+    target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+    try {
+      await target.service.approveTemplate({ shareCode: published.template.shareCode, fingerprint: published.template.fingerprint! })
+      available = false
+
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      expect(target.create).not.toHaveBeenCalled()
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
   it('recovers a failed portable import from its durable provisioning row', async () => {
     const source = await harness()
     const sourceBot = await source.service.create({ name: 'Recoverable source' })
@@ -3272,6 +3309,7 @@ describe('durable Bot roster', () => {
 
     const target = await harness()
     try {
+      provideResolvedTemplatePreset(target.ctx)
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
@@ -3376,6 +3414,7 @@ describe('durable Bot roster', () => {
 
     const reopened = await harness(pool)
     try {
+      provideResolvedTemplatePreset(reopened.ctx)
       await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
         templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
       })

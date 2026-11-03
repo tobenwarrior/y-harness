@@ -128,7 +128,7 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
             aria-label={t('templatesCodeLabel')}
             onChange={(event) => { actions.setTemplateCode(event.currentTarget.value) }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && !state.busy && state.code.trim() !== '') {
                 event.preventDefault()
                 void preview()
               }

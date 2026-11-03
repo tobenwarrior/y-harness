@@ -1463,6 +1463,7 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
+      const localPermissions = await this.requireTemplatePermissions(active.payload.agentPreset)
       const templateDomain = await this.templateDomain
       const current = templateDomain.global.get()
       const approvals = current.approvals ?? {}
@@ -1477,7 +1478,7 @@ export class BotService extends TypertRemoteService {
       }
       return {
         template: { ...active.template, approved: true },
-        localPermissions: await this.localTemplatePermissions(active.payload.agentPreset),
+        localPermissions,
       }
     })
   }
@@ -1528,6 +1529,7 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
+      await this.requireTemplatePermissions(payload.agentPreset)
       if (importDigest !== undefined && previousBinding === undefined
         && Object.keys(bindings ?? {}).length >= BOT_TEMPLATE_IMPORT_BINDING_LIMIT) {
         throw new RemoteError('gateway/bad-request', 'This Host has reached its template import retry limit.', {})
@@ -2338,6 +2340,20 @@ export class BotService extends TypertRemoteService {
       this.ctx.logger.debug(`bots: local template permissions unavailable for preset "${preset}": ${String(error)}`)
       return { status: 'unavailable', preset, tools: [] }
     }
+  }
+
+  /** Require the signed or target-default preset to resolve before approval or import. */
+  private async requireTemplatePermissions(agentPreset: string | undefined): Promise<BotTemplateLocalPermissions> {
+    const permissions = await this.localTemplatePermissions(agentPreset)
+    const requiredPreset = agentPreset ?? this.ctx.get('agentPresets')?.defaultId
+    if (requiredPreset !== undefined && permissions.status !== 'resolved') {
+      throw new RemoteError(
+        'bot-template/permissions-unavailable',
+        `The target Host could not resolve the Bot template preset "${requiredPreset}".`,
+        { preset: requiredPreset },
+      )
+    }
+    return permissions
   }
 
   private async exportTemplateAvatar(botId: BotRecord['id'], avatar: ImageAttachmentRef): Promise<BotTemplateAvatar> {

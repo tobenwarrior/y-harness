@@ -371,6 +371,29 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
   })
 
+  it('ignores a stale preview failure after the pasted code changes', async () => {
+    const source = bot('bot-template-stale-preview-error', 'session-template-stale-preview-error')
+    const template = templateView('bot-template-stale-error-row', 'bot-template-code-error-a')
+    let rejectPreview: ((error: Error) => void) | undefined
+    const previewResult = new Promise<RemoteResult<BotTemplatePreviewValue>>((_resolve, reject) => { rejectPreview = reject })
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => previewResult)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-error-a')
+    const pending = actions?.previewTemplate()
+    actions?.setTemplateCode('bot-template-code-error-b')
+    rejectPreview?.(new Error('old preview failed'))
+    await pending?.catch(() => {})
+
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      code: 'bot-template-code-error-b', preview: null, error: null, busy: false,
+    })
+    controller.dispose()
+  })
+
   it('ignores an older preview after the user returns to the same code', async () => {
     const source = bot('bot-template-preview-generation', 'session-template-preview-generation')
     const template = templateView('bot-template-preview-generation-row', 'bot-template-code-a')
@@ -398,10 +421,59 @@ describe('BotWorkspaceController', () => {
     pending[0]?.resolve({ ok: true, value: { template, localPermissions } })
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
     expect(controller.source.getSnapshot().templates.preview).toBeNull()
+    expect(controller.source.getSnapshot().templates.busy).toBe(true)
     pending[1]?.resolve({ ok: true, value: { template, localPermissions } })
     await Promise.all([first, second])
 
     expect(controller.source.getSnapshot().templates.preview?.shareCode).toBe('bot-template-code-a')
+    controller.dispose()
+  })
+
+  it('retains a newer template draft when a load started earlier completes', async () => {
+    const source = bot('bot-template-stale-load', 'session-template-stale-load')
+    const template = templateView('bot-template-stale-load-row', 'bot-template-code-stale-load')
+    const listTemplates = Promise.withResolvers<RemoteResult<{ readonly templates: readonly BotTemplateView[] }>>()
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => listTemplates.promise)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(remote.listTemplates).toHaveBeenCalledOnce() })
+
+    controller.face().templateActions?.setTemplateCode('newer-template-code')
+    listTemplates.resolve({ ok: true, value: { templates: [template] } })
+    await loading
+
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      code: 'newer-template-code', preview: null, error: null,
+    })
+    controller.dispose()
+  })
+
+  it('retains a newer template draft when a publish refresh completes late', async () => {
+    const source = bot('bot-template-stale-refresh', 'session-template-stale-refresh')
+    const template = templateView('bot-template-stale-refresh-row', 'bot-template-code-stale-refresh')
+    const refreshResult = Promise.withResolvers<RemoteResult<{ readonly templates: readonly BotTemplateView[] }>>()
+    let listCalls = 0
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => {
+      listCalls++
+      return listCalls === 1
+        ? { ok: true as const, value: { templates: [template] } }
+        : refreshResult.promise
+    })
+    remote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('draft-before-publish')
+    const publishing = actions?.publishTemplate({ botId: String(source.id) })
+    await vi.waitFor(() => { expect(remote.listTemplates).toHaveBeenCalledTimes(2) })
+
+    actions?.setTemplateCode('newer-draft')
+    refreshResult.resolve({ ok: true, value: { templates: [template] } })
+    await publishing
+
+    expect(controller.source.getSnapshot().templates.code).toBe('newer-draft')
     controller.dispose()
   })
 

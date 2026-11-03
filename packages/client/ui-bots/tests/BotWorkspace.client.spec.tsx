@@ -152,6 +152,30 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(actions.previewTemplate).toHaveBeenCalledOnce() })
   })
 
+  it('does not preview a template from Enter while another template action is busy', () => {
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, busy: true }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Template share code' }), { key: 'Enter' })
+
+    expect(actions.previewTemplate).not.toHaveBeenCalled()
+  })
+
   it('shows signed issuer and configuration details before approval', async () => {
     const preview = {
       ...templateState.templates[0]!,

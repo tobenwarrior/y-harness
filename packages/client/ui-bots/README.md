@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a second-mode Bot workspace to the Web client without owning Session persistence. The panel provides a roster, selected Bot conversation slot, creation and rename, organization, status and unread indicators, and animated character avatars. Host callbacks reopen Sessions, connect apps, configure generated images, or supply template actions. Signed templates publish safe profiles, preview the self-asserted issuer fingerprint, signed configuration, portable avatar, and target-local effective preset/tool view, require matching approval, copy or revoke local rows, and import a distinct Bot with retry-stable ids. A missing local permission view disables approval; stale preview responses cannot replace the current code. Missing callbacks hide their controls instead of inventing local state.
+Add a second-mode Bot workspace to the Web client without owning Session persistence. The panel provides a roster, selected Bot conversation slot, creation and rename, organization, status and unread indicators, and animated character avatars. Host callbacks reopen Sessions, connect apps, configure generated images, or supply template actions. Signed templates publish safe profiles, preview the self-asserted issuer fingerprint, signed configuration, portable avatar, and target-local effective preset/tool view, require matching approval, copy or revoke local rows, and import a distinct Bot with retry-stable ids. A missing local permission view disables approval; request generations keep stale previews, failures, and catalog refreshes from replacing newer draft state, and busy controls reject duplicate keyboard submissions. Missing callbacks hide their controls instead of inventing local state.
 
 ## Table of Contents
 
