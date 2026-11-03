@@ -16,6 +16,7 @@ import { removeFixtureSafely } from './test-fixture-cleanup.ts'
 const repository = resolve(import.meta.dirname, '..')
 /** Committed V4-to-V5 source delta, reversed in the temporary checkout without requiring Git history. */
 const V4_FORMAT_REVERSAL = 'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch'
+const MIGRATION_TEST_TIMEOUT = 60_000
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
 let v4Checkout = ''
@@ -61,11 +62,11 @@ beforeAll(async () => {
   await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
   v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
-})
+}, MIGRATION_TEST_TIMEOUT)
 
 afterAll(() => {
   if (v4Checkout !== '') removeFixtureSafely(v4Checkout)
-})
+}, MIGRATION_TEST_TIMEOUT)
 
 afterEach(async () => {
   await Promise.all(stopProcesses.splice(0).map(stop => stop()))
@@ -109,7 +110,7 @@ async function fixture(
   return { path, bytes, directory }
 }
 
-describe('one-time V4 migration command', () => {
+describe('one-time V4 migration command', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
   it('bounds active jobs and retries changed-source inputs only after the initial pass drains', async () => {
     const entered = Array.from({ length: 4 }, () => Promise.withResolvers<undefined>())
     const release = Array.from({ length: 4 }, () => Promise.withResolvers<undefined>())
