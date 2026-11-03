@@ -1,7 +1,9 @@
+import { execFile, spawn } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock, writeFileAtomic } from '../src/index.ts'
 
@@ -39,6 +41,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 const scratchDirs: string[] = []
+const execFileAsync = promisify(execFile)
 
 afterEach(async () => {
   vi.useRealTimers()
@@ -278,6 +281,45 @@ describe('withFileLock', () => {
 
     await expect(withFileLock(target, async () => {}, { waitMs: 0 }))
       .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
+  })
+
+  it('fails closed without blocking on a FIFO lock sidecar', async () => {
+    if (process.platform === 'win32') return
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const lockPath = `${target}.lock`
+    await execFileAsync('mkfifo', [lockPath])
+    const modulePath = new URL('../src/index.ts', import.meta.url).href
+    const childSource = `
+      import { withFileLock } from ${JSON.stringify(modulePath)}
+      try {
+        await withFileLock(${JSON.stringify(target)}, async () => {}, { waitMs: 0 })
+        process.exitCode = 1
+      } catch (error) {
+        if (error?.code !== 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL') process.exitCode = 1
+      }
+    `
+    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', childSource], {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    const result = await new Promise<number>((resolveResult, rejectResult) => {
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        rejectResult(new Error(`FIFO lock acquisition blocked: ${stderr}`))
+      }, 1_000)
+      child.once('error', (error) => {
+        clearTimeout(timer)
+        rejectResult(error)
+      })
+      child.once('close', (code) => {
+        clearTimeout(timer)
+        resolveResult(code ?? 1)
+      })
+    })
+    expect(result, stderr).toBe(0)
   })
 
   it('recovers an uninitialized lock file after its creator exited', async () => {

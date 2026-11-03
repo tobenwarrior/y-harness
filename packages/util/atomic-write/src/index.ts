@@ -289,8 +289,13 @@ async function acquirePosixLock(lockPath: string): Promise<HeldLock> {
     created = true
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error
+    const info = await lstat(lockPath).catch((lstatError: unknown) => {
+      if ((lstatError as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined
+      throw lstatError
+    })
+    if (info !== undefined && !info.isFile()) throw lockProtocolError(lockPath)
     try {
-      file = await open(lockPath, fsConstants.O_RDWR | fsConstants.O_NOFOLLOW)
+      file = await open(lockPath, fsConstants.O_RDWR | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | null)?.code
       if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
@@ -299,6 +304,7 @@ async function acquirePosixLock(lockPath: string): Promise<HeldLock> {
   }
 
   try {
+    if (!(await file.stat()).isFile()) throw lockProtocolError(lockPath)
     const marker = created ? '' : await readLockMarker(file, lockPath)
     if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
     await tryLockExclusive(file.fd)
