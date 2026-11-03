@@ -52,7 +52,7 @@ function assistantEvent(text: string, seq: number, turn = 1): SessionEvent<'assi
         id: MessageId(`assistant-${String(seq)}`), role: 'assistant',
         content: [{ type: 'text', text }], source: { kind: 'model', provider: 'test', model: 'test' },
       }), stream: [],
-    },
+    }, surfaceOp: 'append',
   }
 }
 
@@ -105,13 +105,10 @@ describe('Bot collaboration seam', () => {
       content: [{ type: 'text', text: 'Compacted shared secret.' }],
       source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-alpha'), messageId: BotGroupMessageId('bot-group-message-compacted') },
     }), 11))
-    targetEvents.push(userEvent(createUserMessage({
+    const compactedReplacement = userEvent(createUserMessage({
       content: [{ type: 'text', text: 'Compacted surface replacement.' }], source: { kind: 'user' },
-    }), 12))
-    targetEvents[targetEvents.length - 1] = {
-      ...targetEvents[targetEvents.length - 1]!,
-      sourceEventSeqs: [SessionSeq(11)],
-    }
+    }), 12)
+    targetEvents.push({ ...compactedReplacement, sourceEventSeqs: [SessionSeq(11)] })
     targetEvents.push(assistantEvent('Beta compacted shared reply.', 13, 3))
 
     const gamma = await h.service.bind({ id: SessionId('bot-session-gamma') })

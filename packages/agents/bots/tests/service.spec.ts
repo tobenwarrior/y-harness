@@ -9,6 +9,7 @@ import type { ContextFormed } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
+import type { Domain } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
@@ -482,6 +483,7 @@ describe('durable Bot roster', () => {
     const h = await harness(pool, undefined, undefined, [
       String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
     ])
+    let hClosed = false
     try {
       const created = await h.service.createGroup({
         name: 'Launch room',
@@ -498,7 +500,7 @@ describe('durable Bot roster', () => {
       await expect(h.service.sendGroupMessage({
         groupId: created.group.id,
         text: 'Coordinate the release plan.',
-        messageId: 'bot-group-message-1',
+        messageId: BotGroupMessageId('bot-group-message-1'),
       })).resolves.toMatchObject({
         status: 'accepted',
         deliveries: [
@@ -510,8 +512,10 @@ describe('durable Bot roster', () => {
       for (const followup of h.followups) {
         const delivered = followup.mock.calls[0]?.[0]
         expect(delivered?.role).toBe('user')
-        expect(delivered?.source.kind).toBe('bot-group-message')
-        expect(delivered?.source.groupId).toBe(created.group.id)
+        const source = delivered?.source
+        expect(source?.kind).toBe('bot-group-message')
+        if (source?.kind !== 'bot-group-message') throw new Error('group delivery source was not a Bot group message')
+        expect(source.groupId).toBe(created.group.id)
       }
       expect(h.followups[0]?.mock.calls[0]?.[0].content).toEqual([
         { type: 'text', text: 'Message from group "Launch room":\nCoordinate the release plan.' },
@@ -519,7 +523,7 @@ describe('durable Bot roster', () => {
       await expect(h.service.sendGroupMessage({
         groupId: created.group.id,
         text: 'Coordinate the release plan.',
-        messageId: 'bot-group-message-1',
+        messageId: BotGroupMessageId('bot-group-message-1'),
       })).resolves.toMatchObject({ status: 'duplicate' })
       expect(h.followups[0]).toHaveBeenCalledTimes(1)
 
@@ -568,6 +572,7 @@ describe('durable Bot roster', () => {
       })
 
       await close(h.ctx)
+      hClosed = true
       const reopened = await harness(pool, undefined, undefined, [
         String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
       ])
@@ -586,7 +591,7 @@ describe('durable Bot roster', () => {
         await close(reopened.ctx)
       }
     } finally {
-      if (!h.ctx.disposed) await close(h.ctx)
+      if (!hClosed) await close(h.ctx)
     }
   })
 
@@ -604,8 +609,8 @@ describe('durable Bot roster', () => {
     try {
       const groupA = await h.service.createGroup({ name: 'Alpha room', botIds: [alpha.bot.id, beta.bot.id] })
       const groupB = await h.service.createGroup({ name: 'Gamma room', botIds: [beta.bot.id, gamma.bot.id] })
-      await h.service.sendGroupMessage({ groupId: groupA.group.id, text: 'Alpha request.', messageId: 'bot-group-message-a' })
-      await h.service.sendGroupMessage({ groupId: groupB.group.id, text: 'Gamma request.', messageId: 'bot-group-message-b' })
+      await h.service.sendGroupMessage({ groupId: groupA.group.id, text: 'Alpha request.', messageId: BotGroupMessageId('bot-group-message-a') })
+      await h.service.sendGroupMessage({ groupId: groupB.group.id, text: 'Gamma request.', messageId: BotGroupMessageId('bot-group-message-b') })
 
       const betaAgent = h.agents[1]
       if (betaAgent === undefined) throw new Error('shared Bot Agent was not created')
@@ -656,7 +661,7 @@ describe('durable Bot roster', () => {
       const group = await h.service.createGroup({ name: 'Hidden member room', botIds: [alpha.bot.id, beta.bot.id] })
       expect(group.group.bots.map(bot => bot.id)).toEqual([alpha.bot.id, beta.bot.id])
       await expect(h.service.sendGroupMessage({
-        groupId: group.group.id, text: 'Hidden members still receive this.', messageId: 'bot-group-message-hidden',
+        groupId: group.group.id, text: 'Hidden members still receive this.', messageId: BotGroupMessageId('bot-group-message-hidden'),
       })).resolves.toMatchObject({
         status: 'accepted',
         deliveries: [
@@ -680,7 +685,7 @@ describe('durable Bot roster', () => {
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       const group = await h.service.createGroup({ name: 'Bot-authored room', botIds: [alpha.bot.id, beta.bot.id] })
-      const domain = h.ctx.storageDomain.get(botGroupDomain.name)
+      const domain = h.ctx.storageDomain.get(botGroupDomain.name) as Domain<typeof botGroupDomain> | undefined
       if (domain === undefined) throw new Error('group domain was not mounted')
       const target = h.agents[1]
       if (target === undefined) throw new Error('target Bot Agent was not created')
@@ -744,7 +749,7 @@ describe('durable Bot roster', () => {
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       const group = await h.service.createGroup({ name: 'Tool turn room', botIds: [alpha.bot.id, beta.bot.id] })
-      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Use a tool before answering.', messageId: 'bot-group-message-tool-turn' })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Use a tool before answering.', messageId: BotGroupMessageId('bot-group-message-tool-turn') })
       const betaAgent = h.agents[1]
       const delivered = h.followups[1]?.mock.calls[0]?.[0]
       if (betaAgent === undefined || delivered === undefined) throw new Error('tool-turn delivery was not admitted')
@@ -793,7 +798,7 @@ describe('durable Bot roster', () => {
 
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     const group = await h.service.createGroup({ name: 'Runtime context room', botIds: [alpha.bot.id, beta.bot.id] })
-    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive synthetic context.', messageId: 'bot-group-message-runtime-context' })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive synthetic context.', messageId: BotGroupMessageId('bot-group-message-runtime-context') })
     const delivered = h.followups[1]?.mock.calls[0]?.[0]
     if (delivered === undefined) throw new Error('runtime-context delivery was not admitted')
     await close(h.ctx)
@@ -889,7 +894,7 @@ describe('durable Bot roster', () => {
       String(alpha.bot.sessionId), String(beta.bot.sessionId),
     ])
     const group = await h.service.createGroup({ name: 'Restart room', botIds: [alpha.bot.id, beta.bot.id] })
-    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive the restart.', messageId: 'bot-group-message-restart' })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive the restart.', messageId: BotGroupMessageId('bot-group-message-restart') })
     const betaAgent = h.agents[1]
     const delivered = h.followups[1]?.mock.calls[0]?.[0]
     if (betaAgent === undefined || delivered === undefined) throw new Error('restart delivery was not admitted')
@@ -941,7 +946,7 @@ describe('durable Bot roster', () => {
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       const group = await h.service.createGroup({ name: 'Private guard room', botIds: [alpha.bot.id, beta.bot.id] })
-      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Shared request.', messageId: 'bot-group-message-private-guard' })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Shared request.', messageId: BotGroupMessageId('bot-group-message-private-guard') })
       const betaAgent = h.agents[1]
       const delivered = h.followups[1]?.mock.calls[0]?.[0]
       if (betaAgent === undefined || delivered === undefined) throw new Error('private-guard delivery was not admitted')
@@ -984,7 +989,7 @@ describe('durable Bot roster', () => {
 
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     const group = await h.service.createGroup({ name: 'Compaction room', botIds: [alpha.bot.id, beta.bot.id] })
-    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Rebuild this turn.', messageId: 'bot-group-message-compaction' })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Rebuild this turn.', messageId: BotGroupMessageId('bot-group-message-compaction') })
     const delivered = h.followups[1]?.mock.calls[0]?.[0]
     if (delivered === undefined) throw new Error('compaction delivery was not admitted')
     await close(h.ctx)
@@ -1036,7 +1041,7 @@ describe('durable Bot roster', () => {
     const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       const group = await h.service.createGroup({ name: 'Same source room', botIds: [alpha.bot.id, beta.bot.id] })
-      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Answer separately.', messageId: 'bot-group-message-same-source' })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Answer separately.', messageId: BotGroupMessageId('bot-group-message-same-source') })
       for (const [index, agent] of h.agents.entries()) {
         const delivered = h.followups[index]?.mock.calls[0]?.[0]
         if (delivered === undefined) throw new Error('same-source delivery was not admitted')
@@ -1081,7 +1086,7 @@ describe('durable Bot roster', () => {
       const spoofedRequest = {
         groupId: group.group.id,
         text: 'This must remain a human message.',
-        messageId: 'bot-group-message-spoof',
+        messageId: BotGroupMessageId('bot-group-message-spoof'),
         senderBotId: alpha.bot.id,
       }
       await expect(h.service.sendGroupMessage(spoofedRequest)).resolves.toMatchObject({ status: 'accepted' })
@@ -1129,7 +1134,7 @@ describe('durable Bot roster', () => {
       await expect(h.service.sendGroupMessage({
         groupId: group.group.id,
         text: 'Prepare the release.',
-        messageId: 'bot-group-message-partial',
+        messageId: BotGroupMessageId('bot-group-message-partial'),
       })).resolves.toMatchObject({
         status: 'partial',
         deliveries: [
@@ -1145,7 +1150,7 @@ describe('durable Bot roster', () => {
       await expect(h.service.sendGroupMessage({
         groupId: group.group.id,
         text: 'Prepare the release.',
-        messageId: 'bot-group-message-partial',
+        messageId: BotGroupMessageId('bot-group-message-partial'),
       })).resolves.toMatchObject({
         status: 'accepted',
         deliveries: [
