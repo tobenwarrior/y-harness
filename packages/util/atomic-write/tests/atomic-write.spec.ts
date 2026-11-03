@@ -306,9 +306,10 @@ describe('withFileLock', () => {
     let stderr = ''
     child.stderr.on('data', (chunk) => { stderr += String(chunk) })
     const result = await new Promise<number>((resolveResult, rejectResult) => {
+      let timedOut = false
       const timer = setTimeout(() => {
+        timedOut = true
         child.kill('SIGKILL')
-        rejectResult(new Error(`FIFO lock acquisition blocked: ${stderr}`))
       }, 1_000)
       child.once('error', (error) => {
         clearTimeout(timer)
@@ -316,7 +317,8 @@ describe('withFileLock', () => {
       })
       child.once('close', (code) => {
         clearTimeout(timer)
-        resolveResult(code ?? 1)
+        if (timedOut) rejectResult(new Error(`FIFO lock acquisition blocked: ${stderr}`))
+        else resolveResult(code ?? 1)
       })
     })
     expect(result, stderr).toBe(0)

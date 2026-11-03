@@ -14,6 +14,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
+import { close as closeFd, fstat as fstatFd, ftruncate as ftruncateFd, read as readFd, write as writeFd } from 'node:fs'
 import { lstat, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { dirname, resolve, toNamespacedPath } from 'node:path'
@@ -103,6 +104,7 @@ export async function writeFileAtomic(filename: string, content: string, options
 const LOCK_PROTOCOL_MARKER = 'dsh-atomic-write-kernel-lock-v1\n'
 const LOCK_SIDECAR_ERROR = 'ERR_ATOMIC_WRITE_LOCK_PATH'
 const WINDOWS_INVALID_HANDLE = -1
+const WINDOWS_INVALID_FD = -1
 const WINDOWS_GENERIC_READ = 0x80000000
 const WINDOWS_GENERIC_WRITE = 0x40000000
 const WINDOWS_FILE_SHARE_READ = 0x1
@@ -148,6 +150,7 @@ interface WindowsLockBindings {
   ) => number
   readonly closeHandle: (handle: number) => number
   readonly getLastError: () => number
+  readonly openOsfHandle: (handle: number) => number
 }
 
 let windowsLockBindings: WindowsLockBindings | undefined
@@ -157,6 +160,7 @@ async function loadWindowsLockBindings(): Promise<WindowsLockBindings> {
   if (windowsLockBindings !== undefined) return windowsLockBindings
   const koffi = (await import('koffi')).default
   const kernel32 = koffi.load('kernel32.dll')
+  const node = koffi.load(null)
   windowsLockBindings = {
     createFileW: kernel32.func('__stdcall', 'CreateFileW', 'intptr', [
       'str16', 'uint32', 'uint32', 'void*', 'uint32', 'uint32', 'void*',
@@ -169,6 +173,7 @@ async function loadWindowsLockBindings(): Promise<WindowsLockBindings> {
     ]) as WindowsLockBindings['unlockFileEx'],
     closeHandle: kernel32.func('__stdcall', 'CloseHandle', 'int', ['intptr']) as WindowsLockBindings['closeHandle'],
     getLastError: kernel32.func('__stdcall', 'GetLastError', 'uint', []) as WindowsLockBindings['getLastError'],
+    openOsfHandle: node.func('uv_open_osfhandle', 'int', ['intptr']) as WindowsLockBindings['openOsfHandle'],
   }
   return windowsLockBindings
 }
@@ -205,6 +210,7 @@ function windowsLockError(syscall: string, code: number, path: string): NodeJS.E
 /** Acquire one byte-range lock on the opened Windows lock-file handle. */
 async function acquireWindowsLock(lockPath: string): Promise<{
   readonly handle: number
+  readonly fd: number
   readonly overlapped: WindowsPointer
 }> {
   const api = await loadWindowsLockBindings()
@@ -221,26 +227,83 @@ async function acquireWindowsLock(lockPath: string): Promise<{
   if (handle === 0 || handle === WINDOWS_INVALID_HANDLE) throw windowsLockError('CreateFileW', createError, lockPath)
   const overlapped = (await import('koffi')).default.alloc('uint8', 32) as WindowsPointer
   if (api.lockFileEx(handle, WINDOWS_LOCKFILE_EXCLUSIVE | WINDOWS_LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlapped) !== 0) {
-    return { handle, overlapped }
+    const fd = api.openOsfHandle(handle)
+    if (fd !== WINDOWS_INVALID_FD) return { handle, fd, overlapped }
+    const openError = api.getLastError()
+    api.closeHandle(handle)
+    throw nativeLockError('uv_open_osfhandle', 'EIO', openError)
   }
   const lockError = api.getLastError()
   api.closeHandle(handle)
   throw windowsLockError('LockFileEx', lockError, lockPath)
 }
 
+function readWindowsFd(fd: number, buffer: Buffer, position: number): Promise<number> {
+  return new Promise((resolveRead, rejectRead) => {
+    readFd(fd, buffer, 0, buffer.byteLength, position, (error, bytesRead) => {
+      if (error !== null) rejectRead(error)
+      else resolveRead(bytesRead)
+    })
+  })
+}
+
+function writeWindowsFd(fd: number, buffer: Buffer, position: number): Promise<number> {
+  return new Promise((resolveWrite, rejectWrite) => {
+    writeFd(fd, buffer, 0, buffer.byteLength, position, (error, bytesWritten) => {
+      if (error !== null) rejectWrite(error)
+      else resolveWrite(bytesWritten)
+    })
+  })
+}
+
+function truncateWindowsFd(fd: number, length: number): Promise<void> {
+  return new Promise((resolveTruncate, rejectTruncate) => {
+    ftruncateFd(fd, length, (error) => {
+      if (error !== null) rejectTruncate(error)
+      else resolveTruncate()
+    })
+  })
+}
+
+function closeWindowsFd(fd: number): Promise<void> {
+  return new Promise((resolveClose, rejectClose) => {
+    closeFd(fd, (error) => {
+      if (error !== null) rejectClose(error)
+      else resolveClose()
+    })
+  })
+}
+
 /** Release one byte-range lock and close its Windows file handle. */
-async function releaseWindowsLock(lockPath: string, handle: number, overlapped: WindowsPointer): Promise<void> {
+async function releaseWindowsLock(
+  lockPath: string,
+  handle: number,
+  fd: number,
+  overlapped: WindowsPointer,
+): Promise<void> {
   const api = await loadWindowsLockBindings()
   const released = api.unlockFileEx(handle, 0, 1, 0, overlapped)
   const unlockError = released === 0 ? api.getLastError() : undefined
-  const closed = api.closeHandle(handle)
+  let closeError: unknown
+  try {
+    await closeWindowsFd(fd)
+  } catch (error) {
+    closeError = error
+  }
   if (released === 0) throw windowsLockError('UnlockFileEx', unlockError ?? 0, lockPath)
-  if (closed === 0) throw windowsLockError('CloseHandle', api.getLastError(), lockPath)
+  if (closeError !== undefined) {
+    throw closeError instanceof Error ? closeError : new Error('Windows fd close failed')
+  }
 }
 
 interface HeldLock {
-  readonly file: FileHandle
-  readonly windowsLock: { readonly handle: number; readonly overlapped: WindowsPointer; readonly path: string } | undefined
+  readonly file: FileHandle | undefined
+  readonly windowsLock: {
+    readonly handle: number
+    readonly fd: number
+    readonly overlapped: WindowsPointer
+    readonly path: string
+  } | undefined
 }
 
 function lockProtocolError(lockPath: string): NodeJS.ErrnoException {
@@ -275,6 +338,45 @@ async function readLockMarker(file: FileHandle, lockPath: string): Promise<strin
     const failure = error instanceof Error ? error : new Error(String(error))
     const code = (failure as NodeJS.ErrnoException).code
     if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
+    if ((failure as NodeJS.ErrnoException).path === undefined) (failure as NodeJS.ErrnoException).path = lockPath
+    throw failure
+  }
+}
+
+function statWindowsFd(fd: number): Promise<{
+  readonly size: bigint
+  readonly dev: bigint
+  readonly ino: bigint
+  isFile: () => boolean
+}> {
+  return new Promise((resolveStat, rejectStat) => {
+    fstatFd(fd, { bigint: true }, (error, stats) => {
+      if (error !== null) rejectStat(error)
+      else resolveStat(stats)
+    })
+  })
+}
+
+async function readWindowsLockMarker(fd: number, lockPath: string): Promise<string> {
+  const info = await statWindowsFd(fd)
+  if (!info.isFile()) throw lockProtocolError(lockPath)
+  const markerLength = Buffer.byteLength(LOCK_PROTOCOL_MARKER)
+  if (info.size > BigInt(markerLength)) throw lockProtocolError(lockPath)
+  const buffer = Buffer.alloc(Number(info.size))
+  if (buffer.byteLength === 0) return ''
+  const bytesRead = await readWindowsFd(fd, buffer, 0)
+  if (bytesRead !== buffer.byteLength) throw nativeLockError('ReadFile', 'EIO', bytesRead)
+  return buffer.toString('utf8')
+}
+
+async function writeWindowsLockMarker(fd: number, lockPath: string): Promise<void> {
+  const marker = Buffer.from(LOCK_PROTOCOL_MARKER)
+  const bytesWritten = await writeWindowsFd(fd, marker, 0)
+  if (bytesWritten !== marker.byteLength) throw nativeLockError('WriteFile', 'EIO', bytesWritten)
+  try {
+    await truncateWindowsFd(fd, marker.byteLength)
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error))
     if ((failure as NodeJS.ErrnoException).path === undefined) (failure as NodeJS.ErrnoException).path = lockPath
     throw failure
   }
@@ -316,47 +418,21 @@ async function acquirePosixLock(lockPath: string): Promise<HeldLock> {
   }
 }
 
-/** Open and byte-lock a Windows sidecar without a path-derived namespace. */
-async function openWindowsSidecar(lockPath: string): Promise<{ readonly file: FileHandle; readonly created: boolean }> {
-  const info = await lstat(lockPath).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined
-    throw error
-  })
-  if (info !== undefined && !info.isFile()) throw lockProtocolError(lockPath)
-  try {
-    return { file: await open(lockPath, 'wx+', 0o600), created: true }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error
-    try {
-      return { file: await open(lockPath, 'r+'), created: false }
-    } catch (openError) {
-      const code = (openError as NodeJS.ErrnoException | null)?.code
-      if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
-      throw openError
-    }
-  }
-}
-
 async function acquireWindowsFileLock(lockPath: string): Promise<HeldLock> {
-  const opened = await openWindowsSidecar(lockPath)
-  let windowsLock: { readonly handle: number; readonly overlapped: WindowsPointer } | undefined
+  const windowsLock = await acquireWindowsLock(lockPath)
   try {
-    windowsLock = await acquireWindowsLock(lockPath)
     const info = await lstat(lockPath)
     if (!info.isFile()) throw lockProtocolError(lockPath)
-    const held = await opened.file.stat({ bigint: true })
+    const held = await statWindowsFd(windowsLock.fd)
     const current = await stat(lockPath, { bigint: true })
     if (held.dev === 0n || held.ino === 0n || current.dev === 0n || current.ino === 0n
       || held.dev !== current.dev || held.ino !== current.ino) throw lockProtocolError(lockPath)
-    const marker = opened.created ? '' : await readLockMarker(opened.file, lockPath)
+    const marker = await readWindowsLockMarker(windowsLock.fd, lockPath)
     if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
-    if (marker.length === 0) await writeLockMarker(opened.file, lockPath)
-    return { file: opened.file, windowsLock: { ...windowsLock, path: lockPath } }
+    if (marker.length === 0) await writeWindowsLockMarker(windowsLock.fd, lockPath)
+    return { file: undefined, windowsLock: { ...windowsLock, path: lockPath } }
   } catch (error) {
-    await opened.file.close().catch(() => {})
-    if (windowsLock !== undefined) {
-      await releaseWindowsLock(lockPath, windowsLock.handle, windowsLock.overlapped).catch(() => {})
-    }
+    await releaseWindowsLock(lockPath, windowsLock.handle, windowsLock.fd, windowsLock.overlapped).catch(() => {})
     throw error
   }
 }
@@ -398,15 +474,17 @@ async function releaseLock(lock: HeldLock): Promise<void> {
   let lastError: Error | undefined
   if (lock.windowsLock !== undefined) {
     try {
-      await releaseWindowsLock(lock.windowsLock.path, lock.windowsLock.handle, lock.windowsLock.overlapped)
+      await releaseWindowsLock(lock.windowsLock.path, lock.windowsLock.handle, lock.windowsLock.fd, lock.windowsLock.overlapped)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
     }
   }
-  try {
-    await lock.file.close()
-  } catch (error) {
-    lastError ??= error instanceof Error ? error : new Error(String(error))
+  if (lock.file !== undefined) {
+    try {
+      await lock.file.close()
+    } catch (error) {
+      lastError ??= error instanceof Error ? error : new Error(String(error))
+    }
   }
   if (lastError !== undefined) throw lastError
 }
