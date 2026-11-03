@@ -1,10 +1,12 @@
-import { lstat, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock, writeFileAtomic } from '../src/index.ts'
 
 const state = vi.hoisted(() => ({
+  markerWriteBytes: undefined as number | undefined,
   renameAttempts: 0,
   renameFailures: [] as string[],
 }))
@@ -13,6 +15,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    open: (async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      const bytes = state.markerWriteBytes
+      if (bytes === undefined || !String(args[0]).endsWith('.lock')) return file
+      const write = file.write.bind(file)
+      file.write = (async (...writeArgs: Parameters<FileHandle['write']>) => {
+        const result = await write(...writeArgs)
+        return { ...result, bytesWritten: bytes }
+      }) as FileHandle['write']
+      return file
+    }),
     rename: (async (...args: Parameters<typeof actual.rename>) => {
       state.renameAttempts += 1
       const code = state.renameFailures.shift()
@@ -30,6 +43,7 @@ const scratchDirs: string[] = []
 afterEach(async () => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  state.markerWriteBytes = undefined
   state.renameAttempts = 0
   state.renameFailures.length = 0
   await Promise.all(scratchDirs.splice(0).map(dir => rm(dir, {
@@ -91,6 +105,19 @@ describe('writeFileAtomic', () => {
     expect((await lstat(target)).isSymbolicLink()).toBe(false)
     expect(await readFile(target, 'utf8')).toBe('replaced')
     expect(await readFile(victim, 'utf8')).toBe('victim-content')
+  })
+
+  it('rejects a reserved lock sidecar before following a symlink referent', async () => {
+    const dir = await scratch()
+    const victim = join(dir, 'victim')
+    const lockPath = join(dir, 'document.lock')
+    await writeFile(victim, 'protected')
+    await symlink(victim, lockPath)
+
+    await expect(writeFileAtomic(lockPath, 'replacement', { mode: 0o600 }))
+      .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PATH' })
+    expect(await readFile(victim, 'utf8')).toBe('protected')
+    expect((await lstat(lockPath)).isSymbolicLink()).toBe(true)
   })
 
   it('retries transient Windows rename interference and commits the replacement', async () => {
@@ -160,6 +187,16 @@ describe('withFileLock', () => {
     expect(await readFile(`${target}.lock`, 'utf8')).toBe(LOCK_PROTOCOL_MARKER)
   })
 
+  it('fails closed when lock-marker writing is short', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const operation = vi.fn(async () => {})
+    state.markerWriteBytes = LOCK_PROTOCOL_MARKER.length - 1
+
+    await expect(withFileLock(target, operation, { waitMs: 0 })).rejects.toMatchObject({ code: 'EIO' })
+    expect(operation).not.toHaveBeenCalled()
+  })
+
   it('serializes a second writer until the first kernel lock is released', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
@@ -209,32 +246,38 @@ describe('withFileLock', () => {
       .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
   })
 
-  it('releases the kernel lock without deleting a same-name successor replacement', async () => {
+  it('rejects public replacement of the lock sidecar while held', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     const lockPath = `${target}.lock`
-    const replacement = LOCK_PROTOCOL_MARKER
 
     await expect(withFileLock(target, async () => {
-      await writeFileAtomic(lockPath, replacement, { mode: 0o600 })
-      return 'committed'
-    }, { waitMs: 0 })).resolves.toBe('committed')
+      await writeFileAtomic(lockPath, 'replacement', { mode: 0o600 })
+    }, { waitMs: 0 })).rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PATH' })
 
-    expect(await readFile(lockPath, 'utf8')).toBe(replacement)
+    expect(await readFile(lockPath, 'utf8')).toBe(LOCK_PROTOCOL_MARKER)
   })
 
-  it('does not remove a replacement lock after an operation failure', async () => {
+  it('rejects a symlink lock sidecar without touching its referent', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     const lockPath = `${target}.lock`
-    const replacement = LOCK_PROTOCOL_MARKER
+    const victim = join(dir, 'victim')
+    await writeFile(victim, 'protected')
+    await symlink(victim, lockPath)
 
-    await expect(withFileLock(target, async () => {
-      await writeFileAtomic(lockPath, replacement, { mode: 0o600 })
-      throw new Error('operation failed')
-    }, { waitMs: 0 })).rejects.toThrow('operation failed')
+    await expect(withFileLock(target, async () => {}, { waitMs: 0 }))
+      .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
+    expect(await readFile(victim, 'utf8')).toBe('protected')
+  })
 
-    expect(await readFile(lockPath, 'utf8')).toBe(replacement)
+  it('rejects a predecessor directory lock as an incompatible protocol', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    await mkdir(`${target}.lock`)
+
+    await expect(withFileLock(target, async () => {}, { waitMs: 0 }))
+      .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
   })
 
   it('recovers an uninitialized lock file after its creator exited', async () => {

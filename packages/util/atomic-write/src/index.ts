@@ -12,10 +12,11 @@
  * @module @yharness/atomic-write
  */
 
-import { createHash, randomBytes } from 'node:crypto'
-import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
+import { lstat, mkdir, open, rename, rm, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, toNamespacedPath } from 'node:path'
 import { tryLockExclusive } from '@yharness/node-addon-system/flock'
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS: ReadonlySet<string> = new Set(['EACCES', 'EBUSY', 'EPERM'])
@@ -74,12 +75,15 @@ export interface WriteFileAtomicOptions {
  * one filesystem. Windows replacement retries transient `EACCES`, `EBUSY`,
  * and `EPERM` failures for a bounded interval while the complete temp file
  * remains the rename source. On any remaining failure the temp file is
- * removed and the failure rethrown. Crash durability (fsync) is out of scope.
+ * removed and the failure rethrown. Paths ending in `.lock` are reserved for
+ * {@link withFileLock} sidecars and are rejected before any temp file is
+ * created. Crash durability (fsync) is out of scope.
  * @param filename - final path receiving the content.
  * @param content - complete next file content.
  * @param options - permission bits for the replacement inode.
  */
 export async function writeFileAtomic(filename: string, content: string, options: WriteFileAtomicOptions): Promise<void> {
+  if (/\.lock$/iu.test(filename)) throw lockSidecarError(filename)
   await mkdir(dirname(filename), {
     recursive: true,
     ...options.dirMode === undefined ? {} : { mode: options.dirMode },
@@ -97,28 +101,72 @@ export async function writeFileAtomic(filename: string, content: string, options
 }
 
 const LOCK_PROTOCOL_MARKER = 'dsh-atomic-write-kernel-lock-v1\n'
-const WAIT_OBJECT_0 = 0
-const WAIT_TIMEOUT = 0x102
+const LOCK_SIDECAR_ERROR = 'ERR_ATOMIC_WRITE_LOCK_PATH'
+const WINDOWS_INVALID_HANDLE = -1
+const WINDOWS_GENERIC_READ = 0x80000000
+const WINDOWS_GENERIC_WRITE = 0x40000000
+const WINDOWS_FILE_SHARE_READ = 0x1
+const WINDOWS_FILE_SHARE_WRITE = 0x2
+const WINDOWS_OPEN_ALWAYS = 4
+const WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+const WINDOWS_FILE_ATTRIBUTE_NORMAL = 0x80
+const WINDOWS_LOCKFILE_EXCLUSIVE = 0x2
+const WINDOWS_LOCKFILE_FAIL_IMMEDIATELY = 0x1
+const WINDOWS_ERROR_FILE_NOT_FOUND = 2
+const WINDOWS_ERROR_PATH_NOT_FOUND = 3
+const WINDOWS_ERROR_ACCESS_DENIED = 5
+const WINDOWS_ERROR_SHARING_VIOLATION = 32
+const WINDOWS_ERROR_LOCK_VIOLATION = 33
+
+type Koffi = typeof import('koffi')['default']
+type WindowsPointer = ReturnType<Koffi['pointer']>
 
 interface WindowsLockBindings {
-  readonly createSemaphoreW: (security: null, initial: number, maximum: number, name: string) => number
-  readonly waitForSingleObject: (handle: number, milliseconds: number) => number
-  readonly releaseSemaphore: (handle: number, count: number, previous: null) => number
+  readonly createFileW: (
+    fileName: string,
+    desiredAccess: number,
+    shareMode: number,
+    security: null,
+    creationDisposition: number,
+    flagsAndAttributes: number,
+    template: null,
+  ) => number
+  readonly lockFileEx: (
+    handle: number,
+    flags: number,
+    reserved: number,
+    bytesLow: number,
+    bytesHigh: number,
+    overlapped: WindowsPointer,
+  ) => number
+  readonly unlockFileEx: (
+    handle: number,
+    reserved: number,
+    bytesLow: number,
+    bytesHigh: number,
+    overlapped: WindowsPointer,
+  ) => number
   readonly closeHandle: (handle: number) => number
   readonly getLastError: () => number
 }
 
 let windowsLockBindings: WindowsLockBindings | undefined
 
-/** Load the Windows semaphore API only when a Windows lock is requested. */
+/** Load the Windows file-lock API only when a Windows lock is requested. */
 async function loadWindowsLockBindings(): Promise<WindowsLockBindings> {
   if (windowsLockBindings !== undefined) return windowsLockBindings
   const koffi = (await import('koffi')).default
   const kernel32 = koffi.load('kernel32.dll')
   windowsLockBindings = {
-    createSemaphoreW: kernel32.func('__stdcall', 'CreateSemaphoreW', 'intptr', ['void*', 'int', 'int', 'str16']) as WindowsLockBindings['createSemaphoreW'],
-    waitForSingleObject: kernel32.func('__stdcall', 'WaitForSingleObject', 'uint', ['intptr', 'uint']) as WindowsLockBindings['waitForSingleObject'],
-    releaseSemaphore: kernel32.func('__stdcall', 'ReleaseSemaphore', 'int', ['intptr', 'int', 'void*']) as WindowsLockBindings['releaseSemaphore'],
+    createFileW: kernel32.func('__stdcall', 'CreateFileW', 'intptr', [
+      'str16', 'uint32', 'uint32', 'void*', 'uint32', 'uint32', 'void*',
+    ]) as WindowsLockBindings['createFileW'],
+    lockFileEx: kernel32.func('__stdcall', 'LockFileEx', 'int', [
+      'intptr', 'uint32', 'uint32', 'uint32', 'uint32', 'void*',
+    ]) as WindowsLockBindings['lockFileEx'],
+    unlockFileEx: kernel32.func('__stdcall', 'UnlockFileEx', 'int', [
+      'intptr', 'uint32', 'uint32', 'uint32', 'void*',
+    ]) as WindowsLockBindings['unlockFileEx'],
     closeHandle: kernel32.func('__stdcall', 'CloseHandle', 'int', ['intptr']) as WindowsLockBindings['closeHandle'],
     getLastError: kernel32.func('__stdcall', 'GetLastError', 'uint', []) as WindowsLockBindings['getLastError'],
   }
@@ -133,30 +181,66 @@ function nativeLockError(syscall: string, code: string, errno?: number): NodeJS.
   return error
 }
 
-/** Acquire one named Windows semaphore derived from the stable lock path. */
-async function acquireWindowsLock(lockPath: string): Promise<number> {
-  const api = await loadWindowsLockBindings()
-  const name = `Local\\dsh-atomic-write-${createHash('sha256').update(resolve(lockPath).toLowerCase()).digest('hex')}`
-  const handle = api.createSemaphoreW(null, 1, 1, name)
-  if (handle === 0) throw nativeLockError('CreateSemaphoreW', 'EIO', api.getLastError())
-  const wait = api.waitForSingleObject(handle, 0)
-  if (wait === WAIT_OBJECT_0) return handle
-  api.closeHandle(handle)
-  if (wait === WAIT_TIMEOUT) throw nativeLockError('WaitForSingleObject', 'EBUSY')
-  throw nativeLockError('WaitForSingleObject', 'EIO', api.getLastError())
+function windowsErrorCode(code: number): string {
+  switch (code) {
+    case WINDOWS_ERROR_FILE_NOT_FOUND:
+    case WINDOWS_ERROR_PATH_NOT_FOUND:
+      return 'ENOENT'
+    case WINDOWS_ERROR_ACCESS_DENIED:
+      return 'EACCES'
+    case WINDOWS_ERROR_SHARING_VIOLATION:
+    case WINDOWS_ERROR_LOCK_VIOLATION:
+      return 'EBUSY'
+    default:
+      return 'EIO'
+  }
 }
 
-/** Release one named Windows semaphore. */
-async function releaseWindowsLock(handle: number): Promise<void> {
+function windowsLockError(syscall: string, code: number, path: string): NodeJS.ErrnoException {
+  const error = nativeLockError(syscall, windowsErrorCode(code), code)
+  error.path = path
+  return error
+}
+
+/** Acquire one byte-range lock on the opened Windows lock-file handle. */
+async function acquireWindowsLock(lockPath: string): Promise<{
+  readonly handle: number
+  readonly overlapped: WindowsPointer
+}> {
   const api = await loadWindowsLockBindings()
-  const released = api.releaseSemaphore(handle, 1, null)
+  const handle = api.createFileW(
+    toNamespacedPath(resolve(lockPath)),
+    WINDOWS_GENERIC_READ | WINDOWS_GENERIC_WRITE,
+    WINDOWS_FILE_SHARE_READ | WINDOWS_FILE_SHARE_WRITE,
+    null,
+    WINDOWS_OPEN_ALWAYS,
+    WINDOWS_FILE_ATTRIBUTE_NORMAL | WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT,
+    null,
+  )
+  const createError = api.getLastError()
+  if (handle === 0 || handle === WINDOWS_INVALID_HANDLE) throw windowsLockError('CreateFileW', createError, lockPath)
+  const overlapped = (await import('koffi')).default.alloc('uint8', 32) as WindowsPointer
+  if (api.lockFileEx(handle, WINDOWS_LOCKFILE_EXCLUSIVE | WINDOWS_LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlapped) !== 0) {
+    return { handle, overlapped }
+  }
+  const lockError = api.getLastError()
+  api.closeHandle(handle)
+  throw windowsLockError('LockFileEx', lockError, lockPath)
+}
+
+/** Release one byte-range lock and close its Windows file handle. */
+async function releaseWindowsLock(lockPath: string, handle: number, overlapped: WindowsPointer): Promise<void> {
+  const api = await loadWindowsLockBindings()
+  const released = api.unlockFileEx(handle, 0, 1, 0, overlapped)
+  const unlockError = released === 0 ? api.getLastError() : undefined
   const closed = api.closeHandle(handle)
-  if (released === 0 || closed === 0) throw nativeLockError('ReleaseSemaphore', 'EIO', api.getLastError())
+  if (released === 0) throw windowsLockError('UnlockFileEx', unlockError ?? 0, lockPath)
+  if (closed === 0) throw windowsLockError('CloseHandle', api.getLastError(), lockPath)
 }
 
 interface HeldLock {
   readonly file: FileHandle
-  readonly windowsHandle: number | undefined
+  readonly windowsLock: { readonly handle: number; readonly overlapped: WindowsPointer; readonly path: string } | undefined
 }
 
 function lockProtocolError(lockPath: string): NodeJS.ErrnoException {
@@ -165,8 +249,39 @@ function lockProtocolError(lockPath: string): NodeJS.ErrnoException {
   return error
 }
 
-/** Open and acquire the stable kernel lock without path-based cleanup. */
-async function acquireLock(lockPath: string): Promise<HeldLock> {
+function lockSidecarError(lockPath: string): NodeJS.ErrnoException {
+  const error = nativeLockError('writeFileAtomic', LOCK_SIDECAR_ERROR)
+  error.path = lockPath
+  return error
+}
+
+async function writeLockMarker(file: FileHandle, lockPath: string): Promise<void> {
+  const marker = Buffer.from(LOCK_PROTOCOL_MARKER)
+  const result = await file.write(marker, 0, marker.byteLength, 0)
+  if (result.bytesWritten !== marker.byteLength) throw nativeLockError('write', 'EIO', result.bytesWritten)
+  try {
+    await file.truncate(marker.byteLength)
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    if ((failure as NodeJS.ErrnoException).path === undefined) (failure as NodeJS.ErrnoException).path = lockPath
+    throw failure
+  }
+}
+
+async function readLockMarker(file: FileHandle, lockPath: string): Promise<string> {
+  try {
+    return await file.readFile('utf8')
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error))
+    const code = (failure as NodeJS.ErrnoException).code
+    if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
+    if ((failure as NodeJS.ErrnoException).path === undefined) (failure as NodeJS.ErrnoException).path = lockPath
+    throw failure
+  }
+}
+
+/** Open and lock a POSIX sidecar without following a symlink. */
+async function acquirePosixLock(lockPath: string): Promise<HeldLock> {
   let file: FileHandle
   let created = false
   try {
@@ -174,36 +289,77 @@ async function acquireLock(lockPath: string): Promise<HeldLock> {
     created = true
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error
-    file = await open(lockPath, 'r+')
+    try {
+      file = await open(lockPath, fsConstants.O_RDWR | fsConstants.O_NOFOLLOW)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
+      throw error
+    }
   }
 
-  let windowsHandle: number | undefined
   try {
-    let marker = ''
-    if (!created) {
-      marker = await file.readFile('utf8')
-      // An empty file is either a creator between open and initialization or a
-      // creator that exited before initialization. The kernel lock decides
-      // which case it is; any other non-marker is an older protocol whose
-      // holder cannot be coordinated safely with a kernel lock.
-      if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
-    }
-    if (process.platform === 'win32') {
-      windowsHandle = await acquireWindowsLock(lockPath)
-    } else {
-      await tryLockExclusive(file.fd)
-    }
-    if (created || marker.length === 0) {
-      const markerBytes = Buffer.from(LOCK_PROTOCOL_MARKER)
-      await file.write(markerBytes, 0, markerBytes.byteLength, 0)
-      await file.truncate(LOCK_PROTOCOL_MARKER.length)
-    }
-    return { file, windowsHandle }
+    const marker = created ? '' : await readLockMarker(file, lockPath)
+    if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
+    await tryLockExclusive(file.fd)
+    if (marker.length === 0) await writeLockMarker(file, lockPath)
+    return { file, windowsLock: undefined }
   } catch (error) {
-    if (windowsHandle !== undefined) await releaseWindowsLock(windowsHandle).catch(() => {})
     await file.close().catch(() => {})
     throw error
   }
+}
+
+/** Open and byte-lock a Windows sidecar without a path-derived namespace. */
+async function openWindowsSidecar(lockPath: string): Promise<{ readonly file: FileHandle; readonly created: boolean }> {
+  const info = await lstat(lockPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (info !== undefined && !info.isFile()) throw lockProtocolError(lockPath)
+  try {
+    return { file: await open(lockPath, 'wx+', 0o600), created: true }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error
+    try {
+      return { file: await open(lockPath, 'r+'), created: false }
+    } catch (openError) {
+      const code = (openError as NodeJS.ErrnoException | null)?.code
+      if (code === 'ELOOP' || code === 'EISDIR' || code === 'ENOTDIR') throw lockProtocolError(lockPath)
+      throw openError
+    }
+  }
+}
+
+async function acquireWindowsFileLock(lockPath: string): Promise<HeldLock> {
+  const opened = await openWindowsSidecar(lockPath)
+  let windowsLock: { readonly handle: number; readonly overlapped: WindowsPointer } | undefined
+  try {
+    windowsLock = await acquireWindowsLock(lockPath)
+    const info = await lstat(lockPath)
+    if (!info.isFile()) throw lockProtocolError(lockPath)
+    const held = await opened.file.stat({ bigint: true })
+    const current = await stat(lockPath, { bigint: true })
+    if (held.dev === 0n || held.ino === 0n || current.dev === 0n || current.ino === 0n
+      || held.dev !== current.dev || held.ino !== current.ino) throw lockProtocolError(lockPath)
+    const marker = opened.created ? '' : await readLockMarker(opened.file, lockPath)
+    if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
+    if (marker.length === 0) await writeLockMarker(opened.file, lockPath)
+    return { file: opened.file, windowsLock: { ...windowsLock, path: lockPath } }
+  } catch (error) {
+    await opened.file.close().catch(() => {})
+    if (windowsLock !== undefined) {
+      await releaseWindowsLock(lockPath, windowsLock.handle, windowsLock.overlapped).catch(() => {})
+    }
+    throw error
+  }
+}
+
+/** Open and acquire the stable kernel lock without path-based cleanup. */
+async function acquireLock(lockPath: string): Promise<HeldLock> {
+  return process.platform === 'win32'
+    ? acquireWindowsFileLock(lockPath)
+    : acquirePosixLock(lockPath)
 }
 
 /** Whether a kernel lock attempt found another live holder. */
@@ -234,9 +390,9 @@ const DEFAULT_LOCK_WAIT_MS = 2_000
 /** Release a held kernel lock by closing its OS handles; the lock path stays in place. */
 async function releaseLock(lock: HeldLock): Promise<void> {
   let lastError: Error | undefined
-  if (lock.windowsHandle !== undefined) {
+  if (lock.windowsLock !== undefined) {
     try {
-      await releaseWindowsLock(lock.windowsHandle)
+      await releaseWindowsLock(lock.windowsLock.path, lock.windowsLock.handle, lock.windowsLock.overlapped)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
     }
@@ -264,18 +420,20 @@ export interface FileLockOptions {
 
 /**
  * Hold the cross-process writer lock for `filename` around one operation. The
- * lock is a stable `<filename>.lock` file held by POSIX `flock(2)` or a named
- * Windows semaphore; paired with the rename-based commit of
+ * lock is a stable `<filename>.lock` file held by POSIX `flock(2)` or a Windows
+ * `LockFileEx` byte-range lock; paired with the rename-based commit of
  * {@link writeFileAtomic}, readers stay lock-free and only writers contend.
  * `EAGAIN`, `EWOULDBLOCK`, and Windows `EBUSY` are contention. Contention backs
  * off exponentially and times out after the deadline. The first creator writes
  * a protocol marker while holding the kernel lock. An empty marker is accepted
  * after the kernel lock is acquired so an interrupted creator can be recovered;
  * any other marker is a legacy or unknown protocol and fails closed. The lock path is never
- * removed or renamed: closing the held descriptor or semaphore releases the
+ * removed or renamed: closing the held descriptor or native handle releases the
  * kernel lock, including after process death. Replacing the lock pathname is
- * unsupported because POSIX locks belong to the opened inode; the next caller
- * must use the stable path. The parent directory must exist.
+ * unsupported because POSIX locks belong to the opened inode; public
+ * {@link writeFileAtomic} calls reject sidecar paths, and the next caller must
+ * use the stable path. Symlink, directory, and other non-file sidecars fail
+ * closed. The parent directory must exist.
  * @param filename - the file whose writers this lock serializes.
  * @param operation - the read-render-commit cycle to run while holding the lock.
  * @param options - acquisition options; omitted waits {@link DEFAULT_LOCK_WAIT_MS}.

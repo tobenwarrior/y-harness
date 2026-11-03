@@ -7,7 +7,7 @@ description: "Atomic-write sidecar locks now use a kernel-owned file protocol an
 
 ## Change
 
-`@yharness/atomic-write` now coordinates writers with POSIX `flock(2)` or a Windows named semaphore held on a stable `<filename>.lock` file. The previous directory/PID sidecars are not taken over or removed automatically, and unknown lock contents fail closed. This affects file-backed stores that upgrade while an older process left a lock sidecar behind.
+`@yharness/atomic-write` now coordinates writers with POSIX `flock(2)` or a Windows `LockFileEx` byte-range lock held on a stable `<filename>.lock` file. The previous directory/PID sidecars are not taken over or removed automatically, and unknown lock contents fail closed. Generic `writeFileAtomic` calls reject `.lock` paths with `ERR_ATOMIC_WRITE_LOCK_PATH`; symlink, directory, and other non-file sidecars fail with `ERR_ATOMIC_WRITE_LOCK_PROTOCOL`. This affects file-backed stores that upgrade while an older process left a lock sidecar behind.
 
 ## Migration
 
