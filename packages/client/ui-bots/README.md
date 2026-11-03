@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a second-mode Bot workspace to the Web client without taking ownership of Session persistence. The panel presents a roster, selected Bot conversation slot, creation and rename flows, pin/hide/restore organization, status and unread indicators, and token-backed animated character avatars. Characters blink, look around and respond to pointer movement; reduced-motion preferences disable their animation. Supply the Host-owned Bot and avatar callbacks to reopen the linked Session, connect apps, or configure generated images. The template panel publishes signed portable profiles, previews codes with the issuer fingerprint and signed configuration, requires an explicit matching approval before import, copies or revokes local rows, and imports a distinct Bot with a retry-stable operation id. When callbacks are absent, the package keeps the corresponding controls hidden rather than inventing local state.
+Add a second-mode Bot workspace to the Web client without owning Session persistence. The panel provides a roster, selected Bot conversation slot, creation and rename, organization, status and unread indicators, and animated character avatars. Host callbacks reopen Sessions, connect apps, configure generated images, or supply template actions. Signed templates publish safe profiles, preview issuer and configuration, require matching approval, copy or revoke local rows, and import a distinct Bot with retry-stable ids. Missing callbacks hide their controls instead of inventing local state.
 
 ## Table of Contents
 

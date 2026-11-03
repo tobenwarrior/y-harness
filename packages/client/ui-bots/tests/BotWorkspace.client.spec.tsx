@@ -145,6 +145,7 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(actions.publishTemplate).toHaveBeenCalledWith({ botId: 'research' }) })
 
     const code = screen.getByRole('textbox', { name: 'Template share code' })
+    expect(code.getAttribute('placeholder')).toBe('Paste a yhbot-template-v2.… code')
     fireEvent.change(code, { target: { value: 'bot-template-release-2' } })
     expect(actions.setTemplateCode).toHaveBeenCalledWith('bot-template-release-2')
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))

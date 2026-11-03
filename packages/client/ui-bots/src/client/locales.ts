@@ -89,7 +89,7 @@ export const en = {
   templatesImportTitle: 'Import with a share code',
   templatesImportDescription: 'Preview the safe configuration before creating a separate Bot and Session.',
   templatesCodeLabel: 'Template share code',
-  templatesCodePlaceholder: 'Paste a bot-template-… code',
+  templatesCodePlaceholder: 'Paste a yhbot-template-v2.… code',
   templatesPreview: 'Preview',
   templatesWorking: 'Checking…',
   templatesPreviewSafe: 'Review the signed issuer and configuration before approving this code. A new Session and local permissions are used.',
