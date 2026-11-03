@@ -738,7 +738,7 @@ function routineTool(
             try {
               const resolution = await reconcile(arguments_, candidate.call, context)
               if (resolution.status === 'committed') {
-                return recover(resolution.record, candidate.call)
+                return await recover(resolution.record, candidate.call)
               }
               if (resolution.status === 'unknown') {
                 const pendingKey = nativeCallKey(sessionId, { name, ...candidate.call })
@@ -786,7 +786,7 @@ function routineTool(
           if (reserve !== undefined) {
             try {
               const reservation = await reserve(arguments_, context)
-              if (reservation.status === 'committed') return recover(reservation.record)
+              if (reservation.status === 'committed') return await recover(reservation.record)
               reserved = true
             } catch (error: unknown) {
               return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)

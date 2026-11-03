@@ -195,6 +195,51 @@ describe('native Bot actions', () => {
     expect(routine).not.toHaveBeenCalled()
   })
 
+  it('returns a structured failure when recovery persistence fails', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => { throw new Error('persistence unavailable') },
+      routine: vi.fn(async () => ({ id: 'schedule-new' })),
+      routineReconcile: async () => ({ status: 'committed', record: {
+        id: 'schedule-existing', kind: 'after', title: 'Daily check', prompt: 'Check the report',
+        afterSeconds: 60, scheduledAt: '2099-01-01T00:00:00.000Z', state: 'scheduled', deliveryMode: 'host',
+      } }),
+      routineAvailable: async () => true,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+        arguments: { title: 'Daily check', prompt: 'Check the report', after_seconds: 60 },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    await expect(create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
+      sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn',
+    }))).resolves.toMatchObject({ success: false, contentItems: [{ text: expect.stringContaining('unavailable') }] })
+  })
+
+  it('returns a structured failure when committed reservation recovery persistence fails', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const current = { callId: 'current-call', threadId: 'current-thread', turnId: 'current-turn' }
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => { throw new Error('persistence unavailable') },
+      routine: vi.fn(async () => ({ id: 'schedule-new' })),
+      routineReserve: async () => ({ status: 'committed', record: {
+        id: 'schedule-existing', kind: 'after', title: 'Daily check', prompt: 'Check the report',
+        afterSeconds: 60, scheduledAt: '2099-01-01T00:00:00.000Z', state: 'scheduled', deliveryMode: 'host',
+      } }),
+      routineAvailable: async () => true,
+      replay: async () => [{
+        phase: 'started', name: 'schedule_create', ...current, sessionId,
+        arguments: { title: 'Daily check', prompt: 'Check the report', after_seconds: 60 },
+      }],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    await expect(create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
+      sessionId, ...current,
+    }))).resolves.toMatchObject({ success: false, contentItems: [{ text: expect.stringContaining('unavailable') }] })
+  })
+
   it('retires the recovered native routine lifecycle before allowing an intentional repeat', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const persisted: BotDynamicToolEvent[] = []
