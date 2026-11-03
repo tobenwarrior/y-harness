@@ -772,7 +772,6 @@
   gap: 2px;
   overflow-y: auto;
   padding: 5px;
-  border: 0.5px solid var(--yh-alias-border-l1);
   border-radius: var(--yh-radius-lg);
   box-shadow: var(--yh-elevation-prominent);
 }
