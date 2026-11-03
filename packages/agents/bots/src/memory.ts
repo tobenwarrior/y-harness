@@ -7,7 +7,10 @@ import { BotId as makeBotId, type BotId } from './types.ts'
 /** Stable identity for one durable memory entry. */
 export type BotMemoryId = Branded<'BotMemoryId'>
 
-/** Apply the memory identity brand after the Host has validated the value. */
+/** Apply the memory identity brand after the Host has validated the value.
+ * @param value - Validated memory identity text.
+ * @returns The branded Bot memory identity.
+ */
 export function BotMemoryId(value: string): BotMemoryId {
   return brandString<BotMemoryId>(value)
 }
@@ -98,7 +101,10 @@ export const BOT_MEMORY_TEXT_LIMIT = 2_000
 /** Maximum active entries included in one Bot memory projection. */
 export const BOT_MEMORY_ENTRY_LIMIT = 100
 
-/** Validate and brand a durable memory identity from a model or wire boundary. */
+/** Validate and brand a durable memory identity from a model or wire boundary.
+ * @param value - Candidate memory identity from a model or wire boundary.
+ * @returns The validated branded memory identity.
+ */
 export function parseBotMemoryId(value: string): BotMemoryId {
   if (typeof value !== 'string' || !MEMORY_ID_PATTERN.test(value) || value.length > 256) {
     throw new BotMemoryError('memory-invalid', 'Memory ids must begin with memory- and contain simple URL-safe segments.')
@@ -106,7 +112,10 @@ export function parseBotMemoryId(value: string): BotMemoryId {
   return BotMemoryId(value)
 }
 
-/** Normalize and bound user-authored memory text. */
+/** Normalize and bound user-authored memory text.
+ * @param value - User-authored memory text.
+ * @returns Trimmed memory text within the configured limit.
+ */
 export function normalizeBotMemoryText(value: string): string {
   if (typeof value !== 'string') throw new BotMemoryError('memory-invalid', 'Memory text must be a string.')
   const text = value.trim()

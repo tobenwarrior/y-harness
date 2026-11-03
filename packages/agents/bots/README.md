@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected. Roster organization keeps pinned and hidden state plus an optional user-defined section without changing the Session binding. Bot-scoped memory is stored as required Session events, survives a cold Session, and is included in later Bot prompts as untrusted reference data.
+Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization, and recall untrusted memory stored in their Sessions. Retried creation reuses the requested Bot identity and Session.
 
 ## Table of Contents
 
