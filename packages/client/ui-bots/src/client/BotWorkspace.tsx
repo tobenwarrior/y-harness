@@ -640,7 +640,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                 onMouseDown={(event) => { event.preventDefault() }}
                 onClick={() => { selectMention(bot) }}
               >
-                <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={undefined} size="small" />
+                <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" />
                 <span className={css.mentionOptionCopy}>
                   <span className={css.mentionOptionName}>{bot.name}</span>
                   <span className={css.mentionOptionHint}>{t('mentionBotHint')}</span>
