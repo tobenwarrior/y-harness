@@ -14514,6 +14514,13 @@ importers:
         version: link:../protocol
 
   packages/util/atomic-write:
+    dependencies:
+      '@yharness/node-addon-system':
+        specifier: workspace:~
+        version: link:../../native/system/packages/entry
+      koffi:
+        specifier: 3.1.1
+        version: 3.1.1
     devDependencies:
       '@yharness/cordis':
         specifier: workspace:~

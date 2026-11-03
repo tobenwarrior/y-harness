@@ -7,7 +7,7 @@ kind: "package-library"
 
 ## Summary
 
-Use `dsh-atomic-write` to replace a file without exposing partial content or following a symlinked temporary path. Its writer lock serializes read-modify-write cycles across processes so concurrent writers cannot overwrite one another with stale state. Each replacement uses caller-selected permission bits on a fresh inode, which safely narrows an existing file's permissions. This zero-dependency library accepts strings; it does not provide a `cordis.yml` plugin or crash durability because it does not call `fsync`.
+Use `dsh-atomic-write` to replace a file without exposing partial content or following a symlinked temporary path. Its writer lock serializes read-modify-write cycles across processes so concurrent writers cannot overwrite one another with stale state. Each replacement uses caller-selected permission bits on a fresh inode, which safely narrows an existing file's permissions. This host-only library accepts strings; it does not provide a `cordis.yml` plugin or crash durability because it does not call `fsync`.
 
 ## Table of Contents
 
@@ -52,13 +52,13 @@ await withFileLock('/home/u/.dsh/cordis.patch.yml', async () => {
 })
 ```
 
-Only writers contend — readers never take the lock — and a contender backs off exponentially and fails with a timed-out error rather than blocking forever. How long a contender waits is stated per call through `waitMs`: the default is sized for file work alone, so a holder whose cycle includes a network round trip — a credential mutation that refreshes an expired token — states a longer one, because leaving the default would fail every other writer of that file for the duration. The retry cadence stays fixed. A contender takes over a directory lock only when its owner record names a process that no longer exists; file age alone never removes a lock. After an operation settles, the holder removes its unique owner record and removes the lock directory only when it is empty. A release or takeover that cannot complete fails closed and leaves the lock for a later retry or operator inspection, so no pathname check is used as a precondition for an unsafe `rm` or rename.
+Only writers contend — readers never take the lock — and a contender backs off exponentially and fails with a timed-out error rather than blocking forever. How long a contender waits is stated per call through `waitMs`: the default is sized for file work alone, so a holder whose cycle includes a network round trip — a credential mutation that refreshes an expired token — states a longer one, because leaving the default would fail every other writer of that file for the duration. The retry cadence stays fixed. POSIX uses a nonblocking kernel `flock(2)` on the stable `<filename>.lock` inode; Windows uses a named kernel semaphore derived from that path. The lock path is never removed or renamed, so a holder releases exclusion by closing its descriptor or handle, including after process death.
 
 ### Failures to plan for
 
-Windows retries one `EPERM` when the lock cannot be observed, because its holder can release between exclusive creation and the existence check. A repeated unconfirmed `EPERM` is rethrown without running the operation.
+The first creator writes a protocol marker while holding the kernel lock. An empty lock file is accepted as an interrupted initialization and is claimed only after the kernel lock is acquired; any other non-marker content is a legacy or unknown protocol and fails closed. Replacing the lock pathname is unsupported because POSIX locks belong to the opened inode; the old holder never removes a replacement pathname.
 
-The lock's parent directory must already exist, so `withFileLock` rejects an invalid parent hierarchy before running the operation. A process that exits while holding a directory lock leaves the lock directory behind, and the next writer takes it over. A lock whose directory has no unique owner record, whose record is empty or incomplete, names a PID that a live process reused, or uses the legacy regular-file form is not taken over; later writers time out, and an operator removes it only after verifying that no writer still owns it.
+The lock's parent directory must already exist, so `withFileLock` rejects an invalid parent hierarchy before running the operation. A process that exits while holding a kernel lock releases it automatically; its stable lock file remains for the next writer. A lock file from the pre-kernel protocol is not coordinated automatically; an operator removes it only after verifying that no writer still owns it.
 
 -----
 
@@ -80,13 +80,13 @@ The package is built on one separation: the atomic commit owns the swap, and the
 
 `writeFileAtomic` writes a random-suffix sibling opened with exclusive create (`wx`), then renames it over the target. The exclusive open refuses to follow a symlink planted at a guessable temp path; the same-directory sibling keeps the rename on one filesystem; and the rename replaces a symlinked target itself instead of writing through to its referent. A Windows retry keeps the same complete sibling and uses bounded exponential backoff, so temporary use of the target by software outside the cooperative writer lock cannot turn a safe replacement into an immediate failure; the archived [retry decision record](../../../.agents/notes/archived/bug-fix/2026-08-29-windows-atomic-replace-retry.md) documents the original rationale and rejected alternatives.
 
-`withFileLock` atomically creates a `<filename>.lock` directory, then creates one random `owner-<hex>` child containing its PID as `<pid>\n`. `EEXIST` identifies contention directly; `EPERM` does so only when a fresh `lstat` confirms the lock path exists, covering Windows exclusive-create behavior without hiding an unrelated permission failure. The holder removes its owner child after the operation settles and uses `rmdir` for the final directory removal. `rmdir` succeeds only for an empty directory, so a successor directory or owner child is never removed by an older holder. A contender that reads a directory record whose PID a signal probe reports as absent (`ESRCH`) creates a `<filename>.lock.takeover-<record hash>` claim with `wx`, re-reads the lock and probes its PID again, removes the same owner child, and removes the directory only if it is still empty. A holder that exists under another user (`EPERM`) and a record naming the contender's own process are waited for. Contenders that read the same record contend for one claim, and the second probe rejects a holder that reused the exited PID, so a takeover never removes a lock that another contender acquired after the exited holder's. Legacy regular-file locks are recognized but not automatically removed because pathname verification cannot be made conditional with portable filesystem calls; they remain for an operator. Takeover proves only that the recorded process exited; an operation that starts other writers leaves its successor a way to find them, as the [Plugin Manager](../../boot/plugin-manager/README.md) does for its pnpm runs. Contention backs off exponentially and fails when the per-call `waitMs` deadline (default two seconds) passes; the [historical takeover decision record](../../../.agents/notes/archived/bug-fix/2026-09-24-exited-holder-lock-takeover.md) records the rationale.
+`withFileLock` creates `<filename>.lock` with exclusive create, acquires a nonblocking POSIX `flock(2)` or Windows named semaphore, writes a protocol marker, and keeps the open handle until the operation settles. A second writer retries on kernel contention and eventually times out. The path is deliberately never unlinked or renamed: POSIX locks belong to an inode, and a pathname replacement would create a different inode that the old descriptor cannot protect. An empty lock file from an interrupted initialization is claimed after the kernel lock is acquired; any other non-marker content fails closed rather than mixing protocols. Missing native lock support also rejects acquisition rather than granting an unprotected write.
 
 ### Why the swap stays safe
 
 - **Fresh inode, caller-stated mode** — the temp carries `mode` through the rename, so narrowing a wider-permission file has no chmod race. `mode` is required so the permission decision stays visible at every call site.
 - **Readers never contend** — the rename commit is atomic, so a reader needs no lock.
-- **A contender deletes only an exited holder's lock** — age cannot distinguish a crashed owner from a paused live writer, but a missing process can.
+- **Kernel support required** — a missing POSIX flock binding, unavailable Windows semaphore API, or unknown lock-file protocol rejects coordinated writes instead of falling back to pathname cleanup.
 
 </details>
 
@@ -99,7 +99,7 @@ Read these pages when you need the consuming stores or the family this primitive
 
 - [Profile configuration editor](../../boot/config-editor/README.md) — the profile patch every edit replaces through this package.
 - [Credentials store](../../credentials/credentials-local/README.md) — the credentials file this package locks and replaces.
-- [util group map](../README.md) — the zero-dependency utility family this package belongs to.
+- [util group map](../README.md) — the utility family this package belongs to.
 
 -----
 
@@ -120,8 +120,8 @@ These limits define where the package is not the right tool. They are current pa
 
 - **Atomic, not durable** — no `fsync` of the file or its directory, so after a crash the rename may be observed unwound. The file-backed stores here re-read and republish on boot, keeping durability the caller's policy.
 - **String content only** — no `Buffer` or stream form until a consumer needs one.
-- **Some orphaned locks require operator recovery** — a lock directory without exactly one owner record, an owner record that is empty or incomplete, a record naming a PID a live process reused, and legacy regular-file locks stay in place; later writers time out without deleting them. A contender that ends between creating a claim and removing the lock leaves both `<filename>.lock` and `<filename>.lock.takeover-<record hash>`, and the operator removes both after verifying that no writer still owns the lock.
-- **One host and one PID namespace** — the probe runs on the contender's host. Writers on several hosts sharing a network filesystem, or containers sharing a volume, can see a live holder as exited, take over its lock, and write at the same time as it.
+- **Some legacy locks require operator recovery** — a lock file from the pre-kernel protocol stays in place; later writers fail closed without deleting it. Remove it only after verifying that no writer still owns the lock.
+- **One host and one filesystem lock domain** — POSIX `flock` and the Windows named semaphore coordinate callers that can observe the same lock path and kernel lock namespace. Network filesystems with incomplete `flock` support, or separate hosts with independent kernel namespaces, are unsupported; coordinated writes fail only when the platform reports contention or an invalid protocol, not when an external lock domain is invisible.
 
 <a id="dev-note"></a>
 ### Dev Note

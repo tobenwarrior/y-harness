@@ -1,21 +1,22 @@
 /**
- * Zero-dependency atomic file replacement and writer coordination.
+ * Atomic file replacement and kernel-backed writer coordination.
  * `writeFileAtomic` writes a random-suffix sibling with exclusive create and
  * the caller's permission bits, then renames it over the target, so readers
  * observe either the old or the new complete content and a replaced file ends
  * up with exactly the stated mode. `withFileLock` serializes cross-process
- * writers of one file through an atomically-created `<file>.lock` directory
- * containing one unique owner record, so a read-modify-write cycle can never
- * resurrect a state another writer just replaced; readers stay lock-free
- * because the rename commit is atomic. A lock whose recorded holder process no
- * longer exists is taken over when the directory protocol can remove it
- * without a pathname race.
+ * writers of one file through a kernel-owned `<file>.lock` handle, so a
+ * read-modify-write cycle can never resurrect a state another writer just
+ * replaced; readers stay lock-free because the rename commit is atomic. The
+ * lock path is never removed or renamed: the operating system releases the
+ * handle when its process exits.
  * @module @yharness/atomic-write
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { tryLockExclusive } from '@yharness/node-addon-system/flock'
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS: ReadonlySet<string> = new Set(['EACCES', 'EBUSY', 'EPERM'])
 const WINDOWS_RENAME_RETRY_INITIAL_MS = 20
@@ -95,119 +96,120 @@ export async function writeFileAtomic(filename: string, content: string, options
   }
 }
 
-/** Whether an exclusive create found an existing lock. */
-async function isLockContention(error: unknown, lockPath: string): Promise<boolean> {
-  const code = (error as NodeJS.ErrnoException | null)?.code
-  if (code === 'EEXIST') return true
-  if (code !== 'EPERM') return false
-  try {
-    await lstat(lockPath)
-    return true
-  } catch {
-    // Keep the original EPERM authoritative when lock existence is unproven.
-    return false
-  }
+const LOCK_PROTOCOL_MARKER = 'dsh-atomic-write-kernel-lock-v1\n'
+const WAIT_OBJECT_0 = 0
+const WAIT_TIMEOUT = 0x102
+
+interface WindowsLockBindings {
+  readonly createSemaphoreW: (security: null, initial: number, maximum: number, name: string) => number
+  readonly waitForSingleObject: (handle: number, milliseconds: number) => number
+  readonly releaseSemaphore: (handle: number, count: number, previous: null) => number
+  readonly closeHandle: (handle: number) => number
+  readonly getLastError: () => number
 }
 
-/** Whether the holder a `<pid>\n` record names is proven gone: a signal probe finds no such process. */
-function holderExited(record: string): boolean {
-  // Any other content is being written or was cut short, which proves nothing about its holder.
-  if (!/^\d+\n$/.test(record)) return false
-  const pid = Number(record.trim())
-  // PID 0 addresses the caller's process group, and the probe accepts only positive int32 PIDs.
-  if (pid === 0 || pid > 0x7fffffff) return false
-  // This process is running; a runtime whose probe cannot see itself must not take over its own lock.
-  if (pid === process.pid) return false
+let windowsLockBindings: WindowsLockBindings | undefined
+
+/** Load the Windows semaphore API only when a Windows lock is requested. */
+async function loadWindowsLockBindings(): Promise<WindowsLockBindings> {
+  if (windowsLockBindings !== undefined) return windowsLockBindings
+  const koffi = (await import('koffi')).default
+  const kernel32 = koffi.load('kernel32.dll')
+  windowsLockBindings = {
+    createSemaphoreW: kernel32.func('__stdcall', 'CreateSemaphoreW', 'intptr', ['void*', 'int', 'int', 'str16']) as WindowsLockBindings['createSemaphoreW'],
+    waitForSingleObject: kernel32.func('__stdcall', 'WaitForSingleObject', 'uint', ['intptr', 'uint']) as WindowsLockBindings['waitForSingleObject'],
+    releaseSemaphore: kernel32.func('__stdcall', 'ReleaseSemaphore', 'int', ['intptr', 'int', 'void*']) as WindowsLockBindings['releaseSemaphore'],
+    closeHandle: kernel32.func('__stdcall', 'CloseHandle', 'int', ['intptr']) as WindowsLockBindings['closeHandle'],
+    getLastError: kernel32.func('__stdcall', 'GetLastError', 'uint', []) as WindowsLockBindings['getLastError'],
+  }
+  return windowsLockBindings
+}
+
+function nativeLockError(syscall: string, code: string, errno?: number): NodeJS.ErrnoException {
+  const error = new Error(`${code}: ${syscall} failed`) as NodeJS.ErrnoException
+  error.code = code
+  error.errno = errno
+  error.syscall = syscall
+  return error
+}
+
+/** Acquire one named Windows semaphore derived from the stable lock path. */
+async function acquireWindowsLock(lockPath: string): Promise<number> {
+  const api = await loadWindowsLockBindings()
+  const name = `Local\\dsh-atomic-write-${createHash('sha256').update(resolve(lockPath).toLowerCase()).digest('hex')}`
+  const handle = api.createSemaphoreW(null, 1, 1, name)
+  if (handle === 0) throw nativeLockError('CreateSemaphoreW', 'EIO', api.getLastError())
+  const wait = api.waitForSingleObject(handle, 0)
+  if (wait === WAIT_OBJECT_0) return handle
+  api.closeHandle(handle)
+  if (wait === WAIT_TIMEOUT) throw nativeLockError('WaitForSingleObject', 'EBUSY')
+  throw nativeLockError('WaitForSingleObject', 'EIO', api.getLastError())
+}
+
+/** Release one named Windows semaphore. */
+async function releaseWindowsLock(handle: number): Promise<void> {
+  const api = await loadWindowsLockBindings()
+  const released = api.releaseSemaphore(handle, 1, null)
+  const closed = api.closeHandle(handle)
+  if (released === 0 || closed === 0) throw nativeLockError('ReleaseSemaphore', 'EIO', api.getLastError())
+}
+
+interface HeldLock {
+  readonly file: FileHandle
+  readonly windowsHandle: number | undefined
+}
+
+function lockProtocolError(lockPath: string): NodeJS.ErrnoException {
+  const error = nativeLockError('open', 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL')
+  error.path = lockPath
+  return error
+}
+
+/** Open and acquire the stable kernel lock without path-based cleanup. */
+async function acquireLock(lockPath: string): Promise<HeldLock> {
+  let file: FileHandle
+  let created = false
   try {
-    process.kill(pid, 0)
-    return false
+    file = await open(lockPath, 'wx+', 0o600)
+    created = true
   } catch (error) {
-    // EPERM means the process exists under another user.
-    return (error as NodeJS.ErrnoException).code === 'ESRCH'
+    if ((error as NodeJS.ErrnoException | null)?.code !== 'EEXIST') throw error
+    file = await open(lockPath, 'r+')
   }
-}
 
-interface LockObservation {
-  readonly record: string
-  readonly recordPath: string
-  readonly directory: boolean
-}
-
-const LOCK_OWNER_NAME = /^owner-[0-9a-f]{32}$/
-
-/** The lock record and its unique child path, or undefined when it cannot be read. */
-async function readLockRecord(lockPath: string): Promise<LockObservation | undefined> {
+  let windowsHandle: number | undefined
   try {
-    const current = await lstat(lockPath)
-    if (!current.isDirectory()) {
-      if (!current.isFile()) return undefined
-      return { record: await readFile(lockPath, 'utf8'), recordPath: lockPath, directory: false }
+    let marker = ''
+    if (!created) {
+      marker = await file.readFile('utf8')
+      // An empty file is either a creator between open and initialization or a
+      // creator that exited before initialization. The kernel lock decides
+      // which case it is; any other non-marker is an older protocol whose
+      // holder cannot be coordinated safely with a kernel lock.
+      if (marker.length > 0 && marker !== LOCK_PROTOCOL_MARKER) throw lockProtocolError(lockPath)
     }
-    const owners = (await readdir(lockPath)).filter(name => LOCK_OWNER_NAME.test(name))
-    if (owners.length !== 1) return undefined
-    const name = owners[0]
-    if (name === undefined) return undefined
-    const recordPath = join(lockPath, name)
-    return { record: await readFile(recordPath, 'utf8'), recordPath, directory: true }
+    if (process.platform === 'win32') {
+      windowsHandle = await acquireWindowsLock(lockPath)
+    } else {
+      await tryLockExclusive(file.fd)
+    }
+    if (created || marker.length === 0) {
+      const markerBytes = Buffer.from(LOCK_PROTOCOL_MARKER)
+      await file.write(markerBytes, 0, markerBytes.byteLength, 0)
+      await file.truncate(LOCK_PROTOCOL_MARKER.length)
+    }
+    return { file, windowsHandle }
   } catch (error) {
-    // A lock that vanished, or that Windows is still deleting, proves nothing about a holder.
-    void error
-    return undefined
-  }
-}
-
-/**
- * Remove the lock when its recorded holder exited. Contenders that read the
- * same record serialize on a claim file named after it. Under the claim, the
- * claimant re-reads the lock and probes its PID again, and removes it only
- * when it still holds that record and that PID is still gone: the record's
- * holder can no longer release it, and no other contender can remove it
- * without the claim, so a removal never deletes a lock another contender
- * acquired after the dead holder's, including one whose holder reused the PID.
- * @returns Whether this call removed the dead holder's lock.
- */
-async function takeOverExitedLock(lockPath: string): Promise<boolean> {
-  const observed = await readLockRecord(lockPath)
-  // Legacy regular-file locks are deliberately not removed: no portable
-  // operation can conditionally unlink that pathname after verification.
-  if (observed === undefined || !observed.directory || !holderExited(observed.record)) return false
-  const claim = `${lockPath}.takeover-${createHash('sha256').update(observed.record).digest('hex').slice(0, 16)}`
-  try {
-    await writeFile(claim, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
-  } catch (error) {
-    // Another contender owns the claim for this record, or Windows still deletes the claim it released.
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'EEXIST' || code === 'EPERM') return false
+    if (windowsHandle !== undefined) await releaseWindowsLock(windowsHandle).catch(() => {})
+    await file.close().catch(() => {})
     throw error
   }
-  try {
-    const current = await readLockRecord(lockPath)
-    if (current === undefined || !current.directory
-      || current.recordPath !== observed.recordPath
-      || current.record !== observed.record
-      || !holderExited(observed.record)) return false
-    try {
-      await rm(observed.recordPath, { force: true })
-    } catch (error) {
-      // Windows can refuse the removal while other software briefly holds the file; the next attempt retries.
-      void error
-      return false
-    }
-    try {
-      await rmdir(lockPath)
-      return true
-    } catch (error) {
-      // A successor's owner entry makes its directory non-empty, so rmdir
-      // fails without touching that successor. An absent path is already free.
-      const code = (error as NodeJS.ErrnoException | null)?.code
-      return code === 'ENOENT'
-    }
-  } finally {
-    await rm(claim, { force: true }).catch((error: unknown) => {
-      // A claim left behind names a record that is no longer the lock, so it blocks no later takeover.
-      void error
-    })
-  }
+}
+
+/** Whether a kernel lock attempt found another live holder. */
+function isLockContention(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'EAGAIN' || code === 'EWOULDBLOCK' || code === 'EBUSY'
 }
 
 /**
@@ -217,15 +219,6 @@ async function takeOverExitedLock(lockPath: string): Promise<boolean> {
  */
 const LOCK_RETRY_INITIAL_MS = 20
 const LOCK_RETRY_MAX_MS = 200
-const LOCK_RELEASE_RETRY_LIMIT = 2
-const LOCK_OWNER_PREFIX = 'owner-'
-
-/** The unique owner entry created inside one lock directory. */
-interface LockOwner {
-  readonly record: string
-  readonly recordPath: string
-  readonly lockPath: string
-}
 
 /**
  * How long a contender waits when the caller states no limit — sized for the
@@ -238,44 +231,22 @@ interface LockOwner {
  */
 const DEFAULT_LOCK_WAIT_MS = 2_000
 
-/**
- * Release a held lock without leaving its pathname occupied after the
- * operation has settled. The owner entry has a unique name, and removing the
- * empty lock directory is atomic: a successor's owner entry makes `rmdir`
- * fail without removing the successor. A transient owner-entry unlink failure
- * is retried; after the bounded attempts release fails closed and leaves the
- * lock in place.
- */
-async function releaseLock(owner: LockOwner): Promise<void> {
+/** Release a held kernel lock by closing its OS handles; the lock path stays in place. */
+async function releaseLock(lock: HeldLock): Promise<void> {
   let lastError: Error | undefined
-  for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
+  if (lock.windowsHandle !== undefined) {
     try {
-      await rm(owner.recordPath, { force: true })
-      lastError = undefined
-      break
+      await releaseWindowsLock(lock.windowsHandle)
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
     }
   }
-  if (lastError !== undefined) throw lastError
-  await removeEmptyLockDirectory(owner.lockPath)
-}
-
-/** Remove only an empty lock directory; an occupied successor remains intact. */
-async function removeEmptyLockDirectory(lockPath: string): Promise<void> {
-  let lastError: Error | undefined
-  for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
-    try {
-      await rmdir(lockPath)
-      return
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException | null)?.code
-      if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST' || code === 'ENOTDIR') return
-      lastError = error instanceof Error ? error : new Error(String(error))
-    }
+  try {
+    await lock.file.close()
+  } catch (error) {
+    lastError ??= error instanceof Error ? error : new Error(String(error))
   }
   if (lastError !== undefined) throw lastError
-  throw new Error(`atomic-write: failed to remove lock directory ${lockPath}`)
 }
 
 /** Options for one {@link withFileLock} acquisition. */
@@ -293,26 +264,18 @@ export interface FileLockOptions {
 
 /**
  * Hold the cross-process writer lock for `filename` around one operation. The
- * lock is an atomically-created directory (`<filename>.lock`) with one random
- * owner entry containing the holder's PID; paired with the rename-based commit
- * of {@link writeFileAtomic}, readers stay lock-free and only writers contend.
- * `EEXIST` is contention directly; an `EPERM` is contention only when a fresh
- * `lstat` confirms the lock path exists, covering Windows exclusive-create
- * behavior. Windows retries one unconfirmed EPERM because the holder can
- * release before the probe; a repeated unconfirmed permission error is
- * rethrown. A contender removes a directory lock and retries at once when no
- * process with its PID exists (`ESRCH`), but deliberately leaves legacy
- * regular-file locks for an operator because no portable conditional unlink is
- * available for that protocol. Any other lock, including one whose holder
- * exists under another user (`EPERM`), whose record is incomplete, or whose
- * directory is ambiguous, is waited for. Contention backs off exponentially
- * and times out after the deadline. A holder whose PID a live process reused
- * keeps its lock until an operator removes it. Takeover proves only that the
- * recorded process exited: an operation that starts other writers must stop
- * them with it or leave its successor a way to find them. PIDs are compared on
- * the contender's host, so writers on other hosts or in other PID namespaces
- * sharing the file are unsupported and could both hold the lock. The parent
- * directory must exist.
+ * lock is a stable `<filename>.lock` file held by POSIX `flock(2)` or a named
+ * Windows semaphore; paired with the rename-based commit of
+ * {@link writeFileAtomic}, readers stay lock-free and only writers contend.
+ * `EAGAIN`, `EWOULDBLOCK`, and Windows `EBUSY` are contention. Contention backs
+ * off exponentially and times out after the deadline. The first creator writes
+ * a protocol marker while holding the kernel lock. An empty marker is accepted
+ * after the kernel lock is acquired so an interrupted creator can be recovered;
+ * any other marker is a legacy or unknown protocol and fails closed. The lock path is never
+ * removed or renamed: closing the held descriptor or semaphore releases the
+ * kernel lock, including after process death. Replacing the lock pathname is
+ * unsupported because POSIX locks belong to the opened inode; the next caller
+ * must use the stable path. The parent directory must exist.
  * @param filename - the file whose writers this lock serializes.
  * @param operation - the read-render-commit cycle to run while holding the lock.
  * @param options - acquisition options; omitted waits {@link DEFAULT_LOCK_WAIT_MS}.
@@ -324,32 +287,15 @@ export async function withFileLock<T>(
   options?: FileLockOptions,
 ): Promise<T> {
   const lockPath = `${filename}.lock`
-  const record = `${process.pid}\n`
-  let owner: LockOwner | undefined
+  let lock: HeldLock
   const deadline = Date.now() + (options?.waitMs ?? DEFAULT_LOCK_WAIT_MS)
   let delay = LOCK_RETRY_INITIAL_MS
-  let retriedUnconfirmedPermissionError = false
   for (;;) {
-    let created = false
     try {
-      await mkdir(lockPath, { mode: 0o700 })
-      created = true
-      const recordPath = join(lockPath, `${LOCK_OWNER_PREFIX}${randomBytes(16).toString('hex')}`)
-      await writeFile(recordPath, record, { mode: 0o600, flag: 'wx' })
-      owner = { record, recordPath, lockPath }
+      lock = await acquireLock(lockPath)
       break
     } catch (error) {
-      if (created) {
-        await rmdir(lockPath).catch((cleanupError: unknown) => { void cleanupError })
-        throw error
-      }
-      if (!await isLockContention(error, lockPath)) {
-        // Windows can release the competing lock between exclusive create and lstat.
-        if (process.platform !== 'win32'
-          || (error as NodeJS.ErrnoException | null)?.code !== 'EPERM'
-          || retriedUnconfirmedPermissionError) throw error
-        retriedUnconfirmedPermissionError = true
-      } else if (await takeOverExitedLock(lockPath)) continue
+      if (!isLockContention(error)) throw error
     }
     if (Date.now() >= deadline) {
       throw new Error(`atomic-write: timed out waiting for the writer lock at ${lockPath}`)
@@ -360,6 +306,6 @@ export async function withFileLock<T>(
   try {
     return await operation()
   } finally {
-    await releaseLock(owner)
+    await releaseLock(lock)
   }
 }
