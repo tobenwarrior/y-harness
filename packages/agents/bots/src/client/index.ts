@@ -11,6 +11,7 @@ export type {
   BotGroupListRequest,
   BotGroupListValue,
   BotGroupMemberView,
+  BotGroupMessageId,
   BotGroupMessageSenderView,
   BotGroupMessageView,
   BotGroupSendRequest,

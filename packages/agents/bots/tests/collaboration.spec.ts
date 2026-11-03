@@ -1,4 +1,4 @@
-import { createUserMessage, type UserMessage } from '@yharness/llm'
+import { createUserMessage, freezeMessage, MessageId, type UserMessage } from '@yharness/llm'
 import { SessionId, SessionSeq, type SessionEvent } from '@yharness/session'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -7,6 +7,7 @@ import {
   projectBotTranscript,
   type BotCollaborationHost,
 } from '../src/collaboration.ts'
+import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import { BotId, type BotView } from '../src/types.ts'
 
 function bot(id: string, sessionId: string, name: string): BotView {
@@ -20,8 +21,8 @@ function userEvent(message: ReturnType<typeof createUserMessage>, seq: number): 
   return { type: 'user/message', seq: SessionSeq(seq), time: seq, data: message, surfaceOp: 'append' }
 }
 
-function harness() {
-  const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+function harness(entries = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]) {
+  const bots = entries
   const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
   const followups = new Map<string, ReturnType<typeof vi.fn<(message: UserMessage) => void>>>()
   const host: BotCollaborationHost = {
@@ -42,6 +43,19 @@ function harness() {
   return { service, client: service.bind({ id: SessionId('bot-session-alpha') }), bots, events, followups }
 }
 
+function assistantEvent(text: string, seq: number): SessionEvent<'assistant/message'> {
+  return {
+    type: 'assistant/message', seq: SessionSeq(seq), time: seq,
+    data: {
+      turn: 1, step: seq,
+      message: freezeMessage({
+        id: MessageId(`assistant-${String(seq)}`), role: 'assistant',
+        content: [{ type: 'text', text }], source: { kind: 'model', provider: 'test', model: 'test' },
+      }), stream: [],
+    },
+  }
+}
+
 describe('Bot collaboration seam', () => {
   it('lists roster metadata and projects only bounded text', async () => {
     const h = harness()
@@ -59,6 +73,34 @@ describe('Bot collaboration seam', () => {
     expect(inspected.recent[0]?.text).toContain('Untrusted Bot transcript')
     expect(inspected.recent[0]?.text).toContain('hello')
     expect(inspected.recent[0]?.text).toContain('End untrusted Bot transcript')
+  })
+
+  it('does not leak group requests or their assistant replies through generic peer inspection', async () => {
+    const h = harness([
+      bot('bot-alpha', 'bot-session-alpha', 'Alpha'),
+      bot('bot-beta', 'bot-session-beta', 'Beta'),
+      bot('bot-gamma', 'bot-session-gamma', 'Gamma'),
+    ])
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Shared secret for Alpha and Beta.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-alpha'), messageId: BotGroupMessageId('bot-group-message-alpha') },
+    }), 1))
+    targetEvents.push(assistantEvent('Beta shared reply.', 2))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Gamma may see this private request.' }], source: { kind: 'user' },
+    }), 3))
+    targetEvents.push(assistantEvent('Beta private reply.', 4))
+
+    const gamma = await h.service.bind({ id: SessionId('bot-session-gamma') })
+    const inspected = await gamma.inspect(BotId('bot-beta'))
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Shared secret')
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta shared reply')
+    expect(inspected.recent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'user', text: expect.stringContaining('Gamma may see this private request.') }),
+      expect.objectContaining({ role: 'assistant', text: expect.stringContaining('Beta private reply.') }),
+    ]))
   })
 
   it('delivers to the target Session with durable sender identity and is idempotent', async () => {

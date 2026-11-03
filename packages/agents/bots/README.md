@@ -57,7 +57,7 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project stored rows without waking a cold Session. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions.
+The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project stored rows without waking a cold Session. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions. Scoped group tools derive retry identities from their durable tool call id, while the Client retains a pending message id after a lost or partial Remote result.
 
 | File | Role |
 |---|---|
@@ -118,12 +118,12 @@ The identity text stays prefix-stable until the Bot name or role description cha
 
 #### What the model sees
 
-The service derives the sending identity from the live Bot Agent and rechecks the durable roster for every operation. Inspection excludes reasoning and tool blocks. A delivered message is framed with the sender's current name and persisted in the recipient's existing Session as an `agent-message`, so it becomes ordinary user context on the recipient's next turn. Native Codex actions also persist a required `bot/dynamic-tool` lifecycle record with the exact model-visible result. When a native cursor is lost, the Codex bridge replays a bounded, explicitly disclosed excerpt of those records before the next request; a missing settlement remains an uncertain delivery and is never treated as proof that no message was sent.
+The service derives the sending identity from the live Bot Agent and rechecks the durable roster for every operation. Inspection excludes reasoning and tool blocks, and generic peer inspection removes group-origin turns and their assistant replies; use membership-scoped group inspection for that transcript. Group inspection frames every message as untrusted quoted data. A delivered message is framed with the sender's current name and persisted in the recipient's existing Session as an `agent-message`, so it becomes ordinary user context on the recipient's next turn. Native Codex actions also persist a required `bot/dynamic-tool` lifecycle record with the exact model-visible result. When a native cursor is lost, the Codex bridge replays a bounded, explicitly disclosed excerpt of those records before the next request; a missing settlement remains an uncertain delivery and is never treated as proof that no message was sent.
 
 ##### Native send retry contract
 
 ```markdown
-If a native Bot or group send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. A group result with `status: "partial"` is returned as an explicit `partial-delivery` failure and includes each recipient's outcome; retry it with the returned messageId. Group creation uses a stable group id for the same request and reports an uncertain outcome instead of guessing after a lost settlement. Messaging follows the Session approval policy.
+If a native Bot or group send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. A group result with `status: "partial"` is returned as an explicit `partial-delivery` failure and includes each recipient's outcome; a retry without the returned messageId is rejected as uncertain, while a retry with that id resumes only failed recipients. Scoped tools derive a stable group id or message id from the tool call id when the model omits one. Remote callers should provide a stable `id` or `messageId`; the Client does this and retains the same message id after a lost or partial response. Group creation reports an uncertain outcome instead of guessing after a lost settlement. Messaging follows the Session approval policy.
 ```
 
 #### Token effect

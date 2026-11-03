@@ -15,6 +15,7 @@ import type {
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupMessageId as BotGroupMessageIdType,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupView,
@@ -114,6 +115,8 @@ export class BotWorkspaceController {
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
+  private readonly pendingGroupMessages = new Map<string, { readonly text: string; readonly messageId: BotGroupMessageIdType }>()
+  private readonly pendingGroupCreations = new Map<string, BotGroupIdType>()
   private disposed = false
   private selectionGeneration = 0
 
@@ -133,6 +136,8 @@ export class BotWorkspaceController {
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.avatarLoads.clear()
+    this.pendingGroupMessages.clear()
+    this.pendingGroupCreations.clear()
   }
 
   /** Build the narrow data-and-callback face consumed by the panel.
@@ -385,11 +390,16 @@ export class BotWorkspaceController {
       throw new Error(message)
     }
     const name = creation.name.trim()
+    const botIds = creation.botIds.map(id => id.trim())
+    const pendingKey = `${name}\u0000${botIds.join('\u0000')}`
+    const pendingId = this.pendingGroupCreations.get(pendingKey)
+    const id = pendingId ?? brandString<BotGroupIdType>(`bot-group-${randomUUID()}`)
     const request: BotGroupCreateRequest = {
-      id: brandString<BotGroupIdType>(`bot-group-${randomUUID()}`),
+      id,
       name,
-      botIds: creation.botIds.map(id => brandString<BotIdType>(id)),
+      botIds: botIds.map(id => brandString<BotIdType>(id)),
     }
+    this.pendingGroupCreations.set(pendingKey, id)
     let result: RemoteResult<BotGroupCreateValue>
     try {
       result = await createGroup(request)
@@ -403,6 +413,7 @@ export class BotWorkspaceController {
       this.setGroupError(result.error.message)
       throw new Error(result.error.message)
     }
+    this.pendingGroupCreations.delete(pendingKey)
     const created = groupSummary(result.value.group)
     const current = this.source.getSnapshot()
     const groups = current.groups.some(group => group.id === created.id)
@@ -434,9 +445,14 @@ export class BotWorkspaceController {
       this.setGroupError(message)
       throw new Error(message)
     }
+    const normalizedText = text.trim()
+    const pendingKey = `${current.selectedGroupId}\u0000${normalizedText}`
+    const pending = this.pendingGroupMessages.get(pendingKey)
+    const messageId = pending?.messageId ?? brandString<BotGroupMessageIdType>(`bot-group-message-${randomUUID()}`)
+    this.pendingGroupMessages.set(pendingKey, { text: normalizedText, messageId })
     let result: RemoteResult<BotGroupSendValue>
     try {
-      result = await sendGroupMessage({ groupId: brandString<BotGroupIdType>(current.selectedGroupId), text: text.trim() })
+      result = await sendGroupMessage({ groupId: brandString<BotGroupIdType>(current.selectedGroupId), text: normalizedText, messageId })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       this.setGroupError(message)
@@ -452,6 +468,7 @@ export class BotWorkspaceController {
       this.setGroupError(message)
       throw new Error(message)
     }
+    this.pendingGroupMessages.delete(pendingKey)
     await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
   }
 

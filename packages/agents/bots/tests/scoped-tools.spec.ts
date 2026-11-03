@@ -121,6 +121,13 @@ describe('scoped Bot collaboration tools', () => {
       const denied = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' })
       expect(denied.isError).toBe(true)
       expect(h.groupTools.send).not.toHaveBeenCalled()
+      h.ctx.on('tools/pre-execute', () => Promise.resolve({ kind: 'allow' as const }), { prepend: true })
+      const created = await execute(h.ctx, h.agent, 'create_bot_group', { name: 'Room', botIds: ['bot-beta'] })
+      expect(created.isError).toBe(false)
+      expect(vi.mocked(h.groupTools.create).mock.calls[0]?.[0].id).toMatch(/^bot-group-tool-/)
+      const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' })
+      expect(sent.isError).toBe(false)
+      expect(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-tool-/)
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

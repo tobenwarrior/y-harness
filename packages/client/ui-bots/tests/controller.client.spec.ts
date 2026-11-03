@@ -399,8 +399,50 @@ describe('BotWorkspaceController', () => {
     expect(remote.inspectGroup).toHaveBeenCalledWith({ groupId: group.id })
 
     await controller.face().sendGroupMessage('Add owners.')
-    expect(remote.sendGroupMessage).toHaveBeenCalledWith({ groupId: group.id, text: 'Add owners.' })
+    expect(remote.sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ groupId: group.id, text: 'Add owners.' }))
+    expect(remote.sendGroupMessage.mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-/)
     expect(retain).toHaveBeenCalledOnce()
+  })
+
+  it('reuses one remote group id after a lost create response', async () => {
+    const first = bot('bot-first-create-retry', 'session-first-create-retry')
+    const second = bot('bot-second-create-retry', 'session-second-create-retry')
+    const group = groupView('bot-group-create-retry', 'Retry room', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.createGroup = vi.fn()
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockResolvedValueOnce({ ok: true as const, value: { group } })
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+
+    await expect(controller.face().createGroup({ name: 'Retry room', botIds: [first.id, second.id].map(String) }))
+      .rejects.toThrow('connection closed after commit')
+    await expect(controller.face().createGroup({ name: 'Retry room', botIds: [first.id, second.id].map(String) }))
+      .resolves.toBeUndefined()
+    expect(remote.createGroup).toHaveBeenCalledTimes(2)
+    expect(remote.createGroup.mock.calls[1]?.[0].id).toBe(remote.createGroup.mock.calls[0]?.[0].id)
+  })
+
+  it('reuses one remote group message id after a lost send response', async () => {
+    const first = bot('bot-first-retry', 'session-first-retry')
+    const second = bot('bot-second-retry', 'session-second-retry')
+    const group = groupView('bot-group-retry', 'Retry room', [first, second])
+    const detail: BotGroupInspectValue = { group, messages: [] }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
+    remote.sendGroupMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString('bot-group-message-retry'), status: 'accepted' as const, deliveries: [] } })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await expect(controller.face().sendGroupMessage('Retry this.')).rejects.toThrow('connection closed after commit')
+    await expect(controller.face().sendGroupMessage('Retry this.')).resolves.toBeUndefined()
+    expect(remote.sendGroupMessage).toHaveBeenCalledTimes(2)
+    expect(remote.sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(remote.sendGroupMessage.mock.calls[0]?.[0].messageId)
   })
 
   it('keeps a group transcript visible when delivery is partial and exposes a retryable error', async () => {
@@ -421,8 +463,11 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
 
     await expect(controller.face().sendGroupMessage('Try everyone.')).rejects.toThrow('Some Bots could not receive this message.')
+    await expect(controller.face().sendGroupMessage('Try everyone.')).rejects.toThrow('Some Bots could not receive this message.')
     expect(controller.source.getSnapshot().selectedGroup?.id).toBe(String(group.id))
     expect(controller.source.getSnapshot().groupError).toBe('Some Bots could not receive this message.')
+    expect(remote.sendGroupMessage).toHaveBeenCalledTimes(2)
+    expect(remote.sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(remote.sendGroupMessage.mock.calls[0]?.[0].messageId)
   })
 
   it('re-reads a selected group when a change arrives during an in-flight refresh', async () => {
