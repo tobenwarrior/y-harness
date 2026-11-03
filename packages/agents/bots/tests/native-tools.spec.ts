@@ -5,6 +5,8 @@ import {
   type BotCollaborationClient,
   type BotDynamicToolEvent,
 } from '../src/collaboration.ts'
+import { BotMemoryId } from '../src/memory.ts'
+import type { BotMemoryClient } from '../src/memory.ts'
 import { BotId } from '../src/types.ts'
 import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
 
@@ -18,6 +20,13 @@ function client(): BotCollaborationClient {
       sender: { id: BotId('bot-alpha'), name: 'Alpha', availability: 'idle', state: 'active' },
       target: { id: request.targetBotId, name: 'Beta', availability: 'idle', state: 'active' },
     })),
+    memory: {
+      list: vi.fn<BotMemoryClient['list']>(async () => [{ id: BotMemoryId('memory-one'), text: 'Use dark mode.', createdAt: 1 }]),
+      remember: vi.fn<BotMemoryClient['remember']>(async request => ({
+        id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 2,
+      })),
+      forget: vi.fn<BotMemoryClient['forget']>(async () => {}),
+    },
   }
 }
 
@@ -45,6 +54,106 @@ describe('native Bot actions', () => {
     expect(manage).toHaveBeenCalledOnce()
     await create.execute({ name: 'Other' }, context({ requestApproval: async () => false }))
     expect(manage).toHaveBeenCalledOnce()
+  })
+
+  it('reads, remembers, and forgets durable memory through native actions', async () => {
+    const bound = client()
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const list = tools.find(tool => tool.name === 'list_bot_memory')
+    const remember = tools.find(tool => tool.name === 'remember_bot_memory')
+    const forget = tools.find(tool => tool.name === 'forget_bot_memory')
+    if (list === undefined || remember === undefined || forget === undefined) throw new Error('memory tools missing')
+
+    const listed = await list.execute({}, context())
+    expect(listed.success).toBe(true)
+    expect(listed.contentItems[0]?.text).not.toContain('Use dark mode.')
+    const remembered = await remember.execute({ text: 'Keep reviews concise.', memoryId: 'memory-review' }, context())
+    expect(remembered.success).toBe(true)
+    expect(remembered.contentItems[0]?.text).not.toContain('Keep reviews concise.')
+    const rememberedRequest = vi.mocked(bound.memory!.remember).mock.calls[0]?.[0]
+    expect(rememberedRequest).toMatchObject({ text: 'Keep reviews concise.', memoryId: BotMemoryId('memory-review') })
+    expect(rememberedRequest?.signal).toBeInstanceOf(AbortSignal)
+    await expect(forget.execute({ memoryId: 'memory-review' }, context())).resolves.toMatchObject({ success: true })
+    const forgottenRequest = vi.mocked(bound.memory!.forget).mock.calls[0]?.[0]
+    expect(forgottenRequest).toMatchObject({ memoryId: BotMemoryId('memory-review') })
+    expect(forgottenRequest?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('blocks a retry after an unsettled memory write unless it reuses its id', async () => {
+    const bound = client()
+    const sessionId = SessionId('bot-session-alpha')
+    const replayed: readonly BotDynamicToolEvent[] = [{
+      phase: 'started', name: 'remember_bot_memory', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+      arguments: { text: 'Keep reviews concise.', memoryId: 'memory-review' },
+    }]
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => replayed })
+    const remember = (await provider.resolve({ sessionId })).find(tool => tool.name === 'remember_bot_memory')!
+
+    const uncertain = await remember.execute({ text: 'Different text.', memoryId: 'memory-review' }, context())
+    expect(uncertain.success).toBe(false)
+    expect(uncertain.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(bound.memory?.remember).not.toHaveBeenCalled()
+
+    const retried = await remember.execute({ text: 'Keep reviews concise.', memoryId: 'memory-review' }, context())
+    expect(retried.success).toBe(true)
+    const retriedRequest = vi.mocked(bound.memory!.remember).mock.calls[0]?.[0]
+    expect(retriedRequest).toMatchObject({ text: 'Keep reviews concise.', memoryId: BotMemoryId('memory-review') })
+    expect(retriedRequest?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('reports an unsettled forget as uncertain until the same id is retried', async () => {
+    const bound = client()
+    const sessionId = SessionId('bot-session-alpha')
+    const replayed: readonly BotDynamicToolEvent[] = [{
+      phase: 'started', name: 'forget_bot_memory', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
+      arguments: { memoryId: 'memory-review' },
+    }]
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => replayed })
+    const forget = (await provider.resolve({ sessionId })).find(tool => tool.name === 'forget_bot_memory')!
+
+    const uncertain = await forget.execute({ memoryId: 'memory-other' }, context())
+    expect(uncertain.success).toBe(false)
+    expect(uncertain.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(bound.memory?.forget).not.toHaveBeenCalled()
+
+    const retried = await forget.execute({ memoryId: 'memory-review' }, context())
+    expect(retried.success).toBe(true)
+    const retriedRequest = vi.mocked(bound.memory!.forget).mock.calls[0]?.[0]
+    expect(retriedRequest).toMatchObject({ memoryId: BotMemoryId('memory-review') })
+    expect(retriedRequest?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('recovers an implicit memory id when a retry receives a new native call identity', async () => {
+    const bound = client()
+    const sessionId = SessionId('bot-session-alpha')
+    let replayed: readonly BotDynamicToolEvent[] = []
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => replayed })
+    const remember = (await provider.resolve({ sessionId })).find(tool => tool.name === 'remember_bot_memory')!
+    await remember.execute({ text: 'Keep reviews concise.' }, context({ callId: 'call-1' }))
+    const firstId = vi.mocked(bound.memory!.remember).mock.calls[0]?.[0].memoryId
+    if (firstId === undefined) throw new Error('expected implicit memory id')
+    replayed = [{
+      phase: 'started', name: 'remember_bot_memory', callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+      arguments: { text: 'Keep reviews concise.' },
+    }, {
+      phase: 'started', name: 'remember_bot_memory', callId: 'call-2', threadId: 'thread-2', turnId: 'turn-2', sessionId,
+      arguments: { text: 'Keep reviews concise.' },
+    }]
+    await remember.execute({ text: 'Keep reviews concise.' }, context({ callId: 'call-2', threadId: 'thread-2', turnId: 'turn-2' }))
+    expect(vi.mocked(bound.memory!.remember).mock.calls[1]?.[0].memoryId).toBe(firstId)
+  })
+
+  it('passes native cancellation into memory operations', async () => {
+    const bound = client()
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
+    const remember = (await provider.resolve({ sessionId: SessionId('bot-session-alpha') })).find(tool => tool.name === 'remember_bot_memory')!
+    const controller = new AbortController()
+    controller.abort()
+    const result = await remember.execute({ text: 'Do not save.' }, context({ signal: controller.signal }))
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('cancelled')
+    expect(bound.memory?.remember).not.toHaveBeenCalled()
   })
   it('does not create another Bot when an earlier creation has an uncertain outcome', async () => {
     const manage = vi.fn(async () => ({ id: 'bot-created' }))
@@ -77,7 +186,11 @@ describe('native Bot actions', () => {
       bind: vi.fn(async () => bound), persist: async (event) => { persisted.push(event) }, replay: async () => [],
     })
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
-    expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
+    expect(tools.map(tool => tool.name)).toEqual([
+      'list_bots', 'inspect_bot', 'send_bot_message',
+      'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+      'create_bot', 'edit_bot_profile',
+    ])
     const send = tools.find(tool => tool.name === 'send_bot_message')
     if (send === undefined) throw new Error('send_bot_message was not registered')
     await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context())).resolves.toMatchObject({ success: true })

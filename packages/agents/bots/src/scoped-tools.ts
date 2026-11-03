@@ -1,11 +1,13 @@
 /** Agent-scoped model tools for inspecting and explicitly messaging named Bots. */
 
+import { createHash } from 'node:crypto'
 import type { Context } from '@yharness/cordis'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import {
   BotMessageId,
   type BotCollaborationClient,
 } from './collaboration.ts'
+import { BotMemoryId, normalizeBotMemoryText } from './memory.ts'
 import { defineTool } from '@yharness/tools'
 import type { InferValue, ValueSchemaSpec } from '@yharness/tools'
 import type { BotNativeToolHost } from './native-tools.ts'
@@ -52,6 +54,24 @@ const INSPECTION_RESULT_SCHEMA = {
 } as const
 
 const LIST_RESULT_SCHEMA = { type: 'array', items: BOT_ENTRY_SCHEMA } as const
+
+const MEMORY_RECEIPT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    createdAt: { type: 'number', required: true },
+  },
+} as const
+
+const MEMORY_LIST_RESULT_SCHEMA = { type: 'array', items: MEMORY_RECEIPT_SCHEMA } as const
+
+/** Derive a retry identity that survives a new model call id for the same memory text. */
+function implicitMemoryId(senderId: string, text: string): BotMemoryId {
+  const normalizedText = normalizeBotMemoryText(text)
+  const digest = createHash('sha256').update('remember-bot-memory\0').update(senderId).update('\0').update(normalizedText).digest('hex')
+  return BotMemoryId(`memory-${digest}`)
+}
 
 /** Shared JSON renderer for compact model-facing Bot results. */
 function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
@@ -129,6 +149,55 @@ export function installBotCollaborationTools(
       },
     })))
 
+    register(scope.tools.register(defineTool({
+      name: 'list_bot_memory',
+      description: 'List this Bot’s durable memory ids and timestamps. Memory text is not echoed by the tool result.',
+      parameters: {},
+      output: jsonOutput(MEMORY_LIST_RESULT_SCHEMA),
+      async execute(_args, exec) {
+        const memory = (await bind()).memory
+        if (memory === undefined) throw new Error('Bot memory is unavailable.')
+        return (await memory.list(exec.signal)).map(({ id, createdAt }) => ({ id, createdAt }))
+      },
+    })))
+
+    register(scope.tools.register(defineTool({
+      name: 'remember_bot_memory',
+      description: 'Save one durable memory for this Bot when the user asks you to remember it. Future prompts use it as untrusted reference data; the result returns only its id and timestamp.',
+      parameters: {
+        text: { type: 'string', required: true, description: 'The concise fact or preference to remember.' },
+        memoryId: { type: 'string', description: 'Optional retry identity; reuse it for recovery or choose a distinct id to retain identical text separately. Omitted calls use stable sender-and-text recovery.' },
+      },
+      output: jsonOutput(MEMORY_RECEIPT_SCHEMA),
+      async execute(args, exec) {
+        const client = await bind()
+        const memory = client.memory
+        if (memory === undefined) throw new Error('Bot memory is unavailable.')
+        const memoryId = args.memoryId === undefined
+          ? implicitMemoryId(String(client.sender.id), args.text)
+          : BotMemoryId(args.memoryId)
+        const result = await memory.remember({ text: args.text, memoryId, signal: exec.signal })
+        return { id: result.id, createdAt: result.createdAt }
+      },
+    })))
+
+    register(scope.tools.register(defineTool({
+      name: 'forget_bot_memory',
+      description: 'Logically forget one durable memory from this Bot. It is removed from future memory prompts; prior logs or requests are not erased.',
+      parameters: {
+        memoryId: { type: 'string', required: true, description: 'Exact memory id returned by list_bot_memory.' },
+      },
+      output: jsonOutput({ type: 'object', additionalProperties: false, properties: {
+        forgotten: { type: 'boolean', required: true },
+      } } as const),
+      async execute(args, exec) {
+        const memory = (await bind()).memory
+        if (memory === undefined) throw new Error('Bot memory is unavailable.')
+        await memory.forget({ memoryId: BotMemoryId(args.memoryId), signal: exec.signal })
+        return { forgotten: true }
+      },
+    })))
+
     for (const action of manage === undefined ? [] : ['create', 'edit'] as const) {
       register(scope.tools.register(defineTool({
         name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
@@ -162,7 +231,7 @@ export function installBotCollaborationTools(
         },
       })))
     }
-    register(scope.on('tools/pre-execute', (exec, next) => ['send_bot_message', 'create_bot', 'edit_bot_profile'].includes(exec.name)
+    register(scope.on('tools/pre-execute', (exec, next) => ['send_bot_message', 'create_bot', 'edit_bot_profile', 'remember_bot_memory', 'forget_bot_memory'].includes(exec.name)
       ? Promise.resolve({ kind: 'ask', reason: 'This action changes a Bot or its durable Session.' as const })
       : next()))
   } catch (error: unknown) {

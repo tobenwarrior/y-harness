@@ -3,13 +3,15 @@
 import type { Context } from '@yharness/cordis'
 import type { AgentHandle } from '@yharness/agent'
 import type {} from '@yharness/agent-default-model'
+import type { SessionEvent } from '@yharness/session'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
+import { BotMemoryId } from '../../../../agents/bots/src/memory.ts'
 import { BotId } from '../../../../agents/bots/src/types.ts'
 import { botDomain } from '../../../../agents/bots/src/storage.ts'
 
 export const name = 'snapshot-bot-prereqs'
-export const inject = ['agentDefaultModel', 'agents', 'storageDomain']
+export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain']
 
 /**
  * Keep this fixture focused on Bot-owned Session setup; the full HTTP Session
@@ -58,11 +60,26 @@ export async function apply(ctx: Context): Promise<void> {
   ]
   for (const record of records) await bots.put(record.id, record)
   await domain.close()
+  const senderSession = ctx.sessions.get(SessionId('bot-session-sender'))
+  if (senderSession === undefined) throw new Error('snapshot Bot Session "bot-session-sender" is not live')
+  senderSession.append('bot/memory', {
+    botId: BotId('bot-sender'),
+    memoryId: BotMemoryId('memory-snapshot'),
+    operation: 'remember',
+    text: 'The release checklist must include rollback steps.',
+  })
+  const sessionEvents = new Map<string, readonly SessionEvent[]>()
+  for (const handle of handles) {
+    const session = ctx.sessions.get(handle.agent.id)
+    if (session === undefined) throw new Error(`snapshot Bot Session "${handle.agent.id}" is not live`)
+    sessionEvents.set(String(handle.agent.id), session.snapshotEvents())
+  }
   ctx.provide('snapshotBotAgents', handles as never)
   ctx.provide('sessionController', {
     create: async (request: { readonly sessionId?: string }) => {
       if (request.sessionId === undefined) throw new Error('snapshot Bot Session ids must be explicit')
       return { sessionId: request.sessionId }
     },
+    inspect: async (sessionId: SessionId) => ({ events: sessionEvents.get(String(sessionId)) ?? [] }),
   } as never)
 }

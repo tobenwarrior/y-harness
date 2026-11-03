@@ -6,6 +6,7 @@ import type { AgentMessageSource } from '@yharness/subagent'
 import { freezeMessage, MessageId } from '@yharness/llm'
 import type { ContentBlock, MessageSourceMap, UserMessage } from '@yharness/llm'
 import type { SessionEvent, SessionId } from '@yharness/session'
+import type { BotMemoryClient } from './memory.ts'
 import type { BotId, BotView } from './types.ts'
 
 /** Stable identity for one durable Bot-to-Bot delivery. */
@@ -126,6 +127,8 @@ export interface SendBotMessageResult {
 export interface BotCollaborationClient {
   /** Sender identity captured from the live Agent, never from model arguments. */
   readonly sender: BotCollaborationRosterEntry
+  /** Durable memory operations for the sender Bot, when the Host exposes them. */
+  readonly memory?: BotMemoryClient
   /** List peer Bots visible to this Bot. */
   readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>
   /** Inspect one peer Bot's bounded visible transcript. */

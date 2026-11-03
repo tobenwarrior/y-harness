@@ -2,14 +2,17 @@ import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import { ToolCallId } from '@yharness/llm'
 import { createScope } from '@yharness/scope'
-import { SessionId } from '@yharness/session'
+import { Session, SessionId } from '@yharness/session'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
+import ApprovalService from '@yharness/user-approval'
 import { describe, expect, it, vi } from 'vitest'
 import {
   BotMessageId,
   type BotCollaborationClient,
 } from '../src/collaboration.ts'
+import { BotMemoryId } from '../src/memory.ts'
+import type { BotMemoryClient } from '../src/memory.ts'
 import { BotId } from '../src/types.ts'
 import { installBotCollaborationTools } from '../src/scoped-tools.ts'
 
@@ -25,14 +28,27 @@ function client(): BotCollaborationClient {
       sender: { id: BotId('bot-alpha'), name: 'Alpha', availability: 'idle', state: 'active' },
       target: { id: request.targetBotId, name: 'Beta', availability: 'idle', state: 'active' },
     })),
+    memory: {
+      list: vi.fn<BotMemoryClient['list']>(async () => []),
+      remember: vi.fn<BotMemoryClient['remember']>(async request => ({
+        id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 1,
+      })),
+      forget: vi.fn<BotMemoryClient['forget']>(async () => {}),
+    },
   }
 }
 
-async function harness(withManagement = false) {
+async function harness(withManagement = false, withApproval = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
-  const agent = { id: SessionId('bot-session-alpha') } as Agent
+  if (withApproval) {
+    await ctx.plugin(ApprovalService, { policy: 'ask' })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+  }
+  const session = Session.create(SessionId('bot-session-alpha'))
+  session.append('turn/start', { turn: 1 })
+  const agent = { id: session.id, session } as Agent
   let scope!: ReturnType<typeof createScope>
   await ctx.plugin(Object.assign((inner: Context) => {
     scope = createScope(inner, agent)
@@ -44,9 +60,9 @@ async function harness(withManagement = false) {
   return { ctx, agent, bound, dispose, manage }
 }
 
-async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown) {
+async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
   return ctx.tools.execute({
-    callId: ToolCallId(`bot-call-${name}`), name, arguments: arguments_,
+    callId: ToolCallId(callId), name, arguments: arguments_,
     signal: new AbortController().signal, agent,
   })
 }
@@ -72,6 +88,7 @@ describe('scoped Bot collaboration tools', () => {
     try {
       expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'send_bot_message',
+        'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       ])
       await expect(execute(h.ctx, h.agent, 'list_bots', {})).resolves.toMatchObject({ isError: false })
       expect(JSON.parse(text(await execute(h.ctx, h.agent, 'list_bots', {})))).toEqual([
@@ -79,7 +96,8 @@ describe('scoped Bot collaboration tools', () => {
       ])
       const inspected = await execute(h.ctx, h.agent, 'inspect_bot', { botId: 'bot-beta' })
       expect(JSON.parse(text(inspected))).toMatchObject({ bot: { id: 'bot-beta', name: 'Beta' }, recent: [] })
-
+      const memories = await execute(h.ctx, h.agent, 'list_bot_memory', {})
+      expect(JSON.parse(text(memories))).toEqual([])
       const denied = await execute(h.ctx, h.agent, 'send_bot_message', {
         targetBotId: 'bot-beta', text: 'hello', messageId: 'retry-1',
       })
@@ -96,5 +114,24 @@ describe('scoped Bot collaboration tools', () => {
     h.dispose()
     expect(h.ctx.tools.schemas(h.agent)).toEqual([])
     await h.ctx.fiber.dispose()
+  })
+
+  it('reuses one stable memory id when a scoped remember retry follows an uncertain result', async () => {
+    const h = await harness(false, true)
+    try {
+      const remember = vi.mocked(h.bound.memory!.remember)
+      remember.mockImplementationOnce(async () => { throw new Error('flush result was uncertain') })
+      const first = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' }, 'remember-call-1')
+      expect(first.isError).toBe(true)
+      const second = await execute(h.ctx, h.agent, 'remember_bot_memory', { text: 'Keep the handoff short.' }, 'remember-call-2')
+      expect(second.isError).toBe(false)
+      const requests = remember.mock.calls.map(call => call[0])
+      expect(requests).toHaveLength(2)
+      expect(requests[0]?.memoryId).toBeDefined()
+      expect(requests[1]?.memoryId).toBe(requests[0]?.memoryId)
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
   })
 })

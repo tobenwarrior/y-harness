@@ -28,6 +28,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:assistant/attempt` | event | `15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4` | [`{ type: "assistant/attempt" }`](#persistence-type-sha256-15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4) |
 | `event:assistant/message` | event | `1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625` | [`{ type: "assistant/message" }`](#persistence-type-sha256-1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625) |
 | `event:bot/dynamic-tool` | event | `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213` | [`{ type: "bot/dynamic-tool" }`](#persistence-type-sha256-0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213) |
+| `event:bot/memory` | event | `8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d` | [`{ type: "bot/memory" }`](#persistence-type-sha256-8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d) |
 | `event:claude-code/root-protocol` | event | `77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903` | [`{ type: "claude-code/root-protocol" }`](#persistence-type-sha256-77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903) |
 | `event:coding-session/import-initialization` | event | `3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406` | [`{ type: "coding-session/import-initialization" }`](#persistence-type-sha256-3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406) |
 | `event:command/done` | event | `15196447222782e773eb943c92b18316ce96b9af0f0cfddb6e57ba8274ecc5ff` | [`{ type: "command/done" }`](#persistence-type-sha256-15196447222782e773eb943c92b18316ce96b9af0f0cfddb6e57ba8274ecc5ff) |
@@ -335,7 +336,18 @@ Source: [`packages/core/session/src/types.ts:341`](../packages/core/session/src/
 'bot/dynamic-tool': BotDynamicToolEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:80`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:81`](../packages/agents/bots/src/collaboration.ts)
+
+<a id="botmemory--log-only"></a>
+
+#### `bot/memory` — log-only
+
+```ts persistence-catalog
+/** Durable Bot memory mutation; the current memory prompt is reconstructed from these events. */
+'bot/memory': BotMemoryEvent
+```
+
+Source: [`packages/agents/bots/src/memory.ts:88`](../packages/agents/bots/src/memory.ts)
 
 ### `claude-code/*`
 
@@ -1642,6 +1654,14 @@ SHA-256: `6451ea012cc76f8f63fa8bcf4aec1dda85649e99e51498b7d5037bb84a05e58a`
 
 `"bot/dynamic-tool"`
 
+<a id="persistence-type-sha256-6947ede25ba021fa7e2cd9e6b240a4bc3bb86cd238c4231495dcbd335daa96f6"></a>
+
+### `"bot/memory"`
+
+SHA-256: `6947ede25ba021fa7e2cd9e6b240a4bc3bb86cd238c4231495dcbd335daa96f6`
+
+`"bot/memory"`
+
 <a id="persistence-type-sha256-d4e4d575abeb4b72d616dc65c17ac0eaa943cc135609395044c38d5afcb10e31"></a>
 
 ### `"canceled"`
@@ -2057,6 +2077,14 @@ SHA-256: `e51f28b6c668c696b89e99f9cbb4d9e42de5254401c424894e20896cf2b6aec8`
 SHA-256: `bd499eac047efe091a4df7382eadd06d25cf0cb31fee3981e8b24d85762841cd`
 
 `"finish"`
+
+<a id="persistence-type-sha256-5c175aa73b4a875860e34e7f8660bc6aa82344e549d9aa5d125f6ecfafb713e3"></a>
+
+### `"forget"`
+
+SHA-256: `5c175aa73b4a875860e34e7f8660bc6aa82344e549d9aa5d125f6ecfafb713e3`
+
+`"forget"`
 
 <a id="persistence-type-sha256-2da725e554cd89301d829ed9dc45a572c3cd1b93b5e91d0d71f007976d8a0863"></a>
 
@@ -2591,6 +2619,14 @@ SHA-256: `16d0507cb94b4cfc84a87446b1ba7652d6ec1d65ee1684789e747e30d542800e`
 SHA-256: `6e17987190a6d0e65daf4c4d609fcacbf59dd932df3cd0cac8b2101df3656480`
 
 `"relevance"`
+
+<a id="persistence-type-sha256-36e74534fc5329ec9abb6093c378b4631911335dfbbcdcb3d3c6dec546e140c4"></a>
+
+### `"remember"`
+
+SHA-256: `36e74534fc5329ec9abb6093c378b4631911335dfbbcdcb3d3c6dec546e140c4`
+
+`"remember"`
 
 <a id="persistence-type-sha256-7382c4fc95fe8c5db65ca4d9da572b115d0dbb818b7f32c22ab040318ffbb4bc"></a>
 
@@ -3565,7 +3601,7 @@ Array of [`AssistantStreamRecord`](#persistence-type-sha256-33341aac09312300de5a
 
 SHA-256: `157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:66`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:67`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3588,12 +3624,29 @@ Sources: [`packages/agents/bots/src/collaboration.ts:66`](../packages/agents/bot
 
 SHA-256: `92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:56`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:57`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
 | `contentItems` | required | [`{ type: "inputText" }[]`](#persistence-type-sha256-800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc) |
 | `success` | required | `boolean` |
+
+<a id="persistence-type-sha256-bd97b01de25b421a53444925afcb72f756cb9717d95396e1462b590f088fe44f"></a>
+
+<a id="persistence-type-botmemoryevent"></a>
+
+<a id="persistence-type-packagesagentsbotssrcmemorytsbotmemoryevent"></a>
+
+### `BotMemoryEvent`
+
+SHA-256: `bd97b01de25b421a53444925afcb72f756cb9717d95396e1462b590f088fe44f`
+
+Sources: [`packages/agents/bots/src/memory.ts:72`](../packages/agents/bots/src/memory.ts)
+
+One of:
+
+- [`{ botId, memoryId, operation, text }`](#persistence-type-sha256-7d8cff4ff7e6e9e7ff3a4ab4c3aab850c12767a1d8849edf42cdef8bd2e2c91b)
+- [`{ botId, memoryId, operation }`](#persistence-type-sha256-425db88bfbb792240120b51d81b9c7f1236e6e2c0903c41cb107da41efc4723d)
 
 <a id="persistence-type-sha256-819a42a5c0a87b5a0d11b7dc7d23419bfbb0710f4a036fac6501b99f6ef46a09"></a>
 
@@ -5989,6 +6042,10 @@ Array of `number`.
 
 <a id="persistence-type-attachmentid"></a>
 
+<a id="persistence-type-botid"></a>
+
+<a id="persistence-type-botmemoryid"></a>
+
 <a id="persistence-type-codingsessionlinkid"></a>
 
 <a id="persistence-type-codingsessionmirrorid"></a>
@@ -6006,6 +6063,10 @@ Array of `number`.
 <a id="persistence-type-messagefeedbackversion"></a>
 
 <a id="persistence-type-messageid"></a>
+
+<a id="persistence-type-packagesagentsbotssrcmemorytsbotmemoryid"></a>
+
+<a id="persistence-type-packagesagentsbotssrctypestsbotid"></a>
 
 <a id="persistence-type-packagesapisession-controllersrctypestssessionrequestid"></a>
 
@@ -6139,7 +6200,7 @@ Array of `number`.
 
 SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
 
-Sources: [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+Sources: [`packages/agents/bots/src/memory.ts:8`](../packages/agents/bots/src/memory.ts) · [`packages/agents/bots/src/types.ts:8`](../packages/agents/bots/src/types.ts) · [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
 
 `string`
 
@@ -6503,6 +6564,35 @@ Sources: [`packages/core/session/src/types.ts:361`](../packages/core/session/src
 | `name` | required | `string` |
 | `step` | required | `number` |
 | `turn` | required | `number` |
+
+<a id="persistence-type-sha256-425db88bfbb792240120b51d81b9c7f1236e6e2c0903c41cb107da41efc4723d"></a>
+
+### `{ botId, memoryId, operation }`
+
+SHA-256: `425db88bfbb792240120b51d81b9c7f1236e6e2c0903c41cb107da41efc4723d`
+
+Sources: [`packages/agents/bots/src/memory.ts:79`](../packages/agents/bots/src/memory.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `botId` | required | `string` |
+| `memoryId` | required | `string` |
+| `operation` | required | `"forget"` |
+
+<a id="persistence-type-sha256-7d8cff4ff7e6e9e7ff3a4ab4c3aab850c12767a1d8849edf42cdef8bd2e2c91b"></a>
+
+### `{ botId, memoryId, operation, text }`
+
+SHA-256: `7d8cff4ff7e6e9e7ff3a4ab4c3aab850c12767a1d8849edf42cdef8bd2e2c91b`
+
+Sources: [`packages/agents/bots/src/memory.ts:73`](../packages/agents/bots/src/memory.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `botId` | required | `string` |
+| `memoryId` | required | `string` |
+| `operation` | required | `"remember"` |
+| `text` | required | `string` |
 
 <a id="persistence-type-sha256-1528539c63db8b23506f0209a99ce77d8ad138adfbfcee3d4769b7382d93756c"></a>
 
@@ -8970,6 +9060,22 @@ SHA-256: `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213`
 | `time` | required | `number` |
 | `type` | required | `"bot/dynamic-tool"` |
 
+<a id="persistence-type-sha256-8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d"></a>
+
+<a id="persistence-type-eventbotmemory"></a>
+
+### `{ type: "bot/memory" }`
+
+SHA-256: `8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`BotMemoryEvent`](#persistence-type-sha256-bd97b01de25b421a53444925afcb72f756cb9717d95396e1462b590f088fe44f) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"bot/memory"` |
+
 <a id="persistence-type-sha256-487b65c37bfedb8b72088c4107a0a90a6249701f6b26745f6d98f9b8a22b07c7"></a>
 
 ### `{ type: "chunk" }`
@@ -9290,7 +9396,7 @@ SHA-256: `b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e`
 
 SHA-256: `11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:58`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:59`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
