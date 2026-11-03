@@ -89,6 +89,15 @@ requestRejection(request: ConnectionTrustRequest): ConnectionRequestRejection
 admit(request: ConnectionTrustRequest): PeerAdmission
 
 /**
+ * Apply the Host/Origin fence and then shared collaborator authentication.
+ * The operator browser cookie is deliberately not accepted here.
+ * @param request - request headers from the HTTP or upgrade request.
+ * @param authenticator - separate collaborator identity authority.
+ * @returns a collaborator Peer, or 403/401 before dispatch.
+ */
+admitShared(request: ConnectionTrustRequest, authenticator: SharedAccessAuthenticator): Promise<SharedPeerAdmission>
+
+/**
  * Authenticate one frontend index request, owning a token redirect or 401.
  * @param request - root or configured-index HTTP request.
  * @param response - response owned when the result is false.

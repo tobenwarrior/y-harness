@@ -3,9 +3,13 @@
 import { brandString, type Branded } from '@yharness/brand'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { SessionId } from '@yharness/session/types'
+import type { BotPrincipalId, BotShareRole } from './sharing.ts'
 
 /** Stable user-owned identity for one roster entry. */
 export type BotId = Branded<'BotId'>
+
+/** Opaque identity for one explicitly published shared-context note. */
+export type BotShareMemoryId = Branded<'BotShareMemoryId'>
 
 /** Apply the Bot identity brand to a value already admitted by the owner.
  * @param value - String value already validated as a Bot id.
@@ -13,6 +17,14 @@ export type BotId = Branded<'BotId'>
  */
 export function BotId(value: string): BotId {
   return brandString<BotId>(value)
+}
+
+/** Apply the shared-note identity brand to a validated storage or wire value.
+ * @param value - String already validated as a shared-note id.
+ * @returns The branded shared-note id.
+ */
+export function BotShareMemoryId(value: string): BotShareMemoryId {
+  return brandString<BotShareMemoryId>(value)
 }
 
 /** Existing semantic glyph families used by the Bot avatar. */
@@ -48,6 +60,156 @@ export type BotIdentity = typeof BOT_IDENTITIES[number]
 
 /** Named accent family used by a Bot's stable visual identity. */
 export type BotAccent = typeof BOT_ACCENTS[number]
+
+/** Operator request to issue a one-time collaborator invite. */
+export interface BotShareInviteRequest {
+  /** Bot to share. */
+  readonly botId: BotId
+  /** Role granted by the invite. */
+  readonly role: BotShareRole
+}
+
+/** Operator response containing a one-time collaborator invite. */
+export interface BotShareInviteValue {
+  /** Opaque code to deliver to the intended collaborator. */
+  readonly code: string
+  /** Absolute expiry of the code. */
+  readonly expiresAt: number
+}
+
+/** Safe owner-facing summary of one person allowed to use a shared Bot. */
+export interface BotShareMember {
+  /** Bot whose member list contains this person. */
+  readonly botId: BotId
+  /** Authenticated principal minted by the shared access authority. */
+  readonly principalId: BotPrincipalId
+  /** Access level granted to the person. */
+  readonly role: BotShareRole
+  /** Person who granted this membership. */
+  readonly grantedBy: BotPrincipalId
+  /** Membership creation time in Unix milliseconds. */
+  readonly createdAt: number
+  /** Last membership mutation in Unix milliseconds. */
+  readonly updatedAt: number
+}
+
+/** Owner request to read one Bot's shared membership roster. */
+export interface BotShareMembersRequest {
+  /** Bot whose members should be listed. */
+  readonly botId: BotId
+}
+
+/** Owner response containing the selected Bot's shared membership roster. */
+export interface BotShareMembersValue {
+  /** Bot whose members are returned. */
+  readonly botId: BotId
+  /** Current memberships, including the owner. */
+  readonly members: readonly BotShareMember[]
+}
+
+/** Owner request to revoke one non-owner shared Bot member. */
+export interface BotShareMemberRevokeRequest {
+  /** Bot whose membership should be revoked. */
+  readonly botId: BotId
+  /** Authenticated principal to remove from this Bot only. */
+  readonly principalId: BotPrincipalId
+}
+
+/** Owner response after a shared Bot member is revoked. */
+export interface BotShareMemberRevokeValue {
+  /** Bot whose membership changed. */
+  readonly botId: BotId
+  /** Principal removed from the selected Bot. */
+  readonly principalId: BotPrincipalId
+  /** Always true after the durable deletion commits. */
+  readonly revoked: true
+}
+
+/** Operator request to change whether one Bot publishes shared context. */
+export interface BotShareMemoryPolicyRequest {
+  /** Bot whose shared-context policy should change. */
+  readonly botId: BotId
+  /** Whether members may read and publish shared context. */
+  readonly enabled: boolean
+}
+
+/** Shared-context policy returned to an operator or collaborator. */
+export interface BotShareMemoryPolicyValue {
+  /** Bot whose policy is returned. */
+  readonly botId: BotId
+  /** Whether shared context is enabled. */
+  readonly enabled: boolean
+  /** Last policy mutation timestamp. */
+  readonly updatedAt: number
+}
+
+/** One note explicitly published to a Bot's shared context. */
+export interface BotShareMemoryEntry {
+  /** Stable entry id. */
+  readonly id: BotShareMemoryId
+  /** Authenticated member who published the note. */
+  readonly principalId: BotPrincipalId
+  /** Bounded note text. */
+  readonly text: string
+  /** Entry creation timestamp. */
+  readonly createdAt: number
+}
+
+/** Shared-context response for one authenticated member. */
+export interface BotShareMemoryValue extends BotShareMemoryPolicyValue {
+  /** Notes visible to every member while shared context is enabled. */
+  readonly entries: readonly BotShareMemoryEntry[]
+}
+
+/** Shared-context write carrying a caller acknowledgement; membership and Bot policy authorize it independently. */
+export interface BotShareMemoryWriteRequest {
+  /** Bot whose context receives the note. */
+  readonly botId: BotId
+  /** Bounded note text. */
+  readonly text: string
+  /** Must be true when the caller knowingly publishes to all members; this acknowledgement is not an authorization credential. */
+  readonly consent: true
+}
+
+/** Shared-context write response. */
+export interface BotShareMemoryWriteValue {
+  /** Newly published note. */
+  readonly entry: BotShareMemoryEntry
+}
+
+/** Safe Bot profile returned through the collaborator-only route. */
+export interface BotShareProfile {
+  /** Stable Bot identity. */
+  readonly id: BotId
+  /** User-visible display name. */
+  readonly name: string
+  /** Optional role description. */
+  readonly description?: string
+  /** Semantic character family. */
+  readonly identity: BotIdentity
+  /** Accent family. */
+  readonly accent: BotAccent
+  /** Optional generated avatar reference. */
+  readonly avatar?: BotAvatar
+  /** Provisioning state. */
+  readonly state: BotProvisioningState
+  /** Live availability. */
+  readonly availability: BotAvailability
+}
+
+/** Shared roster row visible to one authenticated collaborator. */
+export interface BotShareRosterEntry extends BotShareProfile {
+  /** Membership role for the authenticated collaborator. */
+  readonly role: BotShareRole
+}
+
+/** Transcript entry projected from a collaborator's private Bot Session. */
+export interface BotShareTranscriptEntry {
+  /** Visible speaker role; tool and reasoning blocks are omitted by the Host. */
+  readonly role: 'user' | 'assistant'
+  /** Bounded visible text. */
+  readonly text: string
+}
 
 /** Lifecycle of a durable Bot row while its backing Session is being adopted. */
 export type BotProvisioningState = 'provisioning' | 'active'
@@ -230,6 +392,8 @@ export interface BotAvatarReadValue {
 
 declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
+    /** A shared profile write observed a newer Bot row and must be retried. */
+    'gateway/conflict': { readonly botId: BotId }
     /** The requested Bot id is absent from the durable roster. */
     'bot/not-found': { readonly botId: BotId }
     /** The requested Bot id already names another roster row. */

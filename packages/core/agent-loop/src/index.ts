@@ -169,8 +169,10 @@ async function raceAbortCall<T>(
   signal: AbortSignal,
   id: SessionId,
   releaseAbandoned?: (value: T) => void,
+  onAbandoned?: () => void,
 ): Promise<T> {
   if (signal.aborted) {
+    onAbandoned?.()
     throw signal.reason instanceof Error
       ? signal.reason
       : new Error(`agent "${id}" creation aborted`, { cause: signal.reason })
@@ -181,6 +183,7 @@ async function raceAbortCall<T>(
   } catch (error: unknown) {
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- the signal can abort while the operation is awaited.
     if (signal.aborted && releaseAbandoned !== undefined) {
+      onAbandoned?.()
       void pending.then(releaseAbandoned, () => undefined)
     }
     throw error
@@ -350,6 +353,8 @@ export class AgentLoop extends Service implements AgentFactory {
   private readonly ownership: FactoryOwnership
   /** Plain holder prevents Cordis from re-tracing the factory's dependency context through a caller shadow. */
   private readonly runtime: { ctx: Context }
+  /** Cleanup barriers for abandoned cold-resume write opens, keyed by Session id. */
+  private readonly resumeCleanups = new Map<SessionId, Promise<void>>()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentLoop')
@@ -812,6 +817,35 @@ export class AgentLoop extends Service implements AgentFactory {
     return this.resumeWith(ownerCtx, persistence, options)
   }
 
+  /**
+   * Wait for an abandoned cold-resume write handle to finish closing before a
+   * fresh resume claims the same persisted Session.
+   * @param sessionId - persisted Session identity to wait for.
+   * @param signal - optional cancellation for the wait; it never cancels close.
+   * @returns completion of the outstanding cleanup, when one exists.
+   */
+  async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void> {
+    const cleanup = this.resumeCleanups.get(sessionId)
+    if (cleanup === undefined) return
+    if (signal === undefined) {
+      await cleanup
+      return
+    }
+    await raceAbort(cleanup, signal, sessionId)
+  }
+
+  /** Retain one cleanup barrier until the abandoned persistence lease is closed. */
+  private trackResumeCleanup(sessionId: SessionId, cleanup: Promise<void>): void {
+    const previous = this.resumeCleanups.get(sessionId)
+    const barrier = (previous === undefined ? Promise.resolve() : previous)
+      .then(() => cleanup)
+      .catch(() => undefined)
+    this.resumeCleanups.set(sessionId, barrier)
+    void barrier.then(() => {
+      if (this.resumeCleanups.get(sessionId) === barrier) this.resumeCleanups.delete(sessionId)
+    })
+  }
+
   /** Resume through an explicit persistence handle used by the deferred config path. */
   private resumeWith(
     ownerCtx: Context,
@@ -835,15 +869,30 @@ export class AgentLoop extends Service implements AgentFactory {
       let handle: SessionHandle | undefined
       let stored: StoredSession | undefined
       let preparation: SessionPreparation | undefined
+      const openCleanup = Promise.withResolvers<void>()
+      let openStarted = false
       try {
         try {
+          await this.waitForResumeCleanup(id, fused)
+          await raceAbort(undefined, fused, id)
+          this.trackResumeCleanup(id, openCleanup.promise)
           // Taking write ownership FIRST excludes a concurrent resume of the
           // same id (in this process, a live agent's handle holds the claim).
           handle = await raceAbortCall(
-            () => persistence.open(id, 'write', { signal: fused }),
+            () => {
+              openStarted = true
+              const pending = Promise.resolve().then(() => persistence.open(id, 'write', { signal: fused }))
+              void pending.catch(() => { openCleanup.resolve() })
+              return pending
+            },
             fused,
             id,
-            (abandoned) => { void abandoned.close() },
+            (abandoned) => {
+              void abandoned.close().then(openCleanup.resolve, openCleanup.resolve)
+            },
+            () => {
+              if (!openStarted) openCleanup.resolve()
+            },
           )
           // Semantic crash repair is the agent layer's job: persistence hands
           // back the physically valid log; an interrupted final turn receives
@@ -869,20 +918,31 @@ export class AgentLoop extends Service implements AgentFactory {
         if (!this.ownership.isActive()) throw new Error('agent loop is not active')
         const owned = stored
         handle = undefined // ownership passes to setupAndPublish/prepare
-        return await this.setupAndPublish(
-          ownerCtx,
-          id,
-          preparation,
-          options.agentOptions ?? {},
-          options.setup,
-          options.signal,
-          'resume',
-          owned,
-          options.parentAgent,
-        )
+        try {
+          return await this.setupAndPublish(
+            ownerCtx,
+            id,
+            preparation,
+            options.agentOptions ?? {},
+            options.setup,
+            options.signal,
+            'resume',
+            owned,
+            options.parentAgent,
+          )
+        } finally {
+          // setupAndPublish closes the handle on an aborted setup or transfers
+          // it to the published agent on success; only then is this id safe
+          // for another cold resume to claim.
+          openCleanup.resolve()
+        }
       } finally {
         preparation?.[Symbol.dispose]()
-        await handle?.close().catch(() => {})
+        const close = handle?.close().catch(() => {})
+        await close
+        // A late handle is closed by raceAbortCall's abandoned-value callback;
+        // leave its barrier pending until that callback finishes.
+        if (close !== undefined) openCleanup.resolve()
       }
     })()
     this.ownership.trackWrapper(published)

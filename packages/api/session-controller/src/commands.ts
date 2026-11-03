@@ -100,9 +100,11 @@ export class SessionCommandController {
   /**
    * Create or idempotently adopt one ordinary Session.
    * @param request - requested identity, location, and Agent preset.
+   * @param signal - optional caller cancellation for Agent activation.
    * @returns the Session identity and resolved preset when configured.
    */
-  async create(request: SessionCreateRequest): Promise<SessionCreateValue> {
+  async create(request: SessionCreateRequest, signal?: AbortSignal): Promise<SessionCreateValue> {
+    signal?.throwIfAborted()
     if (request.workspaceId !== undefined && request.cwd !== undefined) {
       throw new RemoteError('gateway/bad-request', 'session.create accepts workspaceId or cwd, not both', {})
     }
@@ -124,10 +126,12 @@ export class SessionCommandController {
         cwd,
         request.sessionId !== undefined,
         request.agentPreset,
+        signal,
       )
     } catch (error) {
       this.rejectCreation(sessionId, error)
     }
+    signal?.throwIfAborted()
     if (workspace !== undefined) {
       try {
         await workspace.attachSession(sessionId)
@@ -138,6 +142,7 @@ export class SessionCommandController {
           { sessionId, workspaceId: workspace.id },
         )
       }
+      signal?.throwIfAborted()
     }
     const agentPreset = this.agents.presetForSession(adopted.session)
     return { sessionId, ...(agentPreset === undefined ? {} : { agentPreset }) }

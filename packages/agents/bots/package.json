@@ -55,7 +55,9 @@
   },
   "peerDependencies": {
     "@yharness/avatar-generation": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
     "@yharness/cordis": "workspace:~",
+    "@yharness/credentials": "workspace:*",
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
@@ -69,7 +71,9 @@
   },
   "devDependencies": {
     "@yharness/avatar-generation": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
     "@yharness/cordis": "workspace:~",
+    "@yharness/credentials": "workspace:*",
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",

@@ -51,6 +51,41 @@ Host service that owns the durable roster and its Session mappings.
 
 ```ts cordis-catalog
 /**
+ * Issue one collaborator invite for an operator-owned Bot.
+ * @param request - Bot id and role to grant on redemption.
+ * @returns the one-time code and its expiry.
+ */
+@Remote('createShareInvite') async createShareInvite(request: BotShareInviteRequest): Promise<BotShareInviteValue>
+
+/**
+ * List the shared members of one operator-owned Bot.
+ * @param request - Bot id to inspect.
+ * @returns the safe member summaries without private Session data.
+ */
+@Remote('listShareMembers') async listShareMembers(request: BotShareMembersRequest): Promise<BotShareMembersValue>
+
+/**
+ * Read the shared-context policy for one operator-owned Bot.
+ * @param request - Bot id to inspect.
+ * @returns the current shared-context policy.
+ */
+@Remote('getShareMemoryPolicy') async getShareMemoryPolicy(request: BotShareMembersRequest): Promise<BotShareMemoryPolicyValue>
+
+/**
+ * Enable or disable the explicit shared context for one Bot.
+ * @param request - Bot id and desired policy.
+ * @returns the committed policy.
+ */
+@Remote('setShareMemoryPolicy') async setShareMemoryPolicy(request: BotShareMemoryPolicyRequest): Promise<BotShareMemoryPolicyValue>
+
+/**
+ * Revoke one non-owner member from one operator-owned Bot.
+ * @param request - Bot id and the principal to remove.
+ * @returns the scoped revocation result.
+ */
+@Remote('revokeShareMember') async revokeShareMember(request: BotShareMemberRevokeRequest): Promise<BotShareMemberRevokeValue>
+
+/**
  * Bind peer-Bot operations to the live Agent that owns the current turn.
  *
  * The provider bridge must supply this Agent from its runtime context; the

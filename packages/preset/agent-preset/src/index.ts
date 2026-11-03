@@ -15,6 +15,7 @@ export default class AgentPreset {
   static readonly [EntryGroup.key] = true
   static Config: z<Config> = z.object({
     id: z.string().required(),
+    internal: z.boolean(),
     name: z.string(),
     description: z.string(),
     order: z.number(),

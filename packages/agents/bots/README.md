@@ -23,15 +23,15 @@ Provide a named-Bot workspace with one durable Session per Bot, stable visual id
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory; a native provider may expose the same actions through its own tool bridge.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory; a native provider may expose the same actions through its own tool bridge. When Connection and credentials are present, the plugin also mounts the isolated self-hosted shared-Bot route.
 
 ### When to choose it
 
 Choose this package when a Web surface needs named agents with durable visual identity, retryable provisioning, and one retained Session per row. Use the ordinary Session list instead when users should browse arbitrary conversations rather than a curated Bot roster.
 
-### Minimal configuration
+### Configuration
 
-The plugin has no user configuration fields. Mount it with the storage domain, Session controller, Agent registry, system prompt service, tool runtime, and attachment provider supplied by the composition:
+Mount it with the storage domain, Session controller, Agent registry, system prompt service, tool runtime, attachment provider, and (for shared access) Connection and credentials supplied by the composition:
 
 ```yaml
 - name: '@yharness/bots'
@@ -39,7 +39,12 @@ The plugin has no user configuration fields. Mount it with the storage domain, S
 
 | Field | Default | Meaning |
 |---|---|---|
-| none | — | The Bot service takes no configuration; its composition supplies storage, Session, Agent, system prompt, tools, and attachment dependencies. |
+| `shared.enabled` | `true` | Mount shared-Bot enrollment and collaborator routes when Connection and credentials are available. |
+| `shared.sessionMaxAgeMs` | 30 days | Maximum collaborator cookie lifetime. |
+| `shared.inviteMaxAgeMs` | 15 minutes | Maximum unused invite lifetime. |
+| `shared.secureCookie` | `false` | Mark collaborator cookies Secure; required with network `trustedHosts`. |
+| `shared.trustedHosts` | `[]` | Additional exact authorities accepted by the shared route. |
+| `shared.membershipPollIntervalMs` | 1 second | Maximum delay before cross-process membership revocation cancels active private turns. |
 
 ### Durable lifecycle
 
@@ -53,6 +58,18 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 
 `remember_bot_memory` appends a `bot/memory` Session event and waits for the normal Session flush barrier before returning a memory receipt. `list_bot_memory` returns only active ids and timestamps, while `forget_bot_memory` appends a logical deletion event. Forgetting removes the entry from future memory prompts; the append-only Session log and prompts already sent to a model are not erased. Durable forget tombstones make a repeated forget idempotent after a Session restart. Memory text is bounded and presented as untrusted user-provided reference data, not as an instruction-isolation guarantee. Memory writes and deletions are approval-gated in both ordinary and native tool bridges. Ordinary scoped calls without `memoryId` derive a stable sender-and-text identity, so repeating identical normalized text reuses one active memory; supply distinct explicit ids when identical text should be retained as separate memories. Native retries recover an unsettled call's id from the Bot event log, while an explicit `memoryId` is the way to deduplicate intentionally across independent native turns.
 
+### Shared Bot policy foundation
+
+`SharedBotService` persists memberships, one-time invite associations, one private Session binding per `(Bot, principal)` pair, and durable private-session revocation tombstones in the `agent_bot_shares` domain. A credential-backed membership snapshot is refreshed before each operation and by a bounded watcher, so a second Host process observes membership revocation without relying on its in-memory table. The dedicated `/shared-bots` route accepts only `SHARED_BOT_ENDPOINTS`; it never mounts ordinary operator Remote APIs. Enrollment binds the cookie to the request authority, and every request derives its principal from the authenticated shared Peer. `owner`, `manager`, and `collaborator` roles authorize membership operations and shared-context reads or writes; manager profile edits are currently disabled because the separate authority and Bot-row stores do not yet provide one crash-atomic authorization transaction. Private conversation reads remain participant-owned and are never merged into shared context. Revocation removes membership, marks its private Session binding inaccessible until active Agents quiesce, and closes the authority's access.
+
+Operator profile mutations update a credential-backed revision fence through a pending-row transaction. A crash between the Bot-row write and revision commit is repaired from the pending record, and a Host with a stale Bot domain receives a conflict instead of overwriting a newer rename, description, appearance, or avatar update. Owner-side collaborator invites are authorized against the current authority record in the same mutation that records the invite. Shared-context storage is bounded to 256 Bot policies, 4,096 entries per authority record, and 512 entries per Bot. The write `consent` field is a caller acknowledgement; membership authorization and the Bot's enabled policy remain the security checks.
+
+Peer delivery uses a credential-backed, cross-process message ledger and the recipient Session log as its crash-recovery receipt. The ledger retains 4,096 accepted message identities and rejects new unique deliveries when full rather than evicting an identity and risking a duplicate.
+
+The enrollment endpoint is `/shared-bots/bots/share/enroll`; an operator issues its one-time code through `ctx.remote.bots.createShareInvite`, reads the Bot-scoped roster with `listShareMembers`, reads or changes the shared-context policy with `getShareMemoryPolicy` and `setShareMemoryPolicy`, and removes non-owner members with `revokeShareMember`. Shared HTTP requests use `bots/share/list`, `bots/share/read-profile`, `bots/share/read-private-chat`, `bots/share/chat`, `bots/share/manage-members`, `bots/share/read-memory`, `bots/share/write-memory`, and `bots/share/manage-memory`; `bots/share/manage-profile` is deliberately not mounted until an atomic authority-plus-profile transaction exists. Network deployments must use TLS, configure matching `trustedHosts` on Connection and Bots, and set `shared.secureCookie: true`. Each shared request and the bounded membership watcher refresh the durable membership record; a process that observes a remote Bot revocation aborts that principal's active private turn and rejects subsequent requests, while the authority sweep closes revoked cookies within its bounded interval.
+
+Private chat durability checkpoints are bounded for the caller. If a Host flush ignores cancellation or exceeds the checkpoint deadline, the shared request chain can continue and the underlying flush remains tracked; service disposal waits for tracked flushes and quiescence only up to the shared cancellation deadline before closing the shared-Bot domain, and unresolved operations remain inaccessible to the service. A binding whose backing Session no longer exists is removed during the next private chat or transcript read; chat creates a replacement Session and transcript reads return an empty conversation.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -61,7 +78,7 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns one storage-domain table and serializes writes that can allocate or update a Bot. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project the stored row without waking a cold Session. `bots.list` omits hidden rows unless `includeHidden` is true and orders pinned rows before the stable creation-time order; `updateOrganization` changes pin, hidden, and section placement atomically.
+The service owns the durable `agent_bots` roster domain and, when no credential provider is mounted, a separate version-one `agent_bot_intents` write-ahead domain. It serializes writes that can allocate or update a Bot and validates stored keys and Session mappings before the service becomes ready. A pending no-credentials intent is retried before a later mutation and replayed by the next roster read after restart; older BotService versions do not consume this domain, so mixed-version operation is unsupported while a pending intent may exist. The service keeps provisioning rows durable across activation failures, while list and read operations project the stored row without waking a cold Session. `bots.list` omits hidden rows unless `includeHidden` is true and orders pinned rows before the stable creation-time order; `updateOrganization` changes pin, hidden, and section placement atomically.
 
 | File | Role |
 |---|---|
@@ -70,6 +87,8 @@ The service owns one storage-domain table and serializes writes that can allocat
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
+| [`src/sharing.ts`](src/sharing.ts) | Explicit shared-Bot roles, fail-closed authorization, and private-conversation routing primitives. |
+| [`src/shared-service.ts`](src/shared-service.ts) | Shared-Bot enrollment, role-authorized endpoints, durable private Sessions, and revocation. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
 | [`src/types.ts`](src/types.ts) | Browser-safe Bot ids, identities, accents, views, requests, and Remote error details. |
 
@@ -162,6 +181,10 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Sections are user-defined labels** — the roster supports one optional section name per Bot, plus pin, hide, and restore; it does not provide nested folders or cross-user shared roster state.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
+- **Shared Bots use invite identities** — the self-hosted authority is intentionally local and invite-based; deployments that need account recovery, federated identity, or multi-device principal linking must layer an external identity provider above it.
+- **Shared manager profile edits are disabled** — the route is withheld until authority authorization and the separate Bot-row commit can be made one crash-atomic transaction; operators can still edit the Bot profile through the local Bot service.
+- **Credential-less roster recovery is version-scoped** — hosts without credentials recover pending rows through `agent_bot_intents`, but older BotService versions ignore that domain; do not mix versions while a pending intent may exist.
+- **Group chat is not part of the private-session endpoint set** — each participant receives an isolated Bot conversation. Shared context is a separate, explicitly consented note stream; a future group-chat capability must define explicit membership, transcript visibility, and message attribution before it can share a Session.
 
 <a id="dev-note"></a>
 ### Dev Note

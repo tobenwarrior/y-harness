@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
-  IconFolderOpenOutlineRegular, IconLinkOutlineRegular,
+  IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconShareOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconUnarchiveOutlineRegular, Input, Menu, Modal, StateDot, Tag, Tooltip,
@@ -12,10 +12,17 @@ import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
+import { BotShareDialog, SharedBotsDialog } from './BotSharing.tsx'
 import css from './BotWorkspace.module.css'
+import type { BotShareActions } from './controller.ts'
+import type { SharedBotsClient } from './shared-client.ts'
 import type { BotAccent, BotIdentity, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
 
-type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
+type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
+  children?: ReactNode
+  share?: BotShareActions
+  sharedClient?: SharedBotsClient
+}
 
 /** Sidebar geometry passed to the roster when it occupies the shared app rail. */
 export interface BotRosterLayoutProps {
@@ -263,13 +270,14 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, share, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
+  share?: BotShareActions | undefined
   loading: boolean
 }) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
@@ -311,6 +319,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
                 onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
             </Tooltip>
           )}
+          {share !== undefined && <BotShareButton bot={bot} actions={share} t={t} />}
           {onEditAvatar !== undefined && (
             <Tooltip label={t('editAvatar')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('editAvatar')} icon={<IconEditOutlineRegular size={14} />} onClick={onEditAvatar} />
@@ -425,12 +434,13 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
  */
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
-  onOrganizeBot, onRetry, loadAvatar, avatarEditor, error = null, loading = false, wide = true, expandSidebar, t,
+  onOrganizeBot, onRetry, loadAvatar, avatarEditor, sharedClient, error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
+  const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
@@ -475,6 +485,11 @@ export function BotRoster({
                   </Tooltip>
                 )}
                 <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
+                {sharedClient !== undefined && (
+                  <Tooltip label={t('joinBot')} side="bottom" portal>
+                    <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={() => { setSharedBotsOpen(true) }} />
+                  </Tooltip>
+                )}
               </div>
               <Input
                 className={css.search ?? ''}
@@ -598,6 +613,25 @@ export function BotRoster({
           t={t}
         />
       )}
+      {sharedClient !== undefined && (
+        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} onClose={() => { setSharedBotsOpen(false) }} t={t} />
+      )}
     </aside>
+  )
+}
+
+function BotShareButton({ bot, actions, t }: {
+  readonly bot: BotSummary
+  readonly actions: BotShareActions
+  readonly t: BotWorkspaceViewProps['t']
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Tooltip label={t('shareBot')} side="bottom" portal>
+        <Button variant="ghost" size="sm" aria-label={t('shareBot')} icon={<IconShareOutlineRegular size={15} />} onClick={() => { setOpen(true) }} />
+      </Tooltip>
+      <BotShareDialog bot={bot} actions={actions} open={open} onClose={() => { setOpen(false) }} t={t} />
+    </>
   )
 }

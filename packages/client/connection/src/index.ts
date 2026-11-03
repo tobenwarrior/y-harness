@@ -25,6 +25,7 @@ export type {
   ConnectionRpcFailure,
   ConnectionRpcHandler,
   ConnectionRpcHandlerResult,
+  SharedConnectionEnrollmentHandler,
   ConnectionRequestRejection,
   ConnectionRpcResult,
   ConnectionRequestBodyMode,
@@ -33,12 +34,31 @@ export type {
   HostConnectionHandle,
   HostConnectionFetch,
   HostConnectionRpc,
+  HostSharedConnectionRpc,
+  SharedAccessAuthenticator,
+  SharedConnectionLimits,
+  SharedConnectionRpcOptions,
+  SharedConnectionSocket,
+  SharedConnectionUpgradeOptions,
+  SharedConnectionUpgradeHandler,
+  SharedPeerAdmission,
   RpcMessage,
   ServerResponse,
 } from './rpc.ts'
 export type { PeerId, PeerScope, RemoteInvocation } from '@yharness/typert-protocol'
+export type * from './shared-access.ts'
 export { RpcId, transportError } from './rpc.ts'
 export { OperatorPeer } from './operator-peer.ts'
+export {
+  SharedAccessAuthority,
+  SharedInviteCode,
+  SharedPrincipalId,
+  SHARED_ACCESS_AUDIENCE,
+  SHARED_ACCESS_COOKIE_NAME,
+  sharedInviteDigest,
+  sharedPrincipalOf,
+  sharedRevocationSignal,
+} from './shared-access.ts'
 export {
   clientRequestSchema,
   rpcErrorSchema,
@@ -50,6 +70,14 @@ export {
 export { HostConnectionService } from './rpc-host.ts'
 
 export { API_PATH } from './api-path.ts'
+export {
+  SHARED_BOTS_ENDPOINT_PREFIX,
+  SHARED_BOTS_PATH,
+  SHARED_MAX_BODY_READ_MS,
+  SHARED_MAX_CONCURRENT_BODY_READS,
+  SHARED_MAX_CONCURRENT_REQUESTS,
+  SHARED_MAX_REQUEST_BODY_BYTES,
+} from './rpc.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'client-connection'
@@ -135,6 +163,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
     ctx,
     trustedHosts,
     await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
+    maxRequestBodyBytes,
   )
   ctx.inject(['webServer'], (webCtx) => {
     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)

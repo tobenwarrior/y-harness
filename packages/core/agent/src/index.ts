@@ -200,6 +200,15 @@ export interface AgentFactory {
    * @returns the owned handle after setup, both announcements, and loop start complete.
    */
   resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+  /**
+   * Wait for an abandoned cold-resume persistence lease for one Session id to
+   * finish closing. Implementations that do not retain abandoned leases may
+   * resolve immediately.
+   * @param sessionId - persisted Session identity whose abandoned lease is observed.
+   * @param signal - optional cancellation for the wait; it never cancels the lease close.
+   * @returns completion of the outstanding lease cleanup, when one exists.
+   */
+  waitForResumeCleanup?(sessionId: SessionId, signal?: AbortSignal): Promise<void>
 }
 
 /** Thrown when create/resume is called before an agent factory is registered. */
@@ -413,6 +422,24 @@ export class AgentRegistry extends Service {
     const receiver = getTraceable(ownerCtx, target)
     // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
     return Reflect.apply(target.resume, receiver, [ownerCtx, options])
+  }
+
+  /**
+   * Wait for an abandoned cold-resume lease before a caller starts a fresh
+   * resume of the same Session identity.
+   * @param sessionId - persisted Session identity to wait for.
+   * @param signal - optional cancellation for the wait.
+   * @returns completion of the outstanding lease cleanup, or immediately when
+   *   the active factory does not expose one.
+   */
+  async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void> {
+    const target = this.factory?.target
+    if (target === undefined) return
+    if (target.waitForResumeCleanup === undefined) return
+    const ownerCtx = this.ctx
+    const receiver = getTraceable(ownerCtx, target)
+    // oxlint-disable-next-line typescript/unbound-method -- Reflect.apply intentionally supplies the caller-traced receiver
+    await Reflect.apply(target.waitForResumeCleanup, receiver, [sessionId, signal])
   }
 
   /**

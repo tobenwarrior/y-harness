@@ -222,10 +222,11 @@ export class SessionController extends TypertRemoteService {
   /**
    * Resolve or resume one ordinary Session for another Host API domain.
    * @param sessionId - Session identity whose Agent owns the operation.
+   * @param signal - optional caller cancellation for cold Agent activation.
    * @returns the live Agent or the stable Session-domain failure.
    */
-  resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
-    return this.agents.resolveAgent(sessionId)
+  resolveAgent(sessionId: SessionId, signal?: AbortSignal): Promise<ApiSessionAgentResult> {
+    return this.agents.resolveAgent(sessionId, signal)
   }
 
   /**
@@ -275,11 +276,12 @@ export class SessionController extends TypertRemoteService {
   /**
    * Create or idempotently adopt one ordinary Session.
    * @param request - requested identity, location, and Agent preset.
+   * @param signal - caller cancellation for Agent activation.
    * @returns the Session identity and resolved preset when configured.
    */
   @Remote('create')
-  create(request: SessionCreateRequest): Promise<SessionCreateValue> {
-    return this.commands.create(request)
+  create(request: SessionCreateRequest, signal: AbortSignal): Promise<SessionCreateValue> {
+    return this.commands.create(request, signal)
   }
 
   /**

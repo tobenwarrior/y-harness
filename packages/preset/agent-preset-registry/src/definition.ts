@@ -4,6 +4,8 @@ import type { EntryOptions, JsExpr } from '@yharness/cordis-plugin-loader'
 /** Identity, display fields and child Cordis plugins of one preset. */
 export interface PresetDefinition {
   readonly id: string
+  /** Keep an implementation-only composition out of user preset rosters. */
+  readonly internal?: boolean
   readonly name?: string
   readonly description?: string
   readonly order?: number

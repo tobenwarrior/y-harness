@@ -1,6 +1,7 @@
 /** Registers the Bot roster panel and its explicitly bound Conversation. */
 
 import type { Context } from '@yharness/cordis'
+import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
@@ -10,13 +11,14 @@ import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
 import { BotsConversation, BotsPanel, BotsRoster } from './panel.tsx'
 import { en, zh } from './locales.ts'
+import { createSharedBotsClient } from './shared-client.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
 
 /** Services required by the Bot roster and its Session-backed Conversation; image generation is optional. */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.bots', 'sessions',
+  'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection',
 ]
 
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
@@ -27,6 +29,7 @@ export function apply(ctx: Context): void {
     ctx.sessions,
     () => ctx.locale.bind('bots')('unexpectedResponse'),
     ctx.get('remote.avatarGeneration') as typeof ctx.remote.avatarGeneration | undefined,
+    createSharedBotsClient((ctx.get('connection') as { readonly rpc: ClientConnectionRpc }).rpc),
   )
 
   ctx.effect(() => {

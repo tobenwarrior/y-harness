@@ -41,7 +41,7 @@ describe('web e2e: the composer model switch is the default for later sessions',
     const response = await scaffold.ctx.sessionController.create({
       sessionId: SessionId(sessionId),
       cwd: scaffold.workspaceCwd,
-    })
+    }, new AbortController().signal)
     return response.sessionId
   }
 

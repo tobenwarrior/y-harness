@@ -117,7 +117,10 @@ describe('declarative preset revisions', () => {
     const ctx = await setup()
     await declare(ctx, { ...contribution('standard'), name: 'Standard', description: 'General', order: 2 })
     await declare(ctx, { id: 'empty', order: 1, plugins: [{ name: 'missing', disabled: true }] })
+    await declare(ctx, { ...contribution('internal'), internal: true })
     expect((await ctx.agentPresets.list()).map(row => row.id)).toEqual(['empty', 'standard'])
+    expect(await ctx.agentPresets.resolve('internal')).toEqual({ id: 'internal' })
+    expect((await ctx.agentPresets.compositionInventory()).map(row => row.id)).not.toContain('internal')
     expect(await ctx.agentPresets.compositionInventory()).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'standard', name: 'Standard', isDefault: true, rows: expect.any(Array) as unknown[] }),
       expect.objectContaining({ id: 'empty', rows: [expect.objectContaining({ moduleName: 'missing', enabled: false })] }),

@@ -1,7 +1,8 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
 import { Context, Service } from '@yharness/cordis'
-import type { WebRoute } from '@yharness/host-webserver'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { WebRoute, WebUpgradeRoute } from '@yharness/host-webserver'
 import type { PeerScope } from '@yharness/typert-protocol'
 import {
   RpcId,
@@ -9,9 +10,18 @@ import {
   type RpcId as RpcIdType,
 } from './rpc.ts'
 import { clientRequestSchema } from './rpc-schema.ts'
-import { bridge } from './http-bridge.ts'
+import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { isTrustedApiRequest } from './api-request-trust.ts'
+import { bindSharedAccessSocket } from './shared-access.ts'
 import { API_PATH } from './api-path.ts'
+import {
+  SHARED_BOTS_ENDPOINT_PREFIX,
+  SHARED_BOTS_PATH,
+  SHARED_MAX_BODY_READ_MS,
+  SHARED_MAX_CONCURRENT_BODY_READS,
+  SHARED_MAX_CONCURRENT_REQUESTS,
+  SHARED_MAX_REQUEST_BODY_BYTES,
+} from './rpc.ts'
 import type { BrowserAuth } from './browser-auth.ts'
 import { OperatorPeer } from './operator-peer.ts'
 import type {
@@ -24,11 +34,21 @@ import type {
   ConnectionRpcEndpointMatcher,
   ConnectionRpcFailure,
   ConnectionRpcHandler,
+  ConnectionRpcHandlerResult,
   ConnectionRpcResult,
   ConnectionRequestRejection,
   ConnectionTrustRequest,
   HostConnectionHandle,
   HostConnectionRpc,
+  HostSharedConnectionRpc,
+  SharedAccessAuthenticator,
+  SharedConnectionEnrollmentHandler,
+  SharedConnectionLimits,
+  SharedConnectionRpcOptions,
+  SharedConnectionSocket,
+  SharedConnectionUpgradeOptions,
+  SharedConnectionUpgradeHandler,
+  SharedPeerAdmission,
 } from './rpc.ts'
 
 const INVALID_REQUEST_RPC_ID = RpcId('invalid-request')
@@ -52,6 +72,11 @@ interface ConnectionServerResponse {
   readonly result: ConnectionRpcResult<unknown>
 }
 
+interface RpcResponseProjection {
+  readonly result: ConnectionRpcHandlerResult
+  readonly headers?: Readonly<Record<string, string>>
+}
+
 declare module '@yharness/cordis' {
   interface Context {
     /** Host Connection transport and RPC registrations. */
@@ -71,11 +96,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
    * @param browserAuth - process token and persistent browser-session owner.
+   * @param maxRequestBodyBytes - maximum buffered body size for registered RPC routes.
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
     private readonly browserAuth: BrowserAuth,
+    private readonly maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES,
   ) {
     super(ctx, 'connection')
     this.operator = new OperatorPeer(ctx)
@@ -89,6 +116,18 @@ export class HostConnectionService extends Service implements HostConnectionHand
       handle: (channel, handler) => this.register(owner, channel, handler),
       intercept: (channel, matches, handler) =>
         this.registerInterceptor(owner, channel, matches, handler),
+    }
+  }
+
+  /** Isolated collaborator Bot channel registry; no ordinary Remote is mounted here. */
+  get sharedRpc(): HostSharedConnectionRpc {
+    const owner = this.ctx
+    return {
+      handle: (channel, authenticator, handler, options) =>
+        this.registerShared(owner, channel, authenticator, handler, options),
+      enroll: (channel, handler, options) => this.registerSharedEnrollment(owner, channel, handler, options),
+      upgrade: (channel, authenticator, handler, options) =>
+        this.registerSharedUpgrade(owner, channel, authenticator, handler, options),
     }
   }
 
@@ -110,6 +149,12 @@ export class HostConnectionService extends Service implements HostConnectionHand
   admit(request: ConnectionTrustRequest): PeerAdmission {
     const rejection = this.requestRejection(request)
     return rejection === undefined ? { peer: this.operator } : { rejection }
+  }
+
+  /** Apply only the Host/Origin fence and collaborator authentication. */
+  async admitShared(request: ConnectionTrustRequest, authenticator: SharedAccessAuthenticator): Promise<SharedPeerAdmission> {
+    if (!isTrustedApiRequest(request, this.trustedHosts)) return { rejection: 403 }
+    return authenticator.admit(request)
   }
 
   /** Authenticate an index request through the process-token exchange or cookie. */
@@ -174,7 +219,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
     handler: ConnectionRpcHandler,
   ): () => Promise<void> {
     assertChannel(channel)
-    const fetchHandler = rpcFetchHandler(channel, handler, this.operator)
+    const fetchHandler = rpcFetchHandler(channel, (endpoint, payload, signal) =>
+      handler(endpoint, payload, signal, this.operator))
     const route: WebRoute = {
       kind: 'prefix',
       path: channel,
@@ -194,6 +240,118 @@ export class HostConnectionService extends Service implements HostConnectionHand
     )
   }
 
+  private registerShared(
+    owner: Context,
+    channel: string,
+    authenticator: SharedAccessAuthenticator,
+    handler: ConnectionRpcHandler,
+    options: SharedConnectionRpcOptions,
+  ): () => Promise<void> {
+    if (channel !== SHARED_BOTS_PATH) {
+      throw new Error(`connection: invalid shared collaborator channel ${JSON.stringify(channel)}`)
+    }
+    const endpoints = validateSharedEndpoints(options.endpoints)
+    const limits = resolveSharedLimits(options, this.maxRequestBodyBytes)
+    const concurrency = createSharedConcurrency(limits.maxConcurrentRequests)
+    const bodyConcurrency = createSharedConcurrency(limits.maxConcurrentBodyReads)
+    // Authentication is deliberately isolated from the handler capacity. An
+    // unauthenticated client must not occupy all eight shared request slots
+    // while its durable cookie lookup is waiting on storage.
+    const authenticationConcurrency = createSharedConcurrency(2)
+    const route: WebRoute = {
+      kind: 'prefix',
+      path: channel,
+      handler: async (req, res) => {
+        if (!authenticationConcurrency.tryAcquire()) {
+          rejectSharedHttp(res)
+          return
+        }
+        let admission: SharedPeerAdmission
+        try {
+          admission = await this.admitShared(req, authenticator)
+        } finally {
+          authenticationConcurrency.release()
+        }
+        if ('rejection' in admission) {
+          res.writeHead(admission.rejection)
+          res.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden')
+          return
+        }
+        const carrier = rpcFetchHandler(channel, (endpoint, payload, signal) =>
+          sharedHandler(handler, endpoints)(endpoint, payload, signal, admission.peer))
+        await bridgeSharedRequest(req, res, carrier, limits, bodyConcurrency, concurrency)
+      },
+    }
+    return owner.effect(
+      () => owner.webServer.register(route),
+      `client-connection: ${channel} shared collaborator rpc channel`,
+    )
+  }
+
+  private registerSharedEnrollment(
+    owner: Context,
+    channel: typeof SHARED_BOTS_PATH,
+    handler: SharedConnectionEnrollmentHandler,
+    options: SharedConnectionLimits | undefined,
+  ): () => Promise<void> {
+    const path = `${channel}/bots/share/enroll`
+    const limits = resolveSharedLimits(options, this.maxRequestBodyBytes)
+    const concurrency = createSharedConcurrency(limits.maxConcurrentRequests)
+    const bodyConcurrency = createSharedConcurrency(limits.maxConcurrentBodyReads)
+    const route: WebRoute = {
+      kind: 'exact',
+      path,
+      handler: async (req, res) => {
+        if (!isTrustedApiRequest(req, this.trustedHosts)) {
+          res.writeHead(403)
+          res.end('forbidden')
+          return
+        }
+        const carrier = rpcFetchHandler(
+          channel,
+          (endpoint, payload, signal, request) => handler(endpoint, payload, signal, request),
+          projectEnrollmentResult,
+        )
+        await bridgeSharedRequest(req, res, carrier, limits, bodyConcurrency, concurrency)
+      },
+    }
+    return owner.effect(
+      () => owner.webServer.register(route),
+      `client-connection: ${path} shared collaborator enrollment`,
+    )
+  }
+
+  private registerSharedUpgrade(
+    owner: Context,
+    channel: typeof SHARED_BOTS_PATH,
+    authenticator: SharedAccessAuthenticator,
+    handler: SharedConnectionUpgradeHandler,
+    options: SharedConnectionUpgradeOptions,
+  ): () => Promise<void> {
+    assertSharedUpgradeOptions(options)
+    const route: WebUpgradeRoute = {
+      path: channel,
+      handler: async (req, socket, head) => {
+        const admission = await this.admitShared(req, authenticator)
+        if ('rejection' in admission) {
+          rejectSharedUpgrade(socket, admission.rejection)
+          return
+        }
+        bindSharedAccessSocket(admission.peer, socket)
+        if (!bindSharedSocketLimit(socket, head, options.maxInboundBytes)) return
+        try {
+          await handler(req, socket, head, admission.peer)
+        } catch {
+          if (!socket.destroyed) socket.destroy()
+        }
+      },
+    }
+    return owner.effect(
+      () => owner.webServer.registerUpgrade(route),
+      `client-connection: ${channel} shared collaborator WebSocket`,
+    )
+  }
+
   private registerInterceptor(
     owner: Context,
     channel: string,
@@ -205,7 +363,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
     }
     const interceptor: ConnectionRpcInterceptor = {
       matches,
-      fetchHandler: rpcFetchHandler(channel, handler, this.operator),
+      fetchHandler: rpcFetchHandler(channel, (endpoint, payload, signal) =>
+        handler(endpoint, payload, signal, this.operator)),
     }
     return owner.effect(() => {
       if (this.interceptors.has(channel)) {
@@ -219,10 +378,76 @@ export class HostConnectionService extends Service implements HostConnectionHand
   }
 }
 
+function sharedHandler(handler: ConnectionRpcHandler, endpoints: ReadonlySet<string>): ConnectionRpcHandler {
+  return async (endpoint, payload, signal, peer) => {
+    if (!endpoints.has(endpoint)) {
+      return {
+        ok: false,
+        error: {
+          code: 'gateway/forbidden',
+          message: 'shared collaborator endpoint is not part of the Bot namespace',
+          details: {},
+        },
+      }
+    }
+    try {
+      return await handler(endpoint, payload, signal, peer)
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: 'gateway/internal',
+          message: 'shared Bot handler failed',
+          details: {},
+        },
+      }
+    }
+  }
+}
+
+function validateSharedEndpoints(values: readonly string[]): ReadonlySet<string> {
+  const endpoints = new Set<string>()
+  for (const endpoint of values) {
+    if (!endpoint.startsWith(SHARED_BOTS_ENDPOINT_PREFIX)
+      || endpoint.length === SHARED_BOTS_ENDPOINT_PREFIX.length
+      || endpoint.split('/').some(segment => segment === '' || segment === '.' || segment === '..'
+        || !ENDPOINT_SEGMENT_PATTERN.test(segment))) {
+      throw new Error(`connection: invalid shared collaborator endpoint ${JSON.stringify(endpoint)}`)
+    }
+    if (endpoints.has(endpoint)) {
+      throw new Error(`connection: duplicate shared collaborator endpoint ${JSON.stringify(endpoint)}`)
+    }
+    endpoints.add(endpoint)
+  }
+  return endpoints
+}
+
+function rejectSharedUpgrade(
+  socket: SharedConnectionSocket,
+  status: 401 | 403,
+): void {
+  if (socket.destroyed) return
+  const reason = status === 401 ? 'Unauthorized' : 'Forbidden'
+  const body = reason.toLowerCase()
+  socket.end([
+    `HTTP/1.1 ${String(status)} ${reason}`,
+    'Connection: close',
+    'Content-Type: text/plain; charset=utf-8',
+    `Content-Length: ${String(Buffer.byteLength(body))}`,
+    '',
+    body,
+  ].join('\r\n'))
+}
+
 function rpcFetchHandler(
   channel: string,
-  handler: ConnectionRpcHandler,
-  peer: PeerScope,
+  dispatch: (
+    endpoint: string,
+    payload: unknown,
+    signal: AbortSignal,
+    request: ConnectionIndexRequest,
+  ) => Promise<ConnectionRpcHandlerResult>,
+  project: (result: ConnectionRpcHandlerResult) => RpcResponseProjection = result => ({ result }),
 ): ConnectionFetchHandler {
   return {
     requestBodyMode: () => 'buffered',
@@ -257,14 +482,84 @@ function rpcFetchHandler(
         })
       }
 
+      const requestFacts: ConnectionIndexRequest = {
+        headers: request.headers,
+        method: request.method,
+        url: request.url,
+      }
       try {
-        const result = await handler(endpoint, message.payload, request.signal, peer)
-        return fullResponse(message.rpcId, result)
-      } catch (error) {
-        return new Response(`handler failure: ${String(error)}`, { status: 500 })
+        const result = project(await dispatch(endpoint, message.payload, request.signal, requestFacts))
+        return fullResponse(message.rpcId, result.result, result.headers)
+      } catch {
+        return errorResponse(message.rpcId, {
+          code: 'gateway/internal',
+          message: 'Connection handler failed',
+          details: {},
+        })
       }
     },
   }
+}
+
+function projectEnrollmentResult(result: ConnectionRpcHandlerResult): RpcResponseProjection {
+  if (!result.ok || !isRecord(result.value) || typeof result.value.setCookie !== 'string') return { result }
+  const { setCookie, ...value } = result.value
+  return {
+    result: { ok: true, value },
+    headers: { 'set-cookie': setCookie },
+  }
+}
+
+function assertSharedUpgradeOptions(options: SharedConnectionUpgradeOptions): void {
+  if (!Number.isSafeInteger(options.maxInboundBytes) || options.maxInboundBytes <= 0) {
+    throw new Error('connection: shared collaborator WebSocket maxInboundBytes must be a positive safe integer')
+  }
+}
+
+function bindSharedSocketLimit(socket: SharedConnectionSocket, head: Uint8Array, maxBytes: number): boolean {
+  let received = 0
+  let remainingFrameBytes = 0
+  let header: number[] = []
+
+  const consume = (chunk: Uint8Array): boolean => {
+    received += chunk.byteLength
+    if (received > maxBytes) return false
+    let offset = 0
+    while (offset < chunk.byteLength) {
+      if (remainingFrameBytes > 0) {
+        const consumed = Math.min(remainingFrameBytes, chunk.byteLength - offset)
+        remainingFrameBytes -= consumed
+        offset += consumed
+        continue
+      }
+      while (header.length < 2 && offset < chunk.byteLength) header.push(chunk[offset++] ?? 0)
+      if (header.length < 2) return true
+      const code = (header[1] ?? 0) & 0x7f
+      const extensionBytes = code === 126 ? 2 : code === 127 ? 8 : 0
+      const maskBytes = ((header[1] ?? 0) & 0x80) === 0 ? 0 : 4
+      const headerBytes = 2 + extensionBytes + maskBytes
+      while (header.length < headerBytes && offset < chunk.byteLength) header.push(chunk[offset++] ?? 0)
+      if (header.length < headerBytes) return true
+      let length = 0
+      const lengthEnd = 2 + extensionBytes
+      for (let index = 2; index < lengthEnd; index += 1) {
+        length = length * 256 + (header[index] ?? 0)
+        if (!Number.isSafeInteger(length) || length > maxBytes) return false
+      }
+      remainingFrameBytes = length
+      header = []
+    }
+    return true
+  }
+
+  if (!consume(head)) {
+    if (!socket.destroyed) socket.destroy()
+    return false
+  }
+  socket.on('data', (chunk) => {
+    if (!consume(chunk) && !socket.destroyed) socket.destroy()
+  })
+  return true
 }
 
 function invalidEnvelopeResponse(body: unknown, issues: readonly object[]): Response {
@@ -288,18 +583,26 @@ function endpointFromPath(channel: string, pathname: string): string | undefined
   return endpoint
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function errorResponse(rpcId: RpcIdType, error: ConnectionRpcFailure): Response {
   return fullResponse(rpcId, { ok: false, error })
 }
 
-function fullResponse(rpcId: RpcIdType, result: Awaited<ReturnType<ConnectionRpcHandler>>): Response {
+function fullResponse(
+  rpcId: RpcIdType,
+  result: Awaited<ReturnType<ConnectionRpcHandler>>,
+  headers: Readonly<Record<string, string>> = {},
+): Response {
   if (!result.ok) {
     const body: ConnectionServerResponse = { type: 'server-response', rpcId, result }
-    return Response.json(body)
+    return Response.json(body, { headers })
   }
   const { attachments, ...success } = result
   const body: ConnectionServerResponse = { type: 'server-response', rpcId, result: success }
-  if (attachments === undefined || attachments.length === 0) return Response.json(body)
+  if (attachments === undefined || attachments.length === 0) return Response.json(body, { headers })
   const parts = new FormData()
   const attachmentMetadata = attachments.map((attachment, index) => {
     const part = `bytes-${index}`
@@ -308,7 +611,136 @@ function fullResponse(rpcId: RpcIdType, result: Awaited<ReturnType<ConnectionRpc
     return { path: [...attachment.path], codec: 'bytes' as const, part }
   })
   parts.set('metadata', JSON.stringify({ ...body, attachments: attachmentMetadata }))
-  return new Response(parts)
+  return new Response(parts, { headers })
+}
+
+interface SharedConcurrency {
+  readonly tryAcquire: () => boolean
+  readonly release: () => void
+}
+
+type ResolvedSharedLimits = Required<Pick<SharedConnectionLimits, 'maxRequestBodyBytes' | 'maxConcurrentRequests' | 'maxConcurrentBodyReads' | 'maxBodyReadMs'>>
+
+function createSharedConcurrency(maxConcurrentRequests: number): SharedConcurrency {
+  let active = 0
+  return {
+    tryAcquire: () => {
+      if (active >= maxConcurrentRequests) return false
+      active += 1
+      return true
+    },
+    release: () => {
+      // Every successful acquisition has one matching finally block. Keep the
+      // guard local so a malformed carrier cannot make the counter negative.
+      if (active > 0) active -= 1
+    },
+  }
+}
+
+function sharedRequestCarrier(
+  carrier: ConnectionFetchHandler,
+  releaseBody: () => void,
+  concurrency: SharedConcurrency,
+): ConnectionFetchHandler {
+  return {
+    requestBodyMode: request => carrier.requestBodyMode(request),
+    fetch: async (request) => {
+      releaseBody()
+      if (!concurrency.tryAcquire()) return sharedCapacityResponse()
+      try {
+        return await carrier.fetch(request)
+      } finally {
+        concurrency.release()
+      }
+    },
+  }
+}
+
+async function bridgeSharedRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  carrier: ConnectionFetchHandler,
+  limits: ResolvedSharedLimits,
+  bodyConcurrency: SharedConcurrency,
+  concurrency: SharedConcurrency,
+): Promise<void> {
+  if (!bodyConcurrency.tryAcquire()) {
+    rejectSharedHttp(res)
+    return
+  }
+  let bodyAcquired = true
+  const releaseBody = (): void => {
+    if (!bodyAcquired) return
+    bodyAcquired = false
+    bodyConcurrency.release()
+  }
+  try {
+    await bridge(
+      req,
+      res,
+      sharedRequestCarrier(carrier, releaseBody, concurrency),
+      limits.maxRequestBodyBytes,
+      limits.maxBodyReadMs,
+    )
+  } finally {
+    releaseBody()
+  }
+}
+
+function resolveSharedLimits(
+  options: SharedConnectionLimits | undefined,
+  ordinaryMaxRequestBodyBytes: number,
+): ResolvedSharedLimits {
+  const requestedBodyBytes = options?.maxRequestBodyBytes ?? SHARED_MAX_REQUEST_BODY_BYTES
+  if (!Number.isSafeInteger(requestedBodyBytes)
+    || requestedBodyBytes <= 0
+    || requestedBodyBytes > SHARED_MAX_REQUEST_BODY_BYTES) {
+    throw new Error(`connection: shared collaborator request body cap must be an integer from 1 to ${String(SHARED_MAX_REQUEST_BODY_BYTES)} bytes`)
+  }
+  const requestedConcurrency = options?.maxConcurrentRequests ?? SHARED_MAX_CONCURRENT_REQUESTS
+  if (!Number.isSafeInteger(requestedConcurrency)
+    || requestedConcurrency <= 0
+    || requestedConcurrency > SHARED_MAX_CONCURRENT_REQUESTS) {
+    throw new Error(`connection: shared collaborator concurrency cap must be an integer from 1 to ${String(SHARED_MAX_CONCURRENT_REQUESTS)}`)
+  }
+  const requestedBodyReads = options?.maxConcurrentBodyReads ?? SHARED_MAX_CONCURRENT_BODY_READS
+  if (!Number.isSafeInteger(requestedBodyReads)
+    || requestedBodyReads <= 0
+    || requestedBodyReads > SHARED_MAX_CONCURRENT_BODY_READS) {
+    throw new Error(`connection: shared collaborator body-read concurrency cap must be an integer from 1 to ${String(SHARED_MAX_CONCURRENT_BODY_READS)}`)
+  }
+  const requestedBodyReadMs = options?.maxBodyReadMs ?? SHARED_MAX_BODY_READ_MS
+  if (!Number.isSafeInteger(requestedBodyReadMs)
+    || requestedBodyReadMs <= 0
+    || requestedBodyReadMs > SHARED_MAX_BODY_READ_MS) {
+    throw new Error(`connection: shared collaborator body-read timeout must be an integer from 1 to ${String(SHARED_MAX_BODY_READ_MS)} milliseconds`)
+  }
+  if (!Number.isSafeInteger(ordinaryMaxRequestBodyBytes) || ordinaryMaxRequestBodyBytes <= 0) {
+    throw new Error('connection: ordinary request body cap must be a positive safe integer')
+  }
+  return {
+    maxRequestBodyBytes: Math.min(requestedBodyBytes, ordinaryMaxRequestBodyBytes),
+    maxConcurrentRequests: requestedConcurrency,
+    maxConcurrentBodyReads: requestedBodyReads,
+    maxBodyReadMs: requestedBodyReadMs,
+  }
+}
+
+function sharedCapacityResponse(): Response {
+  return new Response('shared collaborator capacity is busy', {
+    status: 429,
+    headers: { connection: 'close', 'retry-after': '1' },
+  })
+}
+
+function rejectSharedHttp(
+  response: {
+    writeHead(status: number, headers?: Readonly<Record<string, string>>): unknown
+    end(body?: string): unknown
+  },
+): void {
+  response.writeHead(429, { connection: 'close', 'retry-after': '1' })
+  response.end('shared collaborator capacity is busy')
 }
 
 function assertChannel(channel: string): void {

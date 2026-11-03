@@ -21,7 +21,7 @@ interface BridgeServerResponse {
   once(event: 'close' | 'drain', listener: () => void): this
   writeHead(statusCode: number, headers?: Record<string, string>): unknown
   write(chunk: Uint8Array): boolean
-  end(): unknown
+  end(data?: string): unknown
 }
 
 /**
@@ -31,12 +31,14 @@ interface BridgeServerResponse {
  * @param res - node:http response the bridge writes and owns to completion.
  * @param apiHandler - fetch-shaped API carrier the request is dispatched to.
  * @param maxRequestBodyBytes - maximum bytes buffered for a buffered route.
+ * @param bodyReadTimeoutMs - maximum time spent receiving a buffered body; zero disables the timeout.
  */
 export async function bridge(
   req: IncomingMessage,
   res: BridgeServerResponse,
   apiHandler: ConnectionFetchHandler,
   maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES,
+  bodyReadTimeoutMs = 0,
 ): Promise<void> {
   const abort = new AbortController()
   // Client-disconnect detection MUST hang off the response, not the request:
@@ -65,16 +67,36 @@ export async function bridge(
     }
     const chunks: Buffer[] = []
     let received = 0
-    for await (const chunk of req) {
-      const buffer = chunk as Buffer
-      received += buffer.byteLength
-      if (received > maxRequestBodyBytes) {
-        res.writeHead(413, { connection: 'close' })
-        res.end()
+    const bodyState = { timedOut: false }
+    const bodyTimer = bodyReadTimeoutMs > 0
+      ? setTimeout(() => {
+        bodyState.timedOut = true
+        if (!res.destroyed && !res.writableEnded) {
+          res.writeHead(408, { connection: 'close' })
+          res.end('request body timed out')
+        }
         req.destroy()
-        return
+      }, bodyReadTimeoutMs)
+      : undefined
+    try {
+      for await (const chunk of req) {
+        const buffer = chunk as Buffer
+        received += buffer.byteLength
+        if (received > maxRequestBodyBytes) {
+          res.writeHead(413, { connection: 'close' })
+          res.end()
+          req.destroy()
+          return
+        }
+        chunks.push(buffer)
       }
-      chunks.push(buffer)
+    } catch (error) {
+      if (!bodyState.timedOut) throw error
+    } finally {
+      if (bodyTimer !== undefined) clearTimeout(bodyTimer)
+    }
+    if (bodyState.timedOut) {
+      return
     }
     request = new Request(url, {
       method,

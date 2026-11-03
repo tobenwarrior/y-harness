@@ -23,7 +23,7 @@ Add a second-mode Bot workspace to the Web client without taking ownership of Se
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount the Client export alongside the Bot Remote, Session UI, conversation UI, locale, layout, sidebar, and renderer packages. The owner supplies plain roster rows and callbacks; the panel selects a Bot and renders the owner's persistent Session in its conversation slot.
+Mount the Client export alongside the Bot Remote, Session UI, conversation UI, locale, layout, sidebar, renderer, and Connection packages. The owner supplies plain roster rows and callbacks; the panel selects a Bot and renders the owner's persistent Session in its conversation slot. When Connection is mounted, the same Bot mode includes an invite and shared-context policy dialog for owner-side membership management and a collaborator dialog that redeems an invite, discovers shared Bots, chats through a private per-person Session, and publishes explicitly acknowledged notes to a separate shared context.
 
 ### When to choose it
 
@@ -41,7 +41,7 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 ### Owner callbacks
 
-`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
+`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section. The owner can also supply share actions, and collaborators use an isolated connection.
 
 ### Visual identity
 

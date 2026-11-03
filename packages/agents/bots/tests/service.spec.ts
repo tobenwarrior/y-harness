@@ -8,14 +8,138 @@ import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
+import { credentialKey, CredentialProvider } from '@yharness/credentials'
+import type {
+  CredentialInfo,
+  CredentialKey,
+  CredentialRecord,
+  CredentialRecordEntry,
+  CredentialRecordInfo,
+  CredentialRef,
+  ResolvedCredential,
+} from '@yharness/credentials'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
+import {
+  SHARED_BOT_AGENT_PRESET,
+  sharedBotSessionRequest,
+  sharedBotWorkingDirectory,
+} from '../src/index.ts'
+import { BotMessageId } from '../src/collaboration.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
+import type { SharedBotHost } from '../src/shared-service.ts'
 import { BotId } from '../src/types.ts'
+
+interface SharedProfileCredentialState {
+  readonly records: Map<CredentialKey, CredentialRecord>
+  tail: Promise<void>
+}
+
+class ThrowAfterSetMap<K, V> extends Map<K, V> {
+  throwAfterSet = false
+
+  override set(key: K, value: V): this {
+    super.set(key, value)
+    if (this.throwAfterSet) {
+      this.throwAfterSet = false
+      throw new Error('post-write rejection')
+    }
+    return this
+  }
+}
+
+class ThrowOnDeleteMap<K, V> extends Map<K, V> {
+  deleteFailure: 'before' | 'after' | undefined
+
+  override delete(key: K): boolean {
+    if (this.deleteFailure === 'before') {
+      this.deleteFailure = undefined
+      throw new Error('pre-delete rejection')
+    }
+    const deleted = super.delete(key)
+    if (this.deleteFailure === 'after') {
+      this.deleteFailure = undefined
+      throw new Error('post-delete rejection')
+    }
+    return deleted
+  }
+}
+
+function postWriteFailurePool(): { pool: MemoryMediaPool; rows: ThrowAfterSetMap<string, unknown> } {
+  const pool = new MemoryMediaPool()
+  const rows = new ThrowAfterSetMap<string, unknown>()
+  pool.media.set('agent_bots', { tables: new Map([['bots', rows]]), global: null })
+  return { pool, rows }
+}
+
+function postIntentWriteFailurePool(): {
+  pool: MemoryMediaPool
+  rows: ThrowAfterSetMap<string, unknown>
+  intents: ThrowAfterSetMap<string, unknown>
+} {
+  const { pool, rows } = postWriteFailurePool()
+  const intents = new ThrowAfterSetMap<string, unknown>()
+  pool.media.set('agent_bot_intents', { tables: new Map([['pending', intents]]), global: null })
+  return { pool, rows, intents }
+}
+
+function clearIntentFailurePool(): {
+  pool: MemoryMediaPool
+  intents: ThrowOnDeleteMap<string, unknown>
+} {
+  const pool = new MemoryMediaPool()
+  pool.media.set('agent_bots', { tables: new Map([['bots', new Map<string, unknown>()]]), global: null })
+  const intents = new ThrowOnDeleteMap<string, unknown>()
+  pool.media.set('agent_bot_intents', { tables: new Map([['pending', intents]]), global: null })
+  return { pool, intents }
+}
+
+class SharedProfileCredentials extends CredentialProvider {
+  private static readonly states = new WeakMap<Map<CredentialKey, CredentialRecord>, SharedProfileCredentialState>()
+  private readonly state: SharedProfileCredentialState
+
+  constructor(ctx: Context, private readonly records: Map<CredentialKey, CredentialRecord>) {
+    super(ctx)
+    this.state = SharedProfileCredentials.states.get(records) ?? { records, tail: Promise.resolve() }
+    SharedProfileCredentials.states.set(records, this.state)
+  }
+
+  resolve(_ref: CredentialRef): Promise<ResolvedCredential | undefined> { return Promise.resolve(undefined) }
+  describe(_ref: CredentialRef): Promise<CredentialInfo> { return Promise.resolve({ configured: false, writable: true }) }
+  set(_ref: CredentialRef, _value: string): Promise<void> { return Promise.resolve() }
+  unset(_ref: CredentialRef): Promise<void> { return Promise.resolve() }
+  readRecord(key: CredentialKey): Promise<CredentialRecord | undefined> { return Promise.resolve(this.records.get(key)) }
+  describeRecord(key: CredentialKey): Promise<CredentialRecordInfo> {
+    const record = this.records.get(key)
+    return Promise.resolve(record === undefined
+      ? { configured: false, writable: true }
+      : { configured: true, kind: record.kind, writable: true })
+  }
+  listRecords(): Promise<readonly CredentialRecordEntry[]> {
+    return Promise.resolve([...this.records].map(([key, record]) => ({ key, kind: record.kind })))
+  }
+  modifyRecord(
+    key: CredentialKey,
+    mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined> {
+    const run = this.state.tail.then(async () => {
+      const next = await mutate(this.records.get(key))
+      if (next !== undefined) this.records.set(key, next)
+      return this.records.get(key)
+    })
+    this.state.tail = run.then(() => undefined, () => undefined)
+    return run
+  }
+  deleteRecord(key: CredentialKey): Promise<void> {
+    const run = this.state.tail.then(() => { this.records.delete(key) })
+    this.state.tail = run.then(() => undefined, () => undefined)
+    return run
+  }
+}
 
 async function harness(
   pool = new MemoryMediaPool(),
@@ -26,6 +150,8 @@ async function harness(
   })),
   existingSessionIds: readonly string[] = [],
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
+  records = new Map<CredentialKey, CredentialRecord>(),
+  useCredentials = true,
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -82,6 +208,7 @@ async function harness(
     attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png' as const, bytes: 3, width: 512, height: 512,
   }])
   ctx.provide('attachments', { readImage, saveImages } as never)
+  const credentials = useCredentials ? new SharedProfileCredentials(ctx, records) : undefined
   const inspect = vi.fn(async (sessionId: SessionId) => ({
     events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? [],
   }))
@@ -103,11 +230,23 @@ async function harness(
     await close(ctx)
     throw error
   }
-  return { ctx, service, pool, create, readImage, saveImages, agents, inspect, resolveAgent, flush, followups }
+  return {
+    ctx, service, pool, records, credentials: credentials!, create, readImage, saveImages,
+    agents, inspect, resolveAgent, flush, followups,
+  }
 }
 
 async function close(ctx: Context): Promise<void> {
   await ctx.fiber.dispose()
+}
+
+function productionSharedHost(service: BotService): SharedBotHost {
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(service), 'sharedHost')
+  if (descriptor === undefined || typeof descriptor.value !== 'function') {
+    throw new Error('BotService shared host is not available')
+  }
+  const method = descriptor.value as (this: BotService) => SharedBotHost
+  return method.call(service)
 }
 
 describe('durable Bot roster', () => {
@@ -127,6 +266,57 @@ describe('durable Bot roster', () => {
       await close(h.ctx)
     }
   })
+
+  it('uses a dedicated no-tools preset and per-session temporary directory for shared chats', () => {
+    const sessionId = SessionId('shared-session-isolation')
+    expect(sharedBotSessionRequest(sessionId)).toEqual({
+      sessionId,
+      cwd: sharedBotWorkingDirectory(sessionId),
+      agentPreset: SHARED_BOT_AGENT_PRESET,
+    })
+    expect(sharedBotWorkingDirectory(sessionId)).toContain('y-harness-shared-bots')
+    expect(sharedBotSessionRequest(sessionId).cwd).not.toBe('/tmp')
+  })
+
+  it('propagates shared-session cancellation through the production create host', async () => {
+    const started = Promise.withResolvers<undefined>()
+    const rejected = Promise.withResolvers<undefined>()
+    const create = vi.fn(async (
+      request: { readonly sessionId?: string; readonly agentPreset?: string },
+      signal?: AbortSignal,
+    ): Promise<{ sessionId: string | undefined }> => {
+      if (request.agentPreset !== SHARED_BOT_AGENT_PRESET) return { sessionId: request.sessionId }
+      started.resolve(undefined)
+      return await new Promise<{ sessionId: string | undefined }>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          rejected.resolve(undefined)
+          reject(signal.reason instanceof Error ? signal.reason : new Error('shared creation cancelled'))
+        }, { once: true })
+      })
+    })
+    const h = await harness(undefined, create)
+    try {
+      const created = await h.service.create({ name: 'Shared cancellation owner', cwd: '/tmp' })
+      const bot = (await h.service.list({})).bots.find(candidate => candidate.id === created.bot.id)
+      if (bot === undefined) throw new Error('production Bot fixture did not create a Bot')
+      const controller = new AbortController()
+      const host = productionSharedHost(h.service)
+      const pending = host.createPrivateSession(
+        bot,
+        SessionId('shared-session-production-cancel'),
+        'principal-production-cancel',
+        controller.signal,
+      )
+      await started.promise
+      controller.abort(new Error('shared creation cancelled'))
+      await rejected.promise
+      await expect(pending).rejects.toThrow('shared creation cancelled')
+      expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ agentPreset: SHARED_BOT_AGENT_PRESET }), controller.signal)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('persists an additional character shape across restarts', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -216,6 +406,41 @@ describe('durable Bot roster', () => {
         await h.service.updateOrganization({ botId: sender.bot.id, hidden: true })
         await h.service.updateOrganization({ botId: target.bot.id, hidden: true })
       }
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      const targetFollowup = h.followups[1]
+      if (senderAgent === undefined) throw new Error('sender test Agent was not created')
+      if (targetAgent === undefined) throw new Error('target test Agent was not created')
+      if (targetFollowup === undefined) throw new Error('target test followup was not created')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      expect(collaboration.sender.id).toBe(sender.bot.id)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id,
+        text: 'Please report your status.',
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        sender: { id: sender.bot.id },
+        target: { id: target.bot.id },
+      })
+      expect(targetFollowup).toHaveBeenCalledTimes(1)
+      expect(h.resolveAgent).toHaveBeenCalledWith(target.bot.sessionId)
+      expect(h.flush).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('binds collaboration to a Bot Agent and flushes explicit peer delivery', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    try {
       const senderAgent = h.agents[0]
       const targetAgent = h.agents[1]
       const targetFollowup = h.followups[1]
@@ -441,6 +666,52 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('deduplicates peer delivery across Bot service instances', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const left = await harness(pool, undefined, undefined, [String(sender.bot.sessionId), String(target.bot.sessionId)], new Map(), records)
+    const right = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sender.bot.sessionId), String(target.bot.sessionId)],
+      new Map(),
+      records,
+    )
+    try {
+      const leftAgent = left.agents[0]
+      const rightAgent = right.agents[0]
+      const leftTargetFollowup = left.followups[1]
+      const rightTargetFollowup = right.followups[1]
+      if (leftAgent === undefined || rightAgent === undefined || leftTargetFollowup === undefined || rightTargetFollowup === undefined) {
+        throw new Error('Bot service delivery fixtures were not created')
+      }
+      const [firstResult, secondResult] = await Promise.all([
+        (await left.service.collaborationFor(leftAgent)).send({
+          targetBotId: target.bot.id,
+          text: 'same durable retry',
+          messageId: BotMessageId('service-cross-process-message'),
+        }),
+        (await right.service.collaborationFor(rightAgent)).send({
+          targetBotId: target.bot.id,
+          text: 'same durable retry',
+          messageId: BotMessageId('service-cross-process-message'),
+        }),
+      ])
+      expect([firstResult.status, secondResult.status].sort()).toEqual(['accepted', 'duplicate'])
+      expect(leftTargetFollowup).toHaveBeenCalledTimes(1)
+      expect(rightTargetFollowup).not.toHaveBeenCalled()
+    } finally {
+      await close(right.ctx)
+      await close(left.ctx)
+    }
+  })
+
   it('durably records native collaboration action observations on the Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -483,9 +754,10 @@ describe('durable Bot roster', () => {
       expect(created.bot.identity).toBe('sparkle')
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
-      expect(h.create).toHaveBeenCalledWith({
-        sessionId: created.bot.sessionId, cwd: '/tmp',
-      })
+      expect(h.create).toHaveBeenCalledWith(
+        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        expect.any(AbortSignal),
+      )
 
       await expect(h.service.list({})).resolves.toMatchObject({
         bots: [{ id: created.bot.id, sessionId: created.bot.sessionId, availability: 'offline' }],
@@ -517,7 +789,11 @@ describe('durable Bot roster', () => {
       })
       const retried = await h.service.create({ id, name: 'Retry me', cwd: '/tmp' })
       expect(retried.bot.state).toBe('active')
-      expect(create).toHaveBeenNthCalledWith(2, { sessionId: firstSessionId, cwd: '/tmp' })
+      expect(create).toHaveBeenNthCalledWith(
+        2,
+        { sessionId: firstSessionId, cwd: '/tmp' },
+        expect.any(AbortSignal),
+      )
     } finally {
       await close(h.ctx)
     }
@@ -531,6 +807,53 @@ describe('durable Bot roster', () => {
       await expect(h.service.create({ name: 'No orphan', cwd: '/tmp' })).rejects.toThrow('injected write failure')
       expect(h.create).not.toHaveBeenCalled()
       await expect(h.service.list({})).resolves.toEqual({ bots: [] })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries an acknowledged create intent after a pre-write row failure', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    const id = BotId('bot-retry-after-row-failure')
+    try {
+      pool.failNextWrites = 1
+      await expect(h.service.create({ id, name: 'Retry after row failure', cwd: '/tmp' }))
+        .rejects.toThrow('injected write failure')
+      await expect(h.service.list({})).resolves.toEqual({ bots: [] })
+
+      await expect(h.service.create({ id, name: 'Retry after row failure', cwd: '/tmp' })).resolves.toMatchObject({
+        bot: { id, name: 'Retry after row failure', state: 'active' },
+      })
+      expect(h.create).toHaveBeenCalledOnce()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps an acknowledged Bot row when the profile fence fails after the row write', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    const originalModify = h.credentials.modifyRecord.bind(h.credentials)
+    let revisionCalls = 0
+    h.credentials.modifyRecord = async (key, mutate) => {
+      if (key === revisionKey) {
+        revisionCalls += 1
+        if (revisionCalls === 3) {
+          await mutate(h.records.get(key))
+          throw new Error('simulated crash after Bot row write')
+        }
+      }
+      return originalModify(key, mutate)
+    }
+    try {
+      await expect(h.service.create({ name: 'Acknowledged Bot', cwd: '/tmp' }))
+        .rejects.toThrow('simulated crash after Bot row write')
+      expect(h.create).not.toHaveBeenCalled()
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ name: 'Acknowledged Bot', state: 'provisioning', availability: 'offline' }],
+      })
     } finally {
       await close(h.ctx)
     }
@@ -558,6 +881,250 @@ describe('durable Bot roster', () => {
       })).rejects.toMatchObject({ code: 'bot/id-conflict' })
     } finally {
       await close(second.ctx)
+    }
+  })
+
+  it('rejects a stale shared profile update from another service instance', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Cross-process profile', cwd: '/tmp' })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.rename({ botId: created.bot.id, name: 'New profile' })).resolves.toMatchObject({
+        bot: { id: created.bot.id, name: 'New profile' },
+      })
+      const staleHost = productionSharedHost(first.service)
+      await expect(staleHost.updateProfile(
+        created.bot.id,
+        { name: 'Stale profile' },
+        undefined,
+        created.bot.updatedAt,
+      )).rejects.toMatchObject({ code: 'gateway/conflict' })
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'New profile' }],
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('does not publish a profile update when the Bot row write fails before touching storage', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    try {
+      const created = await h.service.create({ name: 'Durable profile', cwd: '/tmp' })
+      pool.failNextWrites = 1
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Unwritten profile' }))
+        .rejects.toThrow('injected write failure')
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Durable profile' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retains a pending profile transaction when a durable row write rejects after the row is stored', async () => {
+    const { pool, rows } = postWriteFailurePool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(pool, undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    let closed = false
+    try {
+      const created = await h.service.create({ name: 'Ambiguous profile', cwd: '/tmp' })
+      rows.throwAfterSet = true
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Stored before rejection' }))
+        .rejects.toThrow('post-write rejection')
+      expect(h.records.get(revisionKey)).toMatchObject({
+        kind: 'grant',
+        payload: { pending: { record: { id: created.bot.id, name: 'Stored before rejection' } } },
+      })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Ambiguous profile' }],
+      })
+
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), records)
+      try {
+        await expect(reopened.service.list({})).resolves.toMatchObject({
+          bots: [{ id: created.bot.id, name: 'Stored before rejection' }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('reconciles a no-credentials profile intent after a post-write row rejection', async () => {
+    const { pool, rows } = postWriteFailurePool()
+    const h = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+    let closed = false
+    try {
+      const created = await h.service.create({ name: 'Local profile', cwd: '/tmp' })
+      rows.throwAfterSet = true
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Stored local profile' }))
+        .rejects.toThrow('post-write rejection')
+      expect(pool.media.get('agent_bot_intents')?.tables.get('pending')?.size).toBe(1)
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Local profile' }],
+      })
+
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+      try {
+        await expect(reopened.service.list({})).resolves.toMatchObject({
+          bots: [{ id: created.bot.id, name: 'Stored local profile' }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('reconciles a no-credentials create intent after a post-write row rejection', async () => {
+    const { pool, rows } = postWriteFailurePool()
+    const h = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+    const id = BotId('bot-local-post-write')
+    let closed = false
+    try {
+      rows.throwAfterSet = true
+      await expect(h.service.create({ id, name: 'Local create', cwd: '/tmp' }))
+        .rejects.toThrow('post-write rejection')
+      expect(h.create).not.toHaveBeenCalled()
+      expect(pool.media.get('agent_bot_intents')?.tables.get('pending')?.size).toBe(1)
+      await expect(h.service.list({})).resolves.toEqual({ bots: [] })
+
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+      try {
+        await expect(reopened.service.list({})).resolves.toMatchObject({
+          bots: [{ id, name: 'Local create', state: 'provisioning' }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('does not replay an older no-credentials intent after its write rejects post-write', async () => {
+    const { pool, intents } = postIntentWriteFailurePool()
+    const h = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+    let closed = false
+    try {
+      const created = await h.service.create({ name: 'Intent ordering', cwd: '/tmp' })
+      intents.throwAfterSet = true
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Older intent' }))
+        .rejects.toThrow('post-write rejection')
+      expect(pool.media.get('agent_bot_intents')?.tables.get('pending')?.size).toBe(1)
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Intent ordering' }],
+      })
+
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Newer profile' })).resolves.toMatchObject({
+        bot: { id: created.bot.id, name: 'Newer profile' },
+      })
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+      try {
+        await expect(reopened.service.list({})).resolves.toMatchObject({
+          bots: [{ id: created.bot.id, name: 'Newer profile' }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it.each([
+    { failure: 'before' as const, error: 'pre-delete rejection' },
+    { failure: 'after' as const, error: 'post-delete rejection' },
+  ])('reconciles a no-credentials intent after clear fails $failure', async ({ failure, error }) => {
+    const { pool, intents } = clearIntentFailurePool()
+    const h = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+    let closed = false
+    try {
+      const created = await h.service.create({ name: 'Clear failure', cwd: '/tmp' })
+      intents.deleteFailure = failure
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Stored before clear failure' }))
+        .rejects.toThrow(error)
+      expect(pool.media.get('agent_bot_intents')?.tables.get('pending')?.size).toBe(failure === 'before' ? 1 : 0)
+
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Recovered newer profile' })).resolves.toMatchObject({
+        bot: { id: created.bot.id, name: 'Recovered newer profile' },
+      })
+      await close(h.ctx)
+      closed = true
+      const reopened = await harness(pool, undefined, undefined, [], new Map(), new Map(), false)
+      try {
+        await expect(reopened.service.list({})).resolves.toMatchObject({
+          bots: [{ id: created.bot.id, name: 'Recovered newer profile' }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('repairs a Bot row when the profile revision commit fails after the row write', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    try {
+      const created = await h.service.create({ name: 'Crash-safe profile', cwd: '/tmp' })
+      const originalModify = h.credentials.modifyRecord.bind(h.credentials)
+      let revisionCalls = 0
+      h.credentials.modifyRecord = async (key, mutate) => {
+        if (key === revisionKey) {
+          revisionCalls += 1
+          if (revisionCalls === 2) {
+            await mutate(h.records.get(key))
+            throw new Error('simulated crash before profile revision commit')
+          }
+        }
+        return originalModify(key, mutate)
+      }
+
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Should not commit' }))
+        .rejects.toThrow('simulated crash before profile revision commit')
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Should not commit' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('refreshes profile reads from the durable cross-process profile record', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Read from durable state', cwd: '/tmp' })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Updated elsewhere' }))
+        .resolves.toMatchObject({ bot: { name: 'Updated elsewhere' } })
+      await expect(first.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Updated elsewhere' }],
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
     }
   })
 
@@ -956,6 +1523,28 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('preserves organization changes made from stale cross-process roster snapshots', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Cross-process organization', cwd: '/tmp' })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(first.service.updateOrganization({ botId: created.bot.id, pinned: true })).resolves.toMatchObject({
+        bot: { id: created.bot.id, pinned: true, hidden: false },
+      })
+      await expect(second.service.updateOrganization({ botId: created.bot.id, hidden: true })).resolves.toMatchObject({
+        bot: { id: created.bot.id, pinned: true, hidden: true },
+      })
+      await expect(first.service.list({ includeHidden: true })).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, pinned: true, hidden: true }],
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
     }
   })
 

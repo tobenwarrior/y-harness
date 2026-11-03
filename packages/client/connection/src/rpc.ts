@@ -120,6 +120,62 @@ export type PeerAdmission =
   | { readonly peer: PeerScope }
   | { readonly rejection: 401 | 403 }
 
+/** Outcome of authenticating a collaborator request on a dedicated route. */
+export type SharedPeerAdmission =
+  | { readonly peer: PeerScope }
+  | { readonly rejection: 401 | 403 }
+
+/** Minimal socket operations shared access uses to close revoked peers. */
+export interface SharedConnectionSocket {
+  readonly destroyed: boolean
+  end(data?: string): unknown
+  destroy(): unknown
+  on(event: 'data', listener: (chunk: Uint8Array) => void): unknown
+  once(event: 'close', listener: () => void): unknown
+}
+
+/** Narrow authenticator consumed by the separate shared-Bot Connection route. */
+export interface SharedAccessAuthenticator {
+  /** Authenticate the collaborator request, including its Host/Origin fence. */
+  admit(request: ConnectionTrustRequest): Promise<SharedPeerAdmission>
+}
+
+/** Dedicated HTTP/RPC path reserved for collaborator Bot access. */
+export const SHARED_BOTS_PATH = '/shared-bots' as const
+
+/** Prefix required by every explicitly allowed shared-Bot endpoint. */
+export const SHARED_BOTS_ENDPOINT_PREFIX = 'bots/share/' as const
+
+/** Fixed upper bound for one shared collaborator HTTP request body. */
+export const SHARED_MAX_REQUEST_BODY_BYTES = 128 * 1024
+
+/** Fixed upper bound for in-flight shared collaborator handler requests per route. */
+export const SHARED_MAX_CONCURRENT_REQUESTS = 8
+
+/** Fixed upper bound for buffered shared collaborator bodies receiving concurrently per route. */
+export const SHARED_MAX_CONCURRENT_BODY_READS = 2
+
+/** Fixed upper bound for the time spent receiving one buffered shared collaborator body. */
+export const SHARED_MAX_BODY_READ_MS = 30_000
+
+/** Resource limits for one collaborator-only HTTP route. Values may be lowered per registration. */
+export interface SharedConnectionLimits {
+  /** Maximum buffered request bytes. @default SHARED_MAX_REQUEST_BODY_BYTES */
+  readonly maxRequestBodyBytes?: number
+  /** Maximum requests executing after their bodies have been received. @default SHARED_MAX_CONCURRENT_REQUESTS */
+  readonly maxConcurrentRequests?: number
+  /** Maximum buffered request bodies received concurrently. @default SHARED_MAX_CONCURRENT_BODY_READS */
+  readonly maxConcurrentBodyReads?: number
+  /** Maximum time spent receiving one buffered request body in milliseconds. @default SHARED_MAX_BODY_READ_MS */
+  readonly maxBodyReadMs?: number
+}
+
+/** Exact endpoints a shared-Bot route is allowed to expose. */
+export interface SharedConnectionRpcOptions extends SharedConnectionLimits {
+  /** Complete endpoint names; every omitted endpoint is rejected before the handler runs. */
+  readonly endpoints: readonly string[]
+}
+
 /**
  * Handler invoked after Connection has decoded the transport envelope.
  * `peer` is the Peer the request was admitted as: the operator.
@@ -129,6 +185,28 @@ export type ConnectionRpcHandler = (
   payload: unknown,
   signal: AbortSignal,
   peer: PeerScope,
+) => Promise<ConnectionRpcHandlerResult>
+
+/** Handler for a collaborator-authenticated WebSocket upgrade. */
+export type SharedConnectionUpgradeHandler = (
+  request: ConnectionIndexRequest,
+  socket: SharedConnectionSocket,
+  head: Uint8Array,
+  peer: PeerScope,
+) => void | Promise<void>
+
+/** Bounds applied to bytes received on a collaborator WebSocket. */
+export interface SharedConnectionUpgradeOptions {
+  /** Maximum aggregate inbound bytes accepted for one upgraded connection. */
+  readonly maxInboundBytes: number
+}
+
+/** Handler for the unauthenticated, trust-fenced collaborator enrollment endpoint. */
+export type SharedConnectionEnrollmentHandler = (
+  endpoint: string,
+  payload: unknown,
+  signal: AbortSignal,
+  request: ConnectionIndexRequest,
 ) => Promise<ConnectionRpcHandlerResult>
 
 /** Synchronous ownership test for one endpoint on a shared RPC channel. */
@@ -189,10 +267,58 @@ export interface HostConnectionRpc {
   ): () => Promise<void>
 }
 
+/** Host registry for the isolated collaborator Bot RPC path. */
+export interface HostSharedConnectionRpc {
+  /**
+   * Register the exact trust-fenced enrollment endpoint. The invite code is
+   * the only credential accepted here; no operator `/api` methods are routed.
+   * @param channel - reserved collaborator channel.
+   * @param handler - enrollment handler for the exact `bots/share/enroll` endpoint.
+   * @returns asynchronous disposer removing the route.
+   */
+  enroll(
+    channel: typeof SHARED_BOTS_PATH,
+    handler: SharedConnectionEnrollmentHandler,
+    options?: SharedConnectionLimits,
+  ): () => Promise<void>
+
+  /**
+   * Register one shared-Bot channel that authenticates with a collaborator
+   * authority instead of the operator browser cookie.
+   * @param channel - the reserved collaborator channel.
+   * @param authenticator - authority that maps its cookie to a shared Peer.
+   * @param handler - handler for the explicitly allowed endpoint names.
+   * @param options - exact shared-Bot endpoint names admitted by this route.
+   * @returns asynchronous disposer removing the route.
+   */
+  handle(
+    channel: string,
+    authenticator: SharedAccessAuthenticator,
+    handler: ConnectionRpcHandler,
+    options: SharedConnectionRpcOptions,
+  ): () => Promise<void>
+
+  /**
+   * Register a collaborator-authenticated WebSocket upgrade at the shared path.
+   * @param channel - the reserved collaborator upgrade path.
+   * @param authenticator - authority that maps its cookie to a shared Peer.
+   * @param handler - protocol owner invoked only after trust and identity checks.
+   * @returns asynchronous disposer removing the upgrade route.
+   */
+  upgrade(
+    channel: typeof SHARED_BOTS_PATH,
+    authenticator: SharedAccessAuthenticator,
+    handler: SharedConnectionUpgradeHandler,
+    options: SharedConnectionUpgradeOptions,
+  ): () => Promise<void>
+}
+
 /** Host `ctx.connection` members consumed by transport-independent adapters. */
 export interface HostConnectionHandle {
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
+  /** Isolated collaborator Bot RPC registry; never mounted on `/api`. */
+  readonly sharedRpc: HostSharedConnectionRpc
   /** Exact Fetch routes for streaming or browser-native responses. */
   readonly fetch: HostConnectionFetch
   /** The operator Peer every admitted request speaks for; its scope lives as long as Connection. */
@@ -220,6 +346,15 @@ export interface HostConnectionHandle {
    * @returns the operator Peer, or the rejection status.
    */
   admit(request: ConnectionTrustRequest): PeerAdmission
+
+  /**
+   * Apply the Host/Origin fence and then shared collaborator authentication.
+   * The operator browser cookie is deliberately not accepted here.
+   * @param request - request headers from the HTTP or upgrade request.
+   * @param authenticator - separate collaborator identity authority.
+   * @returns a collaborator Peer, or 403/401 before dispatch.
+   */
+  admitShared(request: ConnectionTrustRequest, authenticator: SharedAccessAuthenticator): Promise<SharedPeerAdmission>
 
   /**
    * Authenticate one frontend index request, owning a token redirect or 401.

@@ -516,6 +516,328 @@
   line-height: 17px;
 }
 
+.shareDialog {
+  width: min(620px, 100%);
+  max-height: 100%;
+  min-height: 0;
+}
+
+.shareDialogContent {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.shareInviteRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.shareInviteRow > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.inviteCode {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 9px;
+  border: 0.5px solid var(--yh-alias-state-business-primary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.inviteCode code {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shareMembers {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 22px;
+}
+
+.shareSectionHeading {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.shareMember {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 7px 6px 9px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.shareMemberIdentity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.shareMemberDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--yh-alias-state-business-primary);
+}
+
+.shareMemberPrincipal {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shareMemberHint,
+.shareEmpty {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.shareLoading {
+  display: flex;
+  justify-content: center;
+  padding: 18px;
+}
+
+.sharedMemoryCard,
+.sharedContext {
+  margin-top: 18px;
+  padding: 11px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.sharedMemoryHeader,
+.sharedContextHeader {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.sharedMemoryHeader > :nth-child(2),
+.sharedContextHeader > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.sharedMemoryIcon {
+  display: flex;
+  width: 25px;
+  height: 25px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-state-business-primary);
+}
+
+.sharedMemoryDescription {
+  margin: 3px 0 0;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sharedContextLabel {
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.sharedMemoryEntries {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 9px;
+  max-height: 130px;
+  overflow: auto;
+}
+
+.sharedMemoryEntry {
+  margin: 0;
+  padding: 7px 8px;
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+  color: var(--yh-alias-label-primary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+}
+
+.sharedMemoryComposer {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.sharedMemoryComposer > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.sharedWorkspace {
+  display: grid;
+  min-width: 0;
+  min-height: 250px;
+  grid-template-columns: minmax(140px, 0.68fr) minmax(0, 1.32fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sharedBotList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+}
+
+.sharedBot,
+.sharedBotSelected {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  border: none;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sharedBot:hover,
+.sharedBotSelected {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.sharedBotSelected {
+  box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
+}
+
+.sharedBot span,
+.sharedConversationHeader div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sharedBot strong,
+.sharedConversationHeader strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sharedBot small,
+.sharedConversationHeader small {
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sharedConversation {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.sharedConversationHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.sharedTranscript {
+  display: flex;
+  min-height: 140px;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.sharedUserMessage,
+.sharedBotMessage {
+  max-width: 88%;
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: var(--yh-radius-md);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+}
+
+.sharedUserMessage {
+  align-self: flex-end;
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.sharedBotMessage {
+  align-self: flex-start;
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.sharedComposer {
+  display: flex;
+  gap: 6px;
+  padding: 7px;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.sharedComposer > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
 .dialogField:first-child {
   margin-top: 0;
 }

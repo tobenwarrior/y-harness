@@ -64,7 +64,8 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
-  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry, loadAvatar, avatarEditor, t,
+  wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry,
+  loadAvatar, avatarEditor, share, sharedClient, t,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -79,6 +80,8 @@ export function BotsRoster({
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}
+      {...(share === undefined ? {} : { share })}
+      {...(sharedClient === undefined ? {} : { sharedClient })}
       error={state.error}
       loading={state.phase === 'loading' && bots.length === 0}
       wide={wide}
@@ -90,7 +93,7 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, loadAvatar, rename, SessionProvider, renderSlot, t,
+  useWorkspace, useSessionStatus, reference, loadAvatar, rename, SessionProvider, renderSlot, t, share,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -110,6 +113,7 @@ export function BotsPanel({
       t={t}
       loadAvatar={loadAvatar}
       onRename={rename}
+      {...(share === undefined ? {} : { share })}
       loading={state.phase === 'loading' && bots.length === 0}
     />
   )

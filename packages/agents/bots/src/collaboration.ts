@@ -51,6 +51,15 @@ export interface BotCollaborationHost {
   readonly resolveAgent: (sessionId: SessionId) => Promise<{ readonly agent: BotCollaborationAgent } | { readonly error: Error }>
   /** Flush a target Session after inbox admission; the call must resolve only after durable storage accepts it. */
   readonly flushSession: (sessionId: SessionId) => Promise<void>
+  /**
+   * Atomically deduplicate and durably deliver one message across Host
+   * processes. Hosts that omit this capability use the in-process fallback.
+   */
+  readonly deliverMessage?: (
+    target: BotView,
+    message: UserMessage,
+    signal?: AbortSignal,
+  ) => Promise<'accepted' | 'duplicate'>
 }
 
 /** Result payload retained for one native Bot action lifecycle record. */
@@ -224,6 +233,16 @@ function hasMessage(events: readonly SessionEvent[], messageId: BotMessageId): b
     || pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === 'agent-message')
 }
 
+/**
+ * Check whether a Bot message is already durable or pending in a target inbox.
+ * @param events - target Session events read from durable storage.
+ * @param messageId - message identity to find.
+ * @returns whether the message has already been admitted.
+ */
+export function botMessageWasDelivered(events: readonly SessionEvent[], messageId: BotMessageId): boolean {
+  return hasMessage(events, messageId)
+}
+
 function messageText(sender: BotCollaborationRosterEntry, text: string): string {
   return `Message from ${sender.name}:\n${text}`
 }
@@ -318,6 +337,26 @@ export class BotCollaborationService {
     if (target === undefined) throw new BotCollaborationError('target-not-found', `Bot "${request.targetBotId}" was not found`)
     if (sender.id === target.id) throw new BotCollaborationError('self-message', 'A Bot cannot send a message to itself')
     const messageId = request.messageId ?? BotMessageId(`bot-message-${randomUUID()}`)
+    const source: MessageSourceMap['agent-message'] = {
+      kind: 'agent-message', form: 'relay', senderSessionId: sender.sessionId,
+    }
+    const message = freezeMessage({
+      id: messageId,
+      role: 'user',
+      content: [{ type: 'text', text: messageText(rosterEntry(sender), text) }],
+      source,
+    })
+    if (this.host.deliverMessage !== undefined) {
+      throwIfCancelled(request.signal)
+      try {
+        const status = await this.host.deliverMessage(target, message, request.signal)
+        throwIfCancelled(request.signal)
+        return { messageId, status, sender: rosterEntry(sender), target: rosterEntry(target) }
+      } catch (error: unknown) {
+        if (error instanceof BotCollaborationError) throw error
+        throw new BotCollaborationError('durability-failed', `Bot "${target.name}" was not durably updated`, { cause: error })
+      }
+    }
     const prior = this.tails.get(target.sessionId) ?? Promise.resolve()
     const run = prior.then(async () => {
       throwIfCancelled(request.signal)
@@ -335,16 +374,8 @@ export class BotCollaborationService {
       if (!('agent' in resolved)) {
         throw new BotCollaborationError('target-unavailable', `Bot "${target.name}" could not be resumed`)
       }
-      const source: MessageSourceMap['agent-message'] = {
-        kind: 'agent-message', form: 'relay', senderSessionId: sender.sessionId,
-      }
       throwIfCancelled(request.signal)
-      resolved.agent.followup(freezeMessage({
-        id: messageId,
-        role: 'user',
-        content: [{ type: 'text', text: messageText(rosterEntry(sender), text) }],
-        source,
-      }))
+      resolved.agent.followup(message)
       await this.flushTarget(target.sessionId, target.name)
       return { messageId, status: 'accepted' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
     })

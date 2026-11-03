@@ -38,6 +38,7 @@ Define an Agent’s child plugins in ordinary Cordis YAML. Declare several prese
 | Field | Default | Meaning |
 |---|---|---|
 | `id` | required | Stable preset identifier |
+| `internal` | false | Keep an implementation-only composition out of user preset rosters |
 | `plugins` | required | Child plugin entry list |
 | `name` | unset | Display name |
 | `description` | unset | Display description |

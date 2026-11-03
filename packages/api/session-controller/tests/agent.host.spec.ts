@@ -140,6 +140,157 @@ describe('ApiSession identity failures', () => {
 })
 
 describe('ApiSession Agent lookup and recovery', () => {
+  it('cancels an Agent published after a cold resume caller aborts', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('late-resume-abort')
+    providePersistence(ctx, {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    })
+    let releaseResume: (() => void) | undefined
+    const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+    const cancel = vi.fn()
+    const resumed = { ...unpublishedAgent(ctx, meta), cancel }
+    const dispose = vi.fn(() => Promise.resolve())
+    let resumeSignal: AbortSignal | undefined
+    const resume = vi.spyOn(ctx.agents, 'resume').mockImplementation(async (options) => {
+      resumeSignal = options.signal
+      await resumeGate
+      return { agent: resumed, dispose }
+    })
+    const controller = new AbortController()
+    const pending = agents.resolveAgent(meta.id, controller.signal)
+    await vi.waitFor(() => { expect(resume).toHaveBeenCalledOnce() })
+    controller.abort(new Error('shared authority revoked'))
+    releaseResume?.()
+
+    await expect(pending).resolves.toMatchObject({ error: { code: 'gateway/internal' } })
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: meta.id,
+      signal: resumeSignal,
+    }))
+    expect(resumeSignal).toBeDefined()
+    expect(resumeSignal).not.toBe(controller.signal)
+    expect(cancel).toHaveBeenCalledWith({ kind: 'parent' })
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a concurrent cold-resume waiter independent when the first aborts', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('shared-resume-waiters')
+    providePersistence(ctx, {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    })
+    let releaseResume: (() => void) | undefined
+    const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+    const cancel = vi.fn()
+    const resumed = { ...unpublishedAgent(ctx, meta), cancel }
+    let resumeSignal: AbortSignal | undefined
+    const resume = vi.spyOn(ctx.agents, 'resume').mockImplementation(async (options) => {
+      resumeSignal = options.signal
+      await resumeGate
+      return { agent: resumed, dispose: () => Promise.resolve() }
+    })
+    const first = new AbortController()
+    const second = new AbortController()
+    const firstPending = agents.resolveAgent(meta.id, first.signal)
+    await vi.waitFor(() => { expect(resume).toHaveBeenCalledOnce() })
+    const secondPending = agents.resolveAgent(meta.id, second.signal)
+    first.abort(new Error('first waiter cancelled'))
+
+    await expect(firstPending).resolves.toMatchObject({ error: { code: 'gateway/internal' } })
+    expect(resume).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: meta.id,
+      signal: resumeSignal,
+    }))
+    expect(resumeSignal).toBeDefined()
+    expect(resumeSignal).not.toBe(first.signal)
+    expect(resumeSignal).not.toBe(second.signal)
+    expect(cancel).not.toHaveBeenCalled()
+    releaseResume?.()
+    await expect(secondPending).resolves.toEqual({ agent: resumed })
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('starts a fresh cold resume after the previous shared entry was aborted', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('fresh-resume-after-abort')
+    providePersistence(ctx, {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    })
+    const firstGate = Promise.withResolvers<undefined>()
+    const secondGate = Promise.withResolvers<undefined>()
+    const firstCancel = vi.fn()
+    const first = { ...unpublishedAgent(ctx, meta), cancel: firstCancel }
+    const second = unpublishedAgent(ctx, meta)
+    let calls = 0
+    const resumeSignals: AbortSignal[] = []
+    const cleanupGate = Promise.withResolvers<undefined>()
+    let cleanupWaits = 0
+    vi.spyOn(ctx.agents, 'waitForResumeCleanup').mockImplementation(async (_sessionId, signal) => {
+      cleanupWaits += 1
+      if (cleanupWaits === 2) {
+        await cleanupGate.promise
+        signal?.throwIfAborted()
+      }
+    })
+    const resume = vi.spyOn(ctx.agents, 'resume').mockImplementation(async (options) => {
+      calls += 1
+      if (options.signal !== undefined) resumeSignals.push(options.signal)
+      if (calls === 1) {
+        await firstGate.promise
+        return { agent: first, dispose: () => Promise.resolve() }
+      }
+      await secondGate.promise
+      return { agent: second, dispose: () => Promise.resolve() }
+    })
+    const controller = new AbortController()
+    const firstPending = agents.resolveAgent(meta.id, controller.signal)
+    await vi.waitFor(() => { expect(resume).toHaveBeenCalledOnce() })
+    controller.abort(new Error('first waiter cancelled'))
+    await expect(firstPending).resolves.toMatchObject({ error: { code: 'gateway/internal' } })
+
+    const secondPending = agents.resolveAgent(meta.id)
+    await vi.waitFor(() => { expect(cleanupWaits).toBe(2) })
+    expect(resume).toHaveBeenCalledOnce()
+    cleanupGate.resolve(undefined)
+    await vi.waitFor(() => { expect(resume).toHaveBeenCalledTimes(2) })
+    expect(resumeSignals[0]).not.toBe(resumeSignals[1])
+    firstGate.resolve(undefined)
+    secondGate.resolve(undefined)
+    await expect(secondPending).resolves.toEqual({ agent: second })
+    expect(firstCancel).toHaveBeenCalledWith({ kind: 'parent' })
+  })
+
+  it('does not return a live Agent when the caller aborts during publication lookup', async () => {
+    const { ctx, agents } = await harness()
+    const meta = header('publication-abort')
+    providePersistence(ctx, {
+      list: () => Promise.resolve([meta]),
+      inspect: () => Promise.resolve({ meta, events: [] }),
+    })
+    const controller = new AbortController()
+    const resumed = unpublishedAgent(ctx, meta)
+    let lookups = 0
+    vi.spyOn(ctx.agents, 'get').mockImplementation(() => {
+      lookups += 1
+      if (lookups === 2) {
+        controller.abort(new Error('caller cancelled during publication'))
+      }
+      return undefined
+    })
+    vi.spyOn(ctx.agents, 'resume').mockResolvedValue({
+      agent: resumed,
+      dispose: () => Promise.resolve(),
+    })
+
+    await expect(agents.resolveAgent(meta.id, controller.signal)).resolves.toMatchObject({
+      error: { code: 'gateway/internal' },
+    })
+  })
+
   it('resumes directly from a retained observation and rejects an invalid observed header', async () => {
     const { ctx, agents } = await harness()
     const meta = header('observed-resume')
@@ -349,6 +500,101 @@ describe('ApiSession create or adoption', () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([created, created])
     expect(create).toHaveBeenCalledOnce()
+  })
+
+  it('keeps concurrent creation waiters independent when the first aborts', async () => {
+    const { ctx, agents } = await harness()
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-controller-shared-create-'))
+    tempDirs.push(cwd)
+    const meta = header('shared-create-waiters', cwd)
+    const cancel = vi.fn()
+    const created = { ...unpublishedAgent(ctx, meta), cancel }
+    const gate = Promise.withResolvers<undefined>()
+    let createSignal: AbortSignal | undefined
+    const create = vi.spyOn(ctx.agents, 'create').mockImplementation(async (options) => {
+      createSignal = options.signal
+      await gate.promise
+      return { agent: created, dispose: () => Promise.resolve() }
+    })
+    const first = new AbortController()
+    const second = new AbortController()
+    const firstPending = agents.ensureSession(meta.id, cwd, false, undefined, first.signal)
+    await vi.waitFor(() => { expect(create).toHaveBeenCalledOnce() })
+    const secondPending = agents.ensureSession(meta.id, cwd, false, undefined, second.signal)
+    first.abort(new Error('first creation waiter cancelled'))
+
+    await expect(firstPending).rejects.toThrow('first creation waiter cancelled')
+    expect(createSignal?.aborted).toBe(false)
+    gate.resolve(undefined)
+    await expect(secondPending).resolves.toBe(created)
+    expect(cancel).not.toHaveBeenCalled()
+  })
+
+  it('starts a fresh creation after every prior waiter leaves an aborted entry', async () => {
+    const { ctx, agents } = await harness()
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-controller-fresh-create-'))
+    tempDirs.push(cwd)
+    const meta = header('fresh-create-after-abort', cwd)
+    const firstGate = Promise.withResolvers<undefined>()
+    const secondGate = Promise.withResolvers<undefined>()
+    const firstIdle = Promise.withResolvers<undefined>()
+    const firstCancel = vi.fn()
+    const first = { ...unpublishedAgent(ctx, meta), cancel: firstCancel, whenIdle: vi.fn(() => firstIdle.promise) }
+    const second = unpublishedAgent(ctx, meta)
+    let calls = 0
+    const create = vi.spyOn(ctx.agents, 'create').mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) {
+        await firstGate.promise
+        return { agent: first, dispose: () => Promise.resolve() }
+      }
+      await secondGate.promise
+      return { agent: second, dispose: () => Promise.resolve() }
+    })
+    const controller = new AbortController()
+    const firstPending = agents.ensureSession(meta.id, cwd, false, undefined, controller.signal)
+    await vi.waitFor(() => { expect(create).toHaveBeenCalledOnce() })
+    controller.abort(new Error('all first creation waiters cancelled'))
+    await expect(firstPending).rejects.toThrow('all first creation waiters cancelled')
+
+    firstGate.resolve(undefined)
+    await vi.waitFor(() => { expect(first.whenIdle).toHaveBeenCalledOnce() })
+    const secondPending = agents.ensureSession(meta.id, cwd, false)
+    await Promise.resolve()
+    expect(create).toHaveBeenCalledOnce()
+    firstIdle.resolve(undefined)
+    await vi.waitFor(() => { expect(create).toHaveBeenCalledTimes(2) })
+    secondGate.resolve(undefined)
+    await expect(secondPending).resolves.toBe(second)
+    expect(firstCancel).toHaveBeenCalledWith({ kind: 'parent' })
+    expect(first.whenIdle).toHaveBeenCalledOnce()
+  })
+
+  it('forwards cancellation into a stalled fresh Agent creation', async () => {
+    const { ctx, agents } = await harness()
+    const cwd = mkdtempSync(join(tmpdir(), 'dsh-session-controller-cancelled-create-'))
+    tempDirs.push(cwd)
+    const meta = header('cancelled-create', cwd)
+    const started = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const cancel = vi.fn()
+    const created = { ...unpublishedAgent(ctx, meta), cancel }
+    let createSignal: AbortSignal | undefined
+    const create = vi.spyOn(ctx.agents, 'create').mockImplementation(async (options) => {
+      createSignal = options.signal
+      started.resolve(undefined)
+      await release.promise
+      return { agent: created, dispose: () => Promise.resolve() }
+    })
+    const controller = new AbortController()
+    const pending = agents.ensureSession(meta.id, cwd, false, undefined, controller.signal)
+    await started.promise
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ signal: createSignal }))
+    controller.abort(new Error('caller cancelled fresh creation'))
+    await expect(pending).rejects.toThrow('caller cancelled fresh creation')
+    expect(createSignal?.aborted).toBe(true)
+    release.resolve(undefined)
+    await vi.waitFor(() => { expect(cancel).toHaveBeenCalledWith({ kind: 'parent' }) })
   })
 
   it('accepts a raced ordinary creation and rejects a raced attached child', async () => {

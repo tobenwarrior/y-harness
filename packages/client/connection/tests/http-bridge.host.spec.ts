@@ -1,10 +1,49 @@
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { bridge } from '../src/http-bridge.ts'
 
 describe('HTTP bridge abort', () => {
+  it('times out a buffered body that never finishes', async () => {
+    vi.useFakeTimers()
+    try {
+      const destroyed: true[] = []
+      let resolveBody!: (result: IteratorResult<Buffer>) => void
+      const request = {
+        url: '/api/session.prompt',
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        destroy: () => {
+          destroyed.push(true)
+          resolveBody({ done: true, value: undefined })
+        },
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<Buffer>>((resolve) => { resolveBody = resolve }),
+        }),
+      } as unknown as IncomingMessage
+      let status: number | undefined
+      let body: string | undefined
+      const response = Object.assign(new EventEmitter(), {
+        writableEnded: false,
+        writeHead(code: number) { status = code; return this },
+        write() { return true },
+        end(value?: string) { body = value; this.writableEnded = true; return this },
+      }) as unknown as ServerResponse
+      const pending = bridge(request, response, {
+        requestBodyMode: () => 'buffered',
+        fetch: () => { throw new Error('a timed out request must never reach the handler') },
+      }, 1000, 10)
+      await vi.advanceTimersByTimeAsync(11)
+      await pending
+      expect(status).toBe(408)
+      expect(body).toBe('request body timed out')
+      expect(destroyed).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('destroys a declared-oversize request instead of draining it', async () => {
     const destroyed: true[] = []
     const request = Readable.from([]) as IncomingMessage

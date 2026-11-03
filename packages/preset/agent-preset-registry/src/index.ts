@@ -171,20 +171,22 @@ export class AgentPresetRegistry extends TypertRemoteService {
     }))
   }
 
-  /** Read every declared preset, including activation failures.
+  /** Read every user-visible preset, including activation failures.
    * @returns Display metadata and loading diagnostics.
    */
   async list(): Promise<AgentPreset[]> {
-    const rows = await Promise.all([...this.definitions.values()].map(async (record) => {
-      const broken = await this.diagnostic(record)
-      return {
-        id: record.config.id,
-        ...(record.config.name === undefined ? {} : { name: record.config.name }),
-        ...(record.config.description === undefined ? {} : { description: record.config.description }),
-        ...(record.config.order === undefined ? {} : { order: record.config.order }),
-        ...(broken === undefined ? {} : { broken }),
-      }
-    }))
+    const rows = await Promise.all([...this.definitions.values()]
+      .filter(record => record.config.internal !== true)
+      .map(async (record) => {
+        const broken = await this.diagnostic(record)
+        return {
+          id: record.config.id,
+          ...(record.config.name === undefined ? {} : { name: record.config.name }),
+          ...(record.config.description === undefined ? {} : { description: record.config.description }),
+          ...(record.config.order === undefined ? {} : { order: record.config.order }),
+          ...(broken === undefined ? {} : { broken }),
+        }
+      }))
     return rows.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity) || a.id.localeCompare(b.id))
   }
 
@@ -380,15 +382,17 @@ export class AgentPresetRegistry extends TypertRemoteService {
    * @returns Current declaration metadata and activation states.
    */
   compositionInventory(): Promise<AgentPresetComposition[]> {
-    return Promise.all([...this.definitions.values()].map(async (record) => {
-      const { id, name, description } = record.config
-      const broken = await this.diagnostic(record)
-      const read = definitionComposition(record.config.plugins, () => { throw new Error('Inactive definition') })
-      return { id, ...(name === undefined ? {} : { name }), ...(description === undefined ? {} : { description }),
-        isDefault: id === this.defaultId,
-        ...(broken === undefined ? {} : { broken }),
-        rows: record.generation === undefined ? ('rows' in read ? read.rows : []) : mountedCompositionRows(record.generation.mount.tree) }
-    }))
+    return Promise.all([...this.definitions.values()]
+      .filter(record => record.config.internal !== true)
+      .map(async (record) => {
+        const { id, name, description } = record.config
+        const broken = await this.diagnostic(record)
+        const read = definitionComposition(record.config.plugins, () => { throw new Error('Inactive definition') })
+        return { id, ...(name === undefined ? {} : { name }), ...(description === undefined ? {} : { description }),
+          isDefault: id === this.defaultId,
+          ...(broken === undefined ? {} : { broken }),
+          rows: record.generation === undefined ? ('rows' in read ? read.rows : []) : mountedCompositionRows(record.generation.mount.tree) }
+      }))
   }
 }
 export default AgentPresetRegistry

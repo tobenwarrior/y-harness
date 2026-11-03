@@ -18,7 +18,8 @@
     "src/recovery-config.ts",
     "src/rpc-host.ts",
     "src/rpc-schema.ts",
-    "src/rpc.ts"
+    "src/rpc.ts",
+    "src/shared-access.ts"
   ],
   "references": [
     {

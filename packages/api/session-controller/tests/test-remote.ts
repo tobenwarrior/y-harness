@@ -73,7 +73,7 @@ export interface TestSessionRemote {
   canOpenWorkspacePath(): Promise<RemoteResult<boolean>>
   list(request: SessionListRequest, signal?: AbortSignal): Promise<RemoteResult<SessionListValue>>
   search(request: SessionSearchRequest, signal?: AbortSignal): Promise<RemoteResult<SessionSearchValue>>
-  create(request: SessionCreateRequest): Promise<RemoteResult<SessionCreateValue>>
+  create(request: SessionCreateRequest, signal?: AbortSignal): Promise<RemoteResult<SessionCreateValue>>
   selectModel(request: SessionSelectModelRequest): Promise<RemoteResult<SessionSelectModelValue>>
   modelCatalog(): Promise<RemoteResult<ModelCatalog>>
   rename(request: SessionRenameRequest): Promise<RemoteResult<SessionRenameValue>>
@@ -359,7 +359,10 @@ export function createSessionTestRemote(
       () => direct.search(request, signal),
       signal,
     ),
-    create: request => remoteResult(() => direct.create(request)),
+    create: (request, signal = new AbortController().signal) => remoteResult(
+      () => direct.create(request, signal),
+      signal,
+    ),
     selectModel: request => remoteResult(() => direct.selectModel(request)),
     modelCatalog: () => remoteResult(() => direct.modelCatalog()),
     rename: request => remoteResult(() => direct.rename(request)),

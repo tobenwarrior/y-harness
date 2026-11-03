@@ -474,6 +474,15 @@ async createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<Agent
  * @returns the published handle.
  */
 async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Wait for an abandoned cold-resume write handle to finish closing before a
+ * fresh resume claims the same persisted Session.
+ * @param sessionId - persisted Session identity to wait for.
+ * @param signal - optional cancellation for the wait; it never cancels close.
+ * @returns completion of the outstanding cleanup, when one exists.
+ */
+async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void>
 ```
 
 Types: [SessionHeader](persistence.md)
@@ -499,7 +508,7 @@ async register(definition: PresetDefinition): Promise<() => Promise<void>>
  */
 inspectCompositions(ctx?: Context): AgentPresetInspection[]
 
-/** Read every declared preset, including activation failures.
+/** Read every user-visible preset, including activation failures.
  * @returns Display metadata and loading diagnostics.
  */
 async list(): Promise<AgentPreset[]>
@@ -670,6 +679,16 @@ async create(options: CreateAgentOptions): Promise<AgentHandle>
  * @returns the handle after setup, rollback-covered publication, and loop start complete.
  */
 async resume(options: ResumeAgentOptions): Promise<AgentHandle>
+
+/**
+ * Wait for an abandoned cold-resume lease before a caller starts a fresh
+ * resume of the same Session identity.
+ * @param sessionId - persisted Session identity to wait for.
+ * @param signal - optional cancellation for the wait.
+ * @returns completion of the outstanding lease cleanup, or immediately when
+ *   the active factory does not expose one.
+ */
+async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void>
 
 /**
  * Register a live agent with source `startup`. Rejects if the id is already registered or a

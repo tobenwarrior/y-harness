@@ -1,8 +1,16 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
+import { mkdir } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
+import {
+  SHARED_BOTS_PATH,
+  SharedAccessAuthority,
+  SharedInviteCode,
+  type HostConnectionHandle,
+} from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
@@ -11,12 +19,15 @@ import { admitEncodedImages } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
-import type { Domain, KvTable } from '@yharness/storage-domain'
+import type { UserMessage } from '@yharness/llm'
+import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
+import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
+import { z as zod } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
-import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
-import type { BotCollaborationClient } from './collaboration.ts'
+import { botMessageWasDelivered, BotCollaborationError, BotCollaborationService } from './collaboration.ts'
+import type { BotCollaborationClient, BotCollaborationHost } from './collaboration.ts'
 import {
   BOT_MEMORY_ENTRY_LIMIT,
   BotMemoryError,
@@ -55,12 +66,27 @@ import type {
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
+  BotShareMemberRevokeRequest,
+  BotShareMemberRevokeValue,
+  BotShareMembersRequest,
+  BotShareMembersValue,
+  BotShareInviteRequest,
+  BotShareInviteValue,
+  BotShareMemoryPolicyRequest,
+  BotShareMemoryPolicyValue,
   BotView,
 } from './types.ts'
-import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, botRecordSchema, imageAttachmentRefSchema } from './storage.ts'
+import {
+  SHARED_BOT_ENDPOINTS,
+  SharedBotService,
+  type SharedBotHost,
+  type SharedBotProfileUpdate,
+} from './shared-service.ts'
+import { BotPrincipalId } from './sharing.ts'
 
 export type * from './types.ts'
-export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
+export { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
 export {
   BOT_MEMORY_ENTRY_LIMIT,
   BOT_MEMORY_TEXT_LIMIT,
@@ -80,8 +106,30 @@ export type {
 } from './memory.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
 export {
+  sharedBotDomain,
+  sharedInviteSchema,
+  sharedMembershipSchema,
+  sharedMembershipSnapshotSchema,
+  sharedMemoryEntrySchema,
+  sharedMemorySnapshotSchema,
+  sharedPrivateSessionSchema,
+} from './storage.ts'
+export {
+  SHARED_BOT_ENDPOINTS,
+  SharedBotService,
+} from './shared-service.ts'
+export type {
+  SharedBotEnrollment,
+  SharedBotHost,
+  SharedBotProfileUpdate,
+  SharedBotProfile,
+  SharedBotRosterEntry,
+  SharedPrivateSessionValue,
+} from './shared-service.ts'
+export {
   BotCollaborationError,
   BotCollaborationService,
+  botMessageWasDelivered,
   BotMessageId,
   projectBotTranscript,
 } from './collaboration.ts'
@@ -102,6 +150,24 @@ export type {
 } from './collaboration.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
+export {
+  authorizeBotShare,
+  botPrivateConversationKey,
+  BOT_SHARE_OPERATIONS,
+  BOT_SHARE_ROLES,
+  BotPrincipalId,
+} from './sharing.ts'
+export type {
+  BotPrivateConversationKey,
+  BotPrivateConversationBinding,
+  BotShareDecision,
+  BotShareDenialReason,
+  BotShareMembership,
+  BotShareOperation,
+  BotShareRequest,
+  BotShareRole,
+  SharedBotRoster,
+} from './sharing.ts'
 
 declare module '@yharness/cordis' {
   interface Context {
@@ -110,8 +176,80 @@ declare module '@yharness/cordis' {
   }
 }
 
-/** Empty Bot service configuration. */
-export const Config = z.object({})
+/** Self-hosted shared-Bot access policy. Durations are milliseconds. */
+export interface BotSharedConfig {
+  /** Mount collaborator routes and durable sharing by default when Connection is present. */
+  readonly enabled?: boolean
+  /** Maximum collaborator cookie lifetime. */
+  readonly sessionMaxAgeMs?: number
+  /** Maximum unused invite lifetime. */
+  readonly inviteMaxAgeMs?: number
+  /** Mark collaborator cookies Secure for HTTPS deployments. */
+  readonly secureCookie?: boolean
+  /** Additional exact network authorities accepted by the shared route. */
+  readonly trustedHosts?: string[]
+  /** Maximum interval before a process notices a membership change in storage. */
+  readonly membershipPollIntervalMs?: number
+}
+
+/** Bot service configuration. */
+export interface Config {
+  /** Separate self-hosted collaborator access policy. */
+  readonly shared?: BotSharedConfig
+}
+
+const DEFAULT_SHARED_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+const DEFAULT_SHARED_INVITE_MAX_AGE_MS = 15 * 60 * 1000
+const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
+const MAX_NODE_TIMER_MS = 2_147_483_647
+const sharedInviteRequestSchema = zod.object({
+  botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  role: zod.enum(['owner', 'manager', 'collaborator']),
+}).strict()
+const sharedMembersRequestSchema = zod.object({
+  botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+}).strict()
+const sharedMemberRevokeRequestSchema = zod.object({
+  botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  principalId: zod.string().regex(/^principal-[A-Za-z0-9-]+$/),
+}).strict()
+const sharedEnrollmentPayloadSchema = zod.object({
+  code: zod.string().min(1).max(512),
+}).strict()
+
+interface ResolvedBotSharedConfig {
+  readonly enabled: boolean
+  readonly sessionMaxAgeMs: number
+  readonly inviteMaxAgeMs: number
+  readonly secureCookie: boolean
+  readonly trustedHosts: readonly string[]
+  readonly membershipPollIntervalMs: number
+}
+
+function resolveSharedConfig(value: BotSharedConfig | undefined): ResolvedBotSharedConfig {
+  return {
+    enabled: value?.enabled ?? true,
+    sessionMaxAgeMs: value?.sessionMaxAgeMs ?? DEFAULT_SHARED_SESSION_MAX_AGE_MS,
+    inviteMaxAgeMs: value?.inviteMaxAgeMs ?? DEFAULT_SHARED_INVITE_MAX_AGE_MS,
+    secureCookie: value?.secureCookie ?? false,
+    trustedHosts: value?.trustedHosts ?? [],
+    membershipPollIntervalMs: Math.max(1, Math.min(
+      value?.membershipPollIntervalMs ?? DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS,
+      MAX_NODE_TIMER_MS,
+    )),
+  }
+}
+
+export const Config = z.object({
+  shared: z.object({
+    enabled: z.boolean().default(true),
+    sessionMaxAgeMs: z.natural().min(1).default(DEFAULT_SHARED_SESSION_MAX_AGE_MS),
+    inviteMaxAgeMs: z.natural().min(1).default(DEFAULT_SHARED_INVITE_MAX_AGE_MS),
+    secureCookie: z.boolean().default(false),
+    trustedHosts: z.array(String).default([]),
+    membershipPollIntervalMs: z.natural().min(1).max(MAX_NODE_TIMER_MS).default(DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS),
+  }).default({}),
+})
 
 interface NormalizedCreate {
   readonly id?: BotRecord['id']
@@ -124,6 +262,79 @@ interface NormalizedCreate {
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
+
+const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions')
+const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
+const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
+const MAX_BOT_MESSAGE_DELIVERIES = 4_096
+/**
+ * Version-one write-ahead Bot rows for hosts that do not mount credentials.
+ * A pending row is replayed before reads after a restart and before any later
+ * mutation in the same process. Older BotService versions do not consume this
+ * domain, so mixed-version operation is unsupported while a pending record
+ * may exist: an older host could overwrite the Bot row without replaying it.
+ * Schema changes require an explicit successor or migration; there is no
+ * fallback.
+ */
+const botMutationIntentSchema = zod.object({
+  transactionId: zod.string().min(1),
+  record: botRecordSchema,
+}).strict()
+type BotMutationIntent = zod.infer<typeof botMutationIntentSchema>
+const botMutationIntentDomain = defineDomain({
+  name: 'agent_bot_intents',
+  version: 1,
+  layout: 'per-record',
+  tables: {
+    pending: domainTable<string, BotMutationIntent>(botMutationIntentSchema),
+  },
+})
+const botProfileSnapshotSchema = zod.object({
+  name: zod.string().min(1).max(80),
+  description: zod.string().max(240).optional(),
+  identity: zod.enum(BOT_IDENTITIES),
+  accent: zod.enum(BOT_ACCENTS),
+  avatar: imageAttachmentRefSchema.optional(),
+  pinned: zod.boolean().optional(),
+  hidden: zod.boolean().optional(),
+  group: zod.string().max(80).refine(value => value.trim() === value).nullable().optional(),
+  updatedAt: zod.number().int().nonnegative(),
+}).strict()
+const botProfilePendingSchema = zod.object({
+  transactionId: zod.string().min(1),
+  record: botRecordSchema,
+}).strict()
+const botProfileRevisionRecordSchema = zod.object({
+  version: zod.literal(1),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+const botMessageDeliveryRecordSchema = zod.object({
+  version: zod.literal(BOT_MESSAGE_DELIVERY_RECORD_VERSION),
+  messages: zod.array(zod.object({
+    targetSessionId: zod.string().min(1).max(256),
+    messageId: zod.string().min(1).max(256),
+  }).strict()).max(MAX_BOT_MESSAGE_DELIVERIES),
+}).strict()
+
+interface BotProfileRevisionState {
+  readonly version: 1
+  readonly revisions: Record<string, number>
+  readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
+  readonly pending?: zod.infer<typeof botProfilePendingSchema>
+}
+
+interface BotMessageDeliveryState {
+  readonly version: typeof BOT_MESSAGE_DELIVERY_RECORD_VERSION
+  readonly messages: readonly { readonly targetSessionId: string; readonly messageId: string }[]
+}
+
+class BotProfileRowWriteError extends Error {
+  constructor(readonly writeError: unknown) {
+    super('Bot profile row write failed', { cause: writeError })
+  }
+}
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -230,11 +441,131 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.agentPreset === request.agentPreset
 }
 
+function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfileRevisionState {
+  if (record === undefined) return { version: 1, revisions: {}, profiles: {} }
+  if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
+  const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Bot profile revision record is invalid')
+  return {
+    version: 1,
+    revisions: { ...parsed.data.revisions },
+    profiles: { ...parsed.data.profiles },
+    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+  }
+}
+
+function profileRevisionRecordOfState(state: BotProfileRevisionState): CredentialRecord {
+  return {
+    kind: 'grant',
+    payload: {
+      version: 1,
+      revisions: state.revisions,
+      ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
+      ...(state.pending === undefined ? {} : { pending: state.pending }),
+    },
+  }
+}
+
+function profileSnapshotOf(record: BotRecord): zod.infer<typeof botProfileSnapshotSchema> {
+  return {
+    name: record.name,
+    ...(record.description === undefined ? {} : { description: record.description }),
+    identity: record.identity,
+    accent: record.accent,
+    ...(record.avatar === undefined ? {} : { avatar: record.avatar }),
+    pinned: record.pinned ?? false,
+    hidden: record.hidden ?? false,
+    group: record.group ?? null,
+    updatedAt: record.updatedAt,
+  }
+}
+
+function applyProfileSnapshot(record: BotRecord, profile: zod.infer<typeof botProfileSnapshotSchema> | undefined): BotRecord {
+  if (profile === undefined) return record
+  const {
+    description: ignoredDescription,
+    avatar: ignoredAvatar,
+    group: currentGroup,
+    ...withoutOptionalProfile
+  } = record
+  void ignoredDescription
+  void ignoredAvatar
+  return {
+    ...withoutOptionalProfile,
+    name: profile.name,
+    ...(profile.description === undefined ? {} : { description: profile.description }),
+    identity: profile.identity,
+    accent: profile.accent,
+    ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
+    ...(profile.pinned === undefined ? {} : { pinned: profile.pinned }),
+    ...(profile.hidden === undefined ? {} : { hidden: profile.hidden }),
+    ...(profile.group === undefined
+      ? currentGroup === undefined ? {} : { group: currentGroup }
+      : profile.group === null ? {} : { group: profile.group }),
+    updatedAt: profile.updatedAt,
+  }
+}
+
+function commitProfileState(state: BotProfileRevisionState, record: BotRecord): BotProfileRevisionState {
+  return {
+    version: 1,
+    revisions: { ...state.revisions, [String(record.id)]: record.updatedAt },
+    profiles: { ...state.profiles, [String(record.id)]: profileSnapshotOf(record) },
+  }
+}
+
+function finishPendingProfile(state: BotProfileRevisionState): BotProfileRevisionState {
+  const pending = state.pending
+  if (pending === undefined) return state
+  const { pending: ignoredPending, ...withoutPending } = state
+  void ignoredPending
+  return commitProfileState(withoutPending, pending.record)
+}
+
+function botMessageDeliveryStateOf(record: CredentialRecord | undefined): BotMessageDeliveryState {
+  if (record === undefined) return { version: BOT_MESSAGE_DELIVERY_RECORD_VERSION, messages: [] }
+  if (record.kind !== 'grant') throw new Error('Bot message delivery record has an unexpected credential kind')
+  const parsed = botMessageDeliveryRecordSchema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Bot message delivery record is invalid')
+  return parsed.data
+}
+
+function botMessageDeliveryRecordOf(state: BotMessageDeliveryState): CredentialRecord {
+  return { kind: 'grant', payload: { version: state.version, messages: state.messages } }
+}
+
 function sessionRequest(record: BotRecord): SessionCreateRequest {
   return {
     sessionId: record.sessionId,
     cwd: record.cwd,
     ...(record.agentPreset === undefined ? {} : { agentPreset: record.agentPreset }),
+  }
+}
+
+/** Fixed Agent preset used by shared sessions; it contains no operator tools. */
+export const SHARED_BOT_AGENT_PRESET = 'shared-bot' as const
+
+const SHARED_BOT_SESSION_ROOT = join(resolve(tmpdir()), 'y-harness-shared-bots')
+
+/**
+ * Return the private working directory assigned to one shared Session.
+ * @param sessionId - durable shared Session id.
+ * @returns an isolated temporary directory path derived from the opaque id.
+ */
+export function sharedBotWorkingDirectory(sessionId: SessionId): string {
+  return join(SHARED_BOT_SESSION_ROOT, encodeURIComponent(String(sessionId)))
+}
+
+/**
+ * Build the only Session creation request accepted for a shared Bot chat.
+ * @param sessionId - durable shared Session id.
+ * @returns a no-tools preset and a per-Session working directory.
+ */
+export function sharedBotSessionRequest(sessionId: SessionId): SessionCreateRequest {
+  return {
+    sessionId,
+    cwd: sharedBotWorkingDirectory(sessionId),
+    agentPreset: SHARED_BOT_AGENT_PRESET,
   }
 }
 
@@ -285,22 +616,35 @@ export class BotService extends TypertRemoteService {
 
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly initialized: PromiseLike<unknown>
+  private readonly credentials: CredentialProvider | undefined
+  private readonly noCredentialIntentReady: Promise<Domain<typeof botMutationIntentDomain> | undefined>
+  private readonly sharedConfig: ResolvedBotSharedConfig
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
   private readonly pendingMemoryFlushes = new Map<string, Map<string, BotMemoryEvent['operation']>>()
+  private readonly blockedProfileTransactions = new Set<string>()
+  private readonly blockedNoCredentialTransactions = new Set<string>()
+  private readonly pendingNoCredentialIntents = new Map<string, BotMutationIntent>()
+  private readonly sharedRecordsBySession = new Map<string, BotRecord>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly collaboration: BotCollaborationService
+  private sharedService: SharedBotService | undefined
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
 
   /**
    * @param ctx - Host context carrying storage and explicit Session creation.
    */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'bots', { namespace: 'bots' })
+    this.credentials = ctx.get('credentials')
+    this.noCredentialIntentReady = this.credentials === undefined
+      ? ctx.storageDomain.open(botMutationIntentDomain)
+      : Promise.resolve(undefined)
+    this.sharedConfig = resolveSharedConfig(config.shared)
     this.ready = ctx.storageDomain.open(botDomain).then(async (domain) => {
       const seenSessions = new Set<string>()
       for (const [key, record] of domain.table('bots').entries()) {
@@ -333,7 +677,7 @@ export class BotService extends TypertRemoteService {
       for (const [, record] of domain.table('bots').entries()) this.recordsBySession.set(String(record.sessionId), record)
       return domain
     })
-    this.collaboration = new BotCollaborationService({
+    const collaborationHostBase: BotCollaborationHost = {
       listBots: async () => (await this.list({ includeHidden: true })).bots,
       inspectSession: async (sessionId) => {
         const inspection = await ctx.sessionController.inspect(sessionId)
@@ -350,7 +694,14 @@ export class BotService extends TypertRemoteService {
         if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
-    })
+    }
+    const collaborationHost: BotCollaborationHost = this.credentials === undefined
+      ? collaborationHostBase
+      : {
+        ...collaborationHostBase,
+        deliverMessage: (target, message, signal) => this.deliverBotMessage(target, message, signal),
+      }
+    this.collaboration = new BotCollaborationService(collaborationHost)
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
@@ -441,8 +792,11 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {
       const domain = await this.ready
+      const noCredentialIntent = await this.noCredentialIntentReady
+      let sharedCleanup: () => Promise<void> = async () => {}
       let cleanup: () => Promise<void>
       try {
+        sharedCleanup = await this.mountSharedAccess()
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           await this.chain
@@ -452,11 +806,19 @@ export class BotService extends TypertRemoteService {
             ...promptFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
           ])
-          await domain.close()
+          await sharedCleanup()
+          await Promise.all([
+            domain.close(),
+            noCredentialIntent?.close() ?? Promise.resolve(),
+          ])
         })
       } catch (error) {
         this.stopping = true
-        await domain.close()
+        await sharedCleanup()
+        await Promise.all([
+          domain.close(),
+          noCredentialIntent?.close() ?? Promise.resolve(),
+        ])
         throw error
       }
       return cleanup
@@ -466,6 +828,420 @@ export class BotService extends TypertRemoteService {
   async [Service.init](): Promise<void> {
     await this.initialized
     await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+  }
+
+  /**
+   * Issue one collaborator invite for an operator-owned Bot.
+   * @param request - Bot id and role to grant on redemption.
+   * @returns the one-time code and its expiry.
+   */
+  @Remote('createShareInvite')
+  async createShareInvite(request: BotShareInviteRequest): Promise<BotShareInviteValue> {
+    const parsed = sharedInviteRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot invite request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    const invite = await this.sharedService.createInvite(parsed.data.botId, parsed.data.role)
+    return { code: String(invite.code), expiresAt: invite.expiresAt }
+  }
+
+  /**
+   * List the shared members of one operator-owned Bot.
+   * @param request - Bot id to inspect.
+   * @returns the safe member summaries without private Session data.
+   */
+  @Remote('listShareMembers')
+  async listShareMembers(request: BotShareMembersRequest): Promise<BotShareMembersValue> {
+    const parsed = sharedMembersRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot member request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    return { botId: parsed.data.botId, members: await this.sharedService.listMembers(parsed.data.botId) }
+  }
+
+  /**
+   * Read the shared-context policy for one operator-owned Bot.
+   * @param request - Bot id to inspect.
+   * @returns the current shared-context policy.
+   */
+  @Remote('getShareMemoryPolicy')
+  async getShareMemoryPolicy(request: BotShareMembersRequest): Promise<BotShareMemoryPolicyValue> {
+    const parsed = sharedMembersRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot memory request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    return this.sharedService.readMemoryPolicy(parsed.data.botId)
+  }
+
+  /**
+   * Enable or disable the explicit shared context for one Bot.
+   * @param request - Bot id and desired policy.
+   * @returns the committed policy.
+   */
+  @Remote('setShareMemoryPolicy')
+  async setShareMemoryPolicy(request: BotShareMemoryPolicyRequest): Promise<BotShareMemoryPolicyValue> {
+    const parsed = zod.object({
+      botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+      enabled: zod.boolean(),
+    }).strict().safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot memory request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    return this.sharedService.setMemoryPolicy(parsed.data.botId, parsed.data.enabled)
+  }
+
+  /**
+   * Revoke one non-owner member from one operator-owned Bot.
+   * @param request - Bot id and the principal to remove.
+   * @returns the scoped revocation result.
+   */
+  @Remote('revokeShareMember')
+  async revokeShareMember(request: BotShareMemberRevokeRequest): Promise<BotShareMemberRevokeValue> {
+    const parsed = sharedMemberRevokeRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot member request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    const result = await this.sharedService.revokeMember(parsed.data.botId, BotPrincipalId(parsed.data.principalId))
+    return result
+  }
+
+  private async updateSharedProfileImpl(
+    botId: BotId,
+    update: SharedBotProfileUpdate,
+    signal?: AbortSignal,
+    expectedUpdatedAt?: number,
+  ): Promise<BotView> {
+    return this.serialize(async () => {
+      const next = await this.commitBotMutation(botId, current => ({
+        ...current,
+        ...(update.name === undefined ? {} : { name: update.name }),
+        ...(update.identity === undefined ? {} : { identity: update.identity }),
+        ...(update.accent === undefined ? {} : { accent: update.accent }),
+        // The optimistic version must advance even when two writes share a
+        // clock tick; otherwise a stale manager update can pass the version
+        // check after a concurrent profile change.
+        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+      }), expectedUpdatedAt, signal)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
+      this.emitChanged()
+      return this.view(next)
+    }, signal)
+  }
+
+  /**
+   * Deduplicate one peer message in the credential store before acknowledging
+   * the durable target Session. A log receipt covers a crash after follow-up
+   * admission but before the delivery ledger write; the ledger covers retries
+   * from other Host processes after the original write has committed.
+   * @param target - durable Bot target.
+   * @param message - frozen sender-attributed message.
+   * @param signal - optional cancellation signal.
+   * @returns whether this call admitted or recognized the message.
+   */
+  private async deliverBotMessage(
+    target: BotView,
+    message: UserMessage,
+    signal?: AbortSignal,
+  ): Promise<'accepted' | 'duplicate'> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) throw new Error('Bot message delivery requires durable credentials')
+    let result: 'accepted' | 'duplicate' | undefined
+    await credentials.modifyRecord(BOT_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
+      const state = botMessageDeliveryStateOf(stored)
+      const targetSessionId = String(target.sessionId)
+      const messageId = String(message.id)
+      const seen = state.messages.some(entry => entry.targetSessionId === targetSessionId && entry.messageId === messageId)
+      if (seen) {
+        result = 'duplicate'
+        return undefined
+      }
+      signal?.throwIfAborted()
+      const inspection = signal === undefined
+        ? await this.ctx.sessionController.inspect(target.sessionId)
+        : await this.ctx.sessionController.inspect(target.sessionId, signal)
+      signal?.throwIfAborted()
+      if (botMessageWasDelivered(inspection.events, message.id)) {
+        result = 'duplicate'
+        if (state.messages.length >= MAX_BOT_MESSAGE_DELIVERIES) return undefined
+        const messages = [...state.messages, { targetSessionId, messageId }].slice(-MAX_BOT_MESSAGE_DELIVERIES)
+        return botMessageDeliveryRecordOf({ version: state.version, messages })
+      }
+      if (state.messages.length >= MAX_BOT_MESSAGE_DELIVERIES) {
+        throw new Error('Bot message delivery ledger is full')
+      }
+      const resolved = signal === undefined
+        ? await this.ctx.sessionController.resolveAgent(target.sessionId)
+        : await this.ctx.sessionController.resolveAgent(target.sessionId, signal)
+      signal?.throwIfAborted()
+      if (!('agent' in resolved)) throw resolved.error
+      let session = this.ctx.sessions.get(target.sessionId)
+      if (session === undefined) session = this.ctx.sessions.get(resolved.agent.id)
+      if (session === undefined) throw new Error(`Bot Session "${String(target.sessionId)}" is not live.`)
+      resolved.agent.followup(message)
+      if (!await this.ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
+      result = 'accepted'
+      const messages = [...state.messages, { targetSessionId, messageId }]
+      return botMessageDeliveryRecordOf({ version: state.version, messages })
+    })
+    if (result === undefined) throw new Error('Bot message delivery did not return a status')
+    return result
+  }
+
+  private async noCredentialIntentTable(): Promise<KvTable<string, BotMutationIntent>> {
+    const domain = await this.noCredentialIntentReady
+    if (domain === undefined) throw new Error('No-credential Bot intent storage is unavailable')
+    return domain.table('pending')
+  }
+
+  private async reconcileNoCredentialIntents(
+    bots: KvTable<BotRecord['id'], BotRecord>,
+    force: boolean,
+  ): Promise<void> {
+    const intents = await this.noCredentialIntentTable()
+    const pending = new Map(this.pendingNoCredentialIntents)
+    for (const [key, intent] of intents.entries()) {
+      if (key !== intent.transactionId) throw new Error('No-credential Bot intent key does not match its transaction')
+      if (!pending.has(intent.transactionId)) pending.set(intent.transactionId, intent)
+    }
+    for (const [key, intent] of pending) {
+      if (!force && this.blockedNoCredentialTransactions.has(intent.transactionId)) continue
+      if (this.pendingNoCredentialIntents.has(intent.transactionId)) {
+        try {
+          // Re-materialize an intent whose put may have reached the medium
+          // before rejecting, so the in-memory table and delete both observe
+          // the exact record that must be recovered.
+          await intents.put(key, intent)
+        } catch (error: unknown) {
+          this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+          this.blockedNoCredentialTransactions.add(intent.transactionId)
+          throw error
+        }
+      }
+      try {
+        await bots.put(intent.record.id, intent.record)
+      } catch (error: unknown) {
+        this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+        this.blockedNoCredentialTransactions.add(intent.transactionId)
+        throw error
+      }
+      await this.clearNoCredentialIntent(intent)
+    }
+  }
+
+  private async persistNoCredentialIntent(record: BotRecord): Promise<BotMutationIntent> {
+    const intent: BotMutationIntent = { transactionId: randomUUID(), record }
+    const intents = await this.noCredentialIntentTable()
+    try {
+      await intents.put(intent.transactionId, intent)
+    } catch (error: unknown) {
+      this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+      this.blockedNoCredentialTransactions.add(intent.transactionId)
+      throw error
+    }
+    return intent
+  }
+
+  private async clearNoCredentialIntent(intent: BotMutationIntent): Promise<void> {
+    const intents = await this.noCredentialIntentTable()
+    try {
+      await intents.delete(intent.transactionId)
+    } catch (error: unknown) {
+      // A rejected delete may have removed the medium record already. Keep
+      // the exact intent and block newer mutations until reconciliation can
+      // make the medium and table cache agree again.
+      this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+      this.blockedNoCredentialTransactions.add(intent.transactionId)
+      throw error
+    }
+    this.pendingNoCredentialIntents.delete(intent.transactionId)
+    this.blockedNoCredentialTransactions.delete(intent.transactionId)
+  }
+
+  /**
+   * Commit one Bot row while holding a durable per-roster revision fence.
+   *
+   * The credential record is used only as a cross-process lock and revision
+   * map when credentials are available; otherwise the intent domain provides
+   * the write-ahead recovery record. Credential-backed processes observe the
+   * durable revision before writing, so an optimistic Bot update cannot
+   * overwrite a newer update from another Host process. The durable snapshot
+   * includes organization fields because those fields are also user edits.
+   * @param botId - Bot row being changed.
+   * @param mutation - Build the next row from the row visible to this process.
+   * @param expectedUpdatedAt - Optional caller-observed row revision.
+   * @param signal - Optional cancellation signal.
+   * @returns the committed Bot row.
+   */
+  private async commitBotMutation(
+    botId: BotId,
+    mutation: (current: BotRecord) => BotRecord,
+    expectedUpdatedAt?: number,
+    signal?: AbortSignal,
+  ): Promise<BotRecord> {
+    const bots = (await this.getDomain()).table('bots')
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) {
+      await this.reconcileNoCredentialIntents(bots, true)
+      const current = bots.get(botId)
+      if (current === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      if (expectedUpdatedAt !== undefined && current.updatedAt !== expectedUpdatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during update', { botId })
+      }
+      const next = mutation(current)
+      if (next.id !== botId || next.updatedAt <= current.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile revision did not advance', { botId })
+      }
+      signal?.throwIfAborted()
+      const intent = await this.persistNoCredentialIntent(next)
+      try {
+        await bots.put(botId, next)
+      } catch (error: unknown) {
+        this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+        this.blockedNoCredentialTransactions.add(intent.transactionId)
+        throw error
+      }
+      await this.clearNoCredentialIntent(intent)
+      return next
+    }
+
+    const transactionId = randomUUID()
+    let nextToCommit: BotRecord | undefined
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+      let state = profileRevisionRecordOf(stored)
+      if (state.pending !== undefined) {
+        await bots.put(state.pending.record.id, state.pending.record)
+        this.blockedProfileTransactions.delete(state.pending.transactionId)
+        state = finishPendingProfile(state)
+      }
+      const storedCurrent = bots.get(botId)
+      if (storedCurrent === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      const current = applyProfileSnapshot(storedCurrent, state.profiles[String(botId)])
+      if (expectedUpdatedAt !== undefined && current.updatedAt !== expectedUpdatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during update', { botId })
+      }
+      const durableRevision = state.revisions[String(botId)]
+      if (durableRevision !== undefined && durableRevision !== current.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed in another process', { botId })
+      }
+      const next = mutation(current)
+      if (next.id !== botId || next.updatedAt <= current.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile revision did not advance', { botId })
+      }
+      signal?.throwIfAborted()
+      nextToCommit = next
+      return profileRevisionRecordOfState({
+        ...state,
+        pending: { transactionId, record: next },
+      })
+    })
+    if (nextToCommit === undefined) {
+      throw new RemoteError('gateway/internal', 'Bot profile preparation did not return a row', { botId })
+    }
+
+    let committed: BotRecord | undefined
+    try {
+      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+        const state = profileRevisionRecordOf(stored)
+        if (state.pending?.transactionId === transactionId) {
+          try {
+            await bots.put(state.pending.record.id, state.pending.record)
+          } catch (error: unknown) {
+            throw new BotProfileRowWriteError(error)
+          }
+          committed = state.pending.record
+          return profileRevisionRecordOfState(finishPendingProfile(state))
+        }
+        const current = bots.get(botId)
+        const profile = state.profiles[String(botId)]
+        if (current !== undefined && profile?.updatedAt === nextToCommit?.updatedAt) {
+          committed = applyProfileSnapshot(current, profile)
+          return undefined
+        }
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during update', { botId })
+      })
+    } catch (error: unknown) {
+      if (error instanceof BotProfileRowWriteError) {
+        this.blockedProfileTransactions.add(transactionId)
+        throw error.writeError
+      }
+      throw error
+    }
+    if (committed === undefined) {
+      throw new RemoteError('gateway/internal', 'Bot profile commit did not return a row', { botId })
+    }
+    return committed
+  }
+
+  /** Commit a newly allocated Bot row under the same cross-process revision fence. */
+  private async commitNewBot(record: BotRecord, signal?: AbortSignal): Promise<void> {
+    const bots = (await this.getDomain()).table('bots')
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) {
+      await this.reconcileNoCredentialIntents(bots, true)
+      if (bots.get(record.id) !== undefined) {
+        throw new RemoteError('bot/id-conflict', `Bot "${record.id}" already exists`, { botId: record.id })
+      }
+      signal?.throwIfAborted()
+      const intent = await this.persistNoCredentialIntent(record)
+      try {
+        await bots.put(record.id, record)
+      } catch (error: unknown) {
+        this.pendingNoCredentialIntents.set(intent.transactionId, intent)
+        this.blockedNoCredentialTransactions.add(intent.transactionId)
+        throw error
+      }
+      await this.clearNoCredentialIntent(intent)
+      return
+    }
+
+    const transactionId = randomUUID()
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+      let state = profileRevisionRecordOf(stored)
+      if (state.pending !== undefined) {
+        await bots.put(state.pending.record.id, state.pending.record)
+        this.blockedProfileTransactions.delete(state.pending.transactionId)
+        state = finishPendingProfile(state)
+      }
+      if (bots.get(record.id) !== undefined || state.revisions[String(record.id)] !== undefined) {
+        throw new RemoteError('bot/id-conflict', `Bot "${record.id}" already exists`, { botId: record.id })
+      }
+      signal?.throwIfAborted()
+      return profileRevisionRecordOfState({
+        ...state,
+        pending: { transactionId, record },
+      })
+    })
+    try {
+      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+        const state = profileRevisionRecordOf(stored)
+        if (state.pending?.transactionId === transactionId) {
+          try {
+            await bots.put(state.pending.record.id, state.pending.record)
+          } catch (error: unknown) {
+            throw new BotProfileRowWriteError(error)
+          }
+          return profileRevisionRecordOfState(finishPendingProfile(state))
+        }
+        if (state.profiles[String(record.id)]?.updatedAt === record.updatedAt) return undefined
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during creation', { botId: record.id })
+      })
+    } catch (error: unknown) {
+      if (error instanceof BotProfileRowWriteError) {
+        this.blockedProfileTransactions.add(transactionId)
+        throw error.writeError
+      }
+      throw error
+    }
   }
 
   /**
@@ -675,13 +1451,13 @@ export class BotService extends TypertRemoteService {
 
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(botId)
-      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
-      const next = { ...current, description, updatedAt: Math.max(Date.now(), current.updatedAt) }
-      signal?.throwIfAborted()
-      await bots.put(botId, next)
+      const next = await this.commitBotMutation(botId, current => ({
+        ...current,
+        description,
+        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+      }), undefined, signal)
       this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
       this.emitChanged()
     })
   }
@@ -695,9 +1471,15 @@ export class BotService extends TypertRemoteService {
   async list(request: BotListRequest): Promise<BotListValue> {
     const bots = (await this.getDomain()).table('bots')
     const includeHidden = request.includeHidden === true
+    const profileState = await this.readProfileRevisionState(bots)
+    const rows = [...bots.entries()].map(([, record]) => {
+      const current = applyProfileSnapshot(record, profileState.profiles[String(record.id)])
+      this.recordsBySession.set(String(current.sessionId), current)
+      this.refreshSharedRecords(current)
+      return this.view(current)
+    })
     return {
-      bots: [...bots.entries()]
-        .map(([, record]) => this.view(record))
+      bots: rows
         .filter(bot => includeHidden || !bot.hidden)
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
     }
@@ -724,7 +1506,11 @@ export class BotService extends TypertRemoteService {
       const bots = (await this.getDomain()).table('bots')
       signal?.throwIfAborted()
       const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
-      const existing = bots.get(id)
+      const profileState = await this.readProfileRevisionState(bots, true)
+      const storedExisting = bots.get(id)
+      const existing = storedExisting === undefined
+        ? undefined
+        : applyProfileSnapshot(storedExisting, profileState.profiles[String(id)])
       if (existing !== undefined) {
         if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
           return { bot: this.view(existing) }
@@ -739,7 +1525,7 @@ export class BotService extends TypertRemoteService {
             { botId: id },
           )
         }
-        const active = await this.provision(existing, bots)
+        const active = await this.provision(existing)
         return { bot: this.view(active) }
       }
 
@@ -763,10 +1549,10 @@ export class BotService extends TypertRemoteService {
         createdAt: now,
         updatedAt: now,
       }
-      await bots.put(id, record)
+      await this.commitNewBot(record, signal)
       this.recordsBySession.set(String(record.sessionId), record)
       this.emitChanged()
-      const active = await this.provision(record, bots)
+      const active = await this.provision(record, signal)
       return { bot: this.view(active) }
     })
   }
@@ -786,15 +1572,13 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const name = normalizeName(request.name)
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const next: BotRecord = { ...current, name, updatedAt: Math.max(Date.now(), current.updatedAt) }
-      signal?.throwIfAborted()
-      await bots.put(id, next)
+      const next = await this.commitBotMutation(id, current => ({
+        ...current,
+        name,
+        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+      }), undefined, signal)
       this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -826,24 +1610,20 @@ export class BotService extends TypertRemoteService {
         return badRequest('Bot organization request must change pinned, hidden, or group')
       }
 
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const { group: currentGroup, ...currentWithoutGroup } = current
-      const next: BotRecord = {
-        ...(hasGroup ? currentWithoutGroup : current),
-        pinned: pinned ?? current.pinned ?? false,
-        hidden: hidden ?? current.hidden ?? false,
-        ...(hasGroup
-          ? group === undefined ? {} : { group }
-          : currentGroup === undefined ? {} : { group: currentGroup }),
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
-      signal?.throwIfAborted()
-      await bots.put(id, next)
+      const next = await this.commitBotMutation(id, (current) => {
+        const { group: currentGroup, ...currentWithoutGroup } = current
+        return {
+          ...(hasGroup ? currentWithoutGroup : current),
+          pinned: pinned ?? current.pinned ?? false,
+          hidden: hidden ?? current.hidden ?? false,
+          ...(hasGroup
+            ? group === undefined ? {} : { group }
+            : currentGroup === undefined ? {} : { group: currentGroup }),
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+      }, undefined, signal)
       this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -873,28 +1653,19 @@ export class BotService extends TypertRemoteService {
         return badRequest('Bot appearance request must change identity or accent, or clear its avatar')
       }
 
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
-      const updatedAt = Math.max(Date.now(), current.updatedAt)
-      const withAppearance: BotRecord = {
-        ...current,
-        ...(identity === undefined ? {} : { identity }),
-        ...(accent === undefined ? {} : { accent }),
-        updatedAt,
-      }
-      let next: BotRecord
-      if (clearAvatar) {
+      const next = await this.commitBotMutation(id, (current) => {
+        const withAppearance: BotRecord = {
+          ...current,
+          ...(identity === undefined ? {} : { identity }),
+          ...(accent === undefined ? {} : { accent }),
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+        if (!clearAvatar) return withAppearance
         const { avatar: ignoredAvatar, ...withoutAvatar } = withAppearance
         void ignoredAvatar
-        next = withoutAvatar
-      } else {
-        next = withAppearance
-      }
-      signal?.throwIfAborted()
-      await bots.put(id, next)
+        return withoutAvatar
+      }, undefined, signal)
+      this.refreshSharedRecords(next)
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -934,23 +1705,15 @@ export class BotService extends TypertRemoteService {
       if (request === null || typeof request !== 'object') return badRequest('Bot avatar request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
-      if (current === undefined) {
-        throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-      }
       const avatar = request.avatar === null ? undefined : await this.admitAvatar(id, request.avatar)
-      const updatedAt = Math.max(Date.now(), current.updatedAt)
-      let next: BotRecord
-      if (request.avatar === null) {
-        const { avatar: ignoredAvatar, ...withoutAvatar } = current
-        void ignoredAvatar
-        next = { ...withoutAvatar, updatedAt }
-      } else {
-        next = { ...current, avatar, updatedAt }
-      }
-      signal?.throwIfAborted()
-      await bots.put(id, next)
+      const next = await this.commitBotMutation(id, (current) => {
+        if (request.avatar === null) {
+          const { avatar: ignoredAvatar, ...withoutAvatar } = current
+          void ignoredAvatar
+          return { ...withoutAvatar, updatedAt: Math.max(Date.now(), current.updatedAt + 1) }
+        }
+        return { ...current, avatar, updatedAt: Math.max(Date.now(), current.updatedAt + 1) }
+      }, undefined, signal)
       this.emitChanged()
       return { bot: this.view(next) }
     })
@@ -968,7 +1731,11 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(id)
+      const profileState = await this.readProfileRevisionState(bots)
+      const storedCurrent = bots.get(id)
+      const current = storedCurrent === undefined
+        ? undefined
+        : applyProfileSnapshot(storedCurrent, profileState.profiles[String(id)])
       if (current === undefined) {
         throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
       }
@@ -1031,10 +1798,13 @@ export class BotService extends TypertRemoteService {
 
   private async provision(
     record: BotRecord,
-    bots: KvTable<BotRecord['id'], BotRecord>,
+    signal?: AbortSignal,
   ): Promise<BotRecord> {
     try {
-      const created = await this.ctx.sessionController.create(sessionRequest(record))
+      const created = await this.ctx.sessionController.create(
+        sessionRequest(record),
+        new AbortController().signal,
+      )
       if (created.sessionId !== record.sessionId) {
         throw new Error(`Session controller returned "${created.sessionId}" for "${record.sessionId}"`)
       }
@@ -1048,13 +1818,13 @@ export class BotService extends TypertRemoteService {
         { cause: error },
       )
     }
-    const active: BotRecord = {
-      ...record,
-      state: 'active',
-      updatedAt: Math.max(Date.now(), record.updatedAt),
-    }
+    let active: BotRecord
     try {
-      await bots.put(record.id, active)
+      active = await this.commitBotMutation(record.id, current => ({
+        ...current,
+        state: 'active',
+        updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+      }), record.updatedAt, signal)
     } catch (error: unknown) {
       throw new RemoteError(
         'bot/provisioning-failed',
@@ -1071,30 +1841,33 @@ export class BotService extends TypertRemoteService {
   /** Install the Bot identity in the Agent scope before its first model turn. */
   private async installPrompt(agent: Agent): Promise<void> {
     await this.ready
-    const record = this.recordsBySession.get(String(agent.id))
+    const record = this.recordsBySession.get(String(agent.id)) ?? this.sharedRecordsBySession.get(String(agent.id))
     if (record === undefined || this.promptFibers.has(agent)) return
-    await this.ensureMemoryLoaded(record)
+    const operatorBot = this.recordsBySession.has(String(agent.id))
+    if (operatorBot) await this.ensureMemoryLoaded(record)
     const fiber = agent.ctx.inject(['systemPrompt', 'tools'], (scope) => {
       const identityOrder = scope.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX') + 1
       scope.systemPrompt.section({
         name: BOT_IDENTITY_SECTION,
         order: identityOrder,
         text: () => {
-          const record = this.recordsBySession.get(String(agent.id))
-          return record === undefined ? '' : botIdentityPrompt(record)
+          const current = this.recordsBySession.get(String(agent.id)) ?? this.sharedRecordsBySession.get(String(agent.id))
+          return current === undefined ? '' : botIdentityPrompt(current)
         },
         // Bot names and descriptions are user-authored prose, not variables.
         interpolate: false,
       })
-      scope.systemPrompt.section({
-        name: BOT_MEMORY_SECTION,
-        order: identityOrder + 1,
-        text: () => botMemoryPrompt([...this.memoriesBySession.get(String(agent.id))?.values() ?? []]
-          .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))),
-        // Memory text is data, not a template.
-        interpolate: false,
-      })
-      installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
+      if (operatorBot) {
+        scope.systemPrompt.section({
+          name: BOT_MEMORY_SECTION,
+          order: identityOrder + 1,
+          text: () => botMemoryPrompt([...this.memoriesBySession.get(String(agent.id))?.values() ?? []]
+            .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))),
+          // Memory text is data, not a template.
+          interpolate: false,
+        })
+        installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
+      }
     })
     this.promptFibers.set(agent, fiber)
     await fiber
@@ -1120,9 +1893,179 @@ export class BotService extends TypertRemoteService {
     return { ...record, pinned: record.pinned ?? false, hidden: record.hidden ?? false, availability }
   }
 
+  /**
+   * Read the cross-process profile record and repair an unfinished row commit.
+   * A row-write rejection observed by this process remains pending until an
+   * explicit mutation retries it, so a read does not expose an unacknowledged row.
+   */
+  private async readProfileRevisionState(
+    bots: KvTable<BotRecord['id'], BotRecord>,
+    reconcilePending = false,
+  ): Promise<BotProfileRevisionState> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) {
+      await this.reconcileNoCredentialIntents(bots, reconcilePending)
+      return { version: 1, revisions: {}, profiles: {} }
+    }
+    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
+      const state = profileRevisionRecordOf(record)
+      if (state.pending === undefined) return undefined
+      if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
+      await bots.put(state.pending.record.id, state.pending.record)
+      this.blockedProfileTransactions.delete(state.pending.transactionId)
+      return profileRevisionRecordOfState(finishPendingProfile(state))
+    })
+    return profileRevisionRecordOf(stored)
+  }
+
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  private async mountSharedAccess(): Promise<() => Promise<void>> {
+    if (!this.sharedConfig.enabled) return async () => {}
+    const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
+    const credentials: CredentialProvider | undefined = this.ctx.get('credentials')
+    if (connection === undefined || credentials === undefined) return async () => {}
+
+    const authority = await SharedAccessAuthority.create(this.ctx, credentials, {
+      sessionMaxAgeMs: this.sharedConfig.sessionMaxAgeMs,
+      inviteMaxAgeMs: this.sharedConfig.inviteMaxAgeMs,
+      secureCookie: this.sharedConfig.secureCookie,
+      trustedHosts: this.sharedConfig.trustedHosts,
+    })
+    let service: SharedBotService | undefined
+    let removeEnrollment: (() => Promise<void>) | undefined
+    let removeShared: (() => Promise<void>) | undefined
+    try {
+      service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, this.sharedHost(), {
+        membershipPollIntervalMs: this.sharedConfig.membershipPollIntervalMs,
+      })
+      const shared = service
+      const bots = (await this.list({})).bots
+      const botsById = new Map(bots.map(bot => [String(bot.id), bot]))
+      for (const binding of shared.privateSessionBindings()) {
+        const bot = botsById.get(String(binding.botId))
+        if (bot !== undefined) {
+          this.sharedRecordsBySession.set(String(binding.sessionId), { ...bot, sessionId: binding.sessionId })
+        }
+      }
+      removeEnrollment = connection.sharedRpc.enroll(SHARED_BOTS_PATH, async (_endpoint, payload, _signal, request) => {
+        const parsed = sharedEnrollmentPayloadSchema.safeParse(payload)
+        if (!parsed.success) {
+          return { ok: false, error: { code: 'gateway/bad-request', message: 'Invalid shared Bot enrollment request', details: {} } }
+        }
+        try {
+          return { ok: true, value: await shared.enroll(SharedInviteCode(parsed.data.code), request) }
+        } catch {
+          return { ok: false, error: { code: 'gateway/bad-request', message: 'Shared Bot enrollment failed', details: {} } }
+        }
+      })
+      removeShared = connection.sharedRpc.handle(SHARED_BOTS_PATH, authority, shared.handle.bind(shared), {
+        endpoints: SHARED_BOT_ENDPOINTS,
+      })
+      this.sharedService = service
+      return async () => {
+        await removeShared?.()
+        await removeEnrollment?.()
+        await service?.dispose()
+        await authority.dispose()
+        this.sharedService = undefined
+        this.sharedRecordsBySession.clear()
+      }
+    } catch (error) {
+      await removeShared?.()
+      await removeEnrollment?.()
+      await service?.dispose()
+      await authority.dispose()
+      throw error
+    }
+  }
+
+  private sharedHost(): SharedBotHost {
+    return {
+      listBots: async (signal) => {
+        signal?.throwIfAborted()
+        const bots = (await this.list({})).bots
+        signal?.throwIfAborted()
+        return bots
+      },
+      findBot: async (botId, signal) => {
+        signal?.throwIfAborted()
+        const bot = (await this.list({})).bots.find(candidate => candidate.id === botId)
+        signal?.throwIfAborted()
+        return bot
+      },
+      updateProfile: async (botId, update, signal, expectedUpdatedAt) => {
+        const identity = update.identity === undefined ? undefined : normalizeAppearanceIdentity(update.identity)
+        const accent = update.accent === undefined ? undefined : normalizeAppearanceAccent(update.accent)
+        const normalized: SharedBotProfileUpdate = {
+          ...(update.name === undefined ? {} : { name: normalizeName(update.name) }),
+          ...(identity === undefined ? {} : { identity }),
+          ...(accent === undefined ? {} : { accent }),
+        }
+        if (normalized.name === undefined && normalized.identity === undefined && normalized.accent === undefined) {
+          throw new RemoteError('gateway/bad-request', 'Bot profile update must change a field', {})
+        }
+        return this.updateSharedProfileImpl(botId, normalized, signal, expectedUpdatedAt)
+      },
+      createPrivateSession: async (bot, sessionId, principalId, signal) => {
+        signal?.throwIfAborted()
+        void principalId
+        const record: BotRecord = { ...bot, sessionId }
+        const request = sharedBotSessionRequest(sessionId)
+        this.sharedRecordsBySession.set(String(sessionId), record)
+        try {
+          const cwd = request.cwd
+          if (cwd === undefined) throw new Error('shared Bot Session request did not include an isolated directory')
+          await mkdir(cwd, { recursive: true, mode: 0o700 })
+          signal?.throwIfAborted()
+          await this.ctx.sessionController.create(request, signal ?? new AbortController().signal)
+          const created = this.ctx.agents.get(sessionId)
+          if (created === undefined) throw new Error(`Shared Bot Session "${String(sessionId)}" was not published.`)
+          return created
+        } catch (error) {
+          this.sharedRecordsBySession.delete(String(sessionId))
+          throw error
+        }
+      },
+      resolvePrivateAgent: async (sessionId, signal) => {
+        signal.throwIfAborted()
+        const expected = sharedBotSessionRequest(sessionId)
+        const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+        signal.throwIfAborted()
+        if (inspection.meta.cwd !== expected.cwd || inspection.meta.agentPreset !== expected.agentPreset) {
+          return { error: new Error('shared Bot Session does not use its isolated preset and directory') }
+        }
+        const resolved = await this.ctx.sessionController.resolveAgent(sessionId, signal)
+        signal.throwIfAborted()
+        return 'agent' in resolved ? { agent: resolved.agent } : { error: resolved.error }
+      },
+      inspectPrivateSession: async (sessionId, signal) => {
+        const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+        return { events: inspection.events }
+      },
+      flushPrivateSession: async (sessionId, signal) => {
+        signal?.throwIfAborted()
+        let session = this.ctx.sessions.get(sessionId)
+        if (session === undefined) {
+          const resolved = await this.ctx.sessionController.resolveAgent(sessionId, signal)
+          if (!('agent' in resolved)) throw resolved.error
+          session = this.ctx.sessions.get(resolved.agent.id)
+        }
+        if (session === undefined) throw new Error(`Shared Bot Session "${String(sessionId)}" is not live.`)
+        signal?.throwIfAborted()
+        await this.ctx.sessions.flush(session)
+        signal?.throwIfAborted()
+      },
+    }
+  }
+
+  private refreshSharedRecords(bot: BotRecord): void {
+    for (const [key, current] of this.sharedRecordsBySession) {
+      if (current.id === bot.id) this.sharedRecordsBySession.set(key, { ...current, ...bot, sessionId: current.sessionId })
+    }
   }
 
   private emitChanged(): void {
@@ -1133,9 +2076,12 @@ export class BotService extends TypertRemoteService {
     }
   }
 
-  private serialize<T>(work: () => Promise<T>): Promise<T> {
+  private serialize<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     if (this.stopping) return Promise.reject(new Error('Bot service is stopping'))
-    const pending = this.chain.then(work)
+    const pending = this.chain.then(() => {
+      signal?.throwIfAborted()
+      return work()
+    })
     this.chain = pending.catch(() => undefined)
     return pending
   }

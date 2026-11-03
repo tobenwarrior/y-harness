@@ -12,7 +12,16 @@ import type {
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
   BotView,
+  BotShareInviteRequest,
+  BotShareInviteValue,
+  BotShareMemoryPolicyRequest,
+  BotShareMemoryPolicyValue,
+  BotShareMemberRevokeRequest,
+  BotShareMemberRevokeValue,
+  BotShareMembersRequest,
+  BotShareMembersValue,
 } from '@yharness/bots/client'
+import { BotPrincipalId } from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -25,6 +34,7 @@ import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity, BotOrganizationPatch } from './types.ts'
+import type { SharedBotsClient } from './shared-client.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
@@ -36,6 +46,25 @@ export interface BotWorkspaceRemote {
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
   readAvatar?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<{ readonly avatar: BotAvatar; readonly data: string }>>
+  createShareInvite?: (request: BotShareInviteRequest) => Promise<RemoteResult<BotShareInviteValue>>
+  listShareMembers?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMembersValue>>
+  revokeShareMember?: (request: BotShareMemberRevokeRequest) => Promise<RemoteResult<BotShareMemberRevokeValue>>
+  getShareMemoryPolicy?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+  setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+}
+
+/** Owner-facing shared-Bot roster and invite actions. */
+export interface BotShareActions {
+  /** List members of one owned Bot. */
+  readonly listMembers: (botId: string) => Promise<BotShareMembersValue>
+  /** Issue a one-time invite for one owned Bot. */
+  readonly createInvite: (botId: string, role: BotShareInviteRequest['role']) => Promise<BotShareInviteValue>
+  /** Remove one non-owner member from one owned Bot. */
+  readonly revokeMember: (botId: string, principalId: string) => Promise<BotShareMemberRevokeValue>
+  /** Read the explicit shared-context policy for one owned Bot. */
+  readonly getMemoryPolicy?: (botId: string) => Promise<BotShareMemoryPolicyValue>
+  /** Change the explicit shared-context policy for one owned Bot. */
+  readonly setMemoryPolicy?: (botId: string, enabled: boolean) => Promise<BotShareMemoryPolicyValue>
 }
 
 /** Avatar generation namespace mounted by the API remotes assembly. */
@@ -64,6 +93,10 @@ export interface BotWorkspaceFace {
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
+  /** Owner controls for sharing the selected Bot, when the Host mounts them. */
+  readonly share?: BotShareActions
+  /** Collaborator-only enrollment, discovery, and private chat client. */
+  readonly sharedClient?: SharedBotsClient
 }
 
 declare module '@yharness/api-session-controller/client' {
@@ -99,6 +132,7 @@ export class BotWorkspaceController {
     private readonly sessions: ISessions,
     private readonly unexpectedResponse: () => string,
     private readonly avatarGeneration?: BotAvatarGenerationRemote,
+    private readonly sharedClient?: SharedBotsClient,
   ) {}
 
   /** Stop asynchronous reads and release the selected Session. */
@@ -140,6 +174,11 @@ export class BotWorkspaceController {
           ? { avatarEditor: this.avatarEditor() }
           : {}
       ),
+      ...(() => {
+        const share = this.shareActions()
+        return share === undefined ? {} : { share }
+      })(),
+      ...(this.sharedClient === undefined ? {} : { sharedClient: this.sharedClient }),
       retry: () => {
         void this.retry().catch((error: unknown) => {
           this.fail(error instanceof Error ? error.message : String(error))
@@ -456,6 +495,49 @@ export class BotWorkspaceController {
       ? current.bots.map(bot => bot.id === id ? result.value.bot : bot)
       : [...current.bots, result.value.bot]
     this.source.set({ ...current, bots, error: null })
+  }
+
+  private shareActions(): BotShareActions | undefined {
+    const listMembers = this.remote.listShareMembers
+    const createInvite = this.remote.createShareInvite
+    const revokeMember = this.remote.revokeShareMember
+    const getMemoryPolicy = this.remote.getShareMemoryPolicy
+    const setMemoryPolicy = this.remote.setShareMemoryPolicy
+    if (listMembers === undefined || createInvite === undefined || revokeMember === undefined) return undefined
+    return {
+      listMembers: async (botId) => {
+        const result = await listMembers({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value
+      },
+      createInvite: async (botId, role) => {
+        const result = await createInvite({ botId: brandString<BotIdType>(botId), role })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value
+      },
+      revokeMember: async (botId, principalId) => {
+        const result = await revokeMember({
+          botId: brandString<BotIdType>(botId),
+          principalId: BotPrincipalId(principalId),
+        })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value
+      },
+      ...(getMemoryPolicy === undefined ? {} : {
+        getMemoryPolicy: async (botId: string) => {
+          const result = await getMemoryPolicy({ botId: brandString<BotIdType>(botId) })
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(setMemoryPolicy === undefined ? {} : {
+        setMemoryPolicy: async (botId: string, enabled: boolean) => {
+          const result = await setMemoryPolicy({ botId: brandString<BotIdType>(botId), enabled })
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+    }
   }
 
   private create(creation: BotCreation): Promise<void> {

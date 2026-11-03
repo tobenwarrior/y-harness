@@ -91,8 +91,10 @@ async function persistSession(sessionId: SessionId): Promise<string> {
 }
 
 /** A handle stand-in for abandoned-open races; only `close()` is ever reachable. */
-function abandonedHandleStub(): { handle: SessionHandle; close: ReturnType<typeof vi.fn> } {
-  const close = vi.fn(async () => {})
+function abandonedHandleStub(
+  closeImplementation: () => Promise<void> = async () => {},
+): { handle: SessionHandle; close: ReturnType<typeof vi.fn> } {
+  const close = vi.fn(closeImplementation)
   return { handle: { close } as unknown as SessionHandle, close }
 }
 
@@ -842,24 +844,117 @@ describe('the session-persistence Agent Note: AgentLoop factory create/resume', 
     expect(ctx.agents.get(sessionId)).toBeUndefined()
     expect(ctx.sessions.get(sessionId)).toBeUndefined()
 
-    // owner.dispose() awaited transaction settlement, so the same identities
-    // can be reused before awaiting the public rejection.
+    // The same identity stays unavailable until the abandoned backend open
+    // settles and its write handle is closed.
+    const abandoned = abandonedHandleStub()
+    lateOpen.resolve(abandoned.handle)
+    await expect.poll(() => abandoned.close.mock.calls.length).toBe(1)
     const retry = await promptly(ctx.agents.resume({ resumeSessionId: sessionId, agentOptions: { provider: 'mock', model: 'mock' } }))
     await rejection
     expect(opens).toBe(2)
     expect(published).toEqual(['session/created', 'agent/created'])
 
     // Settlement of the abandoned backend open cannot resume the old
-    // transaction: the late handle is closed, and no second publication lands
-    // after the retry owns the ids.
-    const abandoned = abandonedHandleStub()
-    lateOpen.resolve(abandoned.handle)
-    await expect.poll(() => abandoned.close.mock.calls.length).toBe(1)
+    // transaction, and no second publication lands after the retry owns ids.
     expect(ctx.agents.get(sessionId)).toBe(retry.agent)
     expect(ctx.sessions.get(sessionId)).toBe(retry.agent.session)
     expect(published).toEqual(['session/created', 'agent/created'])
 
     await retry.dispose()
+    await ctx.fiber.dispose()
+  })
+
+  it('retains the abandoned resume lease barrier until the late write handle closes', async () => {
+    const sessionId = SessionId('resume-abandoned-close-barrier')
+    const root = await persistSession(sessionId)
+    const ctx = await mountPersistentHarness(root, new MockAdapter([textResponse('next')]))
+    const lateOpen = Promise.withResolvers<SessionHandle>()
+    const openStarted = Promise.withResolvers<undefined>()
+    const originalOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    let opens = 0
+    ctx.sessionPersistence.open = (id, access, options) => {
+      opens += 1
+      if (opens === 1) {
+        openStarted.resolve(undefined)
+        return lateOpen.promise
+      }
+      return originalOpen(id, access, options)
+    }
+
+    const controller = new AbortController()
+    const resuming = ctx.agents.resume({ resumeSessionId: sessionId, signal: controller.signal })
+    await openStarted.promise
+    controller.abort(new Error('resume abandoned'))
+    await expect(promptly(resuming)).rejects.toThrow('resume abandoned')
+
+    const cleanup = ctx.agents.waitForResumeCleanup(sessionId)
+    let cleanupSettled = false
+    void cleanup.then(() => { cleanupSettled = true })
+    const closeGate = Promise.withResolvers<undefined>()
+    const abandoned = abandonedHandleStub(() => closeGate.promise.then(() => undefined))
+    lateOpen.resolve(abandoned.handle)
+    await expect.poll(() => abandoned.close.mock.calls.length).toBe(1)
+    await Promise.resolve()
+    expect(cleanupSettled).toBe(false)
+
+    closeGate.resolve(undefined)
+    await cleanup
+    expect(cleanupSettled).toBe(true)
+    const retry = await ctx.agents.resume({ resumeSessionId: sessionId })
+    await retry.dispose()
+    await ctx.fiber.dispose()
+  })
+
+  it('retains the resume lease barrier through cancellation after open', async () => {
+    const sessionId = SessionId('resume-abort-after-open')
+    const root = await persistSession(sessionId)
+    const ctx = await mountPersistentHarness(root, new MockAdapter([]))
+    const readStarted = Promise.withResolvers<undefined>()
+    const readGate = Promise.withResolvers<undefined>()
+    const closeStarted = Promise.withResolvers<undefined>()
+    const closeGate = Promise.withResolvers<undefined>()
+    const originalOpen = ctx.sessionPersistence.open.bind(ctx.sessionPersistence)
+    ctx.sessionPersistence.open = async (id, access, options) => {
+      const handle = await originalOpen(id, access, options)
+      const realRead = handle.read.bind(handle)
+      Object.defineProperty(handle, 'read', {
+        value: async (
+          offset?: number,
+          length?: number,
+          readOptions?: Parameters<SessionHandle['read']>[2],
+        ) => {
+          readStarted.resolve(undefined)
+          await readGate.promise
+          readOptions?.signal?.throwIfAborted()
+          return realRead(offset, length, readOptions)
+        },
+      })
+      const realClose = handle.close.bind(handle)
+      Object.defineProperty(handle, 'close', {
+        value: async () => {
+          closeStarted.resolve(undefined)
+          await closeGate.promise
+          await realClose()
+        },
+      })
+      return handle
+    }
+
+    const controller = new AbortController()
+    const resuming = ctx.agents.resume({ resumeSessionId: sessionId, signal: controller.signal })
+    await readStarted.promise
+    const cleanup = ctx.agents.waitForResumeCleanup(sessionId)
+    let cleanupSettled = false
+    void cleanup.then(() => { cleanupSettled = true })
+    controller.abort(new Error('resume aborted after open'))
+    readGate.resolve(undefined)
+    await closeStarted.promise
+    await Promise.resolve()
+    expect(cleanupSettled).toBe(false)
+    closeGate.resolve(undefined)
+    await expect(promptly(resuming)).rejects.toThrow('resume aborted after open')
+    await cleanup
+    expect(cleanupSettled).toBe(true)
     await ctx.fiber.dispose()
   })
 

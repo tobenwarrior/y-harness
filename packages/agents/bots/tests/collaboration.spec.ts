@@ -39,7 +39,7 @@ function harness() {
     flushSession: async () => undefined,
   }
   const service = new BotCollaborationService(host)
-  return { service, client: service.bind({ id: SessionId('bot-session-alpha') }), bots, events, followups }
+  return { service, client: service.bind({ id: SessionId('bot-session-alpha') }), bots, events, followups, host }
 }
 
 describe('Bot collaboration seam', () => {
@@ -130,6 +130,36 @@ describe('Bot collaboration seam', () => {
     expect(followup).toHaveBeenCalledTimes(1)
   })
 
+  it('uses the host delivery transaction when two Bot services retry one message concurrently', async () => {
+    const h = harness()
+    const first = await h.client
+    const secondService = new BotCollaborationService(h.host)
+    const second = await secondService.bind({ id: SessionId('bot-session-alpha') })
+    const messageId = BotMessageId('cross-process-message')
+    const delivery = vi.fn(async (target: BotView, message: UserMessage) => {
+      const targetEvents = h.events.get(String(target.sessionId))
+      if (targetEvents === undefined) throw new Error('missing target')
+      if (hasMessageForTest(targetEvents, message.id)) return 'duplicate' as const
+      targetEvents.push(userEvent(message, targetEvents.length + 1))
+      return 'accepted' as const
+    })
+    const hostWithDelivery = h.host as BotCollaborationHost & {
+      deliverMessage: typeof delivery
+    }
+    hostWithDelivery.deliverMessage = delivery
+
+    await expect(Promise.all([
+      first.send({ targetBotId: BotId('bot-beta'), text: 'same retry', messageId }),
+      second.send({ targetBotId: BotId('bot-beta'), text: 'same retry', messageId }),
+    ])).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'accepted', messageId }),
+      expect.objectContaining({ status: 'duplicate', messageId }),
+    ]))
+    expect(delivery).toHaveBeenCalledTimes(2)
+    expect(h.followups.get('bot-session-beta')).toBeUndefined()
+    expect(h.events.get('bot-session-beta')).toHaveLength(1)
+  })
+
   it('rejects unbounded message identities before touching the target Session', async () => {
     const h = harness()
     const client = await h.client
@@ -161,3 +191,7 @@ describe('Bot collaboration seam', () => {
     expect(projectBotTranscript([event])).toEqual([{ role: 'user', text: 'visible' }])
   })
 })
+
+function hasMessageForTest(events: readonly SessionEvent[], messageId: string): boolean {
+  return events.some(event => event.type === 'user/message' && event.data.id === messageId)
+}

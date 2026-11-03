@@ -34,6 +34,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@yharness/brand": "workspace:*",
     "@yharness/credentials": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "zod": "^4.4.3"
@@ -50,7 +51,6 @@
   "devDependencies": {
     "@yharness/cordis": "workspace:~",
     "@yharness/attachment": "workspace:*",
-    "@yharness/brand": "workspace:*",
     "@yharness/host-webserver": "workspace:*",
     "@yharness/llm": "workspace:*",
     "@yharness/scope": "workspace:*",

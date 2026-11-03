@@ -70,6 +70,22 @@ type InstalledSelection = ModelSelectionRef & {
   consume(provider: string, model: string, reasoningEffort: string | undefined, serviceTier: string | undefined): boolean
 }
 
+interface AgentResumeEntry {
+  readonly controller: AbortController
+  readonly promise: Promise<Agent>
+  waiters: number
+  settled: boolean
+}
+
+interface AgentCreationEntry {
+  readonly controller: AbortController
+  readonly promise: Promise<Agent>
+  readonly cleanup: Promise<void>
+  readonly releaseCleanup: () => void
+  waiters: number
+  settled: boolean
+}
+
 /**
  * Test whether generic Session routing must leave an identity to subagent routing.
  * @param ctx - Host context carrying the Agent ownership registry.
@@ -138,8 +154,8 @@ export async function inspectApiSession(
 
 /** Owns every operation that may create, resume, or configure a Web Agent. */
 export class ApiSessionAgentController {
-  private readonly resumes = new Map<SessionId, Promise<Agent>>()
-  private readonly creations = new Map<SessionId, Promise<Agent>>()
+  private readonly resumes = new Map<SessionId, AgentResumeEntry>()
+  private readonly creations = new Map<SessionId, AgentCreationEntry>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
 
@@ -165,42 +181,50 @@ export class ApiSessionAgentController {
   /**
    * Resolve or resume one ordinary Session, deduplicating concurrent resumes.
    * @param sessionId - ordinary Session identity.
+   * @param signal - optional cancellation for cold observation and Agent resume.
    * @returns the live Agent or a stable Session-domain failure.
    */
-  async resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
-    return this.resolve(sessionId)
+  async resolveAgent(sessionId: SessionId, signal?: AbortSignal): Promise<ApiSessionAgentResult> {
+    return this.resolve(sessionId, undefined, signal)
   }
 
   /**
    * Resolve one ordinary Session from an already-retained exact observation.
    * @param observation - Host-owned observation whose preparation stays pinned through setup.
+   * @param signal - optional cancellation for Agent resume.
    * @returns the live Agent or a stable Session-domain failure.
    */
-  async resolveObservedAgent(observation: SessionObservation): Promise<ApiSessionAgentResult> {
-    return this.resolve(observation.header.id, observation)
+  async resolveObservedAgent(observation: SessionObservation, signal?: AbortSignal): Promise<ApiSessionAgentResult> {
+    return this.resolve(observation.header.id, observation, signal)
   }
 
   private async resolve(
     sessionId: SessionId,
     observation?: SessionObservation,
+    signal?: AbortSignal,
   ): Promise<ApiSessionAgentResult> {
-    const live = this.liveAgent(sessionId)
-    if (live !== undefined) return live
+    signal?.throwIfAborted()
+    const existingResume = this.resumes.get(sessionId)
+    const resumeInFlight = existingResume !== undefined && !existingResume.controller.signal.aborted
+    const live = resumeInFlight ? undefined : this.liveAgent(sessionId)
+    if (live !== undefined) {
+      signal?.throwIfAborted()
+      return live
+    }
     const attached = this.ctx.sessions.get(sessionId)
     if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, undefined)) {
       return { error: apiSessionSubagentOwnershipError(sessionId) }
     }
 
-    let resume = this.resumes.get(sessionId)
-    if (resume === undefined) {
-      resume = this.resume(sessionId, observation).finally(() => { this.resumes.delete(sessionId) })
-      this.resumes.set(sessionId, resume)
-    }
+    const resume = resumeInFlight ? existingResume : this.resumeEntry(sessionId, observation)
+    resume.waiters += 1
     try {
-      const agent = await resume
+      const agent = await raceAgent(resume.promise, signal, sessionId, false)
+      signal?.throwIfAborted()
       // A shared resume can publish an identity that subagent routing adopts
       // before every waiter observes it; apply the live ownership policy again.
       const published = this.liveAgent(sessionId)
+      signal?.throwIfAborted()
       return published ?? { agent }
     } catch (error: unknown) {
       if (error instanceof ApiSessionNotFound) {
@@ -210,7 +234,10 @@ export class ApiSessionAgentController {
         return { error: apiSessionSubagentOwnershipError(error.sessionId) }
       }
       const raced = this.liveAgent(sessionId)
-      if (raced !== undefined) return raced
+      if (raced !== undefined) {
+        signal?.throwIfAborted()
+        return raced
+      }
       const racedSession = this.ctx.sessions.get(sessionId)
       if (racedSession !== undefined && hasApiSessionSubagentOwner(this.ctx, racedSession, undefined)) {
         return { error: apiSessionSubagentOwnershipError(sessionId) }
@@ -225,7 +252,49 @@ export class ApiSessionAgentController {
           {},
         ),
       }
+    } finally {
+      resume.waiters -= 1
+      if (resume.waiters === 0 && !resume.settled) {
+        resume.controller.abort(new Error(`resume for session "${sessionId}" no longer has waiters`))
+      }
     }
+  }
+
+  private resumeEntry(sessionId: SessionId, observation?: SessionObservation): AgentResumeEntry {
+    const existing = this.resumes.get(sessionId)
+    if (existing !== undefined) {
+      if (!existing.controller.signal.aborted) return existing
+      this.resumes.delete(sessionId)
+    }
+    const controller = new AbortController()
+    const pending = this.resumeAfterCleanup(sessionId, observation, controller.signal)
+    const shared = raceAgent(pending, controller.signal, sessionId, true)
+    const entry: AgentResumeEntry = {
+      controller,
+      promise: shared,
+      waiters: 0,
+      settled: false,
+    }
+    void pending.then(() => {
+      entry.settled = true
+      if (this.resumes.get(sessionId) === entry) this.resumes.delete(sessionId)
+    }, () => {
+      entry.settled = true
+      if (this.resumes.get(sessionId) === entry) this.resumes.delete(sessionId)
+    })
+    this.resumes.set(sessionId, entry)
+    return entry
+  }
+
+  /** Wait for a prior abandoned persistence lease before opening this Session again. */
+  private async resumeAfterCleanup(
+    sessionId: SessionId,
+    observation: SessionObservation | undefined,
+    signal: AbortSignal,
+  ): Promise<Agent> {
+    await this.ctx.agents.waitForResumeCleanup(sessionId, signal)
+    signal.throwIfAborted()
+    return this.resume(sessionId, observation, signal)
   }
 
   /**
@@ -234,6 +303,7 @@ export class ApiSessionAgentController {
    * @param cwd - directory the Session must own.
    * @param checkPersistedIdentity - whether to inspect a cold identity before creation.
    * @param presetId - optional Agent preset the Session must own.
+   * @param signal - optional caller cancellation for Session activation.
    * @returns the matching live ordinary Agent.
    */
   async ensureSession(
@@ -241,10 +311,23 @@ export class ApiSessionAgentController {
     cwd: string,
     checkPersistedIdentity: boolean,
     presetId?: string,
+    signal?: AbortSignal,
   ): Promise<Agent> {
-    let creation = this.creations.get(sessionId)
-    if (creation === undefined) {
-      creation = this.createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId)
+    signal?.throwIfAborted()
+    let creation: AgentCreationEntry
+    while (true) {
+      const existing = this.creations.get(sessionId)
+      if (existing !== undefined) {
+        if (existing.controller.signal.aborted) {
+          await raceCompletion(existing.cleanup, signal, sessionId)
+          if (this.creations.get(sessionId) === existing) this.creations.delete(sessionId)
+          continue
+        }
+        creation = existing
+        break
+      }
+      const controller = new AbortController()
+      const promise = this.createOrAdopt(sessionId, cwd, checkPersistedIdentity, presetId, controller.signal)
         .catch((error: unknown) => {
           const live = this.ctx.agents.get(sessionId)
           if (live !== undefined) {
@@ -259,20 +342,62 @@ export class ApiSessionAgentController {
           }
           throw error
         })
-        .finally(() => { this.creations.delete(sessionId) })
-      this.creations.set(sessionId, creation)
+      const cleanup = Promise.withResolvers<void>()
+      const entry: AgentCreationEntry = {
+        controller,
+        promise,
+        cleanup: cleanup.promise,
+        releaseCleanup: cleanup.resolve,
+        waiters: 0,
+        settled: false,
+      }
+      void promise.then(() => {
+        entry.settled = true
+        if (!entry.controller.signal.aborted) {
+          if (this.creations.get(sessionId) === entry) this.creations.delete(sessionId)
+          entry.releaseCleanup()
+        }
+      }, () => {
+        entry.settled = true
+        if (this.creations.get(sessionId) === entry) this.creations.delete(sessionId)
+        entry.releaseCleanup()
+      })
+      creation = entry
+      this.creations.set(sessionId, entry)
+      break
     }
-    const agent = await creation
-    if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
-      throw new ApiSessionSubagentOwnership(sessionId)
+    creation.waiters += 1
+    try {
+      const agent = await raceAgent(creation.promise, signal, sessionId, false)
+      signal?.throwIfAborted()
+      if (hasApiSessionSubagentOwner(this.ctx, agent.session, agent)) {
+        throw new ApiSessionSubagentOwnership(sessionId)
+      }
+      if (presetId !== undefined) {
+        this.assertPresetUnchanged(sessionId, presetId, this.presetForSession(agent.session))
+      }
+      if (agent.session.header.cwd !== cwd) {
+        throw new ApiSessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
+      }
+      return agent
+    } finally {
+      creation.waiters -= 1
+      if (creation.waiters === 0 && !creation.settled) {
+        creation.controller.abort(new Error(`creation for session "${sessionId}" no longer has waiters`))
+        void creation.promise.then(async (agent) => {
+          if (creation.waiters !== 0) return
+          try {
+            agent.cancel({ kind: 'parent' })
+            await agent.whenIdle()
+          } catch (error: unknown) {
+            // No caller remains to observe a late cancellation failure.
+            void error
+          }
+          if (this.creations.get(sessionId) === creation) this.creations.delete(sessionId)
+          creation.releaseCleanup()
+        }, () => undefined)
+      }
     }
-    if (presetId !== undefined) {
-      this.assertPresetUnchanged(sessionId, presetId, this.presetForSession(agent.session))
-    }
-    if (agent.session.header.cwd !== cwd) {
-      throw new ApiSessionCwdConflict(sessionId, cwd, agent.session.header.cwd)
-    }
-    return agent
   }
 
   /**
@@ -411,11 +536,11 @@ export class ApiSessionAgentController {
       : { agent }
   }
 
-  private async resume(sessionId: SessionId, supplied?: SessionObservation): Promise<Agent> {
-    if (supplied !== undefined) return this.resumeObserved(sessionId, supplied)
+  private async resume(sessionId: SessionId, supplied?: SessionObservation, signal?: AbortSignal): Promise<Agent> {
+    if (supplied !== undefined) return this.resumeObserved(sessionId, supplied, signal)
     try {
-      using observation = await this.ctx.sessionQuery.observeSession(sessionId)
-      return await this.resumeObserved(sessionId, observation)
+      using observation = await this.ctx.sessionQuery.observeSession(sessionId, signal === undefined ? undefined : { signal })
+      return await this.resumeObserved(sessionId, observation, signal)
     } catch (error: unknown) {
       if (error instanceof SessionQueryError
         && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
@@ -428,7 +553,9 @@ export class ApiSessionAgentController {
   private async resumeObserved(
     sessionId: SessionId,
     observation: SessionObservation,
+    signal?: AbortSignal,
   ): Promise<Agent> {
+    signal?.throwIfAborted()
     if (observation.header.id !== sessionId || observation.header.cwd === undefined) {
       throw new ApiSessionNotFound(`session "${sessionId}" not found`)
     }
@@ -436,16 +563,24 @@ export class ApiSessionAgentController {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
     const composition = await this.composeAgent(this.presetForObservation(observation))
+    signal?.throwIfAborted()
     const published = this.ctx.sessions.get(sessionId)
     const live = this.ctx.agents.get(sessionId)
     if (published !== undefined && hasApiSessionSubagentOwner(this.ctx, published, live)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    return (await this.ctx.agents.resume({
+    const handle = await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions: this.agentOptions(),
       setup: composition.setup,
-    })).agent
+      ...(signal === undefined ? {} : { signal }),
+    })
+    if (signal?.aborted === true) {
+      handle.agent.cancel({ kind: 'parent' })
+      await handle.dispose().catch(() => undefined)
+      signal.throwIfAborted()
+    }
+    return handle.agent
   }
 
   private async createOrAdopt(
@@ -453,7 +588,9 @@ export class ApiSessionAgentController {
     cwd: string,
     checkPersistedIdentity: boolean,
     presetId: string | undefined,
+    signal?: AbortSignal,
   ): Promise<Agent> {
+    signal?.throwIfAborted()
     const attached = this.ctx.sessions.get(sessionId)
     const live = this.ctx.agents.get(sessionId)
     if (attached !== undefined && hasApiSessionSubagentOwner(this.ctx, attached, live)) {
@@ -463,7 +600,11 @@ export class ApiSessionAgentController {
 
     if (checkPersistedIdentity) {
       try {
-        using observation = await this.ctx.sessionQuery.observeSession(sessionId)
+        using observation = await this.ctx.sessionQuery.observeSession(
+          sessionId,
+          signal === undefined ? undefined : { signal },
+        )
+        signal?.throwIfAborted()
         if (hasApiSessionSubagentOwner(this.ctx, { header: observation.header }, undefined)) {
           throw new ApiSessionSubagentOwnership(sessionId)
         }
@@ -477,6 +618,7 @@ export class ApiSessionAgentController {
           resumeSessionId: sessionId,
           agentOptions: this.agentOptions(),
           setup: composition.setup,
+          ...(signal === undefined ? {} : { signal }),
         })).agent
       } catch (error: unknown) {
         if (!(error instanceof SessionQueryError)
@@ -486,10 +628,13 @@ export class ApiSessionAgentController {
 
     try {
       await mkdir(cwd, { recursive: true })
+      signal?.throwIfAborted()
     } catch (error: unknown) {
+      if (signal?.aborted === true) throw error
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
     const composition = await this.composeAgent(presetId)
+    signal?.throwIfAborted()
     return (await this.ctx.agents.create({
       sessionId,
       agentOptions: this.agentOptions(),
@@ -498,6 +643,7 @@ export class ApiSessionAgentController {
         ...(composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset }),
       },
       setup: composition.setup,
+      ...(signal === undefined ? {} : { signal }),
     })).agent
   }
 
@@ -543,4 +689,79 @@ function agentModelSelection(selection: ModelSelection): AgentModelSelection {
       ? {}
       : { serviceTier: ServiceTierId(selection.serviceTier) }),
   }
+}
+
+/**
+ * Wait for one Agent resume while cancelling an Agent published after the caller aborts.
+ * @param pending - activation promise owned by the session controller.
+ * @param signal - caller cancellation signal.
+ * @param sessionId - identity used in a fallback cancellation error.
+ * @param cancelOnAbort - whether this waiter owns the underlying resume.
+ * @returns the resumed Agent, or a caller cancellation error.
+ */
+function raceAgent(
+  pending: Promise<Agent>,
+  signal: AbortSignal | undefined,
+  sessionId: SessionId,
+  cancelOnAbort: boolean,
+): Promise<Agent> {
+  if (signal === undefined) return pending
+  const abortError = (): Error => signal.reason instanceof Error
+    ? signal.reason
+    : new Error(`resume for session "${sessionId}" aborted`, { cause: signal.reason })
+  const cancelLateAgent = (agent: Agent): void => {
+    try {
+      agent.cancel({ kind: 'parent' })
+    } catch (error: unknown) {
+      // The caller has already abandoned activation; preserve its cancellation result.
+      void error
+    }
+  }
+  if (signal.aborted) {
+    if (cancelOnAbort) void pending.then(cancelLateAgent, () => undefined)
+    return Promise.reject(abortError())
+  }
+  return new Promise<Agent>((resolve, reject) => {
+    let abandoned = false
+    const onAbort = (): void => {
+      abandoned = true
+      if (cancelOnAbort) void pending.then(cancelLateAgent, () => undefined)
+      reject(abortError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    pending.then((agent) => {
+      signal.removeEventListener('abort', onAbort)
+      if (abandoned && cancelOnAbort) cancelLateAgent(agent)
+      else resolve(agent)
+    }, (error: unknown) => {
+      signal.removeEventListener('abort', onAbort)
+      if (!abandoned) {
+        reject(error instanceof Error ? error : new Error(String(error), { cause: error }))
+      }
+    })
+  })
+}
+
+/** Wait for one creation cleanup barrier while preserving caller cancellation. */
+function raceCompletion<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | undefined,
+  sessionId: SessionId,
+): Promise<T> {
+  if (signal === undefined) return pending
+  const abortError = (): Error => signal.reason instanceof Error
+    ? signal.reason
+    : new Error(`creation for session "${sessionId}" aborted`, { cause: signal.reason })
+  if (signal.aborted) return Promise.reject(abortError())
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => { reject(abortError()) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    pending.then((value) => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(value)
+    }, (error: unknown) => {
+      signal.removeEventListener('abort', onAbort)
+      reject(error instanceof Error ? error : new Error(String(error), { cause: error }))
+    })
+  })
 }

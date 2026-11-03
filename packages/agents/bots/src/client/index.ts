@@ -1,7 +1,9 @@
 /** Browser-safe Bot vocabulary. @module @yharness/bots/client */
 
 export type * from '../types.ts'
-export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from '../types.ts'
+export { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from '../types.ts'
+export { BotPrincipalId } from '../sharing.ts'
+export type { BotShareRole } from '../sharing.ts'
 
 /** The Host Bot service has no independent Client lifecycle; API remotes own its calls. */
 export const inject: readonly string[] = []

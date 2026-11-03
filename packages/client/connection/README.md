@@ -13,6 +13,7 @@ The package carries browser-to-Host Remote calls, exact Fetch responses, and con
 
 - [Use this package](#use-this-package)
 - [Browser authentication and request trust](#browser-authentication-and-request-trust)
+- [Self-hosted shared-Bot access](#self-hosted-shared-bot-access)
 - [Connection generation](#connection-generation)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
@@ -44,6 +45,15 @@ Every admitted request speaks for one Peer, the operator. `ctx.connection.operat
 
 Authenticated shared HTTP requests pass through the `connection/request` waterfall before body transfer. A listener may refuse new requests or await `next()` through response completion; removing its owning fiber removes admission behavior. Desktop uses this hook to lock new API work during an approved installation without canceling already-admitted work. Client disconnection aborts the handler signal; the bridge stops socket writes and drains any remaining response chunks. WebSocket stream ownership remains with API Gateway.
 
+<a id="self-hosted-shared-bot-access"></a>
+## Self-hosted shared-Bot access
+
+`SharedAccessAuthority` provides a separate, self-hosted collaborator identity flow. An owner creates a one-time invite, the recipient redeems it once, and the authority stores the signing key, principal, invite digest, and session records in the owner-scoped `client-connection/shared-access` credential record. A valid collaborator cookie becomes a `SharedAccessPeer` carrying one principal id and the `shared-bots` audience; it never becomes the operator Peer. Admission reloads the credential record transactionally, so invite consumption and revocation remain single-use across authority instances.
+
+`ctx.connection.sharedRpc.enroll('/shared-bots', handler)` registers the exact trust-fenced `POST /shared-bots/bots/share/enroll` route. The enrollment handler receives the request authority so a cookie can be bound to the exact Host and port; the resulting HttpOnly cookie is returned in `Set-Cookie`, while the bearer value is omitted from the JSON body. No operator cookie or ordinary Remote method is accepted there. `ctx.connection.sharedRpc.handle('/shared-bots', authority, handler, { endpoints: ['bots/share/list', 'bots/share/chat'] })` registers the collaborator-only RPC path. The route applies the Host/Origin fence, collaborator cookie authentication, and the configured request-body limit, then passes the admitted Peer to the handler; only the exact endpoint names declared at registration are reachable, and handler failures return a generic internal error. Shared routes default to a 128 KiB body cap, two concurrently buffered body reads, a 30-second body-read timeout, and eight in-flight handler requests per registration; deployments may lower these limits but cannot raise them. Body admission is separate from handler admission, so a slow authenticated upload cannot consume a handler slot; an incomplete body receives 408 and a saturated body-read or handler pool receives 429. The existing `/api` route and all ordinary Remote APIs continue to require the operator browser cookie. WebSocket features must provide a positive `maxInboundBytes` option; the transport destroys a collaborator socket after that aggregate inbound limit and binds it to the admitted Peer so revocation closes it. Revocation aborts the admitted Peer's signal; shared handlers must pass it through to active work.
+
+The shared handler must derive private conversation sessions from the admitted principal and Bot id, not from client-supplied principal or Session ids. One deployment should mount one authority against one credential provider; authorities in the same process share the durable state and close their active Peer scopes when another instance revokes a principal. Other processes observe the revocation on their next admission, but cannot close an already-upgraded socket without a deployment-level coordination channel. The invite flow is local self-hosted enrollment rather than federated account login; deployments that need account recovery or multi-device identity must layer an external identity provider above it. Cookies default to loopback-compatible HTTP attributes; network deployments must provide the same `trustedHosts` authorities to `SharedAccessAuthority`, use TLS, and set `secureCookie: true`; otherwise direct collaborator admission fails closed.
+
 <a id="connection-generation"></a>
 ## Connection generation
 
@@ -71,6 +81,7 @@ None; this package neither assembles nor sends a provider request.
 - **Buffered `/api` routes retain each request body in memory** — `maxRequestBodyBytes` (default 300 MiB, sized for the default 200 MiB aggregate image limit after base64 expansion plus envelope headroom) bounds ordinary image and RPC envelopes. Opt-in streaming routes receive backpressured chunks and bypass the aggregate cap; route implementations own persistence, cancellation, and any storage quota.
 - **The browser cookie is not marked `Secure`** — loopback HTTP is the shipped transport, so exposing the same authority over plaintext networking can expose the bearer cookie in transit.
 - **There is no logout operation** — clearing the browser cookie ends one browser session; deleting the owner credential record and restarting `dsh` revokes every session.
+- **Shared WebSocket ownership is transport-level** — Connection enforces WebSocket frame and aggregate byte limits and closes revoked peers, but the protocol owner still defines message semantics and application-level flow control.
 
 <a id="dev-note"></a>
 ### Dev Note

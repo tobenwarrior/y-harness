@@ -42,7 +42,8 @@
         "@yharness/client-ui-layout",
         "@yharness/client-ui-renderer",
         "@yharness/client-ui-session",
-        "@yharness/client-ui-sidebar"
+        "@yharness/client-ui-sidebar",
+        "@yharness/client-connection"
       ]
     }
   },
@@ -55,6 +56,7 @@
     "@yharness/api-remotes": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
     "@yharness/client-store": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
     "@yharness/bots": "workspace:*",
     "@yharness/avatar-generation": "workspace:*",
     "@yharness/client-locale": "workspace:*",

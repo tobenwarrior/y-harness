@@ -50,6 +50,14 @@ export type {
   ClientConnectionRpc, ConnectionRpcFailure, ConnectionRpcResult,
 } from '../rpc.ts'
 export type { RpcFetch } from './rpc.ts'
+export {
+  SHARED_BOTS_ENDPOINT_PREFIX,
+  SHARED_BOTS_PATH,
+  SHARED_MAX_BODY_READ_MS,
+  SHARED_MAX_CONCURRENT_BODY_READS,
+  SHARED_MAX_CONCURRENT_REQUESTS,
+  SHARED_MAX_REQUEST_BODY_BYTES,
+} from '../rpc.ts'
 
 /** Observable identity and Host facts for the active connection generation. */
 export interface ConnectionGenerationState {
