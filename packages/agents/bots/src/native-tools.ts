@@ -248,8 +248,8 @@ function priorRoutineCreateResult(
   if (settled !== undefined) {
     if (stableJson(settled.arguments) !== stableJson(current.arguments) || settled.result === undefined) return 'conflict'
     // A rejected approval, validation, or cancellation did not commit a
-    // routine. The Schedule Host also reconciles unknown failures by its
-    // durable idempotency key, so only successful creates are replay receipts.
+    // routine. The Schedule Host reconciles retries of this same operation by
+    // its durable idempotency key, so only successful creates are replay receipts.
     if (!settled.result.success) return undefined
     return {
       success: settled.result.success,
@@ -257,6 +257,29 @@ function priorRoutineCreateResult(
     }
   }
   return undefined
+}
+
+/** Detect another unresolved routine create with the same request. */
+function pendingRoutineCreate(
+  events: readonly BotDynamicToolEvent[],
+  sessionId: SessionId,
+  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
+    readonly arguments: Readonly<Record<string, unknown>>
+  },
+): boolean {
+  const currentKey = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
+  const currentArguments = stableJson(current.arguments)
+  const keys = new Set(events.filter(event => event.name === 'schedule_create').map(dynamicCallKey))
+  for (const key of keys) {
+    if (key === currentKey) continue
+    const matches = events.filter(event => event.name === 'schedule_create' && dynamicCallKey(event) === key)
+    const startedIndex = matches.findLastIndex(event => event.phase === 'started')
+    if (startedIndex < 0 || stableJson(matches[startedIndex]?.arguments) !== currentArguments) continue
+    const settledIndex = matches.findLastIndex(event => event.phase === 'settled')
+    if (startedIndex <= settledIndex) continue
+    return true
+  }
+  return false
 }
 
 function safeString(value: string): string {
@@ -522,6 +545,12 @@ function routineTool(
             return failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
           }
           if (prior !== undefined) return prior
+          if (pendingRoutineCreate(replayed, sessionId, current)) {
+            return failure(
+              'uncertain-outcome',
+              'An earlier routine creation with the same request has an unknown outcome. List Bot routines before retrying.',
+            )
+          }
         }
         if (mutates) {
           if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')

@@ -128,7 +128,7 @@ If a native send reports uncertain-outcome, reuse its messageId when retrying. T
 ##### Native routine retry contract
 
 ```markdown
-Bot routine creation supplies the Host Schedule service with a durable identity derived from the Bot Session and normalized request. If a native call loses its result after the Schedule write, a later native call with the same routine request returns the existing task instead of allocating another task id; this remains true after Host restart. A different request is a separate routine and still requires approval.
+Bot routine creation supplies the Host Schedule service with an operation-specific durable identity derived from the Bot Session and native call. Retrying that same operation reuses the existing task, including after Host restart; a new operation can intentionally create an identical routine after the earlier call settled. If the earlier native lifecycle has only a `started` record, a later identical request returns `uncertain-outcome` because the Host cannot distinguish an intentional repeat from a lost reply safely; inspect Bot routines before retrying. Every new routine still requires approval.
 ```
 
 #### Token effect

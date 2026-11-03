@@ -1,5 +1,5 @@
 /** Host-wide durable reminders and shared human/model management. */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import z from '@yharness/schemastery'
 import { Context, Service } from '@yharness/cordis'
 import { TypertRemoteService, Remote } from '@yharness/typert-protocol'
@@ -14,7 +14,7 @@ import { resolveScheduleUpdate } from './update.ts'
 import {
   foldScheduleEvents, ScheduleInputError, ScheduleLogError, ScheduleId, createAfterScheduleRecord, createAtScheduleRecord,
   createEveryScheduleRecord, createDailyScheduleRecord, createWeeklyScheduleRecord, createCronScheduleRecord,
-  scheduleTitle,
+  parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle,
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteRequest, ScheduleDeleteResult,
@@ -87,6 +87,33 @@ const DEFAULT_DELIVERY_HISTORY_DAYS = 30
 
 /** Retained delivery-history record cap applied when the deployment states none. */
 const DEFAULT_DELIVERY_HISTORY_RECORDS = 200
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(item => canonicalJson(item)).join(',')}]`
+  if (typeof value === 'object') {
+    const objectValue = value as { readonly [key: string]: unknown }
+    return `{${Object.keys(objectValue).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(objectValue[key])}`).join(',')}}`
+  }
+  return JSON.stringify(`[${typeof value}]`)
+}
+
+/** Hash the normalized selector request stored with a Host retry identity. */
+function scheduleCreateFingerprint(request: ScheduleCreateRequest, title: string): string {
+  const canonical: Record<string, unknown> = { prompt: request.prompt.trim(), title }
+  if (request.after_seconds !== undefined) canonical.after_seconds = request.after_seconds
+  if (request.at !== undefined) canonical.at = new Date(parseAtInput(request.at)).toISOString()
+  if (request.every_seconds !== undefined) canonical.every_seconds = request.every_seconds
+  if (request.daily !== undefined) canonical.daily = parseDailyInput(request.daily)
+  if (request.weekly !== undefined) {
+    const weekly = parseWeeklyInput(request.weekly)
+    canonical.weekly = { ...weekly, weekdays: [...weekly.weekdays] }
+  }
+  if (request.cron !== undefined) canonical.cron = parseCronInput(request.cron)
+  return createHash('sha256').update(canonicalJson(canonical)).digest('hex')
+}
 
 /**
  * Shared management service; reads, deletion, and timing edits never activate a Session.
@@ -219,11 +246,13 @@ export class ScheduleService extends TypertRemoteService {
    * can never reach it: the child is one whose delegation depth is above zero.
    * The record is built from the clock reading inside the serialized queue, after
    * an idempotency lookup, so a retry that finds an existing task never allocates
-   * a fresh task id or timing anchor.
+   * a fresh task id or timing anchor. A reused key with a different canonical
+   * request is rejected.
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
    * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
-   * @param options - Optional Host retry identity. A repeated key for this Session returns the original record.
+   * @param options - Optional operation-specific Host retry identity. A repeated key for this
+   * Session returns the original record only when the canonical request matches.
    * @returns The durably stored schedule. Cancellation does not roll back an in-flight write.
    */
   async create(
@@ -244,6 +273,7 @@ export class ScheduleService extends TypertRemoteService {
     if (invalidIdempotencyKey) {
       throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
     }
+    const requestFingerprint = idempotencyKey === undefined ? undefined : scheduleCreateFingerprint(request, title)
     return this.serialize(async () => {
       const refusal = this.reminderTargetRefusal(sessionId)
       if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
@@ -253,7 +283,12 @@ export class ScheduleService extends TypertRemoteService {
         const existing = [...domain.table('tasks').entries()].find(([, task]) =>
           task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
         signal?.throwIfAborted()
-        if (existing !== undefined) return existing[1].record
+        if (existing !== undefined) {
+          if (existing[1].requestFingerprint !== requestFingerprint) {
+            throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+          }
+          return existing[1].record
+        }
       }
       const id = ScheduleId(`schedule-${randomUUID()}`)
       const now = Date.now()
@@ -273,7 +308,7 @@ export class ScheduleService extends TypertRemoteService {
       else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
       await domain.table('tasks').put(id, {
         sessionId, record, status: 'active',
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey, requestFingerprint }),
         deliveryHistory: { records: [], earlierRecordsUnavailable: false },
       })
       this.emitChanged()

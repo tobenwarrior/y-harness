@@ -51,6 +51,31 @@ describe('shared Schedule management', () => {
     expect(await restarted.service.catalog()).toHaveLength(1)
   })
 
+  it('allows identical intentional creates and rejects key/request conflicts', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-intent')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const first = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-one' })
+    const second = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-two' })
+    expect(second.id).not.toBe(first.id)
+    await expect(test.service.create(sessionId, {
+      prompt: ' Check the build ', title: ' Build check ', after_seconds: 60,
+    }, undefined, { idempotencyKey: 'operation-one' })).resolves.toEqual(first)
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    expect(tasks.get(first.id)).toMatchObject({
+      idempotencyKey: 'operation-one', requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    })
+    await tasks.put(first.id, { ...tasks.get(first.id)!, status: 'inactive' })
+    const recreated = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-three' })
+    expect(recreated.id).not.toBe(first.id)
+    await expect(test.service.create(sessionId, { ...request, title: 'Different task' }, undefined, {
+      idempotencyKey: 'operation-one',
+    })).rejects.toMatchObject({ code: 'invalid_rule' })
+    expect(await test.service.catalog()).toHaveLength(3)
+  })
+
   it('honors cancellation after an idempotent task read', async () => {
     const test = await setup()
     const sessionId = SessionId('idempotent-read-cancel')

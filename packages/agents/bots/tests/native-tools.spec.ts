@@ -53,7 +53,7 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledWith('create', { title: 'Daily check' }, expect.anything())
   })
 
-  it('retries an uncertain native routine through the Host idempotency seam', async () => {
+  it('blocks a cross-call retry while an earlier routine outcome is uncertain', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({
@@ -67,8 +67,9 @@ describe('native Bot actions', () => {
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (create === undefined) throw new Error('schedule_create missing')
     const result = await create.execute({ title: 'Daily check' }, context({ sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn' }))
-    expect(result.success).toBe(true)
-    expect(routine).toHaveBeenCalledOnce()
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(routine).not.toHaveBeenCalled()
   })
 
   it('retries the same call when a routine listing raced the uncertain create', async () => {
@@ -131,6 +132,26 @@ describe('native Bot actions', () => {
     expect(conflict.success).toBe(false)
     expect(conflict.contentItems[0]?.text).toContain('uncertain-outcome')
     expect(routine).not.toHaveBeenCalled()
+  })
+
+  it('allows an intentional identical routine after the earlier call settled', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const result = { success: true, contentItems: [{ type: 'inputText' as const, text: '{"id":"schedule-1"}' }] }
+    const routine = vi.fn(async () => ({ id: 'schedule-2' }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, routine, routineAvailable: async () => true,
+      replay: async () => [
+        { phase: 'started', name: 'schedule_create', callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: { title: 'Daily check' } },
+        { phase: 'settled', name: 'schedule_create', callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: { title: 'Daily check' }, result },
+      ],
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    const repeated = await create.execute({ title: 'Daily check' }, context({
+      sessionId, callId: 'call-2', threadId: 'thread-2', turnId: 'turn-2',
+    }))
+    expect(repeated.success).toBe(true)
+    expect(routine).toHaveBeenCalledOnce()
   })
 
   it('shares one in-flight schedule creation across parallel retries', async () => {

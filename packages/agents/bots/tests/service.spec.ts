@@ -216,14 +216,15 @@ describe('durable Bot roster', () => {
       const firstRecords = await h.ctx.schedule.list({ sessionId })
       expect(firstRecords).toHaveLength(1)
       expect(await h.ctx.schedule.list({ sessionId: SessionId('other-session') })).toEqual([])
-      // The native result is intentionally not settled. A new native call is
-      // allowed to reconcile the uncertain call through the durable Schedule
-      // idempotency key without allocating a second task.
+      // The native result is intentionally not settled. A new native call
+      // cannot be distinguished from an intentional repeat, so it must stay
+      // uncertain rather than allocating a second task.
       const newCallContext = {
         ...context, callId: 'routine-new-call', threadId: 'thread-new', turnId: 'turn-new',
       }
       const duplicate = await create.execute(arguments_, newCallContext)
-      expect(duplicate).toEqual(result)
+      expect(duplicate.success).toBe(false)
+      expect(duplicate.contentItems[0]?.text).toContain('uncertain-outcome')
       expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
       const serviceCancelled = new AbortController()
       serviceCancelled.abort()
@@ -242,7 +243,8 @@ describe('durable Bot roster', () => {
       const sameCall = await createAfterRestart.execute(arguments_, context)
       expect(sameCall).toEqual(result)
       const replayed = await createAfterRestart.execute(arguments_, newCallContext)
-      expect(replayed).toEqual(result)
+      expect(replayed.success).toBe(false)
+      expect(replayed.contentItems[0]?.text).toContain('uncertain-outcome')
       expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
 
       const cancelled = new AbortController()

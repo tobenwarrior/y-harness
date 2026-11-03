@@ -388,7 +388,7 @@ export interface ScheduleCreateRequest {
 
 /** Host-only retry identity for a durable reminder creation. */
 export interface ScheduleCreateOptions {
-  /** Stable identity reused when a caller cannot tell whether an earlier write committed. */
+  /** Stable identity for one operation, reused only when its earlier write outcome is unknown. */
   readonly idempotencyKey?: string
 }
 

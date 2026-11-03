@@ -277,13 +277,20 @@ function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
   return { ...request, ...selectors }
 }
 
-/** Stable Host retry identity for one Bot Session's semantic routine request. */
-function routineIdempotencyKey(sessionId: SessionId, request: ScheduleCreateRequest): string {
+/** Stable Host retry identity for one Bot Session's native routine operation. */
+function routineIdempotencyKey(
+  sessionId: SessionId,
+  context: Parameters<NonNullable<BotNativeToolHost['routine']>>[2],
+): string {
   return createHash('sha256')
     .update('bot-routine-create\0')
     .update(String(sessionId))
     .update('\0')
-    .update(JSON.stringify(request) ?? '')
+    .update(context.callId)
+    .update('\0')
+    .update(context.threadId)
+    .update('\0')
+    .update(context.turnId)
     .digest('hex')
 }
 
@@ -590,7 +597,7 @@ export class BotService extends TypertRemoteService {
       if (action === 'create') {
         const request = routineCreateRequest(args)
         const record = await schedule.create(sessionId, request, context.signal, {
-          idempotencyKey: routineIdempotencyKey(sessionId, request),
+          idempotencyKey: routineIdempotencyKey(sessionId, context),
         })
         context.signal.throwIfAborted()
         return scheduleView(record, Date.now())
