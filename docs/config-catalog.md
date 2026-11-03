@@ -461,6 +461,23 @@ export type Config = LocalConfig
 ```
 <!-- END GENERATED config-catalog:@yharness/bash-sandbox -->
 
+<!-- BEGIN GENERATED config-catalog:@yharness/bots -->
+<a id="yharnessbots"></a>
+
+## `@yharness/bots`
+
+- `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
+- `source`: [`packages/agents/bots/src/index.ts:242`](../packages/agents/bots/src/index.ts)
+
+```ts config-catalog
+/** Deployment-local owner scope for published template rows. */
+export interface BotServiceConfig {
+  /** Stable owner key selected by the Host composition. */
+  readonly ownerId?: string
+}
+```
+<!-- END GENERATED config-catalog:@yharness/bots -->
+
 <!-- BEGIN GENERATED config-catalog:@yharness/client-connection -->
 <a id="yharnessclient-connection"></a>
 
@@ -4615,7 +4632,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@yharness/api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
 | `@yharness/api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@yharness/authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
-| `@yharness/bots` | `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools` | [`packages/agents/bots/src/index.ts`](../packages/agents/bots/src/index.ts) |
 | `@yharness/browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |
 | `@yharness/client-file-upload` | `agents` · `attachments` · `commands` · `connection` | [`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts) |
 | `@yharness/client-locale` | — | [`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts) |

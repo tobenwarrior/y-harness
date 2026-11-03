@@ -3,6 +3,7 @@ import { CordisInspectRegistryService } from '@yharness/cordis-host-runner'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRegistry from '@yharness/tools'
 import { describe, expect, it } from 'vitest'
+import { TYPE_API } from '../src/api-catalog.ts'
 import * as CordisInspectProviders from '../src/host.ts'
 
 /**
@@ -22,6 +23,15 @@ async function host(): Promise<Context> {
 }
 
 describe('the cordis-inspect-providers host entry', () => {
+  it('keeps the remote Bot memory request distinct from the scoped provider request', () => {
+    const remote = TYPE_API.find(entry => entry.name === 'BotMemoryForgetRemoteRequest')
+    const scoped = TYPE_API.find(entry => entry.name === 'BotMemoryForgetRequest')
+    expect(remote?.declaration).toContain('readonly botId: BotId;')
+    expect(remote?.declaration).toContain('readonly memoryId: string;')
+    expect(scoped?.declaration).toContain('readonly memoryId: BotMemoryId;')
+    expect(scoped?.declaration).toContain('readonly signal?: AbortSignal;')
+  })
+
   it('registers the first-party Host providers and withdraws them on disposal', async () => {
     const ctx = await host()
     const fiber = ctx.plugin(CordisInspectProviders)

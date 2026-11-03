@@ -3,8 +3,21 @@ import type {
   SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
 } from '@yharness/api-session-controller/client'
 import type { SessionId } from '@yharness/session/types'
-import { BotId, type BotGroupId, type BotGroupInspectValue, type BotGroupMessageId, type BotGroupView, type BotView } from '@yharness/bots/client'
+import { RemoteError } from '@yharness/typert-protocol'
+import {
+  BotId,
+  type BotGroupId,
+  type BotGroupInspectValue,
+  type BotGroupMessageId,
+  type BotGroupView,
+  type BotTemplateId,
+  type BotTemplatePreviewValue,
+  type BotTemplateShareCode,
+  type BotTemplateView,
+  type BotView,
+} from '@yharness/bots/client'
 import { brandString } from '@yharness/brand'
+import type { RemoteResult } from '@yharness/api-remotes/client'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotGroupPendingState, type BotGroupPendingStore, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
@@ -106,6 +119,26 @@ function groupView(id: string, name: string, bots: readonly BotView[]): BotGroup
   }
 }
 
+function templateView(id: string, shareCode: string, patch: Partial<BotTemplateView> = {}): BotTemplateView {
+  return {
+    id: brandString<BotTemplateId>(id),
+    shareCode: brandString<BotTemplateShareCode>(shareCode),
+    name: 'Research template',
+    description: 'A reusable research partner.',
+    identity: 'browse',
+    accent: 'teal',
+    agentPreset: 'research-preset',
+    persona: 'Summarize evidence before recommending action.',
+    capabilities: ['chat', 'collaboration'],
+    fingerprint: 'a'.repeat(64),
+    issuerFingerprint: 'b'.repeat(64),
+    createdAt: 1,
+    ...patch,
+  }
+}
+
+const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
+
 describe('BotWorkspaceController', () => {
   it('exposes avatar uploads without an image generation service', async () => {
     const original = bot('bot-one', 'session-one')
@@ -191,6 +224,367 @@ describe('BotWorkspaceController', () => {
     await controller.load()
     expect(controller.face().reference()).toBe(secondReference)
     expect(retain).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads, previews, imports, and refreshes safe Bot templates', async () => {
+    const source = bot('bot-template-source', 'session-template-source')
+    const imported = bot('bot-template-imported', 'session-template-imported')
+    const template = templateView('bot-template-1', 'bot-template-code-1')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: imported, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+
+    await controller.load()
+
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      phase: 'ready', templates: [{ id: 'bot-template-1', shareCode: 'bot-template-code-1', name: 'Research template' }],
+    })
+    const actions = controller.face().templateActions
+    expect(actions).toBeDefined()
+    actions?.setTemplateCode(' bot-template-code-1 ')
+    await actions?.previewTemplate()
+    expect(remote.previewTemplate).toHaveBeenCalledWith({ shareCode: 'bot-template-code-1' })
+    expect(controller.source.getSnapshot().templates.preview).toMatchObject({ id: 'bot-template-1', accent: 'teal' })
+
+    await actions?.importTemplate(' Imported research ')
+    expect(remote.importTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      shareCode: 'bot-template-code-1', name: 'Imported research', importId: expect.stringMatching(/^ui-/),
+    }))
+    expect(remote.approveTemplate).toHaveBeenCalledWith({
+      shareCode: 'bot-template-code-1', fingerprint: template.fingerprint,
+      expectedPermissions: localPermissions, approvalToken: 'preview-token',
+    })
+    expect(controller.source.getSnapshot().templates).toMatchObject({ code: '', preview: null, busy: false })
+    controller.dispose()
+  })
+
+  it('publishes and revokes templates through the safe request fields', async () => {
+    const source = bot('bot-template-publish', 'session-template-publish')
+    const template = templateView('bot-template-published', 'bot-template-code-published')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template } }))
+    remote.revokeTemplate = vi.fn(async () => ({ ok: true as const, value: { template: { ...template, revokedAt: 2 } } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+
+    const actions = controller.face().templateActions
+    await actions?.publishTemplate({ botId: String(source.id), name: '  Shared research  ', description: '  Read-only preset  ' })
+    expect(remote.publishTemplate).toHaveBeenCalledWith({
+      botId: source.id, name: 'Shared research', description: 'Read-only preset',
+    })
+    await actions?.revokeTemplate(' bot-template-published ')
+    expect(remote.revokeTemplate).toHaveBeenCalledWith({ templateId: 'bot-template-published' })
+    expect(controller.source.getSnapshot().templates.busy).toBe(false)
+    controller.dispose()
+  })
+
+  it('retains the pasted code and preview when template import fails', async () => {
+    const source = bot('bot-template-failure', 'session-template-failure')
+    const template = templateView('bot-template-failure-row', 'bot-template-code-failure')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'template expired', {}) }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-failure')
+    await actions?.previewTemplate()
+
+    await expect(actions?.importTemplate()).rejects.toThrow('template expired')
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      code: 'bot-template-code-failure', preview: { id: 'bot-template-failure-row' }, error: 'template expired', busy: false,
+    })
+    controller.dispose()
+  })
+
+  it('fails closed when the Host cannot approve a signed template', async () => {
+    const source = bot('bot-template-no-approval', 'session-template-no-approval')
+    const template = templateView('bot-template-no-approval-row', 'bot-template-code-no-approval')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-no-approval')
+    await actions?.previewTemplate()
+
+    await expect(actions?.importTemplate()).rejects.toThrow('unexpected response')
+    expect(remote.importTemplate).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('fails closed when the target preset permissions cannot be resolved', async () => {
+    const source = bot('bot-template-no-permissions', 'session-template-no-permissions')
+    const template = templateView('bot-template-no-permissions-row', 'bot-template-code-no-permissions')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({
+      ok: true as const,
+      value: { template, localPermissions: { status: 'unavailable' as const, preset: 'research-preset', tools: [] } },
+    }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-no-permissions')
+    await actions?.previewTemplate()
+
+    await expect(actions?.importTemplate()).rejects.toThrow('unexpected response')
+    expect(remote.approveTemplate).not.toHaveBeenCalled()
+    expect(remote.importTemplate).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('ignores a preview response after the pasted code changes', async () => {
+    const source = bot('bot-template-stale-preview', 'session-template-stale-preview')
+    const template = templateView('bot-template-stale-row', 'bot-template-code-a')
+    let resolvePreview: ((result: RemoteResult<BotTemplatePreviewValue>) => void) | undefined
+    const previewResult = new Promise<RemoteResult<BotTemplatePreviewValue>>((resolve) => { resolvePreview = resolve })
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => previewResult)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-a')
+    const pending = actions?.previewTemplate()
+    actions?.setTemplateCode('bot-template-code-b')
+    resolvePreview?.({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
+    await pending
+
+    expect(controller.source.getSnapshot().templates.preview).toBeNull()
+    expect(controller.source.getSnapshot().templates.code).toBe('bot-template-code-b')
+    controller.dispose()
+  })
+
+  it('ignores a stale preview failure after the pasted code changes', async () => {
+    const source = bot('bot-template-stale-preview-error', 'session-template-stale-preview-error')
+    const template = templateView('bot-template-stale-error-row', 'bot-template-code-error-a')
+    let rejectPreview: ((error: Error) => void) | undefined
+    const previewResult = new Promise<RemoteResult<BotTemplatePreviewValue>>((_resolve, reject) => { rejectPreview = reject })
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => previewResult)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-error-a')
+    const pending = actions?.previewTemplate()
+    actions?.setTemplateCode('bot-template-code-error-b')
+    rejectPreview?.(new Error('old preview failed'))
+    await pending?.catch(() => {})
+
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      code: 'bot-template-code-error-b', preview: null, error: null, busy: false,
+    })
+    controller.dispose()
+  })
+
+  it('ignores an older preview after the user returns to the same code', async () => {
+    const source = bot('bot-template-preview-generation', 'session-template-preview-generation')
+    const template = templateView('bot-template-preview-generation-row', 'bot-template-code-a')
+    const pending: Array<{
+      readonly resolve: (result: RemoteResult<BotTemplatePreviewValue>) => void
+      readonly promise: Promise<RemoteResult<BotTemplatePreviewValue>>
+    }> = []
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => {
+      let resolve: (result: RemoteResult<BotTemplatePreviewValue>) => void = () => {}
+      const promise = new Promise<RemoteResult<BotTemplatePreviewValue>>((next) => { resolve = next })
+      pending.push({ resolve, promise })
+      return promise
+    })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-a')
+    const first = actions?.previewTemplate()
+    actions?.setTemplateCode('bot-template-code-b')
+    actions?.setTemplateCode('bot-template-code-a')
+    const second = actions?.previewTemplate()
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    pending[0]?.resolve({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    expect(controller.source.getSnapshot().templates.preview).toBeNull()
+    expect(controller.source.getSnapshot().templates.busy).toBe(true)
+    pending[1]?.resolve({ ok: true, value: { template, localPermissions, approvalToken: 'preview-token' } })
+    await Promise.all([first, second])
+
+    expect(controller.source.getSnapshot().templates.preview?.shareCode).toBe('bot-template-code-a')
+    controller.dispose()
+  })
+
+  it('retains a newer template draft when a load started earlier completes', async () => {
+    const source = bot('bot-template-stale-load', 'session-template-stale-load')
+    const template = templateView('bot-template-stale-load-row', 'bot-template-code-stale-load')
+    const listTemplates = Promise.withResolvers<RemoteResult<{ readonly templates: readonly BotTemplateView[] }>>()
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => listTemplates.promise)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    const loading = controller.load()
+    await vi.waitFor(() => { expect(remote.listTemplates).toHaveBeenCalledOnce() })
+
+    controller.face().templateActions?.setTemplateCode('newer-template-code')
+    listTemplates.resolve({ ok: true, value: { templates: [template] } })
+    await loading
+
+    expect(controller.source.getSnapshot().templates).toMatchObject({
+      code: 'newer-template-code', preview: null, error: null,
+    })
+    controller.dispose()
+  })
+
+  it('retains a newer template draft when a publish refresh completes late', async () => {
+    const source = bot('bot-template-stale-refresh', 'session-template-stale-refresh')
+    const template = templateView('bot-template-stale-refresh-row', 'bot-template-code-stale-refresh')
+    const refreshResult = Promise.withResolvers<RemoteResult<{ readonly templates: readonly BotTemplateView[] }>>()
+    let listCalls = 0
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => {
+      listCalls++
+      return listCalls === 1
+        ? { ok: true as const, value: { templates: [template] } }
+        : refreshResult.promise
+    })
+    remote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('draft-before-publish')
+    const publishing = actions?.publishTemplate({ botId: String(source.id) })
+    await vi.waitFor(() => { expect(remote.listTemplates).toHaveBeenCalledTimes(2) })
+
+    actions?.setTemplateCode('newer-draft')
+    refreshResult.resolve({ ok: true, value: { templates: [template] } })
+    await publishing
+
+    expect(controller.source.getSnapshot().templates.code).toBe('newer-draft')
+    controller.dispose()
+  })
+
+  it('requires the current preview before importing the current code', async () => {
+    const source = bot('bot-template-current-preview', 'session-template-current-preview')
+    const template = templateView('bot-template-current-row', 'bot-template-code-a')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-a')
+    await actions?.previewTemplate()
+    actions?.setTemplateCode('bot-template-code-b')
+
+    await expect(actions?.importTemplate()).rejects.toThrow('unexpected response')
+    expect(remote.approveTemplate).not.toHaveBeenCalled()
+    expect(remote.importTemplate).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('does not clear a newer template draft when an older import resolves', async () => {
+    const source = bot('bot-template-stale-import', 'session-template-stale-import')
+    const template = templateView('bot-template-stale-import-row', 'bot-template-code-stale-import')
+    const importResult = Promise.withResolvers<RemoteResult<{ readonly bot: BotView; readonly template: BotTemplateView }>>()
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => importResult.promise)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-stale-import')
+    await actions?.previewTemplate()
+    const importing = actions?.importTemplate('Older draft name')
+    await vi.waitFor(() => { expect(remote.importTemplate).toHaveBeenCalledOnce() })
+
+    actions?.setTemplateCode('newer-template-code')
+    importResult.resolve({ ok: true, value: { bot: source, template } })
+    await importing
+
+    expect(controller.source.getSnapshot().templates.code).toBe('newer-template-code')
+    expect(controller.source.getSnapshot().templates.preview).toBeNull()
+    controller.dispose()
+  })
+
+  it('does not import when approval returns a different artifact fingerprint', async () => {
+    const source = bot('bot-template-approval-response', 'session-template-approval-response')
+    const template = templateView('bot-template-approval-row', 'bot-template-code-approval')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const,
+      value: { template: { ...template, fingerprint: 'c'.repeat(64), approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-approval')
+    await actions?.previewTemplate()
+
+    await expect(actions?.importTemplate()).rejects.toThrow('unexpected response')
+    expect(remote.importTemplate).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('does not import when approval returns a different portable avatar', async () => {
+    const source = bot('bot-template-avatar-response', 'session-template-avatar-response')
+    const template = templateView('bot-template-avatar-row', 'bot-template-code-avatar', {
+      avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 1, height: 1 },
+    })
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        template: { ...template, avatar: { mediaType: 'image/png' as const, data: 'BAUG', bytes: 3, width: 1, height: 1 }, approved: true },
+        localPermissions,
+      },
+    }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-avatar')
+    await actions?.previewTemplate()
+
+    await expect(actions?.importTemplate()).rejects.toThrow('unexpected response')
+    expect(remote.importTemplate).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('keeps older compositions working when templates are not mounted', async () => {
+    const source = bot('bot-template-optional', 'session-template-optional')
+    const controller = new BotWorkspaceController(remoteFixture([source]), sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    expect(controller.face().templateActions).toBeUndefined()
+    expect(controller.source.getSnapshot().templates.phase).toBe('idle')
+    controller.dispose()
   })
 
   it('waits for the Session catalog before restoring a persisted Bot', async () => {
@@ -490,7 +884,6 @@ describe('BotWorkspaceController', () => {
     expect(controller.face().reference()?.sessionId).toBe('session-lost')
     expect(controller.source.getSnapshot().error).toBeNull()
   })
-
   it('switches from a direct Bot Session to a persistent shared group transcript', async () => {
     const first = bot('bot-first-group', 'session-first-group')
     const second = bot('bot-second-group', 'session-second-group')
@@ -1012,5 +1405,33 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => {
       expect(controller.source.getSnapshot().selectedGroup?.messages.at(-1)?.text).toBe('Arrived during refresh.')
     })
+  })
+  it('binds memory management to the requested Bot id and preserves stable memory ids', async () => {
+    const persisted = bot('bot-memory-owner', 'bot-session-memory-owner')
+    const remote = remoteFixture([persisted])
+    const listMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memories: [{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }],
+    } }))
+    const updateMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memory: { id: 'memory-one', text: 'Keep the review short.', createdAt: 2 },
+    } }))
+    const forgetMemory = vi.fn(async () => ({ ok: true as const, value: { removed: true as const } }))
+    remote.listMemory = listMemory
+    remote.updateMemory = updateMemory
+    remote.forgetMemory = forgetMemory
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    const manager = controller.face().memoryManager
+    if (manager === undefined) throw new Error('memory manager was not mounted')
+    await expect(manager.list(String(persisted.id))).resolves.toEqual([{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }])
+    await expect(manager.update(String(persisted.id), 'memory-one', 'Keep the review short.')).resolves.toEqual({
+      id: 'memory-one', text: 'Keep the review short.', createdAt: 2,
+    })
+    await expect(manager.remove(String(persisted.id), 'memory-one')).resolves.toBeUndefined()
+
+    expect(listMemory).toHaveBeenCalledWith({ botId: persisted.id })
+    expect(updateMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one', text: 'Keep the review short.' })
+    expect(forgetMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one' })
   })
 })

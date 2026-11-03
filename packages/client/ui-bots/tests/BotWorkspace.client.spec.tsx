@@ -6,8 +6,12 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotGroupDetailData, BotGroupSummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type {
+  BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary,
+  BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+} from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -49,6 +53,18 @@ const groupDetail: BotGroupDetailData = {
     { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
     { id: 'message-2', sender: { kind: 'bot', botId: 'research', name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
   ],
+}
+
+const templateState: BotTemplateState = {
+  phase: 'ready',
+  templates: [{
+    id: 'template-release', shareCode: 'bot-template-release', name: 'Release partner', description: 'Keeps releases moving.',
+    identity: 'goal', accent: 'amber', createdAt: 1,
+  }],
+  code: 'bot-template-release',
+  preview: null,
+  error: null,
+  busy: false,
 }
 
 function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
@@ -106,6 +122,164 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByText('Persistent session surface')).toBeNull()
   })
 
+  it('opens the template share surface from the existing Bot sidebar', async () => {
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={templateState}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
+    expect(screen.getByText('Release partner')).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
+    await waitFor(() => { expect(actions.publishTemplate).toHaveBeenCalledWith({ botId: 'research' }) })
+
+    const code = screen.getByRole('textbox', { name: 'Template share code' })
+    expect(code.getAttribute('placeholder')).toBe('Paste a yhbot-template-v2.… code')
+    fireEvent.change(code, { target: { value: 'bot-template-release-2' } })
+    expect(actions.setTemplateCode).toHaveBeenCalledWith('bot-template-release-2')
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await waitFor(() => { expect(actions.previewTemplate).toHaveBeenCalledOnce() })
+  })
+
+  it('does not preview a template from Enter while another template action is busy', () => {
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, busy: true }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Template share code' }), { key: 'Enter' })
+
+    expect(actions.previewTemplate).not.toHaveBeenCalled()
+  })
+
+  it('shows signed issuer and configuration details before approval', async () => {
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-123',
+      fingerprint: 'artifact-fingerprint-456',
+      persona: 'Summarize evidence before recommending action.',
+      capabilities: ['chat', 'collaboration'],
+      agentPreset: 'research-preset',
+      avatar: { mediaType: 'image/png' as const, data: 'AQID', bytes: 3, width: 1, height: 1 },
+      localPermissions: { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] },
+    }
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, preview }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    expect(screen.getByText('issuer-fingerprint-123')).toBeTruthy()
+    expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
+    expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
+    expect(screen.getByText('chat, collaboration')).toBeTruthy()
+    expect(screen.getAllByText('research-preset')).toHaveLength(2)
+    expect(screen.getByRole('img', { name: 'Portable template avatar' }).getAttribute('src')).toBe('data:image/png;base64,AQID')
+    expect(screen.getByText('chat, read_file')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve and create Bot' })).toBeTruthy()
+  })
+
+  it('does not offer approval when local permissions are unavailable', async () => {
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-unavailable',
+      fingerprint: 'artifact-fingerprint-unavailable',
+      localPermissions: { status: 'unavailable' as const, preset: 'research-preset', tools: [] },
+    }
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, preview }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
+    expect(importButton).toHaveProperty('disabled', true)
+    expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
+  })
+
+  it('keeps a newer replacement-name draft when an older import resolves', async () => {
+    const importResult = Promise.withResolvers<undefined>()
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => { await importResult.promise }),
+    }
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-name-race',
+      fingerprint: 'artifact-fingerprint-name-race',
+      localPermissions: { status: 'resolved' as const, preset: 'research-preset', tools: ['read_file'] },
+    }
+    render(<BotTemplatesPanel
+      bots={bots}
+      state={{ ...templateState, preview }}
+      actions={actions}
+      t={t}
+      open
+      onClose={vi.fn()}
+    />)
+
+    const name = screen.getByRole('textbox', { name: 'Imported Bot name' })
+    fireEvent.change(name, { target: { value: 'Older draft name' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and create Bot' }))
+    fireEvent.change(name, { target: { value: 'Newer draft name' } })
+    importResult.resolve(undefined)
+
+    await waitFor(() => { expect(name).toHaveProperty('value', 'Newer draft name') })
+  })
+
   it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {
     const onSelectBot = vi.fn()
     const expandSidebar = vi.fn()
@@ -140,6 +314,71 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('region', { name: 'Research partner' })).toBeTruthy()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('opens the selected bot memory manager from the detail header without adding a sidebar', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => []),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
+    expect(actions.list).toHaveBeenCalledWith('research')
+    expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('does not apply a pending edit from the previous Bot after selection changes', async () => {
+    let resolveUpdate!: (memory: BotMemorySummary) => void
+    const pendingUpdate = new Promise<BotMemorySummary>((resolve) => { resolveUpdate = resolve })
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(async () => pendingUpdate),
+      remove: vi.fn(async () => {}),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
+    fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-shared', 'Updated research note') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
+    await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
+    expect(screen.queryByText('Updated research note')).toBeNull()
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {

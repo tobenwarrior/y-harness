@@ -4,6 +4,7 @@
 - complementary "Bot workspace":
   - text: Bots
   - button "Edit avatar"
+  - button "Bot templates"
   - button "New bot"
   - textbox "Search bots"
   - region "General":
@@ -11,14 +12,53 @@
     - button "Scout, Idle":
       - img "Scout"
       - text: Scout Idle
+    - button "Bot actions for Scout"
     - button "Orbit, Idle":
       - img "Orbit"
       - text: Orbit Idle
+    - button "Bot actions for Orbit"
+  - region "Shared groups":
+    - heading "Shared groups" [level=2]
+    - button "New group"
+  - button "App access"
 - region "Scout":
   - img "Scout"
-  - text: Scout Idle
+  - text: Scout
+  - button "Rename bot"
+  - button "Manage memories"
+  - text: Idle
   - textbox "Message or run a task, / commands, @ files or sessions"
   - button "Add files or run commands"
   - 'button "Access mode, current: Approve for me"': Approve for me
   - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
   - button "Send message" [disabled]
+- dialog "Bot templates":
+  - heading "Bot templates" [level=2]
+  - button "Cancel"
+  - paragraph: Share a Bot’s safe configuration, or bring one into this workspace as a new Bot.
+  - region "Share a Bot":
+    - text: Share a Bot Publish its profile, persona, capabilities, avatar, and preset—never its session or credentials.
+    - img "Scout"
+    - text: Scout
+    - button "Share"
+    - img "Orbit"
+    - text: Orbit
+    - button "Share"
+  - region "Import with a share code":
+    - text: Import with a share code Preview the safe configuration before creating a separate Bot and Session.
+    - textbox "Template share code":
+      - /placeholder: Paste a yhbot-template-v2.… code
+    - button "Preview" [disabled]
+  - region "Shared templates": Shared templates Signed snapshots never contain history or credentials. Revocation blocks new imports on this Host; copied imports remain independent. No shared templates yet.
+  - button "Cancel"
+- dialog "Bot memory":
+  - heading "Bot memory" [level=2]
+  - button "Close"
+  - paragraph: Review the private notes this bot carries between sessions.
+  - img "Scout"
+  - strong: Scout
+  - text: Only this bot can use these notes in its ongoing session.
+  - status:
+    - strong: No saved memories
+    - text: This bot has not saved any notes yet.
+  - button "Close"

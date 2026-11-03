@@ -159,6 +159,8 @@ export interface BotRecord {
   readonly id: BotId
   /** The only Session owned by this Bot. */
   readonly sessionId: SessionId
+  /** Deployment-local owner scope used for template publication authorization. */
+  readonly ownerId: string
   /** User-visible display name. */
   readonly name: string
   /** Optional user-facing routing description. */
@@ -171,6 +173,10 @@ export interface BotRecord {
   readonly avatar?: BotAvatar | undefined
   /** Bot-scoped message routines; absent on rows written before event routines existed. */
   readonly eventRoutines?: readonly BotEventRoutine[] | undefined
+  /** Optional model-facing persona text. */
+  readonly persona?: string | undefined
+  /** Safe capability declarations retained by the Bot. */
+  readonly capabilities?: readonly string[] | undefined
   /** Connected MCP app ids this Bot may use; absent means legacy rows retain all available apps. */
   readonly connectedAppIds?: readonly string[] | undefined
   /** Connected MCP app ids explicitly denied for a legacy allow-all Bot. */
@@ -193,8 +199,8 @@ export interface BotRecord {
   readonly updatedAt: number
 }
 
-/** Browser-facing roster row enriched with live availability, without Bot-owned routine internals. */
-export type BotView = Omit<BotRecord, 'eventRoutines'> & {
+/** Browser-facing roster row enriched with live availability and no private fields. */
+export type BotView = Omit<BotRecord, 'ownerId' | 'eventRoutines'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
   /** Whether the Bot is kept at the top of its roster view. */
@@ -219,6 +225,10 @@ export interface BotCreateRequest {
   readonly cwd?: string
   /** Optional Agent preset passed to Session creation. */
   readonly agentPreset?: string
+  /** Optional model-facing persona text. */
+  readonly persona?: string
+  /** Safe capability declarations retained as declarations, not permissions. */
+  readonly capabilities?: readonly string[]
 }
 
 /** Bot create response. */
@@ -371,6 +381,58 @@ export interface BotConnectedAppAccessValue {
   readonly bot: BotView
   /** Connected MCP app whose access changed. */
   readonly app: BotConnectedAppAccess
+}
+
+/** Browser-safe view of one active memory owned by a Bot. */
+export interface BotMemoryView {
+  /** Stable identity used when editing or removing the memory. */
+  readonly id: string
+  /** User-authored reference text retained by the Bot. */
+  readonly text: string
+  /** Session-log timestamp of the latest remember operation. */
+  readonly createdAt: number
+}
+
+/** Request to list the private memories belonging to one Bot. */
+export interface BotMemoryListRequest {
+  /** Bot whose memory projection should be read. */
+  readonly botId: BotId
+}
+
+/** Response containing active private memories for one Bot. */
+export interface BotMemoryListValue {
+  /** Active memories in creation order. */
+  readonly memories: readonly BotMemoryView[]
+}
+
+/** Request to replace one private memory while retaining its stable id. */
+export interface BotMemoryUpdateRequest {
+  /** Bot that owns the memory. */
+  readonly botId: BotId
+  /** Existing memory identity to update. */
+  readonly memoryId: string
+  /** New non-empty memory text. */
+  readonly text: string
+}
+
+/** Response containing the updated private memory. */
+export interface BotMemoryUpdateValue {
+  /** Updated memory row. */
+  readonly memory: BotMemoryView
+}
+
+/** Remote request to logically remove one private memory. */
+export interface BotMemoryForgetRemoteRequest {
+  /** Bot that owns the memory. */
+  readonly botId: BotId
+  /** Existing memory identity to remove. */
+  readonly memoryId: string
+}
+
+/** Empty response for a successful logical memory removal. */
+export interface BotMemoryForgetValue {
+  /** Stable response marker for generated remote clients. */
+  readonly removed: true
 }
 
 declare module '@yharness/typert-protocol' {

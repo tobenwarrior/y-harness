@@ -1,6 +1,6 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomUUID, type KeyObject } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
 import { MessageId } from '@yharness/llm/brand'
@@ -27,6 +27,7 @@ import type {
   ScheduleTimingChange,
   WeeklyInput,
 } from '@yharness/schedule'
+import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
@@ -109,6 +110,13 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotMemoryForgetRemoteRequest,
+  BotMemoryForgetValue,
+  BotMemoryListRequest,
+  BotMemoryListValue,
+  BotMemoryUpdateRequest,
+  BotMemoryUpdateValue,
+  BotMemoryView,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
@@ -116,6 +124,52 @@ import type {
 } from './types.ts'
 import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+import type { BotStoredRecord } from './storage.ts'
+import {
+  BotTemplateId,
+  BotTemplateShareCode,
+} from './template-types.ts'
+import type {
+  BotTemplateAvatar,
+  BotTemplateApproveRequest,
+  BotTemplateApproveValue,
+  BotTemplateImportRequest,
+  BotTemplateImportValue,
+  BotTemplateLocalPermissions,
+  BotTemplateListRequest,
+  BotTemplateListValue,
+  BotTemplatePreviewRequest,
+  BotTemplatePreviewValue,
+  BotTemplatePublishRequest,
+  BotTemplatePublishValue,
+  BotTemplateRevokeRequest,
+  BotTemplateRevokeValue,
+  BotTemplateView,
+} from './template-types.ts'
+import {
+  BOT_TEMPLATE_AVATAR_MAX_BYTES,
+  BOT_TEMPLATE_CODE_MAX_LENGTH,
+  BOT_TEMPLATE_CODE_PREFIX,
+  BOT_TEMPLATE_FORMAT_VERSION,
+  createBotTemplateSigningKeys,
+  decodeBotTemplateCode,
+  encodeBotTemplateCode,
+  restoreBotTemplatePrivateKey,
+  serializeBotTemplatePrivateKey,
+} from './template-codec.ts'
+import {
+  BOT_TEMPLATE_IMPORT_BINDING_LIMIT,
+  BOT_TEMPLATE_APPROVAL_LIMIT,
+  BOT_TEMPLATE_APPROVAL_TOOL_LIMIT,
+  botTemplateDomain,
+  normalizeBotTemplateShareCode,
+} from './template-storage.ts'
+import type { BotTemplateArtifactPayload } from './template-codec.ts'
+import type {
+  BotTemplateApproval,
+  BotTemplateApprovalPermissions,
+  BotTemplateStoredRecord,
+} from './template-storage.ts'
 
 type RoutineArguments = Record<string, unknown>
 
@@ -227,6 +281,12 @@ export type {
 } from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
+export {
+  BotTemplateId,
+  BotTemplateShareCode,
+} from './template-types.ts'
+export type * from './template-types.ts'
+export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.ts'
 
 declare module '@yharness/cordis' {
   interface Context {
@@ -235,8 +295,16 @@ declare module '@yharness/cordis' {
   }
 }
 
-/** Empty Bot service configuration. */
-export const Config = z.object({})
+/** Deployment-local owner scope for published template rows. */
+export interface BotServiceConfig {
+  /** Stable owner key selected by the Host composition. */
+  readonly ownerId?: string
+}
+
+/** Bot service configuration schema. */
+export const Config = z.object({
+  ownerId: z.string().min(1).max(128).default('local-owner'),
+})
 
 interface NormalizedCreate {
   readonly id?: BotRecord['id']
@@ -246,6 +314,70 @@ interface NormalizedCreate {
   readonly accent: BotAccent
   readonly cwd: string
   readonly agentPreset?: string
+  readonly persona?: string
+  readonly capabilities?: readonly string[]
+}
+
+interface ActiveBotTemplate {
+  readonly template: BotTemplateView
+  readonly payload: BotTemplateArtifactPayload
+  readonly fingerprint: string
+  readonly approved: boolean
+  readonly localTemplate: boolean
+  readonly approval?: BotTemplateApproval
+}
+
+interface TemplateApprovalPreview {
+  readonly fingerprint: string
+  readonly permissions: BotTemplateApprovalPermissions
+  readonly expiresAt: number
+}
+
+const BOT_TEMPLATE_APPROVAL_PREVIEW_LIMIT = 1024
+const BOT_TEMPLATE_APPROVAL_PREVIEW_TTL_MS = 5 * 60 * 1000
+
+function approvalPermissionsOf(localPermissions: BotTemplateLocalPermissions): BotTemplateApprovalPermissions | undefined {
+  if (localPermissions.status !== 'resolved' || localPermissions.preset === undefined) return undefined
+  return { preset: localPermissions.preset, tools: [...localPermissions.tools].sort() }
+}
+
+function sameApprovalPermissions(
+  left: BotTemplateApprovalPermissions | undefined,
+  right: BotTemplateApprovalPermissions | undefined,
+): boolean {
+  if (left === undefined || right === undefined || left.preset !== right.preset || left.tools.length !== right.tools.length) return false
+  return left.tools.every((tool, index) => tool === right.tools[index])
+}
+
+function normalizeApprovalToken(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128 || !/^[A-Za-z0-9-]+$/u.test(value)) {
+    return badRequest('Bot template approval token is invalid')
+  }
+  return value
+}
+
+function normalizeExpectedApprovalPermissions(value: unknown): BotTemplateApprovalPermissions {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+    || !('status' in value) || value.status !== 'resolved'
+    || !('preset' in value) || typeof value.preset !== 'string'
+    || !('tools' in value) || !Array.isArray(value.tools)) {
+    return badRequest('Bot template approval permissions are invalid')
+  }
+  const preset = value.preset
+  if (preset.length === 0 || preset.length > 160 || preset.trim() !== preset) {
+    return badRequest('Bot template approval preset is invalid')
+  }
+  const tools: string[] = []
+  for (const tool of value.tools) {
+    if (typeof tool !== 'string' || tool.length === 0 || tool.length > 160 || tool.trim() !== tool) {
+      return badRequest('Bot template approval tool list is invalid')
+    }
+    tools.push(tool)
+  }
+  if (tools.length > BOT_TEMPLATE_APPROVAL_TOOL_LIMIT || new Set(tools).size !== tools.length) {
+    return badRequest('Bot template approval tool list is invalid')
+  }
+  return { preset, tools: [...tools].sort() }
 }
 
 function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
@@ -286,6 +418,9 @@ const SYNTHETIC_GROUP_CONTEXT_SOURCES: ReadonlySet<string> = new Set([
 function isSyntheticGroupContext(message: UserMessage): boolean {
   return SYNTHETIC_GROUP_CONTEXT_SOURCES.has(message.source.kind)
 }
+const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
+const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
@@ -363,6 +498,103 @@ function normalizeBotId(value: BotRecord['id'] | undefined): BotRecord['id'] | u
   return BotId(value)
 }
 
+function normalizeOwnerId(value: string | undefined): string {
+  if (value === undefined) return 'local-owner'
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || value.length > 128) {
+    throw new Error('Bot template ownerId must be a non-empty trimmed string of at most 128 characters')
+  }
+  return value
+}
+
+function normalizeTemplateId(value: BotTemplateId): BotTemplateId {
+  if (typeof value !== 'string' || !BOT_TEMPLATE_ID_PATTERN.test(value)) {
+    throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(value) })
+  }
+  return BotTemplateId(value)
+}
+
+function normalizeTemplateShareCode(value: BotTemplateShareCode): BotTemplateShareCode {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new RemoteError('bot-template/invalid', 'Enter a Bot template share code.', { reason: 'empty-code' })
+  }
+  const code = value.trim()
+  if (code.length > BOT_TEMPLATE_CODE_MAX_LENGTH || (!code.startsWith(BOT_TEMPLATE_CODE_PREFIX) && !BOT_TEMPLATE_ID_PATTERN.test(code))) {
+    throw new RemoteError('bot-template/invalid', 'The Bot template share code is malformed.', { reason: 'malformed-code' })
+  }
+  try {
+    return normalizeBotTemplateShareCode(BotTemplateShareCode(code))
+  } catch (error: unknown) {
+    throw new RemoteError('bot-template/invalid', 'The Bot template share code is malformed.', { reason: 'malformed-code' }, { cause: error })
+  }
+}
+
+function normalizeTemplateImportId(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !BOT_TEMPLATE_IMPORT_ID_PATTERN.test(value)) {
+    return badRequest('Bot template importId must be a non-empty URL-safe operation identity')
+  }
+  return value
+}
+
+function templateImportDigest(ownerId: string, importId: string): string {
+  return createHash('sha256').update(`${ownerId}\0${importId}`).digest('hex')
+}
+
+function templateView(record: BotTemplateStoredRecord, approved = true): BotTemplateView {
+  const { ownerId: ignoredOwnerId, ...view } = record
+  void ignoredOwnerId
+  return { ...view, approved }
+}
+
+function signedTemplateView(
+  payload: BotTemplateArtifactPayload,
+  shareCode: BotTemplateShareCode,
+  fingerprint: string,
+  issuerFingerprint: string,
+  id: BotTemplateId,
+  createdAt: number,
+  revokedAt: number | undefined,
+  approved: boolean,
+): BotTemplateView {
+  return {
+    id,
+    shareCode,
+    name: payload.profile.name,
+    ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
+    identity: payload.profile.identity,
+    accent: payload.profile.accent,
+    ...(payload.persona === undefined ? {} : { persona: payload.persona }),
+    capabilities: payload.capabilities,
+    profile: payload.profile,
+    ...(payload.avatar === undefined ? {} : { avatar: payload.avatar }),
+    ...(payload.agentPreset === undefined ? {} : { agentPreset: payload.agentPreset }),
+    fingerprint,
+    issuerFingerprint,
+    portableVersion: BOT_TEMPLATE_FORMAT_VERSION,
+    createdAt,
+    ...(revokedAt === undefined ? {} : { revokedAt }),
+    approved,
+  }
+}
+
+function storedTemplateView(record: BotTemplateStoredRecord): BotTemplateView {
+  try {
+    const decoded = decodeBotTemplateCode(record.shareCode)
+    return signedTemplateView(
+      decoded.payload,
+      record.shareCode,
+      decoded.fingerprint,
+      decoded.issuerFingerprint,
+      record.id,
+      record.createdAt,
+      record.revokedAt,
+      true,
+    )
+  } catch {
+    return templateView(record, false)
+  }
+}
+
 function normalizeIdentity(value: BotCreateRequest['identity']): BotIdentity {
   const identity = value ?? 'agent'
   if (!BOT_IDENTITIES.includes(identity)) return badRequest(`Unknown Bot identity '${String(identity)}'`)
@@ -373,6 +605,20 @@ function normalizeAccent(value: BotCreateRequest['accent']): BotAccent {
   const accent = value ?? 'violet'
   if (!BOT_ACCENTS.includes(accent)) return badRequest(`Unknown Bot accent '${String(accent)}'`)
   return accent
+}
+
+function normalizeCapabilities(value: BotCreateRequest['capabilities']): readonly string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) return badRequest('Bot capabilities must be an array')
+  if (value.length > 32) return badRequest('Bot capabilities must contain at most 32 entries')
+  const capabilities = value.map((candidate, index) => {
+    if (typeof candidate !== 'string' || !BOT_CAPABILITY_PATTERN.test(candidate)) {
+      return badRequest(`Bot capability at index ${String(index)} is invalid`)
+    }
+    return candidate
+  })
+  if (new Set(capabilities).size !== capabilities.length) return badRequest('Bot capabilities must be unique')
+  return capabilities
 }
 
 function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
@@ -400,6 +646,8 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
   const description = normalizeOptionalText('Bot description', request.description, 240)
   const cwdInput = normalizeOptionalText('Bot working directory', request.cwd, 4096)
   const agentPreset = normalizeOptionalText('Bot agent preset', request.agentPreset, 160)
+  const persona = normalizeOptionalText('Bot persona', request.persona, 4000)
+  const capabilities = normalizeCapabilities(request.capabilities)
   return {
     ...(id === undefined ? {} : { id }),
     name,
@@ -408,6 +656,8 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
     accent: normalizeAccent(request.accent),
     cwd: resolve(cwdInput ?? process.cwd()),
     ...(agentPreset === undefined ? {} : { agentPreset }),
+    ...(persona === undefined ? {} : { persona }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   }
 }
 
@@ -418,6 +668,8 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.accent === request.accent
     && record.cwd === request.cwd
     && record.agentPreset === request.agentPreset
+    && record.persona === request.persona
+    && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
 
 function routineText(args: RoutineArguments, key: string): string | undefined {
@@ -835,6 +1087,10 @@ function botIdentityPrompt(record: BotRecord): string {
     `Your Bot id is ${JSON.stringify(record.id)}.`,
     'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
     ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
+    ...(record.persona === undefined ? [] : [`Your persona is: ${record.persona}`]),
+    ...(record.capabilities === undefined || record.capabilities.length === 0
+      ? []
+      : [`Declared capabilities: ${record.capabilities.join(', ')}.`]),
   ].join('\n\n')
 }
 
@@ -873,6 +1129,10 @@ function groupTurnFailure(reason: TurnEndReason): string | undefined {
     default:
       return 'This Bot did not complete its reply. Try again.'
   }
+}
+
+function memoryView(memory: BotMemoryRecord): BotMemoryView {
+  return { id: String(memory.id), text: memory.text, createdAt: memory.createdAt }
 }
 
 /** Replace legacy avatar selections without deleting their attachments. */
@@ -932,8 +1192,12 @@ export class BotService extends TypertRemoteService {
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
+  private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
+  private readonly templateSigningKey: Promise<KeyObject>
+  private readonly templateApprovalPreviews = new Map<string, TemplateApprovalPreview>()
+  private readonly ownerId: string
   private readonly initialized: PromiseLike<unknown>
-  private readonly recordsBySession = new Map<string, BotRecord>()
+  private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
@@ -963,8 +1227,9 @@ export class BotService extends TypertRemoteService {
   /**
    * @param ctx - Host context carrying storage and explicit Session creation.
    */
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: BotServiceConfig = {}) {
     super(ctx, 'bots', { namespace: 'bots' })
+    this.ownerId = normalizeOwnerId(config.ownerId)
     this.ready = ctx.storageDomain.open(botDomain).then(async (domain) => {
       const seenSessions = new Set<string>()
       for (const [key, record] of domain.table('bots').entries()) {
@@ -1042,6 +1307,14 @@ export class BotService extends TypertRemoteService {
       }),
       changed: () => this.emitChanged(),
     }))
+    this.templateDomain = ctx.storageDomain.open(botTemplateDomain)
+    this.templateSigningKey = this.templateDomain.then(async (domain) => {
+      const current = domain.global.get()
+      if (current.signingKey !== undefined) return restoreBotTemplatePrivateKey(current.signingKey)
+      const keys = createBotTemplateSigningKeys()
+      await domain.global.set({ ...current, signingKey: serializeBotTemplatePrivateKey(keys.privateKey) })
+      return keys.privateKey
+    })
     ctx.on('session/event', (session, event) => {
       const record = this.recordsBySession.get(String(session.id))
       if (record === undefined) return
@@ -1278,15 +1551,20 @@ export class BotService extends TypertRemoteService {
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
       let groupDomain: Domain<typeof botGroupDomain> | undefined
+      let templateDomain: Domain<typeof botTemplateDomain> | undefined
       let cleanup: () => Promise<void>
       try {
         domain = await this.ready
         groupDomain = await this.groupDomain
+        templateDomain = await this.templateDomain
+        await this.templateSigningKey
         const openedDomain = domain
         const openedGroupDomain = groupDomain
+        const openedTemplateDomain = templateDomain
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
           this.cancelRecoveryRetryTimers()
+          this.templateApprovalPreviews.clear()
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
@@ -1296,6 +1574,7 @@ export class BotService extends TypertRemoteService {
             ...this.promptDisposals,
             openedDomain.close(),
             openedGroupDomain.close(),
+            openedTemplateDomain.close(),
           ])
         })
       } catch (error) {
@@ -1303,6 +1582,7 @@ export class BotService extends TypertRemoteService {
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
+          ...(templateDomain === undefined ? [] : [templateDomain.close()]),
         ])
         throw error
       }
@@ -1317,6 +1597,18 @@ export class BotService extends TypertRemoteService {
     await this.recoverEventRoutineAdmissions()
     await this.recoverPendingEventRoutines()
     await this.recoverEventRoutineResults()
+    const domain = await this.ready
+    try {
+      await this.recoverPendingMemoryUpdates(domain.table('bots'))
+    } catch (error: unknown) {
+      this.stopping = true
+      try {
+        await domain.close()
+      } catch (closeError: unknown) {
+        this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+      }
+      throw error
+    }
     await Promise.all(this.ctx.agents.list().map(async (agent) => {
       await this.installPrompt(agent)
       await this.reconcileGroupSession(agent)
@@ -1353,9 +1645,14 @@ export class BotService extends TypertRemoteService {
     await this.ensureMemoryLoaded(record)
     return {
       remember: request => this.rememberMemory(sessionId, request),
-      list: signal => this.listMemory(sessionId, signal),
-      forget: request => this.forgetMemory(sessionId, request),
+      list: signal => this.listMemoryForSession(sessionId, signal),
+      forget: request => this.forgetMemoryForSession(sessionId, request),
     }
+  }
+
+  /** Serialize a provider memory list because recovery may append events. */
+  private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+    return this.serialize(() => this.readMemoryForSession(sessionId, signal))
   }
 
   /** Load one Bot's memory projection from its durable Session log once. */
@@ -1428,6 +1725,71 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /** Finish a pending two-event edit recorded in the durable Bot row. */
+  private async recoverPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  ): Promise<void> {
+    const pending = record.pendingMemoryUpdate
+    if (pending === undefined) return
+    const id = parseBotMemoryId(pending.memoryId)
+    const text = normalizeBotMemoryText(pending.text)
+    await this.ensureMemoryLoaded(record)
+    await this.reconcilePendingMemory(record.sessionId)
+    const memories = this.memoriesBySession.get(String(record.sessionId))
+    if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+    const current = memories.get(String(id))
+    if (current === undefined) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    } else if (current.text !== text) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'forget' })
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    }
+    await this.clearPendingMemoryUpdate(record, bots, pending)
+  }
+
+  /** Recover all Bot edits that were interrupted after their intent was saved. */
+  private async recoverPendingMemoryUpdates(bots: KvTable<BotRecord['id'], BotStoredRecord>): Promise<void> {
+    for (const [, record] of bots.entries()) {
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
+    }
+  }
+
+  /** Save an edit intent before mutating its append-only memory log. */
+  private async savePendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<BotStoredRecord> {
+    const next: BotStoredRecord = { ...record, pendingMemoryUpdate: intent }
+    await bots.put(record.id, next)
+    this.recordsBySession.set(String(next.sessionId), next)
+    return next
+  }
+
+  /** Remove a completed edit intent without changing the public Bot row. */
+  private async clearPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<void> {
+    const latest = bots.get(record.id)
+    if (latest === undefined || latest.pendingMemoryUpdate === undefined) return
+    if (latest.pendingMemoryUpdate.memoryId !== intent.memoryId || latest.pendingMemoryUpdate.text !== intent.text) return
+    const { pendingMemoryUpdate: ignored, ...withoutPending } = latest
+    void ignored
+    try {
+      await bots.put(record.id, withoutPending)
+    } catch (error: unknown) {
+      throw new BotMemoryError(
+        'durability-failed',
+        'The Bot memory was updated, but its recovery marker could not be cleared.',
+        { cause: error },
+      )
+    }
+    this.recordsBySession.set(String(withoutPending.sessionId), withoutPending)
+  }
+
   /** Append one memory mutation, update the live projection, and await durability. */
   private async appendMemoryEvent(
     sessionId: SessionId,
@@ -1471,7 +1833,9 @@ export class BotService extends TypertRemoteService {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const text = normalizeBotMemoryText(request.text)
@@ -1493,11 +1857,13 @@ export class BotService extends TypertRemoteService {
     })
   }
 
-  /** List the active durable memories for the Bot that owns `sessionId`. */
-  private async listMemory(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+  /** Read the active durable memories while the caller owns serialization. */
+  private async readMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+    const bots = (await this.getDomain()).table('bots')
     await this.ensureMemoryLoaded(record, signal)
+    if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
     await this.reconcilePendingMemory(sessionId, signal)
     this.throwIfMemoryCancelled(signal)
     const memories = this.memoriesBySession.get(String(sessionId))
@@ -1507,12 +1873,14 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Delete one active durable memory for the Bot that owns `sessionId`. */
-  private async forgetMemory(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
+  private async forgetMemoryForSession(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
     return this.serialize(async () => {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       const pending = await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const id = parseBotMemoryId(String(request.memoryId))
@@ -2942,6 +3310,35 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /** Replace one active memory while retaining its stable identity in the log. */
+  private async updateMemoryForSession(
+    sessionId: SessionId,
+    request: { readonly memoryId: BotMemoryId; readonly text: string },
+  ): Promise<BotMemoryRecord> {
+    return this.serialize(async () => {
+      const record = this.recordsBySession.get(String(sessionId))
+      if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+      const text = normalizeBotMemoryText(request.text)
+      const bots = (await this.getDomain()).table('bots')
+      await this.ensureMemoryLoaded(record)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
+      await this.reconcilePendingMemory(sessionId)
+      this.throwIfMemoryCancelled()
+      const id = parseBotMemoryId(String(request.memoryId))
+      const memories = this.memoriesBySession.get(String(sessionId))
+      if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+      const current = memories.get(String(id))
+      if (current === undefined) throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
+      if (current.text === text) return current
+      const intent = { memoryId: String(id), text }
+      const pendingRecord = await this.savePendingMemoryUpdate(record, bots, intent)
+      await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'forget' })
+      const appended = await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'remember', text })
+      await this.clearPendingMemoryUpdate(pendingRecord, bots, intent)
+      return { id, text, createdAt: appended.time }
+    })
+  }
+
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
       const bots = (await this.getDomain()).table('bots')
@@ -2973,9 +3370,351 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * List published Bot configuration snapshots, including revoked rows.
+   * @param _request - Empty list request reserved for future cursor paging.
+   * @returns Published template rows in stable creation order.
+   */
+  @Remote('listTemplates')
+  async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue> {
+    const templates = (await this.templateDomain).table('templates')
+    return {
+      templates: [...templates.entries()]
+        .map(([, template]) => template)
+        .filter(template => template.ownerId === this.ownerId)
+        .map(template => storedTemplateView(template))
+        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+    }
+  }
+
+  /**
+   * Publish a safe Bot configuration snapshot without runtime or credential fields.
+   * @param request - Source Bot and optional display overrides.
+   * @returns Newly persisted safe template row.
+   */
+  @Remote('publishTemplate')
+  async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template publish request must be an object')
+      const botId = normalizeBotId(request.botId)
+      if (botId === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const source = bots.get(botId)
+      if (source === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      if (source.ownerId !== this.ownerId) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      const name = request.name === undefined ? source.name : normalizeName(request.name)
+      const description = request.description === undefined
+        ? source.description
+        : normalizeOptionalText('Bot template description', request.description, 240)
+      const persona = request.persona === undefined
+        ? source.persona
+        : normalizeOptionalText('Bot template persona', request.persona, 4000)
+      const capabilities = request.capabilities === undefined
+        ? source.capabilities ?? ['chat']
+        : normalizeCapabilities(request.capabilities) ?? []
+      const avatar = source.avatar === undefined ? undefined : await this.exportTemplateAvatar(source.id, source.avatar)
+      const profile = {
+        name,
+        ...(description === undefined ? {} : { description }),
+        identity: source.identity,
+        accent: source.accent,
+      }
+      const payload: BotTemplateArtifactPayload = {
+        profile,
+        ...(persona === undefined ? {} : { persona }),
+        capabilities,
+        ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
+        ...(avatar === undefined ? {} : { avatar }),
+        issuedAt: Date.now(),
+      }
+      const shareCode = encodeBotTemplateCode(payload, await this.templateSigningKey)
+      const decoded = decodeBotTemplateCode(shareCode)
+      const id = BotTemplateId(`bot-template-${randomUUID()}`)
+      const template: BotTemplateStoredRecord = {
+        id,
+        shareCode,
+        ownerId: this.ownerId,
+        name,
+        ...(description === undefined ? {} : { description }),
+        identity: source.identity,
+        accent: source.accent,
+        ...(persona === undefined ? {} : { persona }),
+        capabilities,
+        profile,
+        ...(avatar === undefined ? {} : { avatar }),
+        ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
+        fingerprint: decoded.fingerprint,
+        portableVersion: BOT_TEMPLATE_FORMAT_VERSION,
+        createdAt: payload.issuedAt,
+      }
+      await (await this.templateDomain).table('templates').put(id, template)
+      this.emitChanged()
+      return { template: storedTemplateView(template) }
+    })
+  }
+
+  /**
+   * Revoke one published Bot template while retaining its row for the owner.
+   * @param request - Template identity to revoke.
+   * @returns The retained template row with its revocation timestamp.
+   */
+  @Remote('revokeTemplate')
+  async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template revoke request must be an object')
+      const id = normalizeTemplateId(request.templateId)
+      const templates = (await this.templateDomain).table('templates')
+      const current = templates.get(id)
+      if (current === undefined) {
+        throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(id) })
+      }
+      if (current.ownerId !== this.ownerId) {
+        throw new RemoteError('bot-template/not-found', 'The requested Bot template was not found.', { reference: String(id) })
+      }
+      const revokedAt = Math.max(Date.now(), current.createdAt)
+      const matching = [...templates.entries()]
+        .map(([, template]) => template)
+        .filter(template => template.ownerId === this.ownerId && template.shareCode === current.shareCode)
+      let template: BotTemplateStoredRecord = current
+      for (const candidate of matching) {
+        const next = candidate.revokedAt === undefined ? { ...candidate, revokedAt } : candidate
+        await templates.put(candidate.id, next)
+        if (candidate.id === current.id) template = next
+      }
+      this.emitChanged()
+      return { template: storedTemplateView(template) }
+    })
+  }
+
+  /**
+   * Preview one active Bot template by exact opaque share code.
+   * @param request - Opaque share code to resolve.
+   * @returns Safe template configuration used by import.
+   */
+  @Remote('previewTemplate')
+  async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue> {
+    return this.serialize(async () => {
+      const active = await this.activeTemplate(request)
+      const localPermissions = await this.localTemplatePermissions(active.payload.agentPreset)
+      const approvalPermissions = approvalPermissionsOf(localPermissions)
+      const approvalToken = approvalPermissions === undefined
+        ? undefined
+        : this.issueTemplateApprovalPreview(active.fingerprint, approvalPermissions)
+      return {
+        template: active.template,
+        localPermissions,
+        ...(approvalToken === undefined ? {} : { approvalToken }),
+      }
+    })
+  }
+
+  private issueTemplateApprovalPreview(fingerprint: string, permissions: BotTemplateApprovalPermissions): string {
+    const now = Date.now()
+    for (const [token, preview] of this.templateApprovalPreviews) {
+      if (preview.expiresAt <= now) this.templateApprovalPreviews.delete(token)
+    }
+    while (this.templateApprovalPreviews.size >= BOT_TEMPLATE_APPROVAL_PREVIEW_LIMIT) {
+      const oldest = this.templateApprovalPreviews.keys().next().value
+      if (oldest === undefined) break
+      this.templateApprovalPreviews.delete(oldest)
+    }
+    const token = `bot-template-preview-${randomUUID()}`
+    this.templateApprovalPreviews.set(token, {
+      fingerprint,
+      permissions,
+      expiresAt: now + BOT_TEMPLATE_APPROVAL_PREVIEW_TTL_MS,
+    })
+    return token
+  }
+
+  /**
+   * Approve one exact verified portable artifact before it can provision a Bot.
+   * @param request - Signed code inspected by the recipient.
+   * @returns The verified template marked approved on this Host.
+   */
+  @Remote('approveTemplate')
+  async approveTemplate(request: BotTemplateApproveRequest): Promise<BotTemplateApproveValue> {
+    return this.serialize(async () => {
+      const active = await this.activeTemplate(request)
+      if (request.fingerprint !== active.fingerprint) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      if (typeof request.approvalToken !== 'string' || request.expectedPermissions === undefined) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview and target-Host permission view before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const approvalToken = normalizeApprovalToken(request.approvalToken)
+      const expectedPermissions = normalizeExpectedApprovalPermissions(request.expectedPermissions)
+      const preview = this.templateApprovalPreviews.get(approvalToken)
+      if (preview === undefined || preview.expiresAt <= Date.now()
+        || preview.fingerprint !== active.fingerprint
+        || !sameApprovalPermissions(preview.permissions, expectedPermissions)) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve the exact signed preview and target-Host permission view before importing this template.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const localPermissions = await this.requireTemplatePermissions(active.payload.agentPreset, { requireResolution: true })
+      const approvalPermissions = approvalPermissionsOf(localPermissions)
+      if (approvalPermissions === undefined) throw new RemoteError(
+        'bot-template/permissions-unavailable',
+        'The target Host could not resolve an effective preset and tool view for this Bot template.',
+        {},
+      )
+      if (!sameApprovalPermissions(approvalPermissions, expectedPermissions)
+        || !sameApprovalPermissions(approvalPermissions, preview.permissions)) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'The target Host preset or tool permissions changed after preview; preview this template again.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const templateDomain = await this.templateDomain
+      const current = templateDomain.global.get()
+      const approvals = current.approvals ?? {}
+      if (approvals[active.fingerprint] === undefined && Object.keys(approvals).length >= BOT_TEMPLATE_APPROVAL_LIMIT) {
+        throw new RemoteError('gateway/bad-request', 'This Host has reached its template approval limit.', {})
+      }
+      await templateDomain.global.set({
+        ...current,
+        approvals: {
+          ...approvals,
+          [active.fingerprint]: { approvedAt: Date.now(), permissions: approvalPermissions },
+        },
+      })
+      return {
+        template: { ...active.template, approved: true },
+        localPermissions,
+      }
+    })
+  }
+
+  /**
+   * Import an active template as a new Bot with a newly allocated Session.
+   * @param request - Opaque share code and optional replacement Bot name.
+   * @returns Newly provisioned Bot and the source template row.
+   */
+  @Remote('importTemplate')
+  async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot template import request must be an object')
+      const importId = normalizeTemplateImportId(request.importId)
+      const importDigest = importId === undefined ? undefined : templateImportDigest(this.ownerId, importId)
+      const templateDomain = await this.templateDomain
+      const bindings = templateDomain.global.get().imports
+      const previousBinding = importDigest === undefined ? undefined : bindings?.[importDigest]
+      const active = await this.activeTemplate(request, { allowRevoked: previousBinding !== undefined })
+      const { template, payload } = active
+      const name = request.name === undefined ? template.name : normalizeName(request.name)
+      if (previousBinding !== undefined && importId !== undefined && previousBinding.fingerprint !== active.fingerprint) {
+        throw new RemoteError(
+          'bot-template/import-conflict',
+          'This import identity was already used with different template data.',
+          { importId },
+        )
+      }
+      if (previousBinding !== undefined && importId !== undefined
+        && previousBinding.name !== undefined && previousBinding.name !== name) {
+        throw new RemoteError(
+          'bot-template/import-conflict',
+          'This import identity was already used with a different Bot name.',
+          { importId },
+        )
+      }
+      if (!active.approved) {
+        throw new RemoteError(
+          'bot-template/untrusted',
+          'Approve this signed Bot template before importing it on this Host.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const localPermissions = await this.requireTemplatePermissions(payload.agentPreset, {
+        requireResolution: !active.localTemplate,
+      })
+      if (!active.localTemplate && !sameApprovalPermissions(
+        active.approval?.permissions,
+        approvalPermissionsOf(localPermissions),
+      )) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve this signed Bot template again because the target Host preset or tool permissions changed.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const id = importId === undefined
+        ? BotId(`bot-${randomUUID()}`)
+        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
+      if (previousBinding !== undefined && importId !== undefined) {
+        const existing = (await this.getDomain()).table('bots').get(BotId(previousBinding.botId))
+        if (existing?.ownerId === this.ownerId && existing.state === 'active') return { bot: this.view(existing), template }
+      }
+      if (importDigest !== undefined && previousBinding === undefined
+        && Object.keys(bindings ?? {}).length >= BOT_TEMPLATE_IMPORT_BINDING_LIMIT) {
+        throw new RemoteError('gateway/bad-request', 'This Host has reached its template import retry limit.', {})
+      }
+      if (importDigest !== undefined && previousBinding === undefined) {
+        const currentGlobal = templateDomain.global.get()
+        await templateDomain.global.set({
+          ...currentGlobal,
+          imports: {
+            ...(currentGlobal.imports ?? {}),
+            [importDigest]: { fingerprint: active.fingerprint, botId: String(id), name },
+          },
+        })
+      }
+      const preparedAvatar = payload.avatar === undefined || (await this.getDomain()).table('bots').get(id)?.avatar !== undefined
+        ? undefined
+        : await this.prepareImportedAvatar(id, payload.avatar)
+      let created: BotCreateValue
+      try {
+        created = await this.createRecord({
+          id,
+          name,
+          ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
+          identity: payload.profile.identity,
+          accent: payload.profile.accent,
+          ...(payload.persona === undefined ? {} : { persona: payload.persona }),
+          capabilities: payload.capabilities,
+          ...(payload.agentPreset === undefined ? {} : { agentPreset: payload.agentPreset }),
+        }, undefined, preparedAvatar)
+      } catch (error: unknown) {
+        const errorCode = remoteErrorOf(error)?.code
+        if (importId !== undefined && (errorCode === 'bot/id-conflict' || errorCode === 'bot/provisioning-conflict')) {
+          throw new RemoteError(
+            'bot-template/import-conflict',
+            'This import identity was already used with different Bot metadata.',
+            { importId },
+            { cause: error },
+          )
+        }
+        throw error
+      }
+      const bot = created.bot
+      if (importDigest !== undefined && importId !== undefined) {
+        const currentGlobal = templateDomain.global.get()
+        await templateDomain.global.set({
+          ...currentGlobal,
+          imports: {
+            ...(currentGlobal.imports ?? {}),
+            [importDigest]: { fingerprint: active.fingerprint, botId: String(bot.id), name },
+          },
+        })
+      }
+      return { bot, template }
+    })
+  }
+
+  /**
    * List durable multi-Bot groups and current member projections.
-   * @param request - Group list request.
-   * @returns The available groups and their members.
+   * @param request - Group list filters and paging request.
+   * @returns Durable group rows with current member projections.
    */
   @Remote('listGroups')
   async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue> {
@@ -2984,8 +3723,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Create or idempotently reuse one durable multi-Bot group.
-   * @param request - Group identity, name, and members.
-   * @returns The created or existing group.
+   * @param request - Group name and requested Bot membership.
+   * @returns The created or reused durable group.
    */
   @Remote('createGroup')
   async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue> {
@@ -2994,8 +3733,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Update a durable multi-Bot group from the human workspace.
-   * @param request - Group identity, name, and members.
-   * @returns The updated group.
+   * @param request - Group identity and requested changes.
+   * @returns The updated durable group.
    */
   @Remote('updateGroup')
   async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
@@ -3004,8 +3743,8 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Read one durable group transcript.
-   * @param request - Group identity.
-   * @returns The group and its transcript.
+   * @param request - Group identity and transcript query.
+   * @returns The group and bounded transcript projection.
    */
   @Remote('inspectGroup')
   async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
@@ -3017,12 +3756,64 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Persist and fan out one human group message to every member Bot.
-   * @param request - Group identity, message identity, and text.
-   * @returns The updated group transcript.
+   * @param request - Group message and optional caller-provided operation id.
+   * @returns Per-recipient delivery outcomes.
    */
   @Remote('sendGroupMessage')
   async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
     return (await this.getGroupService()).send(request)
+  }
+
+  /**
+   * List active memories for a Bot without accepting a model-supplied Session id.
+   * @param request - Durable Bot id whose private projection should be read.
+   * @returns active memory rows owned by that Bot.
+   */
+  @Remote('listMemory')
+  async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const record = bots.get(id)
+      if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const memories = await this.readMemoryForSession(record.sessionId)
+      return { memories: memories.map(memoryView) }
+    })
+  }
+
+  /**
+   * Replace one active memory for a Bot while preserving its stable id.
+   * @param request - Bot id, memory id, and replacement text.
+   * @returns the updated memory row.
+   */
+  @Remote('updateMemory')
+  async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    const memory = await this.updateMemoryForSession(record.sessionId, { memoryId, text: request.text })
+    return { memory: memoryView(memory) }
+  }
+
+  /**
+   * Logically remove one active memory for a Bot.
+   * @param request - Bot id and memory id to remove.
+   * @returns a stable success marker after the forget event is durable.
+   */
+  @Remote('forgetMemory')
+  async forgetMemory(request: BotMemoryForgetRemoteRequest): Promise<BotMemoryForgetValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    await this.forgetMemoryForSession(record.sessionId, { memoryId })
+    return { removed: true }
   }
 
   /**
@@ -3041,57 +3832,82 @@ export class BotService extends TypertRemoteService {
   }
 
   private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
-    return this.serialize(async () => {
-      const normalized = normalizeCreate(request)
-      const bots = (await this.getDomain()).table('bots')
-      signal?.throwIfAborted()
-      const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
-      const existing = bots.get(id)
-      if (existing !== undefined) {
-        if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
-          return { bot: this.view(existing) }
-        }
-        if (existing.state !== 'provisioning') {
-          throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
-        }
-        if (!matchesMetadata(existing, normalized)) {
-          throw new RemoteError(
-            'bot/provisioning-conflict',
-            `Bot "${id}" is provisioning with different metadata`,
-            { botId: id },
-          )
-        }
-        const active = await this.provision(existing, bots)
-        return { bot: this.view(active) }
-      }
+    return this.serialize(() => this.createRecord(request, signal))
+  }
 
-      const now = Date.now()
-      // Keep the Session id independent from a caller-supplied Bot id. A Bot
-      // id is user-facing and must never accidentally adopt an unrelated
-      // ordinary Session with a matching derived name.
-      const sessionId = SessionId(`bot-session-${randomUUID()}`)
-      const record: BotRecord = {
-        id,
-        sessionId,
-        name: normalized.name,
-        ...(normalized.description === undefined ? {} : { description: normalized.description }),
-        identity: normalized.identity,
-        accent: normalized.accent,
-        connectedAppIds: [],
-        pinned: false,
-        hidden: false,
-        cwd: normalized.cwd,
-        ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
-        state: 'provisioning',
-        createdAt: now,
-        updatedAt: now,
+  private async createRecord(
+    request: BotCreateRequest,
+    signal?: AbortSignal,
+    avatar?: ImageAttachmentRef,
+  ): Promise<BotCreateValue> {
+    const normalized = normalizeCreate(request)
+    const bots = (await this.getDomain()).table('bots')
+    signal?.throwIfAborted()
+    const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
+    const existing = bots.get(id)
+    if (existing !== undefined) {
+      if (existing.ownerId !== this.ownerId) {
+        throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
       }
-      await bots.put(id, record)
-      this.recordsBySession.set(String(record.sessionId), record)
-      this.emitChanged()
-      const active = await this.provision(record, bots)
+      if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
+        if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
+        const next: BotRecord = { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
+        await bots.put(id, next)
+        this.recordsBySession.set(String(next.sessionId), next)
+        this.emitChanged()
+        return { bot: this.view(next) }
+      }
+      if (existing.state !== 'provisioning') {
+        throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
+      }
+      if (!matchesMetadata(existing, normalized)) {
+        throw new RemoteError(
+          'bot/provisioning-conflict',
+          `Bot "${id}" is provisioning with different metadata`,
+          { botId: id },
+        )
+      }
+      const pending = avatar === undefined || existing.avatar !== undefined
+        ? existing
+        : { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
+      if (pending !== existing) {
+        await bots.put(id, pending)
+        this.recordsBySession.set(String(pending.sessionId), pending)
+      }
+      const active = await this.provision(pending, bots)
       return { bot: this.view(active) }
-    })
+    }
+
+    const now = Date.now()
+    // Keep the Session id independent from a caller-supplied Bot id. A Bot
+    // id is user-facing and must never accidentally adopt an unrelated
+    // ordinary Session with a matching derived name.
+    const sessionId = SessionId(`bot-session-${randomUUID()}`)
+    const record: BotRecord = {
+      id,
+      sessionId,
+      ownerId: this.ownerId,
+      name: normalized.name,
+      ...(normalized.description === undefined ? {} : { description: normalized.description }),
+      identity: normalized.identity,
+      accent: normalized.accent,
+      ...(avatar === undefined ? {} : { avatar }),
+      connectedAppIds: [],
+      pinned: false,
+      hidden: false,
+      cwd: normalized.cwd,
+      ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
+      ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
+      ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
+      state: 'provisioning',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await bots.put(id, record)
+    this.recordsBySession.set(String(record.sessionId), record)
+    this.emitChanged()
+    const active = await this.provision(record, bots)
+    return { bot: this.view(active) }
   }
 
   /**
@@ -3642,19 +4458,199 @@ export class BotService extends TypertRemoteService {
     void task.finally(() => { this.promptDisposals.delete(task) })
   }
 
-  private view(record: BotRecord): BotView {
+  private view(record: BotStoredRecord): BotView {
+    const {
+      ownerId: ignoredOwnerId,
+      pendingMemoryUpdate: ignoredPendingMemoryUpdate,
+      eventRoutines: ignoredEventRoutines,
+      ...withoutPrivateFields
+    } = record
     const agent = this.ctx.agents.get(record.sessionId)
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
-    const { eventRoutines, ...roster } = record
-    void eventRoutines
-    return { ...roster, pinned: roster.pinned ?? false, hidden: roster.hidden ?? false, availability }
+    void ignoredOwnerId
+    void ignoredPendingMemoryUpdate
+    void ignoredEventRoutines
+    return {
+      ...withoutPrivateFields,
+      pinned: record.pinned ?? false,
+      hidden: record.hidden ?? false,
+      availability,
+    }
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  private async activeTemplate(
+    request: BotTemplatePreviewRequest | BotTemplateApproveRequest | BotTemplateImportRequest,
+    options: { readonly allowRevoked?: boolean } = {},
+  ): Promise<ActiveBotTemplate> {
+    if (request === null || typeof request !== 'object') return badRequest('Bot template request must be an object')
+    const shareCode = normalizeTemplateShareCode(request.shareCode)
+    let decoded: ReturnType<typeof decodeBotTemplateCode>
+    try {
+      decoded = decodeBotTemplateCode(shareCode)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      const reason = /signature/i.test(message)
+        ? 'invalid-signature'
+        : /version/i.test(message)
+          ? 'unsupported-version'
+          : 'invalid-payload'
+      throw new RemoteError(
+        'bot-template/invalid',
+        'The Bot template share code could not be verified.',
+        { reason },
+        { cause: error },
+      )
+    }
+    const templateDomain = await this.templateDomain
+    const templates = templateDomain.table('templates')
+    const localTemplates = [...templates.entries()]
+      .map(([, value]) => value)
+      .filter(value => value.ownerId === this.ownerId && value.shareCode === shareCode)
+    const localTemplate = localTemplates.find(value => value.revokedAt === undefined) ?? localTemplates[0]
+    if (localTemplate?.revokedAt !== undefined && !options.allowRevoked) {
+      throw new RemoteError('bot-template/revoked', 'This Bot template has been revoked.', { templateId: localTemplate.id })
+    }
+    if (localTemplate?.fingerprint !== undefined && localTemplate.fingerprint !== decoded.fingerprint) {
+      throw new RemoteError('bot-template/invalid', 'The Bot template share code does not match its local record.', { reason: 'invalid-payload' })
+    }
+    const approval = localTemplate === undefined
+      ? templateDomain.global.get().approvals?.[decoded.fingerprint]
+      : undefined
+    const approved = localTemplate !== undefined || approval?.permissions !== undefined
+    const template = signedTemplateView(
+      decoded.payload,
+      shareCode,
+      decoded.fingerprint,
+      decoded.issuerFingerprint,
+      localTemplate?.id ?? BotTemplateId(`bot-template-${decoded.fingerprint.slice(0, 32)}`),
+      localTemplate?.createdAt ?? decoded.payload.issuedAt,
+      localTemplate?.revokedAt,
+      approved,
+    )
+    return {
+      template,
+      payload: decoded.payload,
+      fingerprint: decoded.fingerprint,
+      approved,
+      localTemplate: localTemplate !== undefined,
+      ...(approval === undefined ? {} : { approval }),
+    }
+  }
+
+  /** Resolve the target Host's effective tool view for one imported preset. */
+  private async localTemplatePermissions(agentPreset: string | undefined): Promise<BotTemplateLocalPermissions> {
+    const presets = this.ctx.get('agentPresets')
+    const preset = agentPreset ?? presets?.defaultId
+    if (presets === undefined || preset === undefined) return {
+      status: 'unavailable',
+      ...(preset === undefined ? {} : { preset }),
+      tools: [],
+    }
+    try {
+      const lease = await presets.acquireScope(preset)
+      try {
+        return {
+          status: 'resolved',
+          preset,
+          tools: [...new Set(this.ctx.tools.schemas(lease.key).map(tool => tool.name))].sort(),
+        }
+      } finally {
+        await lease[Symbol.asyncDispose]()
+      }
+    } catch (error: unknown) {
+      this.ctx.logger.debug(`bots: local template permissions unavailable for preset "${preset}": ${String(error)}`)
+      return { status: 'unavailable', preset, tools: [] }
+    }
+  }
+
+  /** Require the signed or target-default preset to resolve before approval or import. */
+  private async requireTemplatePermissions(
+    agentPreset: string | undefined,
+    options: { readonly requireResolution?: boolean } = {},
+  ): Promise<BotTemplateLocalPermissions> {
+    const permissions = await this.localTemplatePermissions(agentPreset)
+    const requiredPreset = agentPreset ?? this.ctx.get('agentPresets')?.defaultId
+    if ((options.requireResolution === true || requiredPreset !== undefined) && permissions.status !== 'resolved') {
+      const details = requiredPreset === undefined ? {} : { preset: requiredPreset }
+      throw new RemoteError(
+        'bot-template/permissions-unavailable',
+        requiredPreset === undefined
+          ? 'The target Host has no resolvable default Bot template preset.'
+          : `The target Host could not resolve the Bot template preset "${requiredPreset}".`,
+        details,
+      )
+    }
+    return permissions
+  }
+
+  private async exportTemplateAvatar(botId: BotRecord['id'], avatar: ImageAttachmentRef): Promise<BotTemplateAvatar> {
+    try {
+      const stored = await this.ctx.attachments.readImage(avatar)
+      const canonical = imageAttachmentRefSchema.safeParse(stored.ref)
+      if (!canonical.success
+        || String(canonical.data.attachmentId) !== String(avatar.attachmentId)
+        || canonical.data.mediaType !== avatar.mediaType
+        || canonical.data.bytes !== avatar.bytes
+        || canonical.data.width !== avatar.width
+        || canonical.data.height !== avatar.height) {
+        throw new Error('Attachment storage returned a different image reference')
+      }
+      if (stored.data.byteLength !== canonical.data.bytes || stored.data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
+        throw new Error('Avatar bytes exceed the portable template limit')
+      }
+      return {
+        mediaType: canonical.data.mediaType,
+        data: Buffer.from(stored.data).toString('base64url'),
+        bytes: stored.data.byteLength,
+        width: canonical.data.width,
+        height: canonical.data.height,
+        ...(canonical.data.name === undefined || !/^[^\\/\0]{1,255}$/u.test(canonical.data.name)
+          ? {}
+          : { name: canonical.data.name }),
+      }
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'bot-template/avatar-invalid',
+        `Bot "${botId}" avatar could not be included in the portable template.`,
+        { reason: 'unavailable' },
+        { cause: error },
+      )
+    }
+  }
+
+  private async prepareImportedAvatar(botId: BotRecord['id'], avatar: BotTemplateAvatar): Promise<ImageAttachmentRef> {
+    let reference: ImageAttachmentRef
+    try {
+      const data = Buffer.from(avatar.data, 'base64url')
+      if (data.toString('base64url') !== avatar.data || data.byteLength !== avatar.bytes || data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
+        throw new Error('Portable avatar bytes failed validation')
+      }
+      reference = await this.ctx.attachments.saveImage({
+        data,
+        mediaType: avatar.mediaType,
+        ...(avatar.name === undefined ? {} : { name: avatar.name }),
+      })
+    } catch (error: unknown) {
+      throw new RemoteError(
+        'bot-template/avatar-invalid',
+        'The portable template avatar could not be saved on this Host.',
+        { reason: 'unavailable' },
+        { cause: error },
+      )
+    }
+    try {
+      return await this.admitAvatar(botId, reference)
+    } catch (error: unknown) {
+      if (error instanceof RemoteError && error.code === 'bot-template/avatar-invalid') throw error
+      throw new RemoteError('bot-template/avatar-invalid', 'The portable template avatar could not be admitted on this Host.', { reason: 'unavailable' }, { cause: error })
+    }
   }
 
   private async getGroupService(): Promise<BotGroupService> {

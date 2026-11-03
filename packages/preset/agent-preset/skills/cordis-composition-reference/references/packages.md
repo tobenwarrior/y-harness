@@ -15,7 +15,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@yharness/avatar-generation` | yes | Y Harness Host-only OpenAI avatar generation using configured credentials and durable image attachments |
-| `@yharness/bots` | no | Y Harness durable user-owned Bot roster with one persistent Session per Bot |
+| `@yharness/bots` | yes | Y Harness durable user-owned Bot roster with one persistent Session per Bot |
 
 ## api
 

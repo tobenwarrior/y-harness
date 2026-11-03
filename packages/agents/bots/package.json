@@ -55,6 +55,7 @@
   },
   "peerDependencies": {
     "@yharness/avatar-generation": "workspace:*",
+    "@yharness/agent-preset-registry": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
@@ -72,11 +73,15 @@
     "@yharness/typert-protocol": "workspace:*"
   },
   "peerDependenciesMeta": {
+    "@yharness/agent-preset-registry": {
+      "optional": true
+    },
     "@yharness/mcp-resources": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@yharness/agent-preset-registry": "workspace:*",
     "@yharness/avatar-generation": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/attachment": "workspace:*",

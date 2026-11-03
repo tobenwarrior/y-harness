@@ -65,7 +65,7 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
-  create, createGroup, organize, retry, loadAvatar, avatarEditor, t,
+  create, createGroup, organize, templateActions, retry, loadAvatar, avatarEditor, t,
   loadConnectedApps,
   setConnectedAppAccess,
 }: BotsRosterProps): ReactNode {
@@ -84,6 +84,8 @@ export function BotsRoster({
 
       onOrganizeBot={organize}
       onCreateGroup={createGroup}
+      templates={state.templates}
+      templateActions={templateActions}
       groupError={state.groupError}
       onLoadConnectedApps={loadConnectedApps}
       onSetConnectedAppAccess={setConnectedAppAccess}
@@ -101,7 +103,8 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, loadAvatar, rename, SessionProvider, renderSlot, t,
+  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, loadAvatar, rename, memoryManager,
+  SessionProvider, renderSlot, t,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -136,6 +139,7 @@ export function BotsPanel({
       t={t}
       loadAvatar={loadAvatar}
       onRename={rename}
+      memoryManager={memoryManager}
       loading={state.phase === 'loading' && bots.length === 0}
     />
   )

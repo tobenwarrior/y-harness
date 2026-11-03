@@ -68,7 +68,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     const secondRow = roster.locator(`[data-bot-id="${secondBot.id}"]`)
     await firstRow.waitFor({ state: 'visible', timeout: 15_000 })
     await secondRow.waitFor({ state: 'visible', timeout: 15_000 })
-    const firstPortrait = firstRow.locator('[data-character]')
+    const firstPortrait = firstRow.locator('[data-character] > span')
     await expect.poll(() => firstPortrait.count()).toBe(1)
     await expect.poll(() => firstPortrait.isVisible()).toBe(true)
     expect(await firstPortrait.evaluate(element => getComputedStyle(element).animationName)).not.toBe('none')
@@ -96,6 +96,24 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       const bounds = await composer.boundingBox()
       return bounds === null ? null : page.viewportSize()!.height - (bounds.y + bounds.height)
     }).toBeLessThan(100)
+
+    await roster.getByRole('button', { name: 'Bot templates', exact: true }).click()
+    const templateDialog = page.getByRole('dialog', { name: 'Bot templates', exact: true })
+    await templateDialog.getByText('No shared templates yet.', { exact: true }).waitFor({ state: 'visible' })
+    const templateDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Bot templates"]', scaffold.workspaceCwd,
+    )
+    await templateDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await templateDialog.waitFor({ state: 'hidden' })
+
+    await firstDetail.getByRole('button', { name: 'Manage memories', exact: true }).click()
+    const memoryDialog = page.getByRole('dialog', { name: 'Bot memory', exact: true })
+    await memoryDialog.getByText('No saved memories', { exact: true }).waitFor({ state: 'visible' })
+    const memoryDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Bot memory"]', scaffold.workspaceCwd,
+    )
+    await memoryDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
+    await memoryDialog.waitFor({ state: 'hidden' })
 
     await secondRow.click()
     const secondDetail = page.locator(`section[aria-label="${secondBot.name}"]`)
@@ -132,6 +150,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         await captureStableAria(page, '[role="group"][aria-label="Workspace mode"]', scaffold.workspaceCwd),
         await captureStableAria(page, '[data-yh-part="sidebar"] aside[aria-label="Bot workspace"]', scaffold.workspaceCwd),
         await captureStableAria(page, `section[aria-label="${firstBot.name}"]`, scaffold.workspaceCwd),
+        templateDialogSnapshot,
+        memoryDialogSnapshot,
       ].join('\n'),
       MODE,
     )

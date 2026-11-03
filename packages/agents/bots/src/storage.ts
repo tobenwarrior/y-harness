@@ -8,6 +8,16 @@ import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'
+import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
+
+/** Durable marker for a memory edit that was interrupted before its log write completed. */
+export type BotStoredRecord = BotRecord & {
+  /** Memory identity being recovered on the next Bot service startup. */
+  readonly pendingMemoryUpdate?: {
+    readonly memoryId: string
+    readonly text: string
+  } | undefined
+}
 
 /** Durable image reference admitted by the attachment store. */
 export const imageAttachmentRefSchema = z.object({
@@ -41,6 +51,10 @@ const sessionIdSchema = z.string()
     message: 'Session ids must not have surrounding whitespace',
   })
   .transform(SessionId)
+
+const ownerIdSchema = z.string().min(1).max(128).refine(value => value.trim() === value, {
+  message: 'Bot owner ids must not have surrounding whitespace',
+})
 
 const boundedText = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value, {
   message: 'Text values must be trimmed',
@@ -86,11 +100,17 @@ export const botEventRoutineSchema = z.object({
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'event routine updatedAt must not be earlier than createdAt',
 })
+const capability = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)
+const pendingMemoryUpdateSchema = z.object({
+  memoryId: z.string().regex(/^memory-[A-Za-z0-9][A-Za-z0-9-]*$/).max(256),
+  text: boundedText(BOT_MEMORY_TEXT_LIMIT),
+}).strict()
 
 /** Stored Bot row; malformed authoritative records reject domain opening. */
 export const botRecordSchema = z.object({
   id: botIdSchema,
   sessionId: sessionIdSchema,
+  ownerId: ownerIdSchema.optional(),
   name: boundedText(80),
   description: z.string().max(240).refine(value => value.trim() === value, {
     message: 'Descriptions must be trimmed',
@@ -99,6 +119,10 @@ export const botRecordSchema = z.object({
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
   eventRoutines: z.array(botEventRoutineSchema).max(100).optional(),
+  persona: z.string().max(4000).refine(value => value.trim() === value, {
+    message: 'Personas must be trimmed',
+  }).optional(),
+  capabilities: z.array(capability).max(32).refine(values => new Set(values).size === values.length).optional(),
   connectedAppIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app ids must be unique' },
@@ -121,11 +145,15 @@ export const botRecordSchema = z.object({
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
+  pendingMemoryUpdate: pendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {
   message: 'Bot and Session identities must remain distinct',
-})
+}).transform((value): BotStoredRecord => ({
+  ...value,
+  ownerId: value.ownerId ?? 'local-owner',
+}))
 
 /** Durable marker for the one-time switch from image avatars to animated characters. */
 export const botAppearanceMigrationSchema = z.object({
@@ -146,9 +174,6 @@ export const botDomain = defineDomain({
     initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
   },
   tables: {
-    bots: domainTable<BotRecord['id'], BotRecord>(botRecordSchema),
+    bots: domainTable<BotRecord['id'], BotStoredRecord>(botRecordSchema),
   },
 })
-
-/** Parsed durable Bot row returned by the storage-domain schema. */
-export type BotStoredRecord = z.infer<typeof botRecordSchema>

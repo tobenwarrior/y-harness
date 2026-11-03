@@ -59,6 +59,7 @@ export async function apply(ctx: Context): Promise<void> {
     {
       id: BotId('bot-sender'),
       sessionId: SessionId('bot-session-sender'),
+      ownerId: 'local-owner',
       name: 'Chief of Staff',
       description: 'Coordinates the work with peer Bots.',
       identity: 'agent' as const,
@@ -71,6 +72,7 @@ export async function apply(ctx: Context): Promise<void> {
     {
       id: BotId('bot-grok'),
       sessionId: SessionId('bot-session-target'),
+      ownerId: 'local-owner',
       name: 'Grok Bot',
       description: 'Researches a request and reports concise findings.',
       identity: 'browse' as const,
