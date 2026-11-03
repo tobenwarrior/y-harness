@@ -500,10 +500,22 @@ export class BotGroupService {
   /** Read one durable group transcript. */
   async inspect(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
     await this.chain
+    return this.inspectInternal(request)
+  }
+
+  /** Read one durable group transcript while authorizing the live member atomically. */
+  async inspectAsBot(senderBotId: BotId, request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
+    return this.serialize(async () => this.inspectInternal(request, senderBotId))
+  }
+
+  private async inspectInternal(request: BotGroupInspectRequest, senderBotId?: BotId): Promise<BotGroupInspectValue> {
     const id = normalizeGroupId(request.groupId)
-    const bots = await this.host.listBots()
     const group = this.domain.table('groups').get(id)
     if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(id)}" was not found`)
+    if (senderBotId !== undefined && !group.botIds.includes(senderBotId)) {
+      throw new BotGroupError('member-not-found', `Bot "${String(senderBotId)}" is not a member of this group`)
+    }
+    const bots = await this.host.listBots()
     const messages = [...this.domain.table('messages').entries()]
       .map(([, message]) => message)
       .filter(message => message.groupId === id)
@@ -637,7 +649,7 @@ export class BotGroupService {
       }
       for (const claim of claims) {
         const group = groups.get(claim.groupId)
-        if (group === undefined || !group.botIds.includes(botId)) continue
+        if (group === undefined) continue
         const id = deliveryId(claim.messageId, botId)
         const delivery = deliveries.get(id)
         if (delivery === undefined
@@ -671,8 +683,8 @@ export class BotGroupService {
    *
    * Queuing a message only proves that it entered the Bot Session. The turn
    * end event is the durable evidence that the model either replied or failed;
-   * only an isolated, still-accepted delivery can be changed here so private
-   * or already projected turns never leak into a group transcript.
+   * only an isolated, still-pending or accepted delivery can be changed here
+   * so private or already projected turns never leak into a group transcript.
    * @param botId - Live Bot identity owning the model turn.
    * @param turn - Durable model turn number.
    * @param error - Safe user-facing failure description.
@@ -688,12 +700,12 @@ export class BotGroupService {
       for (const [id, delivery] of deliveries.entries()) {
         const claim = delivery.claim
         if (delivery.botId !== botId
-          || delivery.status !== 'accepted'
+          || (delivery.status !== 'pending' && delivery.status !== 'accepted')
           || claim === undefined
           || claim.turn !== turn
           || !claim.isolated) continue
         const group = groups.get(delivery.groupId)
-        if (group === undefined || !group.botIds.includes(botId)) continue
+        if (group === undefined) continue
         await deliveries.put(id, { ...delivery, status: 'failed', error: safeError, updatedAt: now })
         if (now > group.updatedAt) await groups.put(group.id, { ...group, updatedAt: now })
         changed = true
@@ -723,11 +735,10 @@ export class BotGroupService {
       const pending = candidates[0]
       if (pending === undefined) return
       const group = this.domain.table('groups').get(pending.groupId)
-      if (group === undefined || !group.botIds.includes(botId)) return
+      if (group === undefined) return
       const source = messages.get(pending.messageId)
       if (source === undefined) return
       if (source.groupId !== pending.groupId) return
-      if (source.sender.kind === 'bot' && !group.botIds.includes(source.sender.botId)) return
       const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
       let changed = false

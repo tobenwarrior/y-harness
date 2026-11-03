@@ -1536,4 +1536,229 @@ describe('durable Bot roster', () => {
       await close(h.ctx)
     }
   })
+
+  it('reconciles a pending group delivery as failed after a restarted blocked turn', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Pending restart room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({ groupId: group.group.id, text: 'Resume the pending request.', messageId: 'bot-group-message-pending-restart' })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('pending restart delivery was not admitted')
+    const domain = first.ctx.storageDomain.get(botGroupDomain.name)
+    if (domain === undefined) throw new Error('group domain was not mounted')
+    const pendingEntry = [...domain.table('deliveries').entries()].find(([, delivery]) => delivery.messageId === 'bot-group-message-pending-restart')
+    if (pendingEntry === undefined) throw new Error('pending restart delivery record was not stored')
+    await domain.table('deliveries').put(pendingEntry[0], { ...pendingEntry[1], status: 'pending' })
+    await close(first.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 14 })
+      resumedBeta.session.append('step/start', { turn: 14, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('step/end', { turn: 14, step: 1 })
+      resumedBeta.session.append('turn/end', { turn: 14, reason: { kind: 'blocked' } })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-pending-restart', botId: beta.bot.id,
+            status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('records a blocked group turn even when pre-step rejects the claimed input', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Blocked pre-step room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'This request will be blocked.', messageId: 'bot-group-message-blocked-pre-step' })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('blocked pre-step delivery was not admitted')
+      await expect(agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 15, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'reject' as const }))).resolves.toMatchObject({ kind: 'reject' })
+      const failure = betaAgent.session.append('turn/end', { turn: 15, reason: { kind: 'blocked' } })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-blocked-pre-step', botId: beta.bot.id, status: 'failed' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not retain a stale group claim when pre-step replaces it with private input', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Rewritten pre-step room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Do not claim this replacement.', messageId: 'bot-group-message-rewritten-pre-step' })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('rewritten pre-step delivery was not admitted')
+      const privateMessage = freezeMessage({
+        id: MessageId('private-replacement-input'), role: 'user',
+        content: [{ type: 'text', text: 'Keep this private.' }], source: { kind: 'user' },
+      })
+      await expect(agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 16, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [privateMessage] }))).resolves.toMatchObject({
+        kind: 'enter', messages: [privateMessage],
+      })
+      const failure = betaAgent.session.append('turn/end', {
+        turn: 16, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'private provider key missing' } },
+      })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-rewritten-pre-step', botId: beta.bot.id, status: 'accepted' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('atomically authorizes Bot group inspection across membership updates', async () => {
+    const h = await harness()
+    try {
+      const alpha = await h.service.create({ name: 'Alpha', cwd: '/tmp' })
+      const beta = await h.service.create({ name: 'Beta', cwd: '/tmp' })
+      const gamma = await h.service.create({ name: 'Gamma', cwd: '/tmp' })
+      const domain = h.ctx.storageDomain.get(botGroupDomain.name)
+      if (domain === undefined) throw new Error('group domain was not mounted')
+      const groupService = new BotGroupService(domain, {
+        listBots: async () => (await h.service.list({})).bots,
+        deliverToBot: async () => 'accepted',
+      })
+      const group = await groupService.create({ name: 'Atomic inspect room', botIds: [alpha.bot.id, beta.bot.id] })
+      const inspection = groupService.inspectAsBot(alpha.bot.id, { groupId: group.group.id })
+      const update = groupService.update({ groupId: group.group.id, name: 'Atomic inspect room', botIds: [beta.bot.id, gamma.bot.id] })
+      await expect(inspection).resolves.toMatchObject({ group: { id: group.group.id, botIds: [alpha.bot.id, beta.bot.id] } })
+      await update
+      await expect(groupService.inspectAsBot(alpha.bot.id, { groupId: group.group.id })).rejects.toThrow('not a member')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('settles a claimed response after its Bot is removed from the group', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Removed delivery room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await h.service.sendGroupMessage({
+        groupId: group.group.id, text: 'Beta should finish this after removal.', targetBotIds: [beta.bot.id],
+        messageId: 'bot-group-message-removed-delivery',
+      })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('removed delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 17, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      await h.service.updateGroup({ groupId: group.group.id, name: 'Removed delivery room', botIds: [alpha.bot.id, gamma.bot.id] })
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const response = betaAgent.session.append('assistant/message', {
+        turn: 17, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-after-removal'), role: 'assistant',
+          content: [{ type: 'text', text: 'Beta completed the queued work.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, response)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Beta should finish this after removal.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta completed the queued work.' },
+        ],
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-removed-delivery', botId: beta.bot.id, status: 'responded' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('settles a claimed failure after its Bot is removed from the group', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Removed failure room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await h.service.sendGroupMessage({
+        groupId: group.group.id, text: 'Beta should report this failure after removal.', targetBotIds: [beta.bot.id],
+        messageId: 'bot-group-message-removed-failure',
+      })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('removed failure delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 18, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      await h.service.updateGroup({ groupId: group.group.id, name: 'Removed failure room', botIds: [alpha.bot.id, gamma.bot.id] })
+      const failure = betaAgent.session.append('turn/end', {
+        turn: 18, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+      })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-removed-failure', botId: beta.bot.id, status: 'failed',
+            error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
+          }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
 })

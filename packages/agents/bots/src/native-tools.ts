@@ -642,6 +642,7 @@ function inspectGroupTool(groups: BotGroupToolHost): BotNativeTool {
           messages: result.messages.map(message => ({
             id: String(message.id), groupId: String(message.groupId), sender: message.sender,
             text: frameUntrustedTranscript(message.text),
+            ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
             createdAt: message.createdAt,
           })),
           ...(result.deliveries === undefined ? {} : {

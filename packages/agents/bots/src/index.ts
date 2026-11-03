@@ -435,15 +435,16 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
       const decision = await next()
       const record = this.recordsBySession.get(String(agent.id))
-      const claims = groupDeliveryClaims(messages)
-      if (record !== undefined && decision.kind === 'enter') {
+      const admittedMessages = decision.kind === 'enter' ? decision.messages : messages
+      const claims = groupDeliveryClaims(admittedMessages)
+      if (record !== undefined) {
         await this.groupService.then(service => service.recordBotMessageClaims(
           record.id,
           claims,
           turn,
           step,
-          isolatedGroupDelivery(messages, claims),
-          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
+          isolatedGroupDelivery(admittedMessages, claims),
+          admittedMessages.length > 0 && !isolatedGroupDelivery(admittedMessages, claims),
         ))
       }
       return decision
@@ -1089,28 +1090,17 @@ export class BotService extends TypertRemoteService {
     const record = this.recordsBySession.get(String(agent.id))
     if (record === undefined) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot')
     const service = await this.getGroupService()
-    const memberGroup = async (groupId: BotGroupInspectRequest['groupId']): Promise<void> => {
-      const listed = await service.list({})
-      const group = listed.groups.find(candidate => candidate.id === groupId)
-      if (group === undefined || !group.botIds.includes(record.id)) throw new Error(`Bot is not a member of group "${String(groupId)}"`)
-    }
     return {
       list: async () => {
         const listed = await service.list({})
         return { groups: listed.groups.filter(group => group.botIds.includes(record.id)) }
       },
-      inspect: async (request) => {
-        await memberGroup(request.groupId)
-        return service.inspect(request)
-      },
+      inspect: request => service.inspectAsBot(record.id, request),
       create: async (request) => {
         const botIds = [record.id, ...request.botIds.filter(botId => botId !== record.id)]
         return service.create({ ...request, botIds })
       },
-      send: async (request) => {
-        await memberGroup(request.groupId)
-        return service.sendAsBot(record.id, request)
-      },
+      send: request => service.sendAsBot(record.id, request),
       update: async request => service.updateAsBot(record.id, request),
     }
   }
