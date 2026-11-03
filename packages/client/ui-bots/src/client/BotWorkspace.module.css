@@ -1309,7 +1309,7 @@
 .templatePreviewAvatar {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--yh-radius-lg);
   object-fit: cover;
 }
 
