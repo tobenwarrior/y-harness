@@ -4,10 +4,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
 import { MessageId } from '@yharness/llm/brand'
+import { freezeMessage } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
-import { ScheduleId, ScheduleInputError, scheduleView } from '@yharness/schedule'
+import { ScheduleId, ScheduleInputError, scheduleTitle, scheduleView } from '@yharness/schedule'
+import { snapshotJsonValue, type JsonValue } from '@yharness/util-values'
 import type {
   AtInput,
   CronInput,
@@ -20,20 +22,28 @@ import type {
 } from '@yharness/schedule'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
-import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
+import type { BotEventRoutineToolHost } from './routine-tools.ts'
+import type { ToolExecution } from '@yharness/tools'
 import type {
   BotAvailability,
   BotAccent,
+  BotEventRoutine,
+  BotEventRoutineDelivery,
+  BotEventRoutineResult,
+  BotEventSource,
+  BotEventTrigger,
   BotAppearanceUpdateRequest,
   BotAppearanceUpdateValue,
   BotAvatarUpdateRequest,
@@ -54,8 +64,22 @@ import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema }
 
 type RoutineArguments = Record<string, unknown>
 
+interface BotEventRoutineCreateRequest {
+  readonly prompt: string
+  readonly title: string
+  readonly event: BotEventTrigger
+}
+
+type BotRoutineCreateRequest = ScheduleCreateRequest | BotEventRoutineCreateRequest
+
+type BotRoutineTimingChange = ScheduleTimingChange | { readonly kind: 'event'; readonly event: BotEventTrigger }
+
+function isEventRoutineRequest(request: BotRoutineCreateRequest): request is BotEventRoutineCreateRequest {
+  return 'event' in request
+}
+
 export type * from './types.ts'
-export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
+export { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
 export {
   BotCollaborationError,
@@ -260,12 +284,32 @@ function routineCron(value: unknown): CronInput {
   return { expression: record.expression, time_zone: record.time_zone }
 }
 
-function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
+function routineEvent(value: unknown): BotEventTrigger {
+  const record = routineRecord(value)
+  if (record === undefined || record.type !== 'message' || typeof record.source !== 'string'
+    || !BOT_EVENT_SOURCES.includes(record.source as BotEventSource)) {
+    throw new BotCollaborationError(
+      'message-invalid',
+      'A routine event must be { type: "message", source: "bot" | "user" }.',
+    )
+  }
+  return { type: 'message', source: record.source as BotEventSource }
+}
+
+function routineCreateRequest(args: RoutineArguments): BotRoutineCreateRequest {
   rejectUnsupportedRoutineTrigger(args)
   const prompt = routineText(args, 'prompt')
   const title = routineText(args, 'title')
   if (prompt === undefined || title === undefined) {
     throw new BotCollaborationError('message-invalid', 'A routine needs non-empty prompt and title.')
+  }
+  if (args.event !== undefined) {
+    const selectors = ['after_seconds', 'at', 'every_seconds', 'daily', 'weekly', 'cron']
+      .filter(key => args[key] !== undefined)
+    if (selectors.length > 0) {
+      throw new BotCollaborationError('message-invalid', 'An event routine cannot also supply a timing selector.')
+    }
+    return { prompt, title, event: routineEvent(args.event) }
   }
   const request: ScheduleCreateRequest = { prompt, title }
   const selectors: Partial<ScheduleCreateRequest> = {}
@@ -281,12 +325,12 @@ function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
   return { ...request, ...selectors }
 }
 
-/** Reject event-trigger requests until a real Host event source is available. */
+/** Reject unrecognized event-trigger aliases instead of silently ignoring them. */
 function rejectUnsupportedRoutineTrigger(args: RoutineArguments): void {
-  if (Object.hasOwn(args, 'event') || Object.hasOwn(args, 'trigger') || Object.hasOwn(args, 'on_event')) {
+  if (Object.hasOwn(args, 'trigger') || Object.hasOwn(args, 'on_event')) {
     throw new BotCollaborationError(
       'message-invalid',
-      'Event-triggered routines are not supported. Use after_seconds, at, every_seconds, daily, weekly, or cron.',
+      'Use event: { type: "message", source: "bot" | "user" } for event-triggered routines.',
     )
   }
 }
@@ -324,6 +368,55 @@ function routineIdempotencyKey(
   return routineOperationKey(sessionId, context)
 }
 
+/** Stable identity for one native event-routine create operation. */
+function eventRoutineOperationKey(
+  sessionId: SessionId,
+  context: Pick<Parameters<NonNullable<BotNativeToolHost['routine']>>[2], 'callId' | 'threadId' | 'turnId'>,
+): string {
+  return createHash('sha256')
+    .update('bot-event-routine-create\0')
+    .update(String(sessionId))
+    .update('\0')
+    .update(context.callId)
+    .update('\0')
+    .update(context.threadId)
+    .update('\0')
+    .update(context.turnId)
+    .digest('hex')
+}
+
+/** Prefix a user-visible event routine id without exposing native call ids. */
+function eventRoutineId(
+  sessionId: SessionId,
+  context: Pick<Parameters<NonNullable<BotNativeToolHost['routine']>>[2], 'callId' | 'threadId' | 'turnId'>,
+): string {
+  return `bot-event-routine-${eventRoutineOperationKey(sessionId, context)}`
+}
+
+/** Project one durable event routine into the common native routine view. */
+function eventRoutineView(routine: BotEventRoutine): Record<string, unknown> {
+  return { ...routine, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+}
+
+/** Extract plain visible text from model content without exposing tool or reasoning blocks. */
+function visibleText(content: readonly { readonly type: string; readonly text?: string }[]): string {
+  return content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join('')
+}
+
+/** Map a live Session turn reason into the bounded event-routine result vocabulary. */
+function routineResultStatus(kind: string): BotEventRoutineResult['status'] {
+  switch (kind) {
+    case 'completed': return 'completed'
+    case 'error': return 'error'
+    case 'aborted': return 'aborted'
+    case 'blocked': return 'blocked'
+    case 'max-tokens': return 'max-tokens'
+    case 'interrupted': return 'interrupted'
+    case 'forked': return 'forked'
+    default: return 'error'
+  }
+}
+
 function routineUpdateContent(args: RoutineArguments): { readonly title?: string; readonly prompt?: string } {
   const title = args.title === undefined ? undefined : routineText(args, 'title')
   const prompt = args.prompt === undefined ? undefined : routineText(args, 'prompt')
@@ -336,9 +429,13 @@ function routineUpdateContent(args: RoutineArguments): { readonly title?: string
   return { ...(title === undefined ? {} : { title }), ...(prompt === undefined ? {} : { prompt }) }
 }
 
-function routineTimingChange(args: RoutineArguments): ScheduleTimingChange | undefined {
+function routineTimingChange(args: RoutineArguments): BotRoutineTimingChange | undefined {
   rejectUnsupportedRoutineTrigger(args)
   const selectors = ['at', 'every_seconds', 'daily', 'weekly', 'cron'].filter(key => args[key] !== undefined)
+  if (args.event !== undefined) {
+    if (selectors.length > 0) throw new BotCollaborationError('message-invalid', 'An event routine update cannot also supply a timing selector.')
+    return { kind: 'event', event: routineEvent(args.event) }
+  }
   if (selectors.length > 1) throw new BotCollaborationError('message-invalid', 'A routine update accepts at most one timing selector.')
   const selector = selectors[0]
   if (selector === undefined) return undefined
@@ -391,6 +488,23 @@ async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<v
   await domain.global.set({ animatedAvatarVersion: BOT_APPEARANCE_MIGRATION_VERSION })
 }
 
+interface EventRoutineTurn {
+  readonly turn: number
+  readonly runs: Map<string, string>
+  readonly output: string[]
+}
+
+const MAX_ROUTINE_RESULT_OUTPUT = 8_000
+const MAX_ROUTINE_DELIVERIES = 200
+const MAX_ROUTINE_RESULTS = 200
+
+/** Validate and detach a native-tool result before exposing it to a scoped tool. */
+function routineJsonResult(value: unknown): JsonValue {
+  const snapshot = snapshotJsonValue(value)
+  if (snapshot === undefined) throw new Error('Bot routine returned a non-JSON result.')
+  return snapshot as JsonValue
+}
+
 /** Host service that owns the durable roster and its Session mappings. */
 export class BotService extends TypertRemoteService {
   private manageBots!: NonNullable<BotNativeToolHost['manage']>
@@ -403,6 +517,7 @@ export class BotService extends TypertRemoteService {
   private readonly recordsBySession = new Map<string, BotRecord>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly promptDisposals = new Set<Promise<void>>()
+  private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly collaboration: BotCollaborationService
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
@@ -462,6 +577,13 @@ export class BotService extends TypertRemoteService {
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
     })
+    ctx.on('session/event', (session, event) => {
+      void this.ready.then(() => {
+        if (!this.stopping) this.observeEventRoutineSessionEvent(session.id, event)
+      }).catch((error: unknown) => {
+        ctx.logger.warn(`bots: event routine observer failed: ${String(error)}`)
+      })
+    }, { global: true })
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
@@ -541,10 +663,16 @@ export class BotService extends TypertRemoteService {
         if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
           throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
         }
-        const schedule = ctx.get('schedule')
-        if (schedule === undefined) throw new Error('Bot routines are unavailable.')
         try {
           const request = routineCreateRequest(args)
+          if (isEventRoutineRequest(request)) {
+            const existing = await this.findEventRoutine(sessionId, eventRoutineId(sessionId, pending))
+            return existing === undefined
+              ? { status: 'unknown' }
+              : { status: 'committed', record: eventRoutineView(existing) }
+          }
+          const schedule = ctx.get('schedule')
+          if (schedule === undefined) throw new Error('Bot routines are unavailable.')
           const resolution = await schedule.reconcileCreate(
             sessionId, request, routineOperationKey(sessionId, pending), context.signal,
           )
@@ -565,10 +693,11 @@ export class BotService extends TypertRemoteService {
         if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
           throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
         }
-        const schedule = ctx.get('schedule')
-        if (schedule === undefined) throw new Error('Bot routines are unavailable.')
         try {
           const request = routineCreateRequest(args)
+          if (isEventRoutineRequest(request)) return { status: 'reserved' }
+          const schedule = ctx.get('schedule')
+          if (schedule === undefined) throw new Error('Bot routines are unavailable.')
           const reservation = await schedule.reserveCreate(
             sessionId, request, routineOperationKey(sessionId, context), context.signal,
           )
@@ -588,10 +717,11 @@ export class BotService extends TypertRemoteService {
       routineRelease: async (args, context): Promise<void> => {
         const sessionId = context.sessionId
         if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) return
-        const schedule = ctx.get('schedule')
-        if (schedule === undefined) return
         try {
           const request = routineCreateRequest(args)
+          if (isEventRoutineRequest(request)) return
+          const schedule = ctx.get('schedule')
+          if (schedule === undefined) return
           await schedule.releaseCreate(sessionId, request, routineOperationKey(sessionId, context))
         } catch (error: unknown) {
           if (error instanceof ScheduleInputError) {
@@ -652,6 +782,7 @@ export class BotService extends TypertRemoteService {
   async [Service.init](): Promise<void> {
     await this.initialized
     await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+    await this.recoverPendingEventRoutines()
   }
 
   /**
@@ -688,33 +819,47 @@ export class BotService extends TypertRemoteService {
     if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
       throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
     }
-    const schedule = this.ctx.get('schedule')
-    if (schedule === undefined) throw new Error('Bot routines are unavailable.')
     context.signal.throwIfAborted()
     try {
       if (action === 'create') {
         const request = routineCreateRequest(args)
+        if (isEventRoutineRequest(request)) {
+          const record = await this.createEventRoutine(sessionId, request, eventRoutineId(sessionId, context), context.signal)
+          context.signal.throwIfAborted()
+          return eventRoutineView(record)
+        }
+        const schedule = this.ctx.get('schedule')
+        if (schedule === undefined) throw new Error('Bot routines are unavailable.')
         const record = await schedule.create(sessionId, request, context.signal, {
           idempotencyKey: routineIdempotencyKey(sessionId, context),
         })
         context.signal.throwIfAborted()
         return scheduleView(record, Date.now())
       }
+      const schedule = this.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Bot routines are unavailable.')
       if (action === 'list') {
         const entries = (await schedule.catalog()).filter(entry => entry.sessionId === sessionId && entry.status !== 'inactive')
+        const eventRoutines = await this.listEventRoutines(sessionId)
         context.signal.throwIfAborted()
-        return entries.map(entry => ({ ...scheduleView(routineCatalogRecord(entry), Date.now()), status: entry.status }))
+        return [
+          ...entries.map(entry => ({ ...scheduleView(routineCatalogRecord(entry), Date.now()), status: entry.status })),
+          ...eventRoutines.map(eventRoutineView),
+        ]
       }
       if (action === 'delete') {
         const id = routineId(args)
+        if (await this.findEventRoutine(sessionId, id) !== undefined) return await this.deleteEventRoutine(sessionId, id, context.signal)
         return await schedule.delete({ sessionId, id: ScheduleId(id) }, context.signal)
       }
       if (action === 'pause') {
         const id = routineId(args)
+        if (await this.findEventRoutine(sessionId, id) !== undefined) return await this.pauseEventRoutine(sessionId, id, context.signal)
         return await schedule.pause({ sessionId, id: ScheduleId(id) }, context.signal)
       }
       if (action === 'resume') {
         const id = routineId(args)
+        if (await this.findEventRoutine(sessionId, id) !== undefined) return await this.resumeEventRoutine(sessionId, id, context.signal)
         return await schedule.resume({ sessionId, id: ScheduleId(id) }, context.signal)
       }
       if (action === 'history') {
@@ -726,12 +871,30 @@ export class BotService extends TypertRemoteService {
         if (args.before !== undefined && typeof args.before !== 'string') {
           throw new BotCollaborationError('message-invalid', 'before must be a message id string.')
         }
+        if (await this.findEventRoutine(sessionId, id) !== undefined) {
+          if (args.before !== undefined) throw new BotCollaborationError('message-invalid', 'before is not supported for event routine history.')
+          return await this.eventRoutineHistory(sessionId, id, limit, context.signal)
+        }
         return await schedule.history({
           sessionId, id: ScheduleId(id), limit,
           ...(args.before === undefined ? {} : { before: MessageId(args.before) }),
         })
       }
       const id = routineId(args)
+      const eventRoutine = await this.findEventRoutine(sessionId, id)
+      if (eventRoutine !== undefined) {
+        const content = routineUpdateContent(args)
+        const change = routineTimingChange(args)
+        if (change !== undefined && change.kind !== 'event') {
+          throw new BotCollaborationError('message-invalid', 'An event routine update accepts only an event trigger, title, or prompt.')
+        }
+        if (change === undefined && content.title === undefined && content.prompt === undefined) {
+          throw new BotCollaborationError('message-invalid', 'An event routine update needs a title, prompt, or event selector.')
+        }
+        return eventRoutineView(await this.updateEventRoutine(sessionId, id, {
+          ...content, ...(change?.kind === 'event' ? { event: change.event } : {}),
+        }, context.signal))
+      }
       const entry = (await schedule.catalog()).find(candidate => candidate.sessionId === sessionId
         && String(candidate.id) === id && candidate.status !== 'inactive')
       context.signal.throwIfAborted()
@@ -746,6 +909,9 @@ export class BotService extends TypertRemoteService {
       const change = routineTimingChange(args)
       if (change === undefined && content.title === undefined && content.prompt === undefined) {
         throw new BotCollaborationError('message-invalid', 'A routine update needs a title, prompt, or timing selector.')
+      }
+      if (change?.kind === 'event') {
+        throw new BotCollaborationError('message-invalid', 'A timed routine update cannot use an event trigger.')
       }
       const result = await schedule.update({
         sessionId,
@@ -763,6 +929,405 @@ export class BotService extends TypertRemoteService {
       }
       throw error
     }
+  }
+
+  /** Adapt a scoped event-routine tool call to the Bot's native routine host. */
+  private runScopedRoutine(
+    action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
+    args: Record<string, unknown>,
+    exec: ToolExecution,
+  ): Promise<JsonValue> {
+    const agent = exec.agent
+    return this.runRoutine(action, args, {
+      callId: String(exec.callId),
+      threadId: String(agent?.id ?? 'bot'),
+      turnId: String(exec.callId),
+      sessionId: agent?.id,
+      signal: exec.signal,
+      approvalPolicy: 'on-request',
+      requestApproval: () => Promise.resolve(true),
+    }).then(routineJsonResult)
+  }
+
+  /** Read one event routine without waking its Bot Session. */
+  private async findEventRoutine(sessionId: SessionId, id: string): Promise<BotEventRoutine | undefined> {
+    const domain = await this.getDomain()
+    const record = this.currentBotRecord(domain, sessionId)
+    return record?.sessionId === sessionId ? record.eventRoutines?.find(routine => routine.id === id) : undefined
+  }
+
+  /** Read the latest durable Bot row for one mapped Session. */
+  private currentBotRecord(domain: Domain<typeof botDomain>, sessionId: SessionId): BotRecord | undefined {
+    const mapped = this.recordsBySession.get(String(sessionId))
+    return mapped === undefined ? undefined : domain.table('bots').get(mapped.id)
+  }
+
+  /** Create or replay one Bot event routine under the calling Bot Session. */
+  private async createEventRoutine(
+    sessionId: SessionId,
+    request: BotEventRoutineCreateRequest,
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<BotEventRoutine> {
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const current = this.currentBotRecord(domain, sessionId)
+      if (current === undefined || current.sessionId !== sessionId) {
+        throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+      }
+      const existing = current.eventRoutines?.find(routine => routine.id === id)
+      if (existing !== undefined) {
+        if (existing.title !== request.title || existing.prompt !== request.prompt || existing.trigger.source !== request.event.source) {
+          throw new BotCollaborationError('message-invalid', 'This event routine operation identity was already used with different arguments.')
+        }
+        return existing
+      }
+      const title = scheduleTitle(request.title)
+      const prompt = request.prompt.trim()
+      if (prompt.length === 0 || prompt.length > 16_000) {
+        throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
+      }
+      signal?.throwIfAborted()
+      const now = Date.now()
+      const routine: BotEventRoutine = {
+        id, title, prompt, trigger: request.event, status: 'active', createdAt: now, updatedAt: now,
+        deliveries: [], results: [],
+      }
+      const next: BotRecord = { ...current, eventRoutines: [...current.eventRoutines ?? [], routine], updatedAt: now }
+      await bots.put(next.id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return routine
+    })
+  }
+
+  /** List active and paused event routines owned by one Bot Session. */
+  private async listEventRoutines(sessionId: SessionId): Promise<readonly BotEventRoutine[]> {
+    const domain = await this.getDomain()
+    const record = this.currentBotRecord(domain, sessionId)
+    return record?.sessionId === sessionId ? [...record.eventRoutines ?? []] : []
+  }
+
+  /** Update content or the message source of an event routine. */
+  private async updateEventRoutine(
+    sessionId: SessionId,
+    id: string,
+    change: { readonly title?: string; readonly prompt?: string; readonly event?: BotEventTrigger },
+    signal?: AbortSignal,
+  ): Promise<BotEventRoutine> {
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const current = this.currentBotRecord(domain, sessionId)
+      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
+        throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
+      }
+      const title = change.title === undefined ? routine.title : scheduleTitle(change.title)
+      const prompt = change.prompt === undefined ? routine.prompt : change.prompt.trim()
+      if (prompt.length === 0 || prompt.length > 16_000) {
+        throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
+      }
+      signal?.throwIfAborted()
+      const nextRoutine: BotEventRoutine = {
+        ...routine, title, prompt, ...(change.event === undefined ? {} : { trigger: change.event }),
+        updatedAt: Math.max(Date.now(), routine.updatedAt),
+      }
+      const eventRoutines = current.eventRoutines ?? []
+      const next: BotRecord = {
+        ...current, eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
+      await bots.put(next.id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return nextRoutine
+    })
+  }
+
+  /** Delete one event routine and its bounded run history. */
+  private async deleteEventRoutine(sessionId: SessionId, id: string, signal?: AbortSignal): Promise<unknown> {
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const current = this.currentBotRecord(domain, sessionId)
+      if (current === undefined || current.sessionId !== sessionId || !(current.eventRoutines ?? []).some(routine => routine.id === id)) {
+        return { id, deleted: false, code: 'schedule_not_found' as const }
+      }
+      signal?.throwIfAborted()
+      const next: BotRecord = {
+        ...current,
+        eventRoutines: (current.eventRoutines ?? []).filter(routine => routine.id !== id),
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
+      await bots.put(next.id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return { id, deleted: true as const }
+    })
+  }
+
+  /** Pause one event routine while preserving its delivery and result history. */
+  private async pauseEventRoutine(sessionId: SessionId, id: string, signal?: AbortSignal): Promise<unknown> {
+    return this.setEventRoutineStatus(sessionId, id, 'paused', signal)
+  }
+
+  /** Resume one paused event routine. */
+  private async resumeEventRoutine(sessionId: SessionId, id: string, signal?: AbortSignal): Promise<unknown> {
+    return this.setEventRoutineStatus(sessionId, id, 'active', signal)
+  }
+
+  private async setEventRoutineStatus(
+    sessionId: SessionId,
+    id: string,
+    status: 'active' | 'paused',
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const current = this.currentBotRecord(domain, sessionId)
+      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
+        return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
+      }
+      signal?.throwIfAborted()
+      const nextRoutine = { ...routine, status, updatedAt: Math.max(Date.now(), routine.updatedAt) }
+      const next: BotRecord = {
+        ...current,
+        eventRoutines: (current.eventRoutines ?? []).map(candidate => candidate.id === id ? nextRoutine : candidate),
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
+      await bots.put(next.id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.emitChanged()
+      return { ...eventRoutineView(nextRoutine), [status === 'active' ? 'resumed' : 'paused']: true }
+    })
+  }
+
+  /** Read bounded event deliveries and completed model results newest first. */
+  private async eventRoutineHistory(sessionId: SessionId, id: string, limit: number, signal?: AbortSignal): Promise<unknown> {
+    const routine = await this.findEventRoutine(sessionId, id)
+    signal?.throwIfAborted()
+    if (routine === undefined) return { id, code: 'schedule_not_found' as const }
+    return {
+      id,
+      deliveries: routine.deliveries.slice(-limit).reverse(),
+      results: routine.results.slice(-limit).reverse(),
+    }
+  }
+
+  /** Observe Bot-owned message routines and retain only the turn facts needed for results. */
+  private observeEventRoutineSessionEvent(sessionId: SessionId, event: SessionEvent): void {
+    if (this.recordsBySession.get(String(sessionId))?.eventRoutines === undefined) return
+    const turnKey = `${String(sessionId)}:${event.type === 'turn/start' || event.type === 'turn/end' || event.type === 'assistant/message'
+      ? event.data.turn
+      : ''}`
+    if (event.type === 'turn/start') {
+      this.eventRoutineTurns.set(turnKey, { turn: event.data.turn, runs: new Map(), output: [] })
+      return
+    }
+    if (event.type === 'user/message') {
+      const source = event.data.source
+      if (source.kind === 'bot-event-routine') {
+        const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
+        if (turn !== undefined) turn.runs.set(String(event.data.id), source.routineId)
+        return
+      }
+      const trigger = source.kind === 'agent-message' ? 'bot' : source.kind === 'user' ? 'user' : undefined
+      if (trigger !== undefined) {
+        queueMicrotask(() => {
+          void this.triggerEventRoutines(sessionId, event, trigger)
+        })
+      }
+      return
+    }
+    if (event.type === 'assistant/message') {
+      this.eventRoutineTurns.get(turnKey)?.output.push(visibleText(event.data.message.content))
+      return
+    }
+    if (event.type !== 'turn/end') return
+    const turn = this.eventRoutineTurns.get(turnKey)
+    this.eventRoutineTurns.delete(turnKey)
+    if (turn !== undefined && turn.runs.size > 0) {
+      queueMicrotask(() => {
+        void this.recordEventRoutineResults(sessionId, turn, event)
+      })
+    }
+  }
+
+  /** Return the most recently opened turn for one Session. */
+  private openTurnNumber(sessionId: SessionId): number {
+    const prefix = `${String(sessionId)}:`
+    let latest = -1
+    for (const key of this.eventRoutineTurns.keys()) {
+      if (!key.startsWith(prefix)) continue
+      const turn = Number(key.slice(prefix.length))
+      if (Number.isSafeInteger(turn)) latest = Math.max(latest, turn)
+    }
+    return latest
+  }
+
+  /** Admit matching event routines and durably reserve their follow-up message ids. */
+  private async triggerEventRoutines(
+    sessionId: SessionId,
+    event: SessionEvent<'user/message'>,
+    source: BotEventSource,
+  ): Promise<void> {
+    try {
+      await this.serialize(async () => {
+        const domain = await this.getDomain()
+        const bots = domain.table('bots')
+        const current = this.currentBotRecord(domain, sessionId)
+        if (current === undefined || current.sessionId !== sessionId) return
+        let next = current
+        for (const routine of current.eventRoutines ?? []) {
+          if (routine.status !== 'active' || routine.trigger.source !== source) continue
+          const existing = routine.deliveries.find(delivery => delivery.triggerEventSeq === Number(event.seq))
+          const delivery = existing ?? {
+            triggerEventSeq: Number(event.seq), messageId: MessageId(randomUUID()), status: 'pending' as const,
+            createdAt: new Date(event.time).toISOString(),
+          }
+          if (existing === undefined) {
+            const updatedRoutine: BotEventRoutine = {
+              ...routine,
+              deliveries: [...routine.deliveries, delivery].slice(-MAX_ROUTINE_DELIVERIES),
+              updatedAt: Math.max(Date.now(), routine.updatedAt),
+            }
+            next = {
+              ...next,
+              eventRoutines: (next.eventRoutines ?? []).map(candidate => candidate.id === routine.id ? updatedRoutine : candidate),
+            }
+            await bots.put(next.id, next)
+            this.recordsBySession.set(String(next.sessionId), next)
+          }
+          const latest = next.eventRoutines?.find(candidate => candidate.id === routine.id)
+          if (latest === undefined) continue
+          const admitted = latest.deliveries.find(candidate => candidate.triggerEventSeq === Number(event.seq))
+          if (admitted === undefined || admitted.status === 'delivered') continue
+          try {
+            next = await this.deliverEventRoutine(next, latest, admitted, bots)
+          } catch (error: unknown) {
+            this.ctx.logger.warn(`bots: event routine ${routine.id} delivery failed: ${String(error)}`)
+          }
+        }
+      })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`bots: event routine dispatch failed: ${String(error)}`)
+    }
+  }
+
+  /** Reconcile a pending event delivery after a Host restart or an uncertain flush. */
+  private async deliverEventRoutine(
+    record: BotRecord,
+    routine: BotEventRoutine,
+    delivery: BotEventRoutineDelivery,
+    bots: KvTable<BotRecord['id'], BotRecord>,
+  ): Promise<BotRecord> {
+    const inspection = await this.ctx.sessionController.inspect(record.sessionId)
+    const alreadyQueued = inspection.events.some(event => event.type === 'user/message' && event.data.id === delivery.messageId)
+    if (!alreadyQueued) {
+      const resolved = await this.ctx.sessionController.resolveAgent(record.sessionId)
+      if (!('agent' in resolved)) throw resolved.error
+      resolved.agent.followup(freezeMessage({
+        id: delivery.messageId,
+        role: 'user',
+        content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${routine.prompt}` }],
+        source: {
+          kind: 'bot-event-routine', form: 'notice', summary: `Routine "${routine.title}" triggered`,
+          routineId: routine.id, triggerEventSeq: delivery.triggerEventSeq,
+        },
+      }))
+      if (!await this.ctx.sessions.flush(resolved.agent.session)) {
+        throw new Error('Bot Session persistence did not acknowledge the event routine')
+      }
+    }
+    const deliveredAt = new Date(Date.now()).toISOString()
+    const updatedRoutine: BotEventRoutine = {
+      ...routine,
+      deliveries: routine.deliveries.map(candidate => candidate.messageId === delivery.messageId
+        ? { ...candidate, status: 'delivered' as const, deliveredAt }
+        : candidate),
+      updatedAt: Math.max(Date.now(), routine.updatedAt),
+    }
+    const next: BotRecord = {
+      ...record,
+      eventRoutines: (record.eventRoutines ?? []).map(candidate => candidate.id === routine.id ? updatedRoutine : candidate),
+      updatedAt: Math.max(Date.now(), record.updatedAt),
+    }
+    await bots.put(next.id, next)
+    this.recordsBySession.set(String(next.sessionId), next)
+    this.emitChanged()
+    return next
+  }
+
+  /** Persist one completed model result without changing delivery semantics. */
+  private async recordEventRoutineResults(
+    sessionId: SessionId,
+    turn: EventRoutineTurn,
+    event: SessionEvent<'turn/end'>,
+  ): Promise<void> {
+    try {
+      await this.serialize(async () => {
+        const domain = await this.getDomain()
+        const bots = domain.table('bots')
+        const current = this.currentBotRecord(domain, sessionId)
+        if (current === undefined) return
+        const output = turn.output.join('').slice(0, MAX_ROUTINE_RESULT_OUTPUT)
+        const status = routineResultStatus(event.data.reason.kind)
+        const error = event.data.reason.kind === 'error' ? event.data.reason.error.message.slice(0, 4_000) : undefined
+        let changedCount = 0
+        const eventRoutines = (current.eventRoutines ?? []).map((routine) => {
+          const messages = [...turn.runs.entries()].filter(([, routineId]) => routineId === routine.id)
+          if (messages.length === 0) return routine
+          const results = [...routine.results]
+          let routineChanged = false
+          for (const [messageId] of messages) {
+            if (results.some(result => String(result.messageId) === messageId)) continue
+            const result: BotEventRoutineResult = {
+              messageId: MessageId(messageId), status, completedAt: new Date(event.time).toISOString(),
+              ...(output === '' ? {} : { output }), ...(error === undefined ? {} : { error }),
+            }
+            results.push(result)
+            routineChanged = true
+            changedCount += 1
+          }
+          return routineChanged
+            ? { ...routine, results: results.slice(-MAX_ROUTINE_RESULTS), updatedAt: Math.max(Date.now(), routine.updatedAt) }
+            : routine
+        })
+        if (changedCount === 0) return
+        const next: BotRecord = { ...current, eventRoutines, updatedAt: Math.max(Date.now(), current.updatedAt) }
+        await bots.put(next.id, next)
+        this.recordsBySession.set(String(next.sessionId), next)
+        this.emitChanged()
+      })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`bots: event routine result persistence failed: ${String(error)}`)
+    }
+  }
+
+  /** Retry deliveries reserved before a Host restart. */
+  private async recoverPendingEventRoutines(): Promise<void> {
+    await this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      for (const [, record] of bots.entries()) {
+        let current = record
+        for (const routine of record.eventRoutines ?? []) {
+          for (const delivery of routine.deliveries.filter(candidate => candidate.status === 'pending')) {
+            try {
+              const latest = current.eventRoutines?.find(candidate => candidate.id === routine.id)
+              if (latest === undefined) continue
+              current = await this.deliverEventRoutine(current, latest, delivery, bots)
+            } catch (error: unknown) {
+              this.ctx.logger.warn(`bots: pending event routine ${routine.id} recovery failed: ${String(error)}`)
+            }
+          }
+        }
+      }
+    })
   }
 
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
@@ -1110,9 +1675,12 @@ export class BotService extends TypertRemoteService {
       })
       installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
       // Scheduling is optional in minimal compositions. When present, the
-      // injection registers the four Host Schedule tools in this Bot scope so
-      // their existing Agent binding and approval pipeline stay intact.
-      installBotRoutineTools(scope)
+      // injection registers the seven Host Schedule tools and Bot-specific
+      // message-triggered routine tools in this Bot scope.
+      const eventRoutineHost: BotEventRoutineToolHost = {
+        run: (action, args, exec) => this.runScopedRoutine(action, args, exec),
+      }
+      installBotRoutineTools(scope, eventRoutineHost)
     })
     this.promptFibers.set(agent, fiber)
     await fiber

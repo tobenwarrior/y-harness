@@ -5424,6 +5424,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotCreateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotEventRoutine',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly results: readonly BotEventRoutineResult[];\n}',
+  },
+  {
+    name: 'BotEventRoutineDelivery',
+    declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly messageId: MessageId;\n    readonly status: \'pending\' | \'delivered\';\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventRoutineResult',
+    declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventSource',
+    declaration: 'export type BotEventSource = typeof BOT_EVENT_SOURCES[number];',
+  },
+  {
+    name: 'BotEventTrigger',
+    declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
+  },
+  {
     name: 'BotId',
     declaration: 'export type BotId = Branded<\'BotId\'>;',
   },
@@ -5445,7 +5465,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',

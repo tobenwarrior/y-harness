@@ -643,7 +643,7 @@ function routineTool(
     description: action === 'list'
       ? 'List the durable routines owned by this Bot Session.'
       : action === 'create'
-        ? 'Create a durable routine owned by this Bot Session. This action requires approval.'
+        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or event { type: "message", source: "bot" | "user" }. This action requires approval.'
         : action === 'update'
           ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
           : action === 'pause'
@@ -651,7 +651,7 @@ function routineTool(
             : action === 'resume'
               ? 'Resume a durable routine owned by this Bot Session. This action requires approval.'
               : action === 'history'
-                ? 'Read retained delivery history for a routine owned by this Bot Session.'
+                ? 'Read retained delivery and completed model-result history for a routine owned by this Bot Session.'
                 : 'Delete a durable routine owned by this Bot Session. This action requires approval.',
     inputSchema: {
       type: 'object',
@@ -659,12 +659,22 @@ function routineTool(
         ...(action === 'create' ? {
           prompt: { type: 'string', description: 'Instruction delivered when the routine runs.' },
           title: { type: 'string', description: 'Short name for the routine.' },
+          event: {
+            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
+            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
+            required: ['type', 'source'], additionalProperties: false,
+          },
           after_seconds: { type: 'number' }, at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),
         ...(action === 'update' ? {
           id: { type: 'string', description: 'Routine id returned by schedule_list.' },
           prompt: { type: 'string' }, title: { type: 'string' },
+          event: {
+            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
+            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
+            required: ['type', 'source'], additionalProperties: false,
+          },
           at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),

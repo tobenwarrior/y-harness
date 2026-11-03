@@ -29,6 +29,14 @@ export type BotMessageSource = AgentMessageSource
 declare module '@yharness/llm' {
   interface MessageSourceMap {
     'agent-message': AgentMessageSource
+    /** A Bot-owned event routine follow-up; not a peer relay and never a trigger source itself. */
+    'bot-event-routine': {
+      kind: 'bot-event-routine'
+      form: 'notice'
+      summary: string
+      routineId: string
+      triggerEventSeq: number
+    }
   }
 }
 

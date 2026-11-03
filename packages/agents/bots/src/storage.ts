@@ -3,9 +3,10 @@
 import { SessionId } from '@yharness/session'
 import { brandString } from '@yharness/brand'
 import type { AttachmentId, ImageAttachmentRef } from '@yharness/attachment'
+import { MessageId } from '@yharness/llm/brand'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
-import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'
 
 /** Durable image reference admitted by the attachment store. */
@@ -45,6 +46,38 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
   message: 'Text values must be trimmed',
 })
 
+const instant = z.iso.datetime({ precision: 3 })
+
+/** Durable message-trigger routine value validated inside each Bot row. */
+export const botEventRoutineSchema = z.object({
+  id: z.string().regex(/^bot-event-routine-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  title: boundedText(120),
+  prompt: boundedText(16_000),
+  trigger: z.object({
+    type: z.literal('message'),
+    source: z.enum(BOT_EVENT_SOURCES),
+  }).strict(),
+  status: z.enum(['active', 'paused']),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  deliveries: z.array(z.object({
+    triggerEventSeq: z.number().int().nonnegative(),
+    messageId: z.string().min(1).transform(MessageId),
+    status: z.enum(['pending', 'delivered']),
+    createdAt: instant,
+    deliveredAt: instant.optional(),
+  }).strict()).max(200),
+  results: z.array(z.object({
+    messageId: z.string().min(1).transform(MessageId),
+    status: z.enum(['completed', 'error', 'aborted', 'blocked', 'max-tokens', 'interrupted', 'forked']),
+    completedAt: instant,
+    output: z.string().max(8_000).optional(),
+    error: z.string().max(4_000).optional(),
+  }).strict()).max(200),
+}).strict().refine(record => record.updatedAt >= record.createdAt, {
+  message: 'event routine updatedAt must not be earlier than createdAt',
+})
+
 /** Stored Bot row; malformed authoritative records reject domain opening. */
 export const botRecordSchema = z.object({
   id: botIdSchema,
@@ -56,6 +89,7 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  eventRoutines: z.array(botEventRoutineSchema).max(100).optional(),
   cwd: z.string().min(1).refine(value => value.trim() === value, {
     message: 'Working directories must not have surrounding whitespace',
   }),

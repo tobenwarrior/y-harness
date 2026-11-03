@@ -1,5 +1,5 @@
 ---
-description: "Durable user-owned Bot roster with one persistent Session per Bot, including stable visual identity and optional generated avatars."
+description: "Durable user-owned Bot roster with one persistent Session per Bot, including stable visual identity, event routines, and optional generated avatars."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected.
+Create a durable Bot roster whose rows keep one stable identity and one persistent Session. Use it for a second-mode Web workspace that can reopen a Bot after a Host restart and show whether its Session is currently resumed. Retried creation reuses the requested Bot id and Session instead of allocating a duplicate. Bot-scoped message routines can react to user or peer-Bot messages and retain bounded delivery and model-result history. Animated object characters are the default presentation; generated images can still be assigned through verified attachment references when explicitly selected.
 
 ## Table of Contents
 
@@ -64,6 +64,7 @@ The service owns one storage-domain table and serializes writes that can allocat
 | [`src/index.ts`](src/index.ts) | Bot Remote methods, lifecycle serialization, Session provisioning, scoped prompt/tools, and attachment admission. |
 | [`src/collaboration.ts`](src/collaboration.ts) | Provider-neutral roster inspection, bounded transcript projection, and durable peer delivery. |
 | [`src/scoped-tools.ts`](src/scoped-tools.ts) | Ordinary Agent-scoped collaboration tool schemas and approval policy. |
+| [`src/routine-tools.ts`](src/routine-tools.ts) | Bot-scoped event-routine tool schemas and approval policy layered over Host Schedule. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
 | [`src/types.ts`](src/types.ts) | Browser-safe Bot ids, identities, accents, views, requests, and Remote error details. |
@@ -89,7 +90,7 @@ Read these pages when the Bot roster is not enough. They move from the package g
 
 #### What the model sees
 
-Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, `edit_bot_profile`, and routine mutations are approval-gated actions. When the selected Agent preset mounts `@yharness/tool-schedule` and the Host Schedule service is available, the Bot reuses `schedule_create`, `schedule_list`, `schedule_update`, `schedule_delete`, `schedule_pause`, `schedule_resume`, and `schedule_history`; every routine remains bound to the Bot's one Session and is delivered there after restart. Routine history reports retained delivery receipts, not model execution results. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
+Selecting a Bot through `ctx.remote.bots` opens its linked ordinary Session; model-visible history remains owned by that Session and its composed plugins. While a Bot Agent is live, its scope exposes `list_bots` and `inspect_bot` for roster metadata and bounded visible transcript inspection. `send_bot_message`, `create_bot`, `edit_bot_profile`, and routine mutations are approval-gated actions. When the selected Agent preset mounts `@yharness/tool-schedule` and the Host Schedule service is available, the Bot reuses `schedule_create`, `schedule_list`, `schedule_update`, `schedule_delete`, `schedule_pause`, `schedule_resume`, and `schedule_history`; every time-based routine remains bound to the Bot's one Session and is delivered there after restart. Bot-specific `schedule_event_create`, `schedule_event_list`, `schedule_event_update`, `schedule_event_delete`, `schedule_event_pause`, `schedule_event_resume`, and `schedule_event_history` tools manage message-triggered routines. Event routines support `event: { type: "message", source: "bot" | "user" }`; deliveries are durable and history includes a bounded completed model-result projection with visible assistant text and terminal status. Picture generation uses the configured OpenAI avatar service and reports failure when it is unavailable.
 
 #### Token effect
 
@@ -128,7 +129,7 @@ If a native send reports uncertain-outcome, reuse its messageId when retrying. T
 ##### Native routine retry contract
 
 ```markdown
-Bot routine creation supplies the Host Schedule service with an operation-specific durable identity derived from the Bot Session and native call. The operation is reserved before approval, so a concurrent retry remains uncertain while approval is live; denial or cancellation releases the reservation, and a reservation left by a Host restart is retired. Retrying that same operation reuses the existing task, including after Host restart; a new operation can intentionally create an identical routine after the earlier call settled. If the earlier native lifecycle has only a `started` record, the Schedule service resolves that operation in its serialized write queue: an unregistered replayed start is retired when no approval call is live, a committed task is replayed and both native lifecycles are durably settled, while a registered operation with no task is retired and permits one retry. Every new routine still requires approval. Pause, resume, and edit preserve the Bot Session binding and saved delivery history; event-triggered routines are rejected because the Host has no event-source adapter.
+Time-based native routine creation supplies the Host Schedule service with an operation-specific durable identity derived from the Bot Session and native call. The operation is reserved before approval, so a concurrent retry remains uncertain while approval is live; denial or cancellation releases the reservation, and a reservation left by a Host restart is retired. Retrying that same operation reuses the existing task, including after Host restart; a new operation can intentionally create an identical routine after the earlier call settled. If the earlier native lifecycle has only a `started` record, the Schedule service resolves that operation in its serialized write queue: an unregistered replayed start is retired when no approval call is live, a committed task is replayed and both native lifecycles are durably settled, while a registered operation with no task is retired and permits one retry. Every new routine still requires approval. Bot event-routine creation uses a separate deterministic identity for the native call and persists the routine before delivering a matching message; a replay with that identity returns the original routine, while a new native call intentionally creates another routine. Pause, resume, edit, and history preserve the Bot Session binding. Event routines currently support only message sources from the user or a peer Bot; arbitrary webhooks and external event sources are not silently accepted.
 ```
 
 #### Token effect
@@ -149,6 +150,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
 - **Routine delivery uses Host Schedule** — Bot routines inherit the Schedule service's recurrence, delivery, and retention behavior; disabling that service or omitting `@yharness/tool-schedule` from the selected preset removes routine tools without affecting the Bot roster.
+- **Event triggers are Bot-specific** — message-triggered routines are handled by the Bot service and retain at most 200 deliveries and 200 completed model results per routine; generic Schedule does not expose arbitrary event sources such as webhooks.
 
 <a id="dev-note"></a>
 ### Dev Note

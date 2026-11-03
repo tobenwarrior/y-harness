@@ -3,12 +3,13 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import type { Agent } from '@yharness/agent'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
-import type { UserMessage } from '@yharness/llm'
+import { createAssistantMessage, createUserMessage, ToolCallId, type UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
+import type { ToolExecutionToken, ToolRunContext } from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import ScheduleService from '../../../schedule/schedule/src/index.ts'
@@ -308,14 +309,171 @@ describe('durable Bot roster', () => {
         title: 'Event check', prompt: 'Watch an event', event: { source: 'webhook' },
       }, { ...context, callId: 'unsupported-event' })
       expect(unsupported).toMatchObject({ success: false })
-      expect(unsupported.contentItems[0]?.text).toContain('Event-triggered routines are not supported')
+      expect(unsupported.contentItems[0]?.text).toContain('A routine event must be')
       const unsupportedUpdate = await update.execute({
         id: routineId, event: { source: 'webhook' },
       }, { ...context, callId: 'unsupported-event-update' })
       expect(unsupportedUpdate).toMatchObject({ success: false })
-      expect(unsupportedUpdate.contentItems[0]?.text).toContain('Event-triggered routines are not supported')
+      expect(unsupportedUpdate.contentItems[0]?.text).toContain('A routine event must be')
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('creates a Bot message-triggered routine and records its model result', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Event routine owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const list = tools.find(tool => tool.name === 'schedule_list')
+      const update = tools.find(tool => tool.name === 'schedule_update')
+      const pause = tools.find(tool => tool.name === 'schedule_pause')
+      const resume = tools.find(tool => tool.name === 'schedule_resume')
+      const remove = tools.find(tool => tool.name === 'schedule_delete')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || list === undefined || update === undefined || pause === undefined
+        || resume === undefined || remove === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'event-create', threadId: 'event-thread', turnId: 'event-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Review bot messages', prompt: 'Review the latest message and summarize it.',
+        event: { type: 'message', source: 'bot' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string; kind: string }
+      expect(routine.kind).toBe('event')
+      expect(await update.execute({ id: routine.id, title: 'Review peer messages' }, { ...context, callId: 'event-update' })).toMatchObject({ success: true })
+      expect(await pause.execute({ id: routine.id }, { ...context, callId: 'event-pause' })).toMatchObject({ success: true })
+      expect(await resume.execute({ id: routine.id }, { ...context, callId: 'event-resume' })).toMatchObject({ success: true })
+      expect(await list.execute({}, { ...context, callId: 'event-list' })).toMatchObject({ success: true })
+
+      const owner = h.agents[0]
+      if (owner === undefined) throw new Error('event routine owner Agent was not created')
+      const followup = h.followups[0]
+      if (followup === undefined) throw new Error('event routine follow-up was not created')
+      expect(h.ctx.tools.schemas(owner).map(tool => tool.name)).toEqual(expect.arrayContaining([
+        'schedule_event_create', 'schedule_event_list', 'schedule_event_update', 'schedule_event_delete',
+        'schedule_event_pause', 'schedule_event_resume', 'schedule_event_history',
+      ]))
+      const scopedCreate = h.ctx.tools.get('schedule_event_create', owner)
+      if (scopedCreate === undefined) throw new Error('scoped event routine create tool missing')
+      const scopedCallId = ToolCallId('scoped-event-create')
+      const scopedExecution: ToolRunContext = {
+        callId: scopedCallId, rootCallId: scopedCallId, name: 'schedule_event_create',
+        arguments: {}, agent: owner, signal: new AbortController().signal,
+        token: Symbol('scoped-event-create') as ToolExecutionToken,
+        deferContext: () => {}, concludeTurn: () => {},
+      }
+      const scopedRoutine = await scopedCreate.execute({
+        title: 'User-facing digest', prompt: 'Summarize direct user messages.',
+        event: { type: 'message', source: 'user' },
+      }, scopedExecution)
+      expect(scopedRoutine).toMatchObject({ kind: 'event', state: 'waiting' })
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'A peer bot sent this.' }],
+        source: { kind: 'agent-message', form: 'relay', senderSessionId: SessionId('bot-session-peer') },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => {
+        expect(followup).toHaveBeenCalledOnce()
+      })
+      const triggeredCall = followup.mock.calls.at(0)
+      if (triggeredCall === undefined) throw new Error('event routine follow-up was not captured')
+      const triggered = triggeredCall[0]
+      owner.session.append('turn/start', { turn: 2 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', triggered, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('assistant/message', {
+        turn: 2, step: 0,
+        message: createAssistantMessage({ content: [{ type: 'text', text: 'Peer message reviewed.' }], source: { provider: 'test', model: 'test-model' } }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(async () => {
+        const execution = await history.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'event-history' })
+        expect(execution).toMatchObject({ success: true })
+        const value = JSON.parse(execution.contentItems[0]!.text) as { results: readonly { status: string; output?: string }[] }
+        expect(value.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
+      })
+      expect(await remove.execute({ id: routine.id }, { ...context, callId: 'event-delete' })).toMatchObject({ success: true })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('replays a pending event delivery after a Host restart without duplicating it', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Pending event owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'pending-event-create', threadId: 'pending-event-thread', turnId: 'pending-event-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'User message monitor', prompt: 'Review the latest user message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+
+      h.flush.mockResolvedValueOnce(false)
+      const owner = h.agents[0]
+      if (owner === undefined) throw new Error('event routine owner Agent was not created')
+      const followup = h.followups[0]
+      if (followup === undefined) throw new Error('event routine follow-up was not created')
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'A direct user message.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => {
+        expect(followup).toHaveBeenCalledOnce()
+      })
+      const pending = await history.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'pending-event-history' })
+      expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
+      await close(h.ctx)
+      initialClosed = true
+
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+      expect(reopened.followups[0]).toHaveBeenCalledOnce()
+      const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
+      const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
+      if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
+      const recovered = await reopenedHistory.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'recovered-event-history' })
+      expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else if (!initialClosed) await close(h.ctx)
     }
   })
 
