@@ -31,7 +31,6 @@ declare module '@yharness/llm' {
   interface MessageSourceMap {
     'runtime-context': { kind: 'runtime-context' } & ContextFormed
     'time-context': { kind: 'time-context' } & ContextFormed
-    'agent-message': { kind: 'agent-message'; form: 'relay'; senderSessionId: SessionId }
   }
 }
 
