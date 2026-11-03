@@ -12,6 +12,9 @@ const state = vi.hoisted(() => ({
   claimFailure: undefined as string | undefined,
   claimRemovalFails: false,
   lockRemovalFails: false,
+  successorLockOnReleaseFailure: false,
+  successorLockInstalled: false,
+  successorLockRecord: undefined as string | undefined,
   lockPermissionFailures: 0,
   releaseLockBeforeProbe: false,
   renameAttempts: 0,
@@ -36,6 +39,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         throw Object.assign(new Error('EBUSY: injected claim removal failure'), { code: 'EBUSY' })
       }
       if (state.lockRemovalFails && String(args[0]).endsWith('.lock')) {
+        if (state.successorLockOnReleaseFailure && !state.successorLockInstalled) {
+          state.successorLockInstalled = true
+          await actual.rm(String(args[0]), { force: true })
+          await actual.writeFile(String(args[0]), state.successorLockRecord ?? 'successor\n', { mode: 0o600, flag: 'wx' })
+        }
         throw Object.assign(new Error('EBUSY: injected lock removal failure'), { code: 'EBUSY' })
       }
       return actual.rm(...args)
@@ -68,6 +76,9 @@ afterEach(async () => {
   state.claimFailure = undefined
   state.claimRemovalFails = false
   state.lockRemovalFails = false
+  state.successorLockOnReleaseFailure = false
+  state.successorLockInstalled = false
+  state.successorLockRecord = undefined
   state.lockPermissionFailures = 0
   state.releaseLockBeforeProbe = false
   state.renameAttempts = 0
@@ -465,6 +476,19 @@ describe('withFileLock', () => {
     expect(await readFile(target, 'utf8')).toBe('committed')
     await expect(stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readdir(dir)).toEqual(['document'])
+  })
+
+  it('does not rename a successor lock after ownership is lost during release', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    state.lockRemovalFails = true
+    state.successorLockOnReleaseFailure = true
+    // A record-only ownership check is insufficient when a same-PID worker
+    // replaces the pathname; the file identity must also remain ours.
+    state.successorLockRecord = `${String(process.pid)}\n`
+
+    await expect(withFileLock(target, async () => 'committed', { waitMs: 0 })).resolves.toBe('committed')
+    await expect(readFile(`${target}.lock`, 'utf8')).resolves.toBe(state.successorLockRecord)
   })
 
   it('waits for the caller-stated limit rather than the protocol default', async () => {

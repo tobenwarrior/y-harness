@@ -185,6 +185,13 @@ const LOCK_RETRY_INITIAL_MS = 20
 const LOCK_RETRY_MAX_MS = 200
 const LOCK_RELEASE_RETRY_LIMIT = 2
 
+/** The lock file identity captured by its creator before the operation runs. */
+interface LockOwner {
+  readonly record: string
+  readonly dev: number
+  readonly ino: number
+}
+
 /**
  * How long a contender waits when the caller states no limit — sized for the
  * render-and-rename cycle every call site had when this package was written.
@@ -198,13 +205,20 @@ const DEFAULT_LOCK_WAIT_MS = 2_000
 
 /**
  * Release a held lock without leaving its pathname occupied after the
- * operation has settled. A transient unlink failure is retried; if the path
- * still cannot be unlinked, an atomic rename removes it from the acquisition
- * protocol and the detached diagnostic sibling is cleaned up best-effort.
+ * operation has settled. Every removal or fallback rename is fenced by the
+ * creator's pathname identity and record; if another writer replaced the
+ * pathname, release leaves that successor untouched. A transient unlink
+ * failure is retried; if the owned path still cannot be unlinked, an atomic
+ * rename removes it from the acquisition protocol and the detached diagnostic
+ * sibling is cleaned up best-effort.
  */
-async function releaseLock(lockPath: string): Promise<void> {
+async function releaseLock(lockPath: string, owner: LockOwner | undefined): Promise<void> {
+  // The lock may have disappeared before its identity was captured. In that
+  // case the creator has no pathname it can safely release.
+  if (owner === undefined) return
   let lastError: unknown
   for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
+    if (!await ownsLock(lockPath, owner)) return
     try {
       await rm(lockPath, { force: true })
       return
@@ -212,12 +226,14 @@ async function releaseLock(lockPath: string): Promise<void> {
       lastError = error
     }
   }
+  if (!await ownsLock(lockPath, owner)) return
   const releasedPath = `${lockPath}.released-${process.pid}-${randomBytes(6).toString('hex')}`
   try {
     await rename(lockPath, releasedPath)
   } catch (error) {
     // If another actor already removed the path, release has succeeded. A
     // remaining error means this holder could not clear its acquisition path.
+    if (!await ownsLock(lockPath, owner)) return
     try {
       await rm(lockPath, { force: true })
       return
@@ -230,6 +246,29 @@ async function releaseLock(lockPath: string): Promise<void> {
   } catch {
     // The released sibling is outside the lock pathname; its cleanup is not
     // allowed to turn a committed operation into a failed lock release.
+  }
+}
+
+/** Capture the pathname identity immediately after exclusive lock creation. */
+async function captureLockOwner(lockPath: string, record: string): Promise<LockOwner | undefined> {
+  try {
+    const current = await lstat(lockPath)
+    return { record, dev: current.dev, ino: current.ino }
+  } catch {
+    // The lock vanished before the operation began; never release a later
+    // writer's lock at this pathname.
+    return undefined
+  }
+}
+
+/** Confirm that the lock pathname still names the exact file we created. */
+async function ownsLock(lockPath: string, owner: LockOwner): Promise<boolean> {
+  try {
+    const current = await lstat(lockPath)
+    if (current.dev !== owner.dev || current.ino !== owner.ino) return false
+    return await readFile(lockPath, 'utf8') === owner.record
+  } catch {
+    return false
   }
 }
 
@@ -276,13 +315,18 @@ export async function withFileLock<T>(
   options?: FileLockOptions,
 ): Promise<T> {
   const lockPath = `${filename}.lock`
+  const record = `${process.pid}\n`
+  let owner: LockOwner | undefined
   const deadline = Date.now() + (options?.waitMs ?? DEFAULT_LOCK_WAIT_MS)
   let delay = LOCK_RETRY_INITIAL_MS
   let retriedUnconfirmedPermissionError = false
   for (;;) {
     try {
-      await writeFile(lockPath, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
-      break
+      await writeFile(lockPath, record, { mode: 0o600, flag: 'wx' })
+      owner = await captureLockOwner(lockPath, record)
+      if (owner !== undefined) break
+      // Do not run the operation without a releasable ownership identity if
+      // the pathname disappeared during acquisition.
     } catch (error) {
       if (!await isLockContention(error, lockPath)) {
         // Windows can release the competing lock between exclusive create and lstat.
@@ -301,6 +345,6 @@ export async function withFileLock<T>(
   try {
     return await operation()
   } finally {
-    await releaseLock(lockPath)
+    await releaseLock(lockPath, owner)
   }
 }

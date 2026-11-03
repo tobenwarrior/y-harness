@@ -2,8 +2,10 @@
  * One opened SQLite KV unit: prepared per-table statements over the
  * `u_<unit>_<table>` record tables plus this unit's row in the shared
  * `unit_globals` table. Ordinary primitives are single statements; fenced
- * updates use a bounded-retry `BEGIN IMMEDIATE` transaction. There is no write
- * queue (write ordering is the caller's responsibility per the KV contract).
+ * updates use a bounded-retry `BEGIN IMMEDIATE` transaction. Unit close drains
+ * an already-started fenced update before releasing the unit slot. There is no
+ * write queue (write ordering is the caller's responsibility per the KV
+ * contract).
  * @module @yharness/storage-sqlite/unit
  */
 
@@ -37,6 +39,9 @@ export class SqliteKvUnit implements KvUnit {
   private readonly globalUpsert: StatementSync | undefined
   private readonly globalSelect: StatementSync | undefined
   private closed = false
+  /** Fenced updates that must settle before unit teardown releases its slot. */
+  private readonly inFlight = new Set<Promise<void>>()
+  private closing: Promise<void> | undefined
 
   /**
    * @param db - Open database handle owned by the backend (never closed here).
@@ -86,7 +91,7 @@ export class SqliteKvUnit implements KvUnit {
     key: string,
     update: (current: unknown) => unknown,
   ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
-    return this.withImmediateTransaction(() => {
+    return this.track(this.withImmediateTransaction(() => {
       const statements = this.statementsFor(table)
       const row = statements.selectOne.get(key) as { value: string } | undefined
       if (row === undefined) {
@@ -95,7 +100,7 @@ export class SqliteKvUnit implements KvUnit {
       const value = update(this.parseValue(row.value, `table '${table}' key '${key}'`))
       statements.upsert.run(key, JSON.stringify(value))
       return { found: true, value }
-    })
+    }))
   }
 
   insertRecord(table: string, key: string, value: unknown): Promise<boolean> {
@@ -158,11 +163,12 @@ export class SqliteKvUnit implements KvUnit {
   }
 
   close(): Promise<void> {
-    if (!this.closed) {
-      this.closed = true
+    if (this.closing !== undefined) return this.closing
+    this.closed = true
+    this.closing = Promise.allSettled(this.inFlight).then(() => {
       this.onClose()
-    }
-    return Promise.resolve()
+    })
+    return this.closing
   }
 
   /**
@@ -220,6 +226,14 @@ export class SqliteKvUnit implements KvUnit {
     if (this.closed) {
       throw new StorageError('closed', `kv unit '${this.descriptor.name}' is closed`)
     }
+  }
+
+  /** Keep asynchronous fenced updates inside the close drain barrier. */
+  private track<T>(operation: Promise<T>): Promise<T> {
+    const drain = operation.then(() => undefined, () => undefined)
+    this.inFlight.add(drain)
+    drain.then(() => this.inFlight.delete(drain), () => {})
+    return operation
   }
 
   private statementsFor(table: string): TableStatements {

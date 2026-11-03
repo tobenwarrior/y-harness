@@ -67,7 +67,7 @@ The backend is a document-per-row layout over one `node:sqlite` connection, desi
 ### Design concept
 
 - **Document per row.** Each unit table becomes a physical STRICT table `u_<unit>_<table> (key TEXT PRIMARY KEY, value TEXT)` whose `value` column holds the record's JSON text; the global singleton lives in a shared `unit_globals` table. One key update touches exactly one row — the reason to route a high-churn domain here.
-- **Fenced point operations.** Ordinary writes remain one prepared statement, while `updateRecord` uses `BEGIN IMMEDIATE` with bounded asynchronous retries and `insertRecord` uses `INSERT OR IGNORE` so a consumer can read and replace one current row across SQLite connections without a stale in-memory cache. A competing writer is given a bounded opportunity to commit before the lock error is returned.
+- **Fenced point operations.** Ordinary writes remain one prepared statement, while `updateRecord` uses `BEGIN IMMEDIATE` with bounded asynchronous retries and `insertRecord` uses `INSERT OR IGNORE` so a consumer can read and replace one current row across SQLite connections without a stale in-memory cache. A competing writer is given a bounded opportunity to commit before the lock error is returned, and unit close drains an already-started fenced update before releasing the unit slot.
 - **Names validated before DDL.** Unit and table names must match `UNIT_NAME_RE` before they reach DDL, so no external input is ever interpolated into SQL identifiers.
 - **Versions fail loud.** The physical layout version lives in `PRAGMA user_version` (fresh databases stamp it last); unit format versions live in the `units` table. Any other stamped value rejects — no migrations.
 
