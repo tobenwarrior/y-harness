@@ -490,7 +490,6 @@ describe('BotWorkspaceController', () => {
     expect(controller.face().reference()?.sessionId).toBe('session-lost')
     expect(controller.source.getSnapshot().error).toBeNull()
   })
-
   it('switches from a direct Bot Session to a persistent shared group transcript', async () => {
     const first = bot('bot-first-group', 'session-first-group')
     const second = bot('bot-second-group', 'session-second-group')
@@ -995,5 +994,33 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => {
       expect(controller.source.getSnapshot().selectedGroup?.messages.at(-1)?.text).toBe('Arrived during refresh.')
     })
+  })
+  it('binds memory management to the requested Bot id and preserves stable memory ids', async () => {
+    const persisted = bot('bot-memory-owner', 'bot-session-memory-owner')
+    const remote = remoteFixture([persisted])
+    const listMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memories: [{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }],
+    } }))
+    const updateMemory = vi.fn(async () => ({ ok: true as const, value: {
+      memory: { id: 'memory-one', text: 'Keep the review short.', createdAt: 2 },
+    } }))
+    const forgetMemory = vi.fn(async () => ({ ok: true as const, value: { removed: true as const } }))
+    remote.listMemory = listMemory
+    remote.updateMemory = updateMemory
+    remote.forgetMemory = forgetMemory
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+
+    const manager = controller.face().memoryManager
+    if (manager === undefined) throw new Error('memory manager was not mounted')
+    await expect(manager.list(String(persisted.id))).resolves.toEqual([{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }])
+    await expect(manager.update(String(persisted.id), 'memory-one', 'Keep the review short.')).resolves.toEqual({
+      id: 'memory-one', text: 'Keep the review short.', createdAt: 2,
+    })
+    await expect(manager.remove(String(persisted.id), 'memory-one')).resolves.toBeUndefined()
+
+    expect(listMemory).toHaveBeenCalledWith({ botId: persisted.id })
+    expect(updateMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one', text: 'Keep the review short.' })
+    expect(forgetMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one' })
   })
 })

@@ -28,6 +28,12 @@ import type {
   BotListRequest,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotMemoryForgetRequest,
+  BotMemoryForgetValue,
+  BotMemoryListRequest,
+  BotMemoryListValue,
+  BotMemoryUpdateRequest,
+  BotMemoryUpdateValue,
   BotView,
 } from '@yharness/bots/client'
 import type {
@@ -43,7 +49,7 @@ import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
-  BotGroupSummary, BotIdentity, BotOrganizationPatch,
+  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch,
 } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -60,6 +66,9 @@ export interface BotWorkspaceRemote {
   inspectGroup?: (request: BotGroupInspectRequest) => Promise<RemoteResult<BotGroupInspectValue>>
   sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<RemoteResult<BotGroupSendValue>>
 
+  listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
+  updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
+  forgetMemory?: (request: BotMemoryForgetRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -128,6 +137,7 @@ export interface BotWorkspaceFace {
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
+  readonly memoryManager?: BotMemoryManagerActions
   readonly retry: () => void
 }
 
@@ -375,6 +385,13 @@ export class BotWorkspaceController {
         || this.remote.uploadAvatar !== undefined
         || (this.avatarGeneration !== undefined && this.remote.updateAvatar !== undefined)
           ? { avatarEditor: this.avatarEditor() }
+          : {}
+      ),
+      ...(
+        this.remote.listMemory !== undefined
+        && this.remote.updateMemory !== undefined
+        && this.remote.forgetMemory !== undefined
+          ? { memoryManager: this.memoryManager() }
           : {}
       ),
       retry: () => {
@@ -1071,6 +1088,39 @@ export class BotWorkspaceController {
       bots: current.bots.map(bot => bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot),
       error: null,
     })
+  }
+
+  private memoryManager(): BotMemoryManagerActions {
+    const listMemory = this.remote.listMemory
+    const updateMemory = this.remote.updateMemory
+    const forgetMemory = this.remote.forgetMemory
+    if (listMemory === undefined || updateMemory === undefined || forgetMemory === undefined) {
+      throw new Error('Bot memory management is not mounted.')
+    }
+    return {
+      list: async (botId) => {
+        const result = await listMemory({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value.memories
+      },
+      update: async (botId, memoryId, text) => {
+        const result = await updateMemory({
+          botId: brandString<BotIdType>(botId),
+          memoryId,
+          text,
+        })
+        if (!result.ok) throw new Error(result.error.message)
+        if (result.value.memory.id !== memoryId) throw new Error(this.unexpectedResponse())
+        return result.value.memory
+      },
+      remove: async (botId, memoryId) => {
+        const result = await forgetMemory({
+          botId: brandString<BotIdType>(botId),
+          memoryId,
+        })
+        if (!result.ok) throw new Error(result.error.message)
+      },
+    }
   }
 
   private create(creation: BotCreation): Promise<void> {

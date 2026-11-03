@@ -353,6 +353,53 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('manages private memories through Bot-scoped remote methods and reloads the logical removal', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Remote memory owner', cwd: '/tmp' })
+    const other = await first.service.create({ name: 'Remote other owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId), String(other.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const memoryId = 'memory-remote'
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      const remembered = await (await h.service.collaborationFor(h.agents[0]!)).memory!.remember({
+        memoryId: BotMemoryId(memoryId), text: 'Only the owner can see this note.',
+      })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({
+        memories: [{ id: memoryId, text: remembered.text, createdAt: remembered.createdAt }],
+      })
+      await expect(h.service.listMemory({ botId: other.bot.id })).resolves.toEqual({ memories: [] })
+      await expect(h.service.updateMemory({ botId: owner.bot.id, memoryId, text: 'The owner changed this note.' })).resolves.toMatchObject({
+        memory: { id: memoryId, text: 'The owner changed this note.' },
+      })
+      await expect(h.service.forgetMemory({ botId: owner.bot.id, memoryId })).resolves.toEqual({ removed: true })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      await expect(h.service.forgetMemory({ botId: owner.bot.id, memoryId })).resolves.toEqual({ removed: true })
+      await expect(h.service.updateMemory({ botId: other.bot.id, memoryId, text: 'Wrong owner.' })).rejects.toMatchObject({ code: 'memory-not-found' })
+    } finally {
+      events = h.agents[0]?.session.snapshotEvents() ?? []
+      await close(h.ctx)
+    }
+
+    const reopened = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(owner.bot.sessionId), String(other.bot.sessionId)],
+      new Map([[String(owner.bot.sessionId), events]]),
+    )
+    try {
+      await expect(reopened.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      const events = reopened.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory') ?? []
+      expect(events.filter(event => event.type === 'bot/memory' && event.data.operation === 'forget')).toHaveLength(2)
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('rejects malformed required memory events instead of silently dropping them', async () => {
     const event = {
       type: 'bot/memory', seq: SessionSeq(0), time: 1,

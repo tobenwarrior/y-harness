@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotGroupDetailData, BotGroupSummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type { BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -139,6 +139,28 @@ describe('Bot roster and detail', () => {
 
     expect(screen.getByRole('region', { name: 'Research partner' })).toBeTruthy()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
+    expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('opens the selected bot memory manager from the detail header without adding a sidebar', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => []),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
+    expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
   })
 

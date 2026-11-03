@@ -82,6 +82,13 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotMemoryForgetRequest as BotMemoryForgetRemoteRequest,
+  BotMemoryForgetValue,
+  BotMemoryListRequest,
+  BotMemoryListValue,
+  BotMemoryUpdateRequest,
+  BotMemoryUpdateValue,
+  BotMemoryView,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
@@ -425,6 +432,10 @@ function groupTurnFailure(reason: TurnEndReason): string | undefined {
   }
 }
 
+function memoryView(memory: BotMemoryRecord): BotMemoryView {
+  return { id: String(memory.id), text: memory.text, createdAt: memory.createdAt }
+}
+
 /** Replace legacy avatar selections without deleting their attachments. */
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
@@ -751,8 +762,8 @@ export class BotService extends TypertRemoteService {
     await this.ensureMemoryLoaded(record)
     return {
       remember: request => this.rememberMemory(sessionId, request),
-      list: signal => this.listMemory(sessionId, signal),
-      forget: request => this.forgetMemory(sessionId, request),
+      list: signal => this.listMemoryForSession(sessionId, signal),
+      forget: request => this.forgetMemoryForSession(sessionId, request),
     }
   }
 
@@ -892,7 +903,7 @@ export class BotService extends TypertRemoteService {
   }
 
   /** List the active durable memories for the Bot that owns `sessionId`. */
-  private async listMemory(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
+  private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
     await this.ensureMemoryLoaded(record, signal)
@@ -905,7 +916,7 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Delete one active durable memory for the Bot that owns `sessionId`. */
-  private async forgetMemory(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
+  private async forgetMemoryForSession(sessionId: SessionId, request: BotMemoryForgetRequest): Promise<void> {
     return this.serialize(async () => {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
@@ -1079,6 +1090,30 @@ export class BotService extends TypertRemoteService {
     })
   }
 
+  /** Replace one active memory while retaining its stable identity in the log. */
+  private async updateMemoryForSession(
+    sessionId: SessionId,
+    request: { readonly memoryId: BotMemoryId; readonly text: string },
+  ): Promise<BotMemoryRecord> {
+    return this.serialize(async () => {
+      const record = this.recordsBySession.get(String(sessionId))
+      if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+      const text = normalizeBotMemoryText(request.text)
+      await this.ensureMemoryLoaded(record)
+      await this.reconcilePendingMemory(sessionId)
+      this.throwIfMemoryCancelled()
+      const id = parseBotMemoryId(String(request.memoryId))
+      const memories = this.memoriesBySession.get(String(sessionId))
+      if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+      const current = memories.get(String(id))
+      if (current === undefined) throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
+      if (current.text === text) return current
+      await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'forget' })
+      const appended = await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+      return { id, text, createdAt: appended.time }
+    })
+  }
+
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
       const bots = (await this.getDomain()).table('bots')
@@ -1160,6 +1195,58 @@ export class BotService extends TypertRemoteService {
   @Remote('sendGroupMessage')
   async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue> {
     return (await this.getGroupService()).send(request)
+  }
+
+  /**
+   * List active memories for a Bot without accepting a model-supplied Session id.
+   * @param request - Durable Bot id whose private projection should be read.
+   * @returns active memory rows owned by that Bot.
+   */
+  @Remote('listMemory')
+  async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const record = bots.get(id)
+      if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const memories = await this.listMemoryForSession(record.sessionId)
+      return { memories: memories.map(memoryView) }
+    })
+  }
+
+  /**
+   * Replace one active memory for a Bot while preserving its stable id.
+   * @param request - Bot id, memory id, and replacement text.
+   * @returns the updated memory row.
+   */
+  @Remote('updateMemory')
+  async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    const memory = await this.updateMemoryForSession(record.sessionId, { memoryId, text: request.text })
+    return { memory: memoryView(memory) }
+  }
+
+  /**
+   * Logically remove one active memory for a Bot.
+   * @param request - Bot id and memory id to remove.
+   * @returns a stable success marker after the forget event is durable.
+   */
+  @Remote('forgetMemory')
+  async forgetMemory(request: BotMemoryForgetRemoteRequest): Promise<BotMemoryForgetValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const memoryId = parseBotMemoryId(request.memoryId)
+    await this.forgetMemoryForSession(record.sessionId, { memoryId })
+    return { removed: true }
   }
 
   /**

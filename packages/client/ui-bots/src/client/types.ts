@@ -137,6 +137,26 @@ export interface BotCreation {
   readonly accent: BotAccent
 }
 
+/** One active memory row exposed by the selected Bot's private manager. */
+export interface BotMemorySummary {
+  /** Stable memory identity used for edits and logical removal. */
+  readonly id: string
+  /** User-authored reference text retained by this Bot. */
+  readonly text: string
+  /** Unix milliseconds when the current text was remembered. */
+  readonly createdAt: number
+}
+
+/** Bot-scoped memory management actions mounted by the Host. */
+export interface BotMemoryManagerActions {
+  /** Read the selected Bot's active private memories. */
+  readonly list: (botId: string) => Promise<readonly BotMemorySummary[]>
+  /** Replace one memory while retaining its stable identity. */
+  readonly update: (botId: string, memoryId: string, text: string) => Promise<BotMemorySummary>
+  /** Logically remove one memory from future Bot prompts. */
+  readonly remove: (botId: string, memoryId: string) => Promise<void>
+}
+
 /** Async avatar capabilities owned by the Client composition. */
 export interface BotAvatarEditorActions {
   /** Read whether the configured provider can generate an avatar now. */

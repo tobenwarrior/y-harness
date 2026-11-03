@@ -5,6 +5,7 @@ import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular,
+  IconContextInjectionOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
@@ -12,10 +13,11 @@ import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
+import { BotMemoryManager } from './BotMemoryManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
-  BotIdentity, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps,
+  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
@@ -781,19 +783,21 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, memoryManager, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
+  memoryManager?: BotMemoryManagerActions | undefined
   loading: boolean
 }) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
   const [renameError, setRenameError] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -827,6 +831,11 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
             <Tooltip label={t('renameBot')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('renameBot')} icon={<IconEditOutlineRegular size={14} />}
                 onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
+            </Tooltip>
+          )}
+          {memoryManager !== undefined && (
+            <Tooltip label={t('manageMemories')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('manageMemories')} icon={<IconContextInjectionOutlineRegular size={14} />} onClick={() => { setMemoryOpen(true) }} />
             </Tooltip>
           )}
           {onEditAvatar !== undefined && (
@@ -866,6 +875,16 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
           <Input id="yharness-bot-rename" data-modal-autofocus value={name} disabled={saving}
             onChange={(event) => { setName(event.currentTarget.value) }} /></div>
       </Modal>}
+      {memoryManager !== undefined && (
+        <BotMemoryManager
+          bot={bot}
+          actions={memoryManager}
+          loadAvatar={loadAvatar}
+          open={memoryOpen}
+          onClose={() => { setMemoryOpen(false) }}
+          t={t}
+        />
+      )}
     </section>
   )
 }
