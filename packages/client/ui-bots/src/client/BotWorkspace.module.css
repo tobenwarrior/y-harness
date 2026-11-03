@@ -749,8 +749,53 @@
   box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
 }
 
+.connectedAppsLoading,
+.connectedAppsEmpty {
+  padding: 18px 4px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.connectedAppsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.connectedAppRow {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.connectedAppIcon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--yh-radius-md);
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 16%, var(--yh-alias-bg-layer-2));
+  color: var(--yh-alias-label-primary);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
 .sharedBot span,
-.sharedConversationHeader div {
+.sharedConversationHeader div,
+.connectedAppCopy {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -763,6 +808,16 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectedAppCopy strong {
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -837,6 +892,24 @@
   min-width: 0;
   flex: 1;
 }
+.connectedAppCopy > span {
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectedAppCopy .connectedAppAllowed,
+.connectedAppCopy .connectedAppBlocked {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.connectedAppAllowed { color: var(--yh-alias-state-success-primary) !important; }
+.connectedAppBlocked { color: var(--yh-alias-label-tertiary) !important; }
 
 .dialogField:first-child {
   margin-top: 0;

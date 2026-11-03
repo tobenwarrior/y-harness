@@ -6,6 +6,9 @@ import type {
   BotAppearanceUpdateValue,
   BotAvatar,
   BotAvatarUpdateValue,
+  BotConnectedAppAccessRequest,
+  BotConnectedAppAccessValue,
+  BotConnectedAppsValue,
   BotCreateRequest,
   BotId as BotIdType,
   BotListRequest,
@@ -33,7 +36,7 @@ import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
-import type { BotAccent, BotAvatarEditorActions, BotCreation, BotIdentity, BotOrganizationPatch } from './types.ts'
+import type { BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotOrganizationPatch } from './types.ts'
 import type { SharedBotsClient } from './shared-client.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -51,6 +54,8 @@ export interface BotWorkspaceRemote {
   revokeShareMember?: (request: BotShareMemberRevokeRequest) => Promise<RemoteResult<BotShareMemberRevokeValue>>
   getShareMemoryPolicy?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
   setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+  listConnectedApps?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotConnectedAppsValue>>
+  setConnectedAppAccess?: (request: BotConnectedAppAccessRequest) => Promise<RemoteResult<BotConnectedAppAccessValue>>
 }
 
 /** Owner-facing shared-Bot roster and invite actions. */
@@ -90,6 +95,8 @@ export interface BotWorkspaceFace {
   readonly create: (creation: BotCreation) => Promise<void>
   readonly rename: (id: string, name: string) => Promise<void>
   readonly organize?: (id: string, patch: BotOrganizationPatch) => Promise<void>
+  readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
+  readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly retry: () => void
@@ -166,6 +173,12 @@ export class BotWorkspaceController {
       ...(this.remote.updateOrganization === undefined
         ? {}
         : { organize: (id: string, patch: BotOrganizationPatch) => this.organize(id, patch) }),
+      ...(this.remote.listConnectedApps === undefined
+        ? {}
+        : { loadConnectedApps: (id: string) => this.loadConnectedApps(id) }),
+      ...(this.remote.setConnectedAppAccess === undefined
+        ? {}
+        : { setConnectedAppAccess: (id: string, appId: string, allowed: boolean) => this.setConnectedAppAccess(id, appId, allowed) }),
       loadAvatar: (botId, avatar) => this.loadAvatar(botId, avatar),
       ...(
         this.remote.updateAppearance !== undefined
@@ -538,6 +551,30 @@ export class BotWorkspaceController {
         },
       }),
     }
+  }
+
+  private async loadConnectedApps(id: string): Promise<readonly BotConnectedAppAccess[]> {
+    const listConnectedApps = this.remote.listConnectedApps
+    if (listConnectedApps === undefined) return []
+    const result = await listConnectedApps({ botId: brandString<BotIdType>(id) })
+    if (!result.ok) throw new Error(result.error.message)
+    if (String(result.value.bot.id) !== id) throw new Error(this.unexpectedResponse())
+    return result.value.apps
+  }
+
+  private async setConnectedAppAccess(id: string, appId: string, allowed: boolean): Promise<void> {
+    const setConnectedAppAccess = this.remote.setConnectedAppAccess
+    if (setConnectedAppAccess === undefined) return
+    const result = await setConnectedAppAccess({ botId: brandString<BotIdType>(id), appId, allowed })
+    if (!result.ok) throw new Error(result.error.message)
+    if (String(result.value.bot.id) !== id) throw new Error(this.unexpectedResponse())
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    this.source.set({
+      ...current,
+      bots: current.bots.map(bot => bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot),
+      error: null,
+    })
   }
 
   private create(creation: BotCreation): Promise<void> {

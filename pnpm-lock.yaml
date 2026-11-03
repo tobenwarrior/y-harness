@@ -1182,6 +1182,9 @@ importers:
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@yharness/mcp-resources':
+        specifier: workspace:*
+        version: link:../../mcp/mcp-resources
       '@yharness/scope':
         specifier: workspace:*
         version: link:../../core/scope

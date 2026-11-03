@@ -12,8 +12,16 @@ import {
   type HostConnectionHandle,
 } from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
+import type {
+  PreToolDecision,
+  ToolDispatchDecision,
+  ToolDispatchExecution,
+  ToolExecution,
+  ToolFailure,
+} from '@yharness/tools'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
+import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
 import { SessionId } from '@yharness/session'
@@ -46,9 +54,15 @@ import type {
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
+import type { BotConnectedAppToolHost } from './scoped-tools.ts'
 import type {
   BotAvailability,
   BotAccent,
+  BotConnectedAppAccess,
+  BotConnectedAppAccessRequest,
+  BotConnectedAppAccessValue,
+  BotConnectedAppsRequest,
+  BotConnectedAppsValue,
   BotAppearanceUpdateRequest,
   BotAppearanceUpdateValue,
   BotAvatarUpdateRequest,
@@ -369,6 +383,34 @@ function normalizeOptionalBoolean(label: string, value: boolean | undefined): bo
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') return badRequest(`${label} must be a boolean`)
   return value
+}
+
+function normalizeConnectedAppId(value: unknown): string {
+  if (typeof value !== 'string') return badRequest('Connected-app id must be a string')
+  return value
+}
+
+function connectedAppName(id: string): string {
+  const wellKnown: Readonly<Record<string, string>> = {
+    github: 'GitHub',
+    gitlab: 'GitLab',
+    google_drive: 'Google Drive',
+    google_calendar: 'Google Calendar',
+    microsoft_teams: 'Microsoft Teams',
+    linear: 'Linear',
+    notion: 'Notion',
+    slack: 'Slack',
+  }
+  const known = wellKnown[id.toLocaleLowerCase()]
+  if (known !== undefined) return known
+  return id.split(/[-_]+/u).filter(Boolean)
+    .map(part => part.slice(0, 1).toLocaleUpperCase() + part.slice(1)).join(' ')
+}
+
+/** Read the explicitly named MCP server from a shared resource tool call. */
+function resourceServerArgument(args: unknown): string | undefined {
+  if (typeof args !== 'object' || args === null || !('server' in args)) return undefined
+  return typeof args.server === 'string' ? args.server : undefined
 }
 
 function normalizeOrganizationGroup(value: BotOrganizationUpdateRequest['group']): string | undefined {
@@ -1449,6 +1491,159 @@ export class BotService extends TypertRemoteService {
     })
   }
 
+  /**
+   * Build the connected-app catalog from server-qualified MCP tools visible to
+   * the Host and its live Bot scopes, retaining ids already present in a Bot's
+   * durable policy even while their connection is temporarily offline.
+   * @param record - Bot whose policy should be projected.
+   * @returns app access rows in stable display order.
+   */
+  private connectedAppsFor(record: BotRecord): readonly BotConnectedAppAccess[] {
+    const names = new Map<string, string>()
+    const addSchemas = (schemas: readonly { readonly name: string }[], agent?: Agent): void => {
+      for (const schema of schemas) {
+        const source = this.ctx.tools.get(schema.name, agent)?.source
+        const id = source?.kind === 'mcp' ? source.serverName : undefined
+        if (id !== undefined && !names.has(id)) names.set(id, connectedAppName(id))
+      }
+    }
+    addSchemas(this.ctx.tools.schemas())
+    const agent = this.ctx.agents.get(record.sessionId)
+    if (agent !== undefined) addSchemas(this.ctx.tools.schemas(agent), agent)
+    const resources = this.ctx.get('mcpResources')
+    for (const id of resources?.servers(agent) ?? []) {
+      if (!names.has(id)) names.set(id, connectedAppName(id))
+    }
+    for (const id of record.connectedAppIds ?? []) {
+      if (!names.has(id)) names.set(id, connectedAppName(id))
+    }
+    for (const id of record.connectedAppDenyIds ?? []) {
+      if (!names.has(id)) names.set(id, connectedAppName(id))
+    }
+    const allowed = record.connectedAppIds
+    const denied = record.connectedAppDenyIds ?? []
+    return [...names.entries()].sort(([first], [second]) => first.localeCompare(second)).map(([id, name]) => ({
+      id,
+      name,
+      allowed: allowed === undefined ? !denied.includes(id) : allowed.includes(id),
+    }))
+  }
+
+  /** Build a structured denial for one Bot's external MCP tool call. */
+  private connectedAppDenial(
+    agent: Pick<Agent, 'id'>,
+    exec: Readonly<ToolExecution | ToolDispatchExecution>,
+  ): Extract<PreToolDecision, { kind: 'deny' }> | undefined {
+    const source = this.ctx.tools.get(exec.name, agent)?.source
+    const appId = source?.kind === 'mcp'
+      ? source.serverName
+      : source?.kind === 'mcp-resource'
+        ? resourceServerArgument(exec.arguments)
+        : undefined
+    if (appId === undefined) return undefined
+    const record = this.recordsBySession.get(String(agent.id))
+    if (record === undefined) return undefined
+    const allowed = record.connectedAppIds === undefined
+      ? !record.connectedAppDenyIds?.includes(appId)
+      : record.connectedAppIds.includes(appId)
+    if (allowed) return undefined
+    const name = connectedAppName(appId)
+    const reason = `Bot "${record.name}" does not have access to MCP app "${name}". Grant access in Bot settings before using ${exec.name}.`
+    return {
+      kind: 'deny',
+      reason,
+      info: { name: 'BotConnectedAppAccessError', code: 'BOT_APP_ACCESS_REQUIRED', reason },
+    }
+  }
+
+  /** Check one Bot's external MCP tool call before approval is requested. */
+  private checkConnectedApp(
+    agent: Pick<Agent, 'id'>,
+    exec: ToolExecution,
+  ): PreToolDecision {
+    return this.connectedAppDenial(agent, exec) ?? { kind: 'allow' }
+  }
+
+  /** Recheck one Bot's MCP app policy immediately before tool dispatch. */
+  private connectedAppGuard(agent: Pick<Agent, 'id'>, exec: Readonly<ToolExecution>): ToolFailure | undefined {
+    const denial = this.connectedAppDenial(agent, exec)
+    return denial === undefined
+      ? undefined
+      : {
+        message: denial.reason,
+        ...(denial.info === undefined ? {} : { info: denial.info }),
+      }
+  }
+
+  /** Recheck one MCP app grant at the final tool-body boundary. */
+  private connectedAppBeforeDispatch(
+    agent: Pick<Agent, 'id'>,
+    exec: Readonly<ToolDispatchExecution>,
+  ): ToolDispatchDecision {
+    const denial = this.connectedAppDenial(agent, exec)
+    return denial === undefined
+      ? { kind: 'allow' }
+      : { kind: 'deny', reason: denial.reason, ...(denial.info === undefined ? {} : { info: denial.info }) }
+  }
+
+  /**
+   * Read the available connected apps and one Bot's current grants.
+   * @param request - Bot id whose connected-app policy should be projected.
+   * @returns The Bot view and stable connected-app access rows.
+   */
+  @Remote('listConnectedApps')
+  async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const current = bots.get(id)
+    if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    return { bot: this.view(current), apps: this.connectedAppsFor(current) }
+  }
+
+  /**
+   * Persist one Bot's grant or revoke for a connected app.
+   * @param request - Bot id, connected-app id, and desired access state.
+   * @returns The updated Bot view and connected-app access row.
+   */
+  @Remote('setConnectedAppAccess')
+  async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const appId = normalizeConnectedAppId(request.appId)
+      if (typeof request.allowed !== 'boolean') return badRequest('Connected-app allowed must be a boolean')
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(id)
+      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const app = this.connectedAppsFor(current).find(candidate => candidate.id === appId)
+      if (app === undefined) {
+        throw new RemoteError('bot/app-not-found', `Connected app "${appId}" is not available`, { botId: id, appId })
+      }
+      const next: BotRecord = current.connectedAppIds === undefined
+        ? {
+          ...current,
+          connectedAppDenyIds: request.allowed
+            ? (current.connectedAppDenyIds ?? []).filter(candidate => candidate !== appId)
+            : [...new Set([...(current.connectedAppDenyIds ?? []), appId])],
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+        : {
+          ...current,
+          connectedAppIds: request.allowed
+            ? [...new Set([...current.connectedAppIds, appId])]
+            : current.connectedAppIds.filter(candidate => candidate !== appId),
+          updatedAt: Math.max(Date.now(), current.updatedAt),
+        }
+      await bots.put(id, next)
+      this.recordsBySession.set(String(next.sessionId), next)
+      const committed = this.connectedAppsFor(next).find(candidate => candidate.id === appId)
+      if (committed === undefined) throw new Error('Connected-app policy disappeared during commit')
+      this.emitChanged()
+      return { bot: this.view(next), app: committed }
+    })
+  }
+
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
     return this.serialize(async () => {
       const next = await this.commitBotMutation(botId, current => ({
@@ -1541,6 +1736,7 @@ export class BotService extends TypertRemoteService {
         ...(normalized.description === undefined ? {} : { description: normalized.description }),
         identity: normalized.identity,
         accent: normalized.accent,
+        connectedAppIds: [],
         pinned: false,
         hidden: false,
         cwd: normalized.cwd,
@@ -1866,7 +2062,16 @@ export class BotService extends TypertRemoteService {
           // Memory text is data, not a template.
           interpolate: false,
         })
-        installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots)
+        const connectedApps: BotConnectedAppToolHost = {
+          list: () => {
+            const current = this.recordsBySession.get(String(agent.id))
+            return Promise.resolve(current === undefined ? [] : this.connectedAppsFor(current))
+          },
+          check: exec => this.checkConnectedApp(agent, exec),
+          guard: exec => this.connectedAppGuard(agent, exec),
+          beforeDispatch: exec => this.connectedAppBeforeDispatch(agent, exec),
+        }
+        installBotCollaborationTools(scope, () => this.collaborationFor(agent), this.manageBots, connectedApps)
       }
     })
     this.promptFibers.set(agent, fiber)

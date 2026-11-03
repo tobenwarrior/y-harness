@@ -587,6 +587,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'collaboration operations attributed to that Bot.',
       },
       {
+        signature: '@Remote(\'listConnectedApps\') async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue>',
+        description: 'Read the available connected apps and one Bot\'s current grants.',
+        parameters: [{ name: 'request', description: 'Bot id whose connected-app policy should be projected.' }],
+        returns: 'The Bot view and stable connected-app access rows.',
+      },
+      {
+        signature: '@Remote(\'setConnectedAppAccess\') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>',
+        description: 'Persist one Bot\'s grant or revoke for a connected app.',
+        parameters: [{ name: 'request', description: 'Bot id, connected-app id, and desired access state.' }],
+        returns: 'The updated Bot view and connected-app access row.',
+      },
+      {
         signature: '@Remote(\'list\') async list(request: BotListRequest): Promise<BotListValue>',
         description: 'List the durable Bot roster without activating cold Sessions.',
         parameters: [{ name: 'request', description: 'Optional hidden-row inclusion for the restore surface.' }],
@@ -1793,8 +1805,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'register(server: string, provider: McpResourceProvider): () => void',
         description: 'Register one server and expose resource tools while that scope has providers.',
-        parameters: [{ name: 'server', description: 'configured server name, unique in this scope.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
+        parameters: [{ name: 'server', description: 'exact opaque server id, unique in this scope; empty and long ids are preserved.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
         returns: 'the effect disposer for this exact registration.',
+      },
+      {
+        signature: 'servers(scope?: ScopeKey): readonly string[]',
+        description: 'List resource servers visible from one caller scope.',
+        parameters: [{ name: 'scope', description: 'the viewing Agent scope, or undefined for global access.' }],
+        returns: 'visible configured server names in registration order.',
       },
     ],
   },
@@ -3871,8 +3889,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'guard(guard: ToolGuard): () => void',
-        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
-        parameters: [{ name: 'guard', description: 'synchronous check; a returned string denies the execution.' }],
+        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason or structured failure, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
+        parameters: [{ name: 'guard', description: 'synchronous check; a returned string or failure detail denies the execution.' }],
+        returns: 'the exact disposer that unregisters the guard.',
+      },
+      {
+        signature: 'beforeDispatch(guard: ToolDispatchGuard): () => void',
+        description: 'Register a synchronous last-mile guard immediately before a tool body. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that Agent. This stage runs after every `tools/execute` waterfall has settled, so revoking a capability while an async wrapper is waiting cannot allow the body to start. Returning a denial preserves its structured error metadata in the tool result. The exact disposer is returned for ordered ownership and HMR cleanup.',
+        parameters: [{ name: 'guard', description: 'synchronous allow/deny check for the final dispatch.' }],
         returns: 'the exact disposer that unregisters the guard.',
       },
       {
@@ -5428,6 +5452,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n}',
   },
   {
+    name: 'BotConnectedAppAccessRequest',
+    declaration: 'export interface BotConnectedAppAccessRequest {\n    readonly botId: BotId;\n    readonly appId: string;\n    readonly allowed: boolean;\n}',
+  },
+  {
+    name: 'BotConnectedAppAccessValue',
+    declaration: 'export interface BotConnectedAppAccessValue {\n    readonly bot: BotView;\n    readonly app: BotConnectedAppAccess;\n}',
+  },
+  {
+    name: 'BotConnectedAppsRequest',
+    declaration: 'export interface BotConnectedAppsRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotConnectedAppsValue',
+    declaration: 'export interface BotConnectedAppsValue {\n    readonly bot: BotView;\n    readonly apps: readonly BotConnectedAppAccess[];\n}',
+  },
+  {
     name: 'BotCreateRequest',
     declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
   },
@@ -5485,7 +5525,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -6810,6 +6850,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'McpResourceRequest',
     declaration: 'export type McpResourceRequest = {\n    method: \'resources/list\' | \'resources/templates/list\';\n    cursor?: string;\n} | {\n    method: \'resources/read\';\n    uri: string;\n};',
+  },
+  {
+    name: 'McpResourceToolSource',
+    declaration: 'export interface McpResourceToolSource {\n    readonly kind: \'mcp-resource\';\n}',
   },
   {
     name: 'Message',
@@ -9165,11 +9209,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolDefinition',
-    declaration: 'export interface ToolDefinition extends ToolSchema {\n    readonly output: ToolOutputDefinition;\n    execute(args: unknown, exec: ToolRunContext): Promise<unknown>;\n    projectContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    timeoutMs?: number;\n    isConcurrencySafe?(args: unknown): boolean;\n    presentCall?(args: unknown): ToolCallView | undefined;\n    presentResult?(args: unknown, result: ToolResult): ToolResultView | undefined;\n}',
+    declaration: 'export interface ToolDefinition extends ToolSchema {\n    readonly source?: ToolSource | McpResourceToolSource;\n    readonly output: ToolOutputDefinition;\n    execute(args: unknown, exec: ToolRunContext): Promise<unknown>;\n    projectContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    timeoutMs?: number;\n    isConcurrencySafe?(args: unknown): boolean;\n    presentCall?(args: unknown): ToolCallView | undefined;\n    presentResult?(args: unknown, result: ToolResult): ToolResultView | undefined;\n}',
+  },
+  {
+    name: 'ToolDispatchDecision',
+    declaration: 'export type ToolDispatchDecision = {\n    readonly kind: \'allow\';\n} | {\n    readonly kind: \'deny\';\n    readonly reason: string;\n    readonly info?: ToolErrorInfo;\n};',
   },
   {
     name: 'ToolDispatchExecution',
     declaration: 'export interface ToolDispatchExecution extends Omit<ToolExecution, \'signal\'> {\n    signal: AbortSignal;\n}',
+  },
+  {
+    name: 'ToolDispatchGuard',
+    declaration: 'export type ToolDispatchGuard = (execution: Readonly<ToolDispatchExecution>) => ToolDispatchDecision;',
   },
   {
     name: 'ToolErrorInfo',
@@ -9209,7 +9261,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolGuard',
-    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined;',
+    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | ToolFailure | undefined;',
   },
   {
     name: 'ToolHistory',
@@ -9261,7 +9313,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    beforeDispatch(guard: ToolDispatchGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',
@@ -9270,6 +9322,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ToolSchema',
     declaration: 'export interface ToolSchema {\n    deferLoading?: true;\n    name: string;\n    description: string;\n    parameters: Record<string, unknown>;\n}',
+  },
+  {
+    name: 'ToolSource',
+    declaration: 'export interface ToolSource {\n    readonly kind: \'mcp\';\n    readonly serverName: string;\n}',
   },
   {
     name: 'ToolSpec',

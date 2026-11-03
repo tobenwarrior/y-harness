@@ -97,6 +97,20 @@ Host service that owns the durable roster and its Session mappings.
 collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
+ * Read the available connected apps and one Bot's current grants.
+ * @param request - Bot id whose connected-app policy should be projected.
+ * @returns The Bot view and stable connected-app access rows.
+ */
+@Remote('listConnectedApps') async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue>
+
+/**
+ * Persist one Bot's grant or revoke for a connected app.
+ * @param request - Bot id, connected-app id, and desired access state.
+ * @returns The updated Bot view and connected-app access row.
+ */
+@Remote('setConnectedAppAccess') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>
+
+/**
  * List the durable Bot roster without activating cold Sessions.
  * @param request - Optional hidden-row inclusion for the restore surface.
  * @returns visible rows by default, with pinned rows first and creation time as the stable tie-breaker.

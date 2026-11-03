@@ -40,6 +40,8 @@ The client is a per-server connection plugin and a consumer of the harness tool 
 
 `mcp-resources` owns the shared resource tools and selects providers in the caller's scope. Each MCP client supplies resource operations through its own connection. The first provider in a scope enables the local shared tools, and removing the last removes them; inherited providers remain visible. The service owns these tool registrations independently of any one client. Connection failures do not remove shared resource tools while a visible client entry remains active.
 
+Resource-provider registration preserves exact opaque server ids, including empty, long, and punctuation-bearing values. Durable Bot connected-app policy stores up to 128 exact ids in each allow or deny list; registration and policy updates do not trim or normalize ids.
+
 Configured `serverName` identifies a server in its registration scope. Two entries in that scope cannot reserve the same name; separate Agent scopes can reuse it. Public tool names include the configured server name, so equally named tools from different servers remain distinct. Registration effects own names and discovered tools; plugin disposal closes the connection and removes its contributions.
 
 The [native Cua Driver provider](../../packages/experimental/computer-use-cua-driver-native/README.md) shares the client's exported result adapter without opening an MCP connection. Desktop provider selection belongs to the [computer-use subsystem](computer-use.md).
@@ -126,12 +128,21 @@ Scoped resource access plus three tools shared by configured MCP servers.
 ```ts cordis-catalog
 /**
  * Register one server and expose resource tools while that scope has providers.
- * @param server - configured server name, unique in this scope.
+ * @param server - exact opaque server id, unique in this scope; empty and long ids are preserved.
  * @param provider - connection-owned resource operations.
  * @returns the effect disposer for this exact registration.
  */
 register(server: string, provider: McpResourceProvider): () => void
+
+/**
+ * List resource servers visible from one caller scope.
+ * @param scope - the viewing Agent scope, or undefined for global access.
+ * @returns visible configured server names in registration order.
+ */
+servers(scope?: ScopeKey): readonly string[]
 ```
+
+Types: [ScopeKey](scope.md)
 
 Source: [`packages/mcp/mcp-resources/src/index.ts`](../../packages/mcp/mcp-resources/src/index.ts)
 <!-- END GENERATED cordis-surface -->

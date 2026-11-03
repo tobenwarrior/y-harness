@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconArchiveOffOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconShareOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
-  IconUnarchiveOutlineRegular, Input, Menu, Modal, StateDot, Tag, Tooltip,
+  IconUnarchiveOutlineRegular, Input, Menu, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
@@ -17,11 +17,27 @@ import css from './BotWorkspace.module.css'
 import type { BotShareActions } from './controller.ts'
 import type { SharedBotsClient } from './shared-client.ts'
 import type { BotAccent, BotIdentity, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
+import type { BotConnectedAppAccess } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   children?: ReactNode
   share?: BotShareActions
   sharedClient?: SharedBotsClient
+}
+
+function connectedAppName(app: BotConnectedAppAccess, t: BotWorkspaceViewProps['t']): string {
+  const name = app.name.trim()
+  return name !== '' && name !== '-' ? name : t('connectedAppFallbackName', { id: app.id })
+}
+
+function connectedAppMonogram(name: string): string {
+  const words = name.trim().split(/\s+/u).filter(Boolean)
+  if (words.length > 1) return words.slice(0, 2).map(word => word.slice(0, 1)).join('').toLocaleUpperCase()
+  return name.trim().slice(0, 2).toLocaleUpperCase()
+}
+
+function connectedAppMark(app: BotConnectedAppAccess, name: string): ReactNode {
+  return connectedAppGlyph({ appId: app.id, size: 16 }) ?? connectedAppMonogram(name)
 }
 
 /** Sidebar geometry passed to the roster when it occupies the shared app rail. */
@@ -424,6 +440,135 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
   )
 }
 
+function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
+  bot: BotSummary | undefined
+  open: boolean
+  onClose: () => void
+  onLoad: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
+  onSet: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  t: BotWorkspaceViewProps['t']
+}) {
+  type ConnectedAppCatalog = {
+    readonly botId: string
+    readonly requestId: number
+    readonly apps: readonly BotConnectedAppAccess[]
+    readonly error: string | null
+  }
+  type ConnectedAppSave = {
+    readonly botId: string
+    readonly requestId: number
+    readonly appId: string
+  }
+  const [catalog, setCatalog] = useState<ConnectedAppCatalog | undefined>()
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState<ConnectedAppSave | null>(null)
+  const requestSequence = useRef(0)
+  const botId = bot?.id
+  useEffect(() => {
+    if (!open || botId === undefined) {
+      setCatalog(undefined)
+      setLoading(false)
+      setSaving(null)
+      return
+    }
+    const requestId = requestSequence.current + 1
+    requestSequence.current = requestId
+    let active = true
+    setCatalog({ botId, requestId, apps: [], error: null })
+    setLoading(true)
+    setSaving(null)
+    void onLoad(botId).then((next) => {
+      if (active) setCatalog({ botId, requestId, apps: next, error: null })
+    }).catch((cause: unknown) => {
+      if (active) setCatalog({
+        botId,
+        requestId,
+        apps: [],
+        error: cause instanceof Error ? cause.message : t('connectedAppsLoadFailed'),
+      })
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [botId, open])
+  if (bot === undefined) return null
+  const currentCatalog = catalog?.botId === bot.id ? catalog : undefined
+  const apps = currentCatalog?.apps ?? []
+  const error = currentCatalog?.error ?? null
+  const loadingCurrentCatalog = loading || (open && currentCatalog === undefined)
+  const savingAppId = saving?.botId === bot.id ? saving.appId : null
+  const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
+    if (savingAppId !== null || currentCatalog === undefined) return
+    const allowed = !app.allowed
+    const request = { botId: bot.id, requestId: currentCatalog.requestId, appId: app.id }
+    setSaving(request)
+    setCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+      ? { ...current, error: null }
+      : current)
+    try {
+      await onSet(request.botId, request.appId, allowed)
+      setCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+        ? {
+          ...current,
+          apps: current.apps.map(candidate => candidate.id === request.appId ? { ...candidate, allowed } : candidate),
+        }
+        : current)
+    } catch (cause: unknown) {
+      setCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+        ? { ...current, error: cause instanceof Error ? cause.message : t('connectedAppsSaveFailed') }
+        : current)
+    } finally {
+      setSaving(current => current?.botId === request.botId && current.requestId === request.requestId && current.appId === request.appId
+        ? null
+        : current)
+    }
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('connectedAppsTitle')}
+      description={t('connectedAppsDescription', { name: bot.name })}
+      closeLabel={t('cancel')}
+      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      {loadingCurrentCatalog && <div className={css.connectedAppsLoading} role="status">{t('connectedAppsLoading')}</div>}
+      {!loadingCurrentCatalog && error === null && apps.length === 0 && <div className={css.connectedAppsEmpty}>{t('connectedAppsEmpty')}</div>}
+      {!loadingCurrentCatalog && apps.length > 0 && (
+        <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
+          {apps.map((app) => {
+            const name = connectedAppName(app, t)
+            return (
+              <div className={css.connectedAppRow} key={app.id} role="listitem">
+                <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
+                <span className={css.connectedAppCopy}>
+                  <strong>{name}</strong>
+                  <span>{app.description ?? t('connectedAppDescription', { name })}</span>
+                  <span className={app.allowed ? css.connectedAppAllowed : css.connectedAppBlocked}>
+                    {app.allowed ? t('connectedAppAllowed') : t('connectedAppBlocked')}
+                  </span>
+                </span>
+                <Button
+                  variant={app.allowed ? 'ghost' : 'outline'}
+                  size="sm"
+                  disabled={savingAppId !== null}
+                  aria-pressed={app.allowed}
+                  aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
+                  icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
+                  onClick={() => { void toggle(app) }}
+                >
+                  {app.allowed ? t('allowed') : t('grant')}
+                </Button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 /**
  * Render only the bot roster for the shared application sidebar.
  *
@@ -434,13 +579,21 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
  */
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
-  onOrganizeBot, onRetry, loadAvatar, avatarEditor, sharedClient, error = null, loading = false, wide = true, expandSidebar, t,
+  onOrganizeBot, onRetry, loadAvatar, avatarEditor, sharedClient,
+  onLoadConnectedApps,
+  onSetConnectedAppAccess,
+  error = null,
+  loading = false,
+  wide = true,
+  expandSidebar,
+  t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
+  const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
@@ -467,6 +620,14 @@ export function BotRoster({
   const openAvatarEditor = (): void => {
     if (!wide) expandSidebar?.()
     setAvatarEditorOpen(true)
+  }
+  const openConnectedApps = (): void => {
+    if (selectedBot === undefined || onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
+      onConnectApps?.()
+      return
+    }
+    if (!wide) expandSidebar?.()
+    setConnectedAppsOpen(true)
   }
 
   return (
@@ -555,7 +716,7 @@ export function BotRoster({
                 <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconSidebarBotsOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconSidebarBotAddOutlineRegular size={14} />}>{t('newBot')}</Button></div>
               )}
             </div>
-            {onConnectApps !== undefined && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={onConnectApps}>{t('connectApps')}</Button></div>}
+            {(onConnectApps !== undefined || (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && selectedBot !== undefined)) && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={openConnectedApps}>{t('connectApps')}</Button></div>}
           </>
         )
         : (
@@ -615,6 +776,16 @@ export function BotRoster({
       )}
       {sharedClient !== undefined && (
         <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} onClose={() => { setSharedBotsOpen(false) }} t={t} />
+      )}
+      {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
+        <ConnectedAppsDialog
+          bot={selectedBot}
+          open={connectedAppsOpen}
+          onClose={() => { setConnectedAppsOpen(false) }}
+          onLoad={onLoadConnectedApps}
+          onSet={onSetConnectedAppAccess}
+          t={t}
+        />
       )}
     </aside>
   )

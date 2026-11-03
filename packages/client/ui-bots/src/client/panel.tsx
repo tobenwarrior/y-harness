@@ -66,6 +66,8 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, create, organize, retry,
   loadAvatar, avatarEditor, share, sharedClient, t,
+  loadConnectedApps,
+  setConnectedAppAccess,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -77,6 +79,8 @@ export function BotsRoster({
       onSelectBot={select}
       onCreateBot={create}
       onOrganizeBot={organize}
+      onLoadConnectedApps={loadConnectedApps}
+      onSetConnectedAppAccess={setConnectedAppAccess}
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}
