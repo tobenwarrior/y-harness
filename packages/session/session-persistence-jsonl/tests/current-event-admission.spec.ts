@@ -1,5 +1,6 @@
 import { Context } from '@yharness/cordis'
 import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from '@yharness/session'
+import { SessionFormatUnsupportedError } from '@yharness/session-persistence'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -49,7 +50,8 @@ describe('current event admission at EOF', () => {
   it.each([{ surfaceOp: 'append' }, { sourceEventSeqs: [] }])('refuses unknown required metadata %j without truncating a provider append', async (metadata) => {
     const event = { type: 'future/required', seq: 0, time: 1, data: {}, ...metadata }
     const bytes = Buffer.from([header, event].map(row => JSON.stringify(row)).join('\n') + '\n')
-    expect(scanLog(bytes)).toMatchObject({ events: [event], committedBytes: bytes.length })
+    expect(() => scanLog(bytes)).toThrow('format v5 contains unknown event type')
+    expect(() => scanLog(bytes)).toThrow(SessionFormatUnsupportedError)
     const path = await store(bytes)
     const sourceStat = await stat(path)
     for (const access of ['read', 'write'] as const) {
@@ -62,7 +64,7 @@ describe('current event admission at EOF', () => {
           await handle.close()
         }
       }
-      await expect(operation()).rejects.toThrow('unknown to this harness and not marked ignorable')
+      await expect(operation()).rejects.toThrow('format v5 contains unknown event type')
       expect(await readFile(path)).toEqual(bytes)
       expect(await stat(path)).toMatchObject({ dev: sourceStat.dev, ino: sourceStat.ino })
     }

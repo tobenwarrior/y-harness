@@ -7,7 +7,17 @@ import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
 import type { BotRecord } from './types.ts'
+import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 import { BOT_SHARE_ROLES, BotPrincipalId } from './sharing.ts'
+
+/** Durable marker for a memory edit that was interrupted before its log write completed. */
+export type BotStoredRecord = BotRecord & {
+  /** Memory identity being recovered on the next Bot service startup. */
+  readonly pendingMemoryUpdate?: {
+    readonly memoryId: string
+    readonly text: string
+  } | undefined
+}
 
 /** Durable image reference admitted by the attachment store. */
 export const imageAttachmentRefSchema = z.object({
@@ -46,6 +56,11 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
   message: 'Text values must be trimmed',
 })
 
+const pendingMemoryUpdateSchema = z.object({
+  memoryId: z.string().regex(/^memory-[A-Za-z0-9][A-Za-z0-9-]*$/).max(256),
+  text: boundedText(BOT_MEMORY_TEXT_LIMIT),
+}).strict()
+
 /** Stored Bot row; malformed authoritative records reject domain opening. */
 export const botRecordSchema = z.object({
   id: botIdSchema,
@@ -79,11 +94,12 @@ export const botRecordSchema = z.object({
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
+  pendingMemoryUpdate: pendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {
   message: 'Bot and Session identities must remain distinct',
-})
+}).transform((record): BotStoredRecord => record)
 
 /** Durable marker for the one-time switch from image avatars to animated characters. */
 export const botAppearanceMigrationSchema = z.object({
@@ -104,7 +120,7 @@ export const botDomain = defineDomain({
     initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
   },
   tables: {
-    bots: domainTable<BotRecord['id'], BotRecord>(botRecordSchema),
+    bots: domainTable<BotRecord['id'], BotStoredRecord>(botRecordSchema),
   },
 })
 
@@ -223,9 +239,6 @@ export const sharedBotDomain = defineDomain({
     private_sessions: domainTable<string, z.infer<typeof sharedPrivateSessionSchema>>(sharedPrivateSessionSchema),
   },
 })
-
-/** Parsed durable Bot row returned by the storage-domain schema. */
-export type BotStoredRecord = z.infer<typeof botRecordSchema>
 
 /** Parsed durable shared membership row. */
 export type SharedMembershipRecord = z.infer<typeof sharedMembershipSchema>

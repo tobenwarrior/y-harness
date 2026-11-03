@@ -31,7 +31,7 @@ const prefix: readonly SessionFormatJsonObject[] = [
   { type: 'user/message', data: question, surfaceOp: 'append' },
   { type: 'request/header', data: { header: { config, system: 'Inspect the durable audit.' }, reason: 'initial' } },
 ]
-/** Released V3 files still carry plugin attribution; current V4 files are producer-owned. */
+/** Released V3 files still carry plugin attribution; V4 predecessor files are producer-owned. */
 const releasedPrefix: readonly SessionFormatJsonObject[] = [
   ...prefix.slice(0, 2),
   { type: 'system/message', surfaceOp: 'append', data: {
@@ -318,7 +318,20 @@ describe.each(modes)('EOF migration refusal ($compression, $access)', ({ compres
     await expectOnlyGenerations([path])
   })
 
-  it.each([5, 99])('retains a V3 watermark claiming V%s unchanged through native reopening', async (sessionFormatVersion) => {
+  it('refuses a V3 watermark claiming V5 without publishing a successor', async () => {
+    const marker = { type: 'session-log-deepseek/delivery-accepted', data: {
+      sessionId: id, throughSeq: 0, sessionFormatVersion: 5,
+    } }
+    const path = await store(3, compression, [...releasedPrefix, marker])
+    const original = await observe(path)
+    const ctx = await mount(compression)
+    await expectRefusal(ctx, access, path,
+      '@yharness/session-format-v4-to-v5 refuses this format v4 Session: format v4 delivery marker claims target format v5; source v3 artifact remains unchanged (raw log: ' + path + ')')
+    expect(await observe(path)).toEqual(original)
+    await expectOnlyGenerations([path])
+  })
+
+  it.each([6, 99])('retains a V3 watermark claiming V%s unchanged through native reopening', async (sessionFormatVersion) => {
     const marker = { type: 'session-log-deepseek/delivery-accepted', data: {
       sessionId: id, throughSeq: 0, sessionFormatVersion,
     } }

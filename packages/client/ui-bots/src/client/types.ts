@@ -4,6 +4,7 @@ import type {
   BotConnectedAppAccess as SharedBotConnectedAppAccess,
   BotIdentity as SharedBotIdentity,
 } from '@yharness/bots/client'
+import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
   AvatarGenerationRequest,
   AvatarGenerationCommitValue,
@@ -53,6 +54,7 @@ export interface BotSummary {
   readonly avatar?: SharedBotAvatar
 }
 
+
 /** Roster placement fields changed by the organization menu. */
 export interface BotOrganizationPatch {
   readonly pinned?: boolean
@@ -60,11 +62,99 @@ export interface BotOrganizationPatch {
   readonly group?: string | null
 }
 
+
+/** One existing Bot shown as a member of a shared group. */
+export interface BotGroupSummary {
+  /** Durable group identity. */
+  readonly id: string
+  /** Human-facing group name. */
+  readonly name: string
+  /** Existing Bots in their durable display order. */
+  readonly bots: readonly BotSummary[]
+}
+
+/** A group transcript row projected for the Bot workspace. */
+export interface BotGroupMessageSummary {
+  /** Durable transcript message identity. */
+  readonly id: string
+  /** Human or Bot author. */
+  readonly sender:
+    | { readonly kind: 'user' }
+    | { readonly kind: 'bot'; readonly botId: string; readonly name: string }
+  /** User-visible message text. */
+  readonly text: string
+  /** Exact Bot ids selected by mentions for this message, when it was targeted. */
+  readonly targetBotIds?: readonly string[]
+  /** Unix timestamp used for stable transcript ordering. */
+  readonly createdAt: number
+}
+
+/** Persisted per-recipient execution state projected into the group transcript. */
+export interface BotGroupDeliverySummary {
+  /** Source group message identity. */
+  readonly messageId: string
+  /** Recipient Bot identity. */
+  readonly botId: string
+  /** Durable delivery lifecycle. */
+  readonly status: SharedBotGroupDeliveryStatusView['status']
+  /** Safe failure description supplied by the Host after a failed turn. */
+  readonly error?: string
+}
+
+/** Selected shared group plus its durable transcript. */
+export interface BotGroupDetailData extends BotGroupSummary {
+  /** Chronological transcript rows. */
+  readonly messages: readonly BotGroupMessageSummary[]
+  /** Persisted per-recipient delivery state, when the Host supports it. */
+  readonly deliveries?: readonly BotGroupDeliverySummary[]
+}
+
+/** User choice passed to the owner when creating a shared group. */
+export interface BotGroupCreation {
+  /** Group name. */
+  readonly name: string
+  /** Two through six existing Bot ids. */
+  readonly botIds: readonly string[]
+  /** Optional explicit retry/new-operation identity. */
+  readonly groupId?: string
+
+}
+
+/** Group metadata and member selection submitted by the edit dialog. */
+export interface BotGroupUpdate {
+  /** Existing group identity. */
+  readonly groupId: string
+  /** New display name. */
+  readonly name: string
+  /** Complete member selection in display order. */
+  readonly botIds: readonly string[]
+}
+
 /** User choice passed to the owner when creating a bot. */
 export interface BotCreation {
   readonly name: string
   readonly identity: BotIdentity
   readonly accent: BotAccent
+}
+
+/** One active memory row exposed by the selected Bot's private manager. */
+export interface BotMemorySummary {
+  /** Stable memory identity used for edits and logical removal. */
+  readonly id: string
+  /** User-authored reference text retained by this Bot. */
+  readonly text: string
+  /** Unix milliseconds when the current text was remembered. */
+  readonly createdAt: number
+}
+
+/** Bot-scoped memory management actions mounted by the Host. */
+export interface BotMemoryManagerActions {
+  /** Read the selected Bot's active private memories. */
+  readonly list: (botId: string) => Promise<readonly BotMemorySummary[]>
+  /** Replace one memory while retaining its stable identity. */
+  readonly update: (botId: string, memoryId: string, text: string) => Promise<BotMemorySummary>
+  /** Logically remove one memory from future Bot prompts. */
+  readonly remove: (botId: string, memoryId: string) => Promise<void>
 }
 
 /** Async avatar capabilities owned by the Client composition. */
@@ -91,14 +181,30 @@ export interface BotAvatarEditorActions {
 export interface BotWorkspaceProps {
   /** Available bots in the owner's stable order. */
   readonly bots: readonly BotSummary[]
+  /** Durable shared groups shown below the Bot roster. */
+  readonly groups?: readonly BotGroupSummary[]
+  /** Selected shared group id, or null when a direct Bot is selected. */
+  readonly selectedGroupId?: string | null | undefined
+  /** Selected group loading or delivery failure, retained beside its transcript. */
+  readonly groupError?: string | null | undefined
   /** Selected bot id, or null when no bot is selected. */
   readonly selectedBotId: string | null
   /** Select a bot and let the owner open its persistent Session. */
   readonly onSelectBot: (id: string) => void
+  /** Select a shared group without creating another Bot Session. */
+  readonly onSelectGroup?: ((id: string) => void) | undefined
   /** Provision one Bot; rejects while the same request remains retryable. */
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
+
   /** Persist a Bot's pinned, hidden, or section placement. */
   readonly onOrganizeBot?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined
+
+  /** Create a shared group from existing Bot identities. */
+  readonly onCreateGroup?: ((creation: BotGroupCreation) => Promise<void>) | undefined
+
+  /** Rename a shared group or replace its members. */
+  readonly onUpdateGroup?: ((update: BotGroupUpdate) => Promise<void>) | undefined
+
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined
   /** Loads the connected-app catalog and current access policy for one Bot. */

@@ -1,13 +1,23 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
+import { SharedAccessAuthority } from '@yharness/client-connection'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
-import type { Agent } from '@yharness/agent'
+import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
+import AgentLoop from '@yharness/agent-loop'
 import { createScope } from '@yharness/scope'
-import { Session, SessionId, SessionSeq } from '@yharness/session'
+import LlmRuntime, { createUserMessage, freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
+import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
+import type { ContextFormed } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
-import { ToolCallId } from '@yharness/llm'
+import type { ToolSchema } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
+import type { Domain } from '@yharness/storage-domain'
+import * as StorageJson from '@yharness/storage-json'
 import type { StorageBackend } from '@yharness/storage'
 import { credentialKey, CredentialProvider } from '@yharness/credentials'
 import type {
@@ -26,18 +36,34 @@ import type { ToolDefinition } from '@yharness/tools'
 import McpResources from '@yharness/mcp-resources'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
+import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { registerServerContext } from '../../../mcp/mcp-client/src/server-context.ts'
 import BotService from '../src/index.ts'
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
+  botDomain,
   SHARED_BOT_AGENT_PRESET,
+  sharedBotDomain,
+  sharedPrivateSessionSchema,
   sharedBotSessionRequest,
   sharedBotWorkingDirectory,
 } from '../src/index.ts'
 import { BotMessageId } from '../src/collaboration.ts'
+import { BotPrincipalId } from '../src/sharing.ts'
+import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
+import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
 import { BotId } from '../src/types.ts'
+import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
+import z from 'zod'
+
+declare module '@yharness/llm' {
+  interface MessageSourceMap {
+    'runtime-context': { kind: 'runtime-context' } & ContextFormed
+    'time-context': { kind: 'time-context' } & ContextFormed
+  }
+}
 
 interface SharedProfileCredentialState {
   readonly records: Map<CredentialKey, CredentialRecord>
@@ -146,6 +172,15 @@ class SharedProfileCredentials extends CredentialProvider {
   }
 }
 
+interface HarnessOptions {
+  readonly connection?: object
+  readonly beforeService?: (ctx: Context) => void
+  readonly inspectSharedSessions?: boolean
+  readonly realAgent?: boolean
+  readonly realAgentInitialResponse?: 'hang' | 'text'
+  readonly initializeService?: boolean
+}
+
 async function harness(
   pool = new MemoryMediaPool(),
   create = vi.fn(async (request: { sessionId?: string }) => ({ sessionId: request.sessionId })),
@@ -155,12 +190,47 @@ async function harness(
   })),
   existingSessionIds: readonly string[] = [],
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
-  records = new Map<CredentialKey, CredentialRecord>(),
-  useCredentials = true,
-  toolMode: 'native' | 'ptc' | 'both' = 'native',
+  recordsOrSeeds: Map<CredentialKey, CredentialRecord> | ReadonlyMap<string, readonly SessionEvent[]> | boolean = new Map(),
+  useCredentialsOrResume: boolean | ReadonlyMap<string, readonly SessionEvent[]> = true,
+  toolModeOrResume: 'native' | 'ptc' | 'both' | boolean = 'native',
+  resumeColdSessions = false,
+  options: HarnessOptions = {},
 ) {
+  const isSessionSeedMap = (value: ReadonlyMap<unknown, unknown>): value is ReadonlyMap<string, readonly SessionEvent[]> => {
+    const first = value.values().next().value as unknown
+    return first !== undefined && Array.isArray(first)
+  }
+  const records = recordsOrSeeds instanceof Map && !isSessionSeedMap(recordsOrSeeds)
+    ? recordsOrSeeds
+    : new Map<CredentialKey, CredentialRecord>()
+  const sessionSeeds = recordsOrSeeds instanceof Map && isSessionSeedMap(recordsOrSeeds)
+    ? recordsOrSeeds
+    : useCredentialsOrResume instanceof Map && isSessionSeedMap(useCredentialsOrResume)
+      ? useCredentialsOrResume
+      : new Map<string, readonly SessionEvent[]>()
+  const useCredentials = recordsOrSeeds === true || recordsOrSeeds === false
+    ? true
+    : typeof useCredentialsOrResume === 'boolean' ? useCredentialsOrResume : true
+  const shouldResumeColdSessions = recordsOrSeeds === true
+    || typeof useCredentialsOrResume === 'boolean' && recordsOrSeeds instanceof Map && isSessionSeedMap(recordsOrSeeds) && useCredentialsOrResume
+    || typeof toolModeOrResume === 'boolean' && toolModeOrResume
+    || resumeColdSessions
+  const toolMode = typeof toolModeOrResume === 'boolean' ? 'native' : toolModeOrResume
   const ctx = new Context()
   await ctx.plugin(Storage)
+  if (options.realAgent) {
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(AgentLoop, { agents: [] })
+  }
+  const adapter = options.realAgent === true
+    ? new MockAdapter(options.realAgentInitialResponse === 'text'
+      ? [textResponse('validation should block this follow-up')]
+      : ['hang', textResponse('queued follow-up')])
+    : undefined
+  if (adapter !== undefined) ctx.llm.registerAdapter(['mock'], adapter)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime, { mode: toolMode })
   if (toolMode !== 'native') ctx.provide('ptcRuntime', { language: 'typescript' } as never)
@@ -177,15 +247,17 @@ async function harness(
       unmount()
     }
   })
-  const followups = existingSessionIds.map(() => vi.fn<(message: UserMessage) => void>())
-  const agents = existingSessionIds.map((sessionId, index) => {
-    const followup = followups[index]
-    if (followup === undefined) throw new Error('test followup was not created')
+  const followups: Array<ReturnType<typeof vi.fn<(message: UserMessage) => void>>> = []
+  const agents: Agent[] = []
+  const createAgent = (sessionId: string): Agent => {
+    const followup = vi.fn<(message: UserMessage) => void>()
+    followups.push(followup)
     const id = SessionId(sessionId)
+    const seed = sessionSeeds.get(sessionId)
     const agent: Agent = {
       id,
       options: {},
-      session: Session.create(id),
+      session: seed === undefined ? Session.create(id) : Session.create(id, seed),
       inbox: {
         nextTurn: [], nextStep: [], clear() {}, append() {}, prepend() {},
         replace() { return false }, remove() { return false }, splice() { return [] },
@@ -206,22 +278,41 @@ async function harness(
     }
     const scope = createScope(ctx, agent)
     Object.defineProperty(agent, 'ctx', { value: scope.ctx })
+    agents.push(agent)
     return agent
-  })
-  ctx.provide('agents', {
-    get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
-    list: () => [...agents],
-  } as never)
+  }
+  if (options.realAgent) {
+    for (const sessionId of existingSessionIds) {
+      agents.push(await ctx.agentLoop.create(SessionId(sessionId), { provider: 'mock', model: 'mock' }))
+    }
+  } else {
+    for (const sessionId of existingSessionIds) createAgent(sessionId)
+    ctx.provide('agents', {
+      get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
+      list: () => [...agents],
+    } as never)
+  }
   const saveImages = vi.fn(async () => [{
     attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png' as const, bytes: 3, width: 512, height: 512,
   }])
   ctx.provide('attachments', { readImage, saveImages } as never)
   const credentials = useCredentials ? new SharedProfileCredentials(ctx, records) : undefined
   const inspect = vi.fn(async (sessionId: SessionId) => ({
-    events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? [],
+    ...(options.inspectSharedSessions
+      ? { meta: { cwd: sharedBotWorkingDirectory(sessionId), agentPreset: SHARED_BOT_AGENT_PRESET } }
+      : {}),
+    events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
+      ?? sessionSeeds.get(String(sessionId))
+      ?? existingSessionEvents.get(String(sessionId))
+      ?? [],
   }))
   const resolveAgent = vi.fn(async (sessionId: SessionId) => {
-    const agent = agents.find(candidate => candidate.id === sessionId)
+    let agent = agents.find(candidate => candidate.id === sessionId)
+    if (agent === undefined && shouldResumeColdSessions
+      && (existingSessionEvents.has(String(sessionId)) || sessionSeeds.has(String(sessionId)))) {
+      agent = createAgent(String(sessionId))
+      await ctx.serial('agent/created', { agent, source: 'resume' })
+    }
     return agent === undefined ? { error: new Error('session not found') } : { agent }
   })
   const flush = vi.fn(async () => true)
@@ -229,17 +320,19 @@ async function harness(
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId)?.session,
     flush,
   }
-  ctx.provide('sessions', sessions as never)
+  if (!options.realAgent) ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
+  options.beforeService?.(ctx)
+  if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   const service = new BotService(ctx)
   try {
-    await service[Service.init]()
+    if (options.initializeService !== false) await service[Service.init]()
   } catch (error) {
     await close(ctx)
     throw error
   }
   return {
-    ctx, service, pool, records, credentials: credentials!, create, readImage, saveImages,
+    ctx, service, pool, records, credentials: credentials!, create, readImage, saveImages, adapter,
     agents, inspect, resolveAgent, flush, followups,
   }
 }
@@ -255,6 +348,43 @@ function productionSharedHost(service: BotService): SharedBotHost {
   }
   const method = descriptor.value as (this: BotService) => SharedBotHost
   return method.call(service)
+}
+
+async function bindSharedSession(
+  authority: SharedAccessAuthority,
+  botId: BotId,
+  sessionId: SessionId,
+  principalId: string,
+): Promise<void> {
+  const privateSessionSnapshotSchema = z.object({
+    version: z.literal(1),
+    bindings: z.array(sharedPrivateSessionSchema),
+  }).strict()
+  await authority.mutateExtension('agent-bots/shared-private-sessions', (current) => {
+    const snapshot = privateSessionSnapshotSchema.parse(current)
+    return {
+      value: undefined,
+      next: {
+        ...snapshot,
+        bindings: [...snapshot.bindings, {
+          botId,
+          principalId: BotPrincipalId(principalId),
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      },
+    }
+  })
+}
+
+function refreshBotRecord(service: BotService, agent: Pick<Agent, 'id'>): Promise<BotRecord | undefined> {
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(service), 'refreshBotRecord')
+  if (descriptor === undefined || typeof descriptor.value !== 'function') {
+    throw new Error('BotService refresh method is not available')
+  }
+  const method = descriptor.value as (this: BotService, agent: Pick<Agent, 'id'>) => Promise<BotRecord | undefined>
+  return method.call(service, agent)
 }
 
 function mcpFixtureTool(name: string, serverName: string, execute: () => Promise<string>): ToolDefinition {
@@ -388,9 +518,9 @@ describe('durable Bot roster', () => {
       await h.ctx.serial('agent/created', { agent, source: 'resume' })
 
       const schemas = h.ctx.tools.schemas(agent).map(schema => schema.name)
-      expect(schemas).not.toEqual(expect.arrayContaining(hostTools))
+      expect(schemas).not.toEqual(expect.arrayContaining([...hostTools]))
       const prompt = await h.ctx.systemPrompt.assemble({ scope: agent })
-      expect(prompt.tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining(hostTools))
+      expect(prompt.tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining([...hostTools]))
       expect(renderPrompt(prompt)).not.toContain('Sensitive')
       expect(prompt.contexts).toEqual([])
       for (const name of hostTools) {
@@ -402,6 +532,943 @@ describe('durable Bot roster', () => {
       for (const call of calls.values()) expect(call).not.toHaveBeenCalled()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('sanitizes shared prompts after upstream listeners add host data', async () => {
+    const sharedSessionId = SessionId('shared-session-late-listener')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({ name: 'Late listener owner', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-late-listener', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('late-listener test Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+      const lateTool: ToolSchema = {
+        name: 'late-host-tool',
+        description: 'Host capability added after the shared sanitizer.',
+        parameters: {},
+      }
+      agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+        const transformed = await next()
+        return {
+          ...transformed,
+          sections: [...transformed.sections, { name: 'late-host-section', text: 'Late host instructions.' }],
+          contexts: [...transformed.contexts, { name: 'late-host-context', text: 'Late host runtime context.' }],
+          tools: [...transformed.tools, lateTool],
+        }
+      })
+
+      const assembly = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(assembly.sections.map(section => section.name)).not.toContain('late-host-section')
+      expect(assembly.contexts).toEqual([])
+      expect(assembly.tools.map(tool => tool.name)).not.toContain('late-host-tool')
+      expect(renderPrompt(assembly)).not.toContain('Late host instructions.')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('drops shared identity after its operator Bot row is deleted', async () => {
+    const sharedSessionId = SessionId('shared-session-deleted-row')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({ name: 'Deleted shared owner', description: 'Stale identity', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-deleted-row', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('deleted-row test Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+      await expect(refreshBotRecord(h.service, agent)).resolves.toMatchObject({ id: created.bot.id, name: 'Deleted shared owner' })
+      const domain = h.ctx.storageDomain.get('agent_bots')
+      if (domain === undefined || !await domain.table('bots').delete(String(created.bot.id))) {
+        throw new Error('deleted-row fixture did not remove the Bot row')
+      }
+
+      await expect(host.findBot(created.bot.id)).resolves.toBeUndefined()
+      await expect(refreshBotRecord(h.service, agent)).resolves.toBeUndefined()
+      const prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).not.toContain('Deleted shared owner')
+      expect(prompt).not.toContain('Stale identity')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps hidden Bot rows available to shared Host lookup', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Hidden shared owner', cwd: '/tmp' })
+      await expect(h.service.updateOrganization({ botId: created.bot.id, hidden: true })).resolves.toMatchObject({
+        bot: { id: created.bot.id, hidden: true },
+      })
+      const host = productionSharedHost(h.service)
+      await expect(host.findBot(created.bot.id)).resolves.toMatchObject({ id: created.bot.id, hidden: true })
+      await expect(host.listBots()).resolves.toContainEqual(expect.objectContaining({ id: created.bot.id, hidden: true }))
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('restores hidden shared Session bindings from the initialized Bot domain', async () => {
+    const sharedSessionId = SessionId('shared-session-hidden-resume')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Hidden resume owner', cwd: '/tmp' })
+      await first.service.updateOrganization({ botId: created.bot.id, hidden: true })
+      const shares = await first.ctx.storageDomain.open(sharedBotDomain)
+      await shares.table('private_sessions').put(
+        `${encodeURIComponent(String(created.bot.id))}:principal-hidden`,
+        {
+          botId: created.bot.id,
+          principalId: BotPrincipalId('principal-hidden'),
+          sessionId: sharedSessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      )
+      await shares.close()
+      await close(first.ctx)
+      firstClosed = true
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        first.records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+        },
+      )
+      try {
+        await expect(refreshBotRecord(h.service, { id: sharedSessionId })).resolves.toMatchObject({
+          id: created.bot.id,
+          hidden: true,
+        })
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('keeps a resumed shared Session restricted when its Bot row is missing', async () => {
+    const sharedSessionId = SessionId('shared-session-missing-bot')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Missing row owner', cwd: '/tmp' })
+      const shares = await first.ctx.storageDomain.open(sharedBotDomain)
+      await shares.table('private_sessions').put(
+        `${encodeURIComponent(String(created.bot.id))}:principal-missing-row`,
+        {
+          botId: created.bot.id,
+          principalId: BotPrincipalId('principal-missing-row'),
+          sessionId: sharedSessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      )
+      await shares.close()
+      const bots = first.ctx.storageDomain.get('agent_bots')
+      if (bots === undefined || !await bots.table('bots').delete(String(created.bot.id))) {
+        throw new Error('missing-row fixture did not remove the Bot row')
+      }
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        first.records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+        },
+      )
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('missing-row shared Agent was not created')
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('bash')
+        await expect(refreshBotRecord(h.service, agent)).resolves.toBeUndefined()
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('fences an existing Agent before a missing Bot lookup can complete', async () => {
+    const sharedSessionId = SessionId('shared-session-admission-missing-bot')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        beforeService: (ctx) => {
+          ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+        },
+        realAgent: true,
+        realAgentInitialResponse: 'text',
+      },
+    )
+    try {
+      const created = await h.service.create({ name: 'Admission missing owner', cwd: '/tmp' })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('admission missing test Agent was not created')
+      expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('bash')
+      const bots = h.ctx.storageDomain.get('agent_bots')
+      if (bots === undefined || !await bots.table('bots').delete(String(created.bot.id))) {
+        throw new Error('admission missing fixture did not remove the Bot row')
+      }
+
+      const resolving = productionSharedHost(h.service).resolvePrivateAgent(
+        sharedSessionId,
+        new AbortController().signal,
+        created.bot.id,
+      )
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-admission-missing-fence'),
+        name: 'bash',
+        arguments: {},
+        signal: new AbortController().signal,
+        agent,
+      })).resolves.toMatchObject({ isError: true })
+      await expect(resolving).resolves.toHaveProperty('error')
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-admission-missing-fence-after-error'),
+        name: 'bash',
+        arguments: {},
+        signal: new AbortController().signal,
+        agent,
+      })).resolves.toMatchObject({ isError: true })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fences an existing Agent before rejecting an aborted admission', async () => {
+    const sharedSessionId = SessionId('shared-session-admission-aborted')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        beforeService: (ctx) => {
+          ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+        },
+        realAgent: true,
+        realAgentInitialResponse: 'text',
+      },
+    )
+    try {
+      const created = await h.service.create({ name: 'Admission aborted owner', cwd: '/tmp' })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('admission aborted test Agent was not created')
+      const controller = new AbortController()
+      controller.abort(new Error('admission cancelled'))
+      const resolving = productionSharedHost(h.service).resolvePrivateAgent(
+        sharedSessionId,
+        controller.signal,
+        created.bot.id,
+      )
+      await expect(resolving).rejects.toThrow('admission cancelled')
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-admission-aborted-fence'),
+        name: 'bash',
+        arguments: {},
+        signal: new AbortController().signal,
+        agent,
+      })).resolves.toMatchObject({ isError: true })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps a live Agent fenced while validation metadata is pending or invalid', async () => {
+    const sharedSessionId = SessionId('shared-session-admission-invalid-metadata')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Admission validation owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+          inspectSharedSessions: true,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+        },
+      )
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('admission validation test Agent was not created')
+        const inspectStarted = Promise.withResolvers<undefined>()
+        const releaseInspect = Promise.withResolvers<undefined>()
+        h.inspect.mockImplementation(async () => {
+          inspectStarted.resolve(undefined)
+          await releaseInspect.promise
+          return {
+            meta: { cwd: '/wrong/shared-directory', agentPreset: SHARED_BOT_AGENT_PRESET },
+            events: [],
+          }
+        })
+
+        const resolving = productionSharedHost(h.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        await inspectStarted.promise
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-admission-invalid-fence'),
+          name: 'bash',
+          arguments: {},
+          signal: new AbortController().signal,
+          agent,
+        })).resolves.toMatchObject({ isError: true })
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: 'this follow-up must not run' }],
+          source: { kind: 'user' },
+        }))
+        await Promise.resolve()
+        expect(h.adapter?.requests).toHaveLength(0)
+
+        releaseInspect.resolve(undefined)
+        await expect(resolving).resolves.toHaveProperty('error')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-admission-invalid-fence-after-error'),
+          name: 'bash',
+          arguments: {},
+          signal: new AbortController().signal,
+          agent,
+        })).resolves.toMatchObject({ isError: true })
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: 'this failed validation follow-up must not run' }],
+          source: { kind: 'user' },
+        }))
+        await Promise.resolve()
+        await agent.whenIdle()
+        expect(h.adapter?.requests).toHaveLength(0)
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('releases a startup fence when agent creation installs the shared scope first', async () => {
+    const sharedSessionId = SessionId('shared-session-startup-created-race')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Startup race owner', cwd: '/tmp' })
+      const shares = await first.ctx.storageDomain.open(sharedBotDomain)
+      await shares.table('private_sessions').put(
+        `${encodeURIComponent(String(created.bot.id))}:principal-startup-race`,
+        {
+          botId: created.bot.id,
+          principalId: BotPrincipalId('principal-startup-race'),
+          sessionId: sharedSessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      )
+      await shares.close()
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+          initializeService: false,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+        },
+      )
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('startup race test Agent was not created')
+        const listStarted = Promise.withResolvers<undefined>()
+        const releaseList = Promise.withResolvers<undefined>()
+        const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(h.service), 'listFromDomain')
+        if (descriptor === undefined || typeof descriptor.value !== 'function') {
+          throw new Error('startup race test list method is not available')
+        }
+        const originalList = descriptor.value as (
+          this: BotService,
+          request: BotListRequest,
+          domain: Domain<typeof botDomain>,
+        ) => Promise<BotListValue>
+        Object.defineProperty(h.service, 'listFromDomain', {
+          configurable: true,
+          value: async function (this: BotService, request: BotListRequest, domain: Domain<typeof botDomain>): Promise<BotListValue> {
+            listStarted.resolve(undefined)
+            await releaseList.promise
+            return originalList.call(this, request, domain)
+          },
+        })
+
+        const initializing = h.service[Service.init]()
+        await listStarted.promise
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-startup-race-fence'),
+          name: 'bash',
+          arguments: {},
+          signal: new AbortController().signal,
+          agent,
+        })).resolves.toMatchObject({ isError: true })
+        await h.ctx.serial('agent/created', { agent, source: 'resume' })
+        releaseList.resolve(undefined)
+        await initializing
+
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: 'startup fence should be released' }],
+          source: { kind: 'user' },
+        }))
+        await agent.whenIdle()
+        expect(h.adapter?.requests).toHaveLength(1)
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('registers a shared Session before a second Host resumes it after startup', async () => {
+    const sharedSessionId = SessionId('shared-session-cross-host-resume')
+    const sessionEvents = new Map<string, readonly SessionEvent[]>([[String(sharedSessionId), []]])
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Cross-host owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [],
+        sessionEvents,
+        records,
+        true,
+        'native',
+        true,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+          inspectSharedSessions: true,
+        },
+      )
+      let authority: SharedAccessAuthority | undefined
+      try {
+        authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        const privateSessionSnapshotSchema = z.object({
+          version: z.literal(1),
+          bindings: z.array(sharedPrivateSessionSchema),
+        }).strict()
+        await authority.mutateExtension('agent-bots/shared-private-sessions', (current) => {
+          const snapshot = privateSessionSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...snapshot,
+              bindings: [...snapshot.bindings, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId('principal-cross-host'),
+                sessionId: sharedSessionId,
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+
+        const host = productionSharedHost(h.service)
+        const resolved = await host.resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        if (!('agent' in resolved)) throw new Error(`cross-host Session did not resume: ${resolved.error.message}`)
+        expect(h.ctx.tools.schemas(resolved.agent).map(schema => schema.name)).not.toContain('bash')
+        expect(renderPrompt(await h.ctx.systemPrompt.assemble({ scope: resolved.agent }))).toContain('Cross-host owner')
+
+        const missingSessionId = SessionId('shared-session-cross-host-missing-bot')
+        sessionEvents.set(String(missingSessionId), [])
+        await authority.mutateExtension('agent-bots/shared-private-sessions', (current) => {
+          const snapshot = privateSessionSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...snapshot,
+              bindings: [...snapshot.bindings, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId('principal-cross-host-missing'),
+                sessionId: missingSessionId,
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+        const bots = h.ctx.storageDomain.get('agent_bots')
+        if (bots === undefined || !await bots.table('bots').delete(String(created.bot.id))) {
+          throw new Error('cross-host missing-row fixture did not remove the Bot row')
+        }
+        const missing = await host.resolvePrivateAgent(
+          missingSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        expect(missing).toHaveProperty('error')
+        expect(h.agents).toHaveLength(1)
+      } finally {
+        await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('installs shared scope when a binding arrives for an already-live Agent', async () => {
+    const sharedSessionId = SessionId('shared-session-cross-host-live')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Cross-host live owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+          inspectSharedSessions: true,
+        },
+      )
+      let authority: SharedAccessAuthority | undefined
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('already-live shared Agent was not created')
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('bash')
+        authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        const privateSessionSnapshotSchema = z.object({
+          version: z.literal(1),
+          bindings: z.array(sharedPrivateSessionSchema),
+        }).strict()
+        await authority.mutateExtension('agent-bots/shared-private-sessions', (current) => {
+          const snapshot = privateSessionSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...snapshot,
+              bindings: [...snapshot.bindings, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId('principal-cross-host-live'),
+                sessionId: sharedSessionId,
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+
+        const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        if (!('agent' in resolved)) throw new Error(`already-live Session did not resume: ${resolved.error.message}`)
+        expect(resolved.agent).toBe(agent)
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('bash')
+        expect(renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))).toContain('Cross-host live owner')
+
+        const host = productionSharedHost(h.service)
+        const cancel = vi.spyOn(agent, 'cancel')
+        Object.defineProperty(agent, 'status', { configurable: true, value: 'running' })
+        const reResolved = await host.resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        expect(reResolved).toHaveProperty('agent', agent)
+        expect(cancel).not.toHaveBeenCalled()
+      } finally {
+        await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('seals an existing Agent before a pending installation can execute tools', async () => {
+    const sharedSessionId = SessionId('shared-session-cross-host-seal')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Cross-host seal owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          beforeService: (ctx) => {
+            ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+          },
+          inspectSharedSessions: true,
+        },
+      )
+      let authority: SharedAccessAuthority | undefined
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('existing shared Agent was not created')
+        authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-cross-host-seal')
+
+        const started = Promise.withResolvers<undefined>()
+        const release = Promise.withResolvers<undefined>()
+        let maintenanceCalls = 0
+        const delayedMaintenance = async <T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+          maintenanceCalls += 1
+          started.resolve(undefined)
+          await release.promise
+          return task(new AbortController().signal)
+        }
+        vi.spyOn(agent, 'runMaintenance').mockImplementation(delayedMaintenance)
+
+        const resolving = productionSharedHost(h.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        await started.promise
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('bash')
+        const direct = await h.ctx.tools.execute({
+          callId: ToolCallId('shared-install-fence'),
+          name: 'bash',
+          arguments: {},
+          signal: new AbortController().signal,
+          agent,
+        })
+        expect(direct.isError).toBe(true)
+
+        release.resolve(undefined)
+        await expect(resolving).resolves.toHaveProperty('agent', agent)
+        expect(maintenanceCalls).toBe(1)
+      } finally {
+        await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('joins concurrent shared scope installation for one existing Agent', async () => {
+    const sharedSessionId = SessionId('shared-session-cross-host-join')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Cross-host join owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+        },
+      )
+      let authority: SharedAccessAuthority | undefined
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('existing shared Agent was not created')
+        authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-cross-host-join')
+
+        const started = Promise.withResolvers<undefined>()
+        const release = Promise.withResolvers<undefined>()
+        let active = false
+        let maintenanceCalls = 0
+        const joiningMaintenance = async <T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+          maintenanceCalls += 1
+          if (active) throw new Error('maintenance overlap')
+          active = true
+          started.resolve(undefined)
+          try {
+            await release.promise
+            return await task(new AbortController().signal)
+          } finally {
+            active = false
+          }
+        }
+        vi.spyOn(agent, 'runMaintenance').mockImplementation(joiningMaintenance)
+
+        const host = productionSharedHost(h.service)
+        const firstResolve = host.resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        await started.promise
+        const secondResolve = host.resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        release.resolve(undefined)
+        const [firstResult, secondResult] = await Promise.all([firstResolve, secondResolve])
+        expect(firstResult).toHaveProperty('agent', agent)
+        expect(secondResult).toHaveProperty('agent', agent)
+        expect(maintenanceCalls).toBe(1)
+      } finally {
+        await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('seals a real Agent before a queued follow-up can run during installation', async () => {
+    const sharedSessionId = SessionId('shared-session-cross-host-real-race')
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Cross-host real race owner', cwd: '/tmp' })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+          realAgent: true,
+        },
+      )
+      let authority: SharedAccessAuthority | undefined
+      let stopStatus: (() => boolean) | undefined
+      let stopRequest: (() => boolean) | undefined
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('real shared Agent was not created')
+        const running = Promise.withResolvers<undefined>()
+        const requestStarted = Promise.withResolvers<undefined>()
+        let installationRequested = false
+        let queued = false
+        stopStatus = h.ctx.on('agent/status', ({ agent: subject, status }) => {
+          if (subject !== agent) return
+          if (status === 'running' && !installationRequested) running.resolve(undefined)
+          if (status === 'idle' && installationRequested && !queued) {
+            queued = true
+            agent.followup(createUserMessage({
+              content: [{ type: 'text', text: 'queued while shared scope installs' }],
+              source: { kind: 'user' },
+            }))
+          }
+        })
+        stopRequest = h.ctx.on('agent/request', ({ agent: subject }, next) => {
+          if (subject === agent) requestStarted.resolve(undefined)
+          return next()
+        })
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: 'hold this turn before shared binding' }],
+          source: { kind: 'user' },
+        }))
+        await running.promise
+        await requestStarted.promise
+
+        authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-cross-host-real-race')
+        installationRequested = true
+        const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        expect(resolved).toHaveProperty('agent', agent)
+        expect(queued).toBe(true)
+        expect(h.adapter?.requests).toHaveLength(1)
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).not.toContain('bash')
+      } finally {
+        stopRequest?.()
+        stopStatus?.()
+        await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
     }
   })
 
@@ -495,6 +1562,7 @@ describe('durable Bot roster', () => {
         'list_bots', 'inspect_bot', 'send_bot_message',
         'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
         'create_bot', 'edit_bot_profile',
+        'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
       ])
       const context = {
         callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
@@ -526,6 +1594,32 @@ describe('durable Bot roster', () => {
       h.ctx.provide('avatarGeneration', generator as never)
       expect((await edit.execute({ botId: research.id, pictureDescription: 'A friendly fox' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({ avatar })
+      const createGroup = tools.find(tool => tool.name === 'create_bot_group')
+      const updateGroup = tools.find(tool => tool.name === 'update_bot_group')
+      const sendGroupMessage = tools.find(tool => tool.name === 'send_bot_group_message')
+      if (createGroup === undefined || updateGroup === undefined || sendGroupMessage === undefined) throw new Error('native group tools were not registered')
+      const groupResult = await createGroup.execute({
+        name: 'Native room', botIds: [research.id],
+      }, { ...context, callId: 'create-group-1' })
+      expect(groupResult.success).toBe(true)
+      const group = JSON.parse(groupResult.contentItems[0]?.text ?? '{}') as { readonly group?: { readonly id?: string } }
+      const groupId = group.group?.id
+      if (groupId === undefined) throw new Error('native group creation returned no id')
+      expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({
+        group: { botIds: [created.bot.id, research.id] },
+      })
+      const nativeUpdateResult = await updateGroup.execute({
+        groupId, name: 'Native room renamed', botIds: [created.bot.id, research.id],
+      }, { ...context, callId: 'update-group-1' })
+      expect(nativeUpdateResult.success).toBe(true)
+      expect(JSON.parse(nativeUpdateResult.contentItems[0]?.text ?? '{}')).toMatchObject({
+        group: { name: 'Native room renamed' },
+      })
+      const nativeSendResult = await sendGroupMessage.execute({ groupId, text: 'Native group update.' }, {
+        ...context, callId: 'send-group-1',
+      })
+      expect(nativeSendResult.success).toBe(false)
+      expect(nativeSendResult.contentItems[0]?.text).toContain('partial-delivery')
       const cancelled = new AbortController()
       generator.generate.mockImplementation(async () => {
         cancelled.abort()
@@ -659,6 +1753,254 @@ describe('durable Bot roster', () => {
       expect(agent.session.snapshotEvents()).toContainEqual(expect.objectContaining({
         type: 'bot/memory', data: { botId: created.bot.id, memoryId, operation: 'remember', text: remembered.text },
       }))
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('manages private memories through Bot-scoped remote methods and reloads the logical removal', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Remote memory owner', cwd: '/tmp' })
+    const other = await first.service.create({ name: 'Remote other owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId), String(other.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const memoryId = 'memory-remote'
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      const remembered = await (await h.service.collaborationFor(h.agents[0]!)).memory!.remember({
+        memoryId: BotMemoryId(memoryId), text: 'Only the owner can see this note.',
+      })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({
+        memories: [{ id: memoryId, text: remembered.text, createdAt: remembered.createdAt }],
+      })
+      await expect(h.service.listMemory({ botId: other.bot.id })).resolves.toEqual({ memories: [] })
+      await expect(h.service.updateMemory({ botId: owner.bot.id, memoryId, text: 'The owner changed this note.' })).resolves.toMatchObject({
+        memory: { id: memoryId, text: 'The owner changed this note.' },
+      })
+      await expect(h.service.forgetMemory({ botId: owner.bot.id, memoryId })).resolves.toEqual({ removed: true })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      await expect(h.service.forgetMemory({ botId: owner.bot.id, memoryId })).resolves.toEqual({ removed: true })
+      await expect(h.service.updateMemory({ botId: other.bot.id, memoryId, text: 'Wrong owner.' })).rejects.toMatchObject({ code: 'memory-not-found' })
+    } finally {
+      events = h.agents[0]?.session.snapshotEvents() ?? []
+      await close(h.ctx)
+    }
+
+    const reopened = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(owner.bot.sessionId), String(other.bot.sessionId)],
+      new Map([[String(owner.bot.sessionId), events]]),
+    )
+    try {
+      await expect(reopened.service.listMemory({ botId: owner.bot.id })).resolves.toEqual({ memories: [] })
+      const events = reopened.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory') ?? []
+      expect(events.filter(event => event.type === 'bot/memory' && event.data.operation === 'forget')).toHaveLength(2)
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reconstructs an edit after an uncertain flush without exposing the old text', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Atomic edit owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const memoryId = BotMemoryId('memory-atomic-edit')
+
+    const firstRun = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const agent = firstRun.agents[0]
+      if (agent === undefined) throw new Error('atomic edit Agent was not created')
+      const memory = (await firstRun.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('atomic edit memory was not bound')
+      await memory.remember({ memoryId, text: 'The old launch window.' })
+      firstRun.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+
+      await expect(firstRun.service.updateMemory({
+        botId: owner.bot.id,
+        memoryId,
+        text: 'The revised launch window.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+      events = agent.session.snapshotEvents()
+      expect(events.filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual(['remember', 'forget'])
+      expect((await firstRun.service.list({})).bots[0]).not.toHaveProperty('pendingMemoryUpdate')
+    } finally {
+      await close(firstRun.ctx)
+    }
+
+    const secondRun = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(owner.bot.sessionId)],
+      new Map([[String(owner.bot.sessionId), events]]),
+    )
+    try {
+      const agent = secondRun.agents[0]
+      if (agent === undefined) throw new Error('restarted atomic edit Agent was not created')
+      await expect(secondRun.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: String(memoryId), text: 'The revised launch window.' }],
+      })
+      expect(secondRun.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
+        'remember', 'forget', 'remember',
+      ])
+      const prompt = renderPrompt(await secondRun.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('The revised launch window.')
+      expect(prompt).not.toContain('The old launch window.')
+    } finally {
+      await close(secondRun.ctx)
+    }
+  })
+
+  it('retries a failed edit from its durable intent without losing the replacement', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Retry edit owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('retry edit Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('retry edit memory was not bound')
+      const memoryId = BotMemoryId('memory-retry-edit')
+      await memory.remember({ memoryId, text: 'The first schedule.' })
+      h.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+
+      const request = { botId: owner.bot.id, memoryId, text: 'The corrected schedule.' }
+      await expect(h.service.updateMemory(request)).rejects.toMatchObject({ code: 'durability-failed' })
+      await expect(h.service.updateMemory(request)).resolves.toMatchObject({
+        memory: { id: String(memoryId), text: 'The corrected schedule.' },
+      })
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
+        'remember', 'forget', 'remember',
+      ])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not return a stale memory while recovery and an update overlap', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Concurrent recovery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('concurrent recovery Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('concurrent recovery memory was not bound')
+      const memoryId = BotMemoryId('memory-concurrent-recovery')
+      await memory.remember({ memoryId, text: 'The original concurrent note.' })
+      h.flush.mockClear().mockResolvedValueOnce(false).mockResolvedValue(true)
+      await expect(h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The pending concurrent note.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+
+      let flushCalls = 0
+      let releaseRecovery!: () => void
+      const recoveryGate = new Promise<void>((resolve) => { releaseRecovery = resolve })
+      h.flush.mockImplementation(async () => {
+        flushCalls += 1
+        if (flushCalls === 2) await recoveryGate
+        return true
+      })
+
+      const updated = h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The final concurrent note.',
+      })
+      await vi.waitFor(() => { expect(flushCalls).toBe(2) })
+      const listed = memory.list()
+      releaseRecovery()
+
+      await expect(updated).resolves.toMatchObject({ memory: { text: 'The final concurrent note.' } })
+      await expect(listed).resolves.toMatchObject([{ text: 'The final concurrent note.' }])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a pending edit while resuming its cold Session during startup', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Cold recovery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const firstRun = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const agent = firstRun.agents[0]
+      if (agent === undefined) throw new Error('cold recovery Agent was not created')
+      const memory = (await firstRun.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('cold recovery memory was not bound')
+      const memoryId = BotMemoryId('memory-cold-recovery')
+      await memory.remember({ memoryId, text: 'The original cold-start note.' })
+      firstRun.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+      await expect(firstRun.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The repaired cold-start note.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+      events = agent.session.snapshotEvents()
+    } finally {
+      await close(firstRun.ctx)
+    }
+
+    const resumed = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map([[String(owner.bot.sessionId), events]]),
+      true,
+    )
+    try {
+      await expect(resumed.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: 'memory-cold-recovery', text: 'The repaired cold-start note.' }],
+      })
+      expect(resumed.agents).toHaveLength(1)
+    } finally {
+      await close(resumed.ctx)
+    }
+  })
+
+  it('reports a recovery-marker failure after the replacement is durable', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Marker failure owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('marker failure Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('marker failure memory was not bound')
+      const memoryId = BotMemoryId('memory-marker-failure')
+      await memory.remember({ memoryId, text: 'The old marker note.' })
+      h.flush
+        .mockImplementationOnce(async () => true)
+        .mockImplementationOnce(async () => {
+          pool.failNextWrites = 1
+          return true
+        })
+
+      await expect(h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The durable replacement.',
+      })).rejects.toMatchObject({
+        code: 'durability-failed',
+        message: 'The Bot memory was updated, but its recovery marker could not be cleared.',
+      })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: String(memoryId), text: 'The durable replacement.' }],
+      })
     } finally {
       await close(h.ctx)
     }
@@ -812,6 +2154,1229 @@ describe('durable Bot roster', () => {
       controller.abort()
       await expect(bot.memory!.remember({ text: 'Do not save.', signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' })
       expect(h.agents[0]?.session.snapshotEvents().some(event => event.type === 'bot/memory')).toBe(false)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists a multi-Bot group and delivers one human message to every member', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await first.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    let hClosed = false
+    try {
+      const created = await h.service.createGroup({
+        name: 'Launch room',
+        botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id],
+      })
+      expect(created.group).toMatchObject({ name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      const reordered = await h.service.createGroup({
+        id: created.group.id,
+        name: 'Launch room',
+        botIds: [gamma.bot.id, alpha.bot.id, beta.bot.id],
+      })
+      expect(reordered.group.botIds).toEqual([alpha.bot.id, beta.bot.id, gamma.bot.id])
+
+      await expect(h.service.sendGroupMessage({
+        groupId: created.group.id,
+        text: 'Coordinate the release plan.',
+        messageId: BotGroupMessageId('bot-group-message-1'),
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'accepted' },
+          { botId: beta.bot.id, status: 'accepted' },
+          { botId: gamma.bot.id, status: 'accepted' },
+        ],
+      })
+      for (const followup of h.followups) {
+        const delivered = followup.mock.calls[0]?.[0]
+        expect(delivered?.role).toBe('user')
+        const source = delivered?.source
+        expect(source?.kind).toBe('bot-group-message')
+        if (source?.kind !== 'bot-group-message') throw new Error('group delivery source was not a Bot group message')
+        expect(source.groupId).toBe(created.group.id)
+      }
+      expect(h.followups[0]?.mock.calls[0]?.[0].content).toEqual([
+        { type: 'text', text: 'Message from group "Launch room":\nCoordinate the release plan.' },
+      ])
+      await expect(h.service.sendGroupMessage({
+        groupId: created.group.id,
+        text: 'Coordinate the release plan.',
+        messageId: BotGroupMessageId('bot-group-message-1'),
+      })).resolves.toMatchObject({ status: 'duplicate' })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+
+      const firstAgent = h.agents[0]
+      if (firstAgent === undefined) throw new Error('first group Bot Agent was not created')
+      const unrelatedEvent = firstAgent.session.append('assistant/message', {
+        turn: 99,
+        step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-unrelated'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'This belongs to the Bot\'s private work.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', firstAgent.session, unrelatedEvent)
+      await expect(h.service.inspectGroup({ groupId: created.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Coordinate the release plan.' }],
+      })
+
+      const delivered = h.followups[0]?.mock.calls[0]?.[0]
+      if (delivered === undefined) throw new Error('first group delivery was not admitted')
+      const decision = await agentEvents(h.ctx, firstAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 1, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      expect(decision.kind).toBe('enter')
+      firstAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const responseEvent = firstAgent.session.append('assistant/message', {
+        turn: 1,
+        step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-alpha'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Alpha is ready.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', firstAgent.session, responseEvent)
+      await expect(h.service.inspectGroup({ groupId: created.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Coordinate the release plan.' },
+          { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha is ready.' },
+        ],
+      })
+
+      await close(h.ctx)
+      hClosed = true
+      const reopened = await harness(pool, undefined, undefined, [
+        String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+      ])
+      try {
+        await expect(reopened.service.listGroups({})).resolves.toMatchObject({
+          groups: [{ id: created.group.id, name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] }],
+        })
+        await expect(reopened.service.inspectGroup({ groupId: created.group.id })).resolves.toMatchObject({
+          group: { id: created.group.id },
+          messages: [
+            { sender: { kind: 'user' }, text: 'Coordinate the release plan.' },
+            { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha is ready.' },
+          ],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!hClosed) await close(h.ctx)
+    }
+  })
+
+  it('uses path-safe per-record delivery keys and retries from JSON storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-groups-'))
+    const bots: readonly BotView[] = [
+      {
+        id: BotId('bot-real-alpha'), sessionId: SessionId('session-real-alpha'), name: 'Alpha',
+        identity: 'agent', accent: 'blue', cwd: '/tmp', state: 'active', availability: 'idle',
+        pinned: false, hidden: false, createdAt: 1, updatedAt: 1,
+      },
+      {
+        id: BotId('bot-real-beta'), sessionId: SessionId('session-real-beta'), name: 'Beta',
+        identity: 'agent', accent: 'teal', cwd: '/tmp', state: 'active', availability: 'idle',
+        pinned: false, hidden: false, createdAt: 2, updatedAt: 2,
+      },
+    ]
+    const open = async () => {
+      const ctx = new Context()
+      await ctx.plugin(Storage)
+      await ctx.plugin(StorageJson, { root })
+      const facility = new DomainFacility(ctx, { backend: 'json' })
+      const domain = await facility.open(botGroupDomain)
+      return { ctx, domain }
+    }
+    const delivered: string[] = []
+    try {
+      const first = await open()
+      try {
+        const groups = new BotGroupService(first.domain, {
+          listBots: async () => bots,
+          deliverToBot: async ({ targetBotId }) => {
+            delivered.push(String(targetBotId))
+            return 'accepted'
+          },
+        })
+        const group = await groups.create({
+          id: BotGroupId('bot-group-real-storage'), name: 'Real storage room', botIds: bots.map(bot => bot.id),
+        })
+        await expect(groups.send({
+          groupId: group.group.id,
+          text: 'Persist this safely.',
+          messageId: BotGroupMessageId('bot-group-message-real-storage'),
+        })).resolves.toMatchObject({ status: 'accepted' })
+      } finally {
+        await first.domain.close()
+        await first.ctx.fiber.dispose()
+      }
+
+      const reopened = await open()
+      try {
+        const groups = new BotGroupService(reopened.domain, {
+          listBots: async () => bots,
+          deliverToBot: async ({ targetBotId }) => {
+            delivered.push(String(targetBotId))
+            return 'accepted'
+          },
+        })
+        await expect(groups.send({
+          groupId: BotGroupId('bot-group-real-storage'),
+          text: 'Persist this safely.',
+          messageId: BotGroupMessageId('bot-group-message-real-storage'),
+        })).resolves.toMatchObject({
+          status: 'duplicate',
+          deliveries: [{ status: 'duplicate' }, { status: 'duplicate' }],
+        })
+        expect(delivered).toEqual(['bot-real-alpha', 'bot-real-beta'])
+      } finally {
+        await reopened.domain.close()
+        await reopened.ctx.fiber.dispose()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('updates a group name and membership with live-member authorization and persistence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const created = await h.service.createGroup({
+        name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id],
+      })
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('Bot native provider was not mounted')
+      const gammaTools = await provider.resolve({ sessionId: gamma.bot.sessionId })
+      const alphaTools = await provider.resolve({ sessionId: alpha.bot.sessionId })
+      const gammaUpdate = gammaTools.find(tool => tool.name === 'update_bot_group')
+      const alphaUpdate = alphaTools.find(tool => tool.name === 'update_bot_group')
+      if (gammaUpdate === undefined || alphaUpdate === undefined) throw new Error('Bot group update tool was not mounted')
+      const context = (sessionId: SessionId, callId: string) => ({
+        callId, threadId: 'thread-group-update', turnId: callId, sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const,
+        requestApproval: async () => true,
+      })
+      const unauthorized = await gammaUpdate.execute({
+        groupId: created.group.id, name: 'Unauthorized room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id],
+      }, context(gamma.bot.sessionId, 'update-unauthorized'))
+      expect(unauthorized.success).toBe(false)
+      expect(unauthorized.contentItems[0]?.text).toContain('not a member')
+      const ownerRemoved = await alphaUpdate.execute({
+        groupId: created.group.id, name: 'Removed owner', botIds: [beta.bot.id, gamma.bot.id],
+      }, context(alpha.bot.sessionId, 'update-owner-removed'))
+      expect(ownerRemoved.success).toBe(false)
+      expect(ownerRemoved.contentItems[0]?.text).toContain('remain a member')
+
+      const updatedResult = await alphaUpdate.execute({
+        groupId: created.group.id, name: 'Launch command room', botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id],
+      }, context(alpha.bot.sessionId, 'update-authorized'))
+      expect(updatedResult.success).toBe(true)
+      const updated = JSON.parse(updatedResult.contentItems[0]?.text ?? '{}') as {
+        readonly group?: { readonly id?: string; readonly name?: string; readonly botIds?: readonly string[] }
+      }
+      expect(updated.group).toMatchObject({
+        id: created.group.id,
+        name: 'Launch command room',
+        botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id].map(String),
+      })
+
+      await close(h.ctx)
+      const reopened = await harness(pool, undefined, undefined, [
+        String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+      ])
+      try {
+        await expect(reopened.service.listGroups({})).resolves.toMatchObject({
+          groups: [{ id: created.group.id, name: 'Launch command room', botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id] }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists mention targets and delivers a targeted group message only to selected members', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Mention room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: '@Beta please review this.',
+        targetBotIds: [beta.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-targeted'),
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [{ botId: beta.bot.id, status: 'accepted' }],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(0)
+      expect(h.followups[1]).toHaveBeenCalledTimes(1)
+      expect(h.followups[2]).toHaveBeenCalledTimes(0)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ text: '@Beta please review this.', targetBotIds: [beta.bot.id] }],
+      })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: '@Beta please review this.',
+        targetBotIds: [alpha.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-targeted'),
+      })).rejects.toThrow('different content')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('attributes a final response to the group delivery claimed earlier in the same turn', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await first.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const groupA = await h.service.createGroup({ name: 'Alpha room', botIds: [alpha.bot.id, beta.bot.id] })
+      const groupB = await h.service.createGroup({ name: 'Gamma room', botIds: [beta.bot.id, gamma.bot.id] })
+      await h.service.sendGroupMessage({ groupId: groupA.group.id, text: 'Alpha request.', messageId: BotGroupMessageId('bot-group-message-a') })
+      await h.service.sendGroupMessage({ groupId: groupB.group.id, text: 'Gamma request.', messageId: BotGroupMessageId('bot-group-message-b') })
+
+      const betaAgent = h.agents[1]
+      if (betaAgent === undefined) throw new Error('shared Bot Agent was not created')
+      const groupBDelivery = h.followups[1]?.mock.calls[1]?.[0]
+      if (groupBDelivery === undefined) throw new Error('second group delivery was not admitted')
+      const decision = await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [groupBDelivery], turn: 2, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [groupBDelivery] }))
+      expect(decision.kind).toBe('enter')
+      betaAgent.session.append('user/message', groupBDelivery, { surfaceOp: 'append' })
+      const responseEvent = betaAgent.session.append('assistant/message', {
+        turn: 2,
+        step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-group-b'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Gamma room response.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, responseEvent)
+
+      await expect(h.service.inspectGroup({ groupId: groupA.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Alpha request.' }],
+      })
+      await expect(h.service.inspectGroup({ groupId: groupB.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Gamma request.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Gamma room response.' },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps hidden Bots available for group projection and delivery', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Visible alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Hidden beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      await h.service.updateOrganization({ botId: beta.bot.id, hidden: true })
+      const group = await h.service.createGroup({ name: 'Hidden member room', botIds: [alpha.bot.id, beta.bot.id] })
+      expect(group.group.bots.map(bot => bot.id)).toEqual([alpha.bot.id, beta.bot.id])
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id, text: 'Hidden members still receive this.', messageId: BotGroupMessageId('bot-group-message-hidden'),
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'accepted' },
+          { botId: beta.bot.id, status: 'accepted' },
+        ],
+      })
+      expect(h.followups[1]).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('attributes a response to a Bot-authored group message', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Bot-authored room', botIds: [alpha.bot.id, beta.bot.id] })
+      const domain = h.ctx.storageDomain.get(botGroupDomain.name) as Domain<typeof botGroupDomain> | undefined
+      if (domain === undefined) throw new Error('group domain was not mounted')
+      const target = h.agents[1]
+      if (target === undefined) throw new Error('target Bot Agent was not created')
+      const deliveryHost: BotGroupDeliveryHost = {
+        listBots: async () => (await h.service.list({})).bots,
+        deliverToBot: async (request) => {
+          target.followup(freezeMessage({
+            id: MessageId(String(request.messageId)), role: 'user',
+            content: [{ type: 'text', text: request.senderName === undefined
+              ? `Message from group "${request.groupName}":\n${request.text}`
+              : `Message from ${request.senderName} in group "${request.groupName}":\n${request.text}` }],
+            source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
+          }))
+          return 'accepted'
+        },
+      }
+      const groups = new BotGroupService(domain, deliveryHost)
+      await expect(groups.sendAsBot(alpha.bot.id, {
+        groupId: group.group.id,
+        text: 'Alpha asks Beta for a status.',
+        messageId: BotGroupMessageId('bot-group-message-authored'),
+      })).resolves.toMatchObject({ status: 'accepted' })
+
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (delivered === undefined) throw new Error('Bot-authored delivery was not admitted')
+      expect(delivered.content).toEqual([{
+        type: 'text', text: 'Message from Alpha in group "Bot-authored room":\nAlpha asks Beta for a status.',
+      }])
+      await agentEvents(h.ctx, target).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 7, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      target.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const responseEvent = target.session.append('assistant/message', {
+        turn: 7, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-authored'), role: 'assistant',
+          content: [{ type: 'text', text: 'Beta received the request.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', target.session, responseEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'bot', botId: alpha.bot.id }, text: 'Alpha asks Beta for a status.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta received the request.' },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('waits for the final assistant message after an intermediate tool-call response', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Tool turn room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Use a tool before answering.', messageId: BotGroupMessageId('bot-group-message-tool-turn') })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('tool-turn delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 8, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const toolEvent = betaAgent.session.append('assistant/message', {
+        turn: 8, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-tool-call'), role: 'assistant',
+          content: [
+            { type: 'text', text: 'I am checking the release status.' },
+            { type: 'tool-call', id: ToolCallId('beta-tool-call'), name: 'inspect', arguments: '{}' },
+          ], source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, toolEvent)
+      const finalEvent = betaAgent.session.append('assistant/message', {
+        turn: 8, step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-tool-final'), role: 'assistant',
+          content: [{ type: 'text', text: 'The release status is green.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, finalEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Use a tool before answering.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The release status is green.' },
+        ],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists a model turn failure in the group transcript and restores it after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Credential failure room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Ask Beta for a status.', messageId: BotGroupMessageId('bot-group-message-credential-failure') })
+    const betaAgent = h.agents[1]
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (betaAgent === undefined || delivered === undefined) throw new Error('credential-failure delivery was not admitted')
+
+    await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+      messages: [delivered], turn: 10, step: 1, signal: new AbortController().signal,
+    }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+    betaAgent.session.append('turn/start', { turn: 10 })
+    betaAgent.session.append('step/start', { turn: 10, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('step/end', { turn: 10, step: 1 })
+    const failure = betaAgent.session.append('turn/end', {
+      turn: 10,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    h.ctx.emit('session/event', betaAgent.session, failure)
+
+    await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+      deliveries: expect.arrayContaining([
+        expect.objectContaining({
+          messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
+          status: 'failed', error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
+        }),
+      ]),
+    })
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
+            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reconciles a persisted failed group turn when the Bot Session resumes', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Restart failure room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({ groupId: group.group.id, text: 'Resume this request.', messageId: BotGroupMessageId('bot-group-message-restart-failure') })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('restart-failure delivery was not admitted')
+    await close(first.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 12 })
+      resumedBeta.session.append('step/start', { turn: 12, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('step/end', { turn: 12, step: 1 })
+      resumedBeta.session.append('turn/end', {
+        turn: 12,
+        reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+      })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-restart-failure', botId: beta.bot.id,
+            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reconciles a blocked pre-step from raw inbox events without a step start', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw blocked restart room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'This raw claim is blocked.', messageId: BotGroupMessageId('bot-group-message-raw-blocked') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw blocked delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [delivered] })
+      resumedBeta.session.append('turn/start', { turn: 20 })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      resumedBeta.session.append('turn/end', { turn: 20, reason: { kind: 'blocked' } })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-raw-blocked', botId: beta.bot.id,
+            status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('does not attribute a private response to a removed raw group input after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw private replacement room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'The group input is replaced.', messageId: BotGroupMessageId('bot-group-message-raw-replaced') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw replacement delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      const privateMessage = freezeMessage({
+        id: MessageId('private-restart-replacement'), role: 'user',
+        content: [{ type: 'text', text: 'This replacement is private.' }], source: { kind: 'user' },
+      })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [delivered] })
+      resumedBeta.session.append('turn/start', { turn: 21 })
+      resumedBeta.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      resumedBeta.session.append('step/start', { turn: 21, step: 1 })
+      resumedBeta.session.append('user/message', privateMessage, { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 21, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-private-restart-replacement'), role: 'assistant',
+          content: [{ type: 'text', text: 'This private response must stay private.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'The group input is replaced.' }],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('ignores synthetic runtime context while reconciling a claimed group turn after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Runtime context room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive synthetic context.', messageId: BotGroupMessageId('bot-group-message-runtime-context') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('runtime-context delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 9 })
+      resumedBeta.session.append('step/start', { turn: 9, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('user/message', freezeMessage({
+        id: MessageId('runtime-context-input'), role: 'user',
+        content: [{ type: 'text', text: 'Current runtime context.' }],
+        source: { kind: 'runtime-context' },
+      }), { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 9, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-runtime-context'), role: 'assistant',
+          content: [{ type: 'text', text: 'The request survived restart.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Survive synthetic context.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The request survived restart.' },
+        ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('recovers an accepted group delivery from a persisted log with time context', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Persisted time context room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({
+      groupId: group.group.id,
+      text: 'Recover this failed request.',
+      messageId: BotGroupMessageId('bot-group-message-persisted-time-context'),
+    })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    const betaAgent = first.agents[1]
+    if (delivered === undefined || betaAgent === undefined) throw new Error('persisted time-context delivery was not admitted')
+    betaAgent.session.append('turn/start', { turn: 31 })
+    betaAgent.session.append('step/start', { turn: 31, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('user/message', freezeMessage({
+      id: MessageId('persisted-time-context-input'),
+      role: 'user',
+      content: [{ type: 'text', text: 'Current time: 12:00.' }],
+      source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+    }), { surfaceOp: 'append' })
+    betaAgent.session.append('turn/end', {
+      turn: 31,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    const persistedEvents = JSON.parse(JSON.stringify(betaAgent.session.snapshotEvents())) as SessionEvent[]
+    await close(first.ctx)
+
+    const reopened = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(alpha.bot.sessionId), String(beta.bot.sessionId)],
+      new Map(),
+      new Map([[String(beta.bot.sessionId), persistedEvents]]),
+    )
+    try {
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-persisted-time-context',
+            botId: beta.bot.id,
+            status: 'failed',
+            error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reconciles a cold group member during inspection without opening its Agent', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Cold inspection room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({
+      groupId: group.group.id,
+      text: 'Recover this while cold.',
+      messageId: BotGroupMessageId('bot-group-message-cold-inspection'),
+    })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    const betaAgent = first.agents[1]
+    if (delivered === undefined || betaAgent === undefined) throw new Error('cold inspection delivery was not admitted')
+    betaAgent.session.append('turn/start', { turn: 33 })
+    betaAgent.session.append('step/start', { turn: 33, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('user/message', freezeMessage({
+      id: MessageId('cold-inspection-time-context'),
+      role: 'user',
+      content: [{ type: 'text', text: 'Current time: 12:00.' }],
+      source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+    }), { surfaceOp: 'append' })
+    betaAgent.session.append('turn/end', {
+      turn: 33,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    const persistedEvents = JSON.parse(JSON.stringify(betaAgent.session.snapshotEvents())) as SessionEvent[]
+    await close(first.ctx)
+
+    const cold = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map(),
+      new Map([[String(beta.bot.sessionId), persistedEvents]]),
+    )
+    try {
+      expect(cold.agents).toHaveLength(0)
+      await expect(cold.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-cold-inspection',
+            botId: beta.bot.id,
+            status: 'failed',
+            error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+      expect(cold.agents).toHaveLength(0)
+    } finally {
+      await close(cold.ctx)
+    }
+  })
+
+  it('keeps a persisted group delivery accepted when another Bot relayed input in the turn', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Persisted Bot relay room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({
+      groupId: group.group.id,
+      text: 'Do not attribute the relay response.',
+      messageId: BotGroupMessageId('bot-group-message-persisted-agent-relay'),
+    })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    const betaAgent = first.agents[1]
+    if (delivered === undefined || betaAgent === undefined) throw new Error('persisted relay delivery was not admitted')
+    betaAgent.session.append('turn/start', { turn: 32 })
+    betaAgent.session.append('step/start', { turn: 32, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('user/message', freezeMessage({
+      id: MessageId('persisted-agent-relay-input'),
+      role: 'user',
+      content: [{ type: 'text', text: 'A private relay from another Bot.' }],
+      source: { kind: 'agent-message', form: 'relay', senderSessionId: alpha.bot.sessionId },
+    }), { surfaceOp: 'append' })
+    betaAgent.session.append('turn/end', {
+      turn: 32,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    const persistedEvents = JSON.parse(JSON.stringify(betaAgent.session.snapshotEvents())) as SessionEvent[]
+    await close(first.ctx)
+
+    const reopened = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(alpha.bot.sessionId), String(beta.bot.sessionId)],
+      new Map(),
+      new Map([[String(beta.bot.sessionId), persistedEvents]]),
+    )
+    try {
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-persisted-agent-relay',
+            botId: beta.bot.id,
+            status: 'accepted',
+          }),
+        ]),
+        messages: [{ sender: { kind: 'user' }, text: 'Do not attribute the relay response.' }],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('uses raw inbox claims instead of surface appends when rebuilding restart attribution', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw inbox room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Do not isolate this turn.', messageId: BotGroupMessageId('bot-group-message-raw-inbox') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw-inbox delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      const privateMessage = freezeMessage({
+        id: MessageId('private-raw-inbox-input'), role: 'user',
+        content: [{ type: 'text', text: 'Keep this private.' }], source: { kind: 'user' },
+      })
+      resumedBeta.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [delivered, privateMessage],
+      })
+      resumedBeta.session.append('turn/start', { turn: 11 })
+      resumedBeta.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 2, inserted: [],
+      })
+      resumedBeta.session.append('step/start', { turn: 11, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 11, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-raw-inbox'), role: 'assistant',
+          content: [{ type: 'text', text: 'The group request was not isolated.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Do not isolate this turn.' }],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('restores a claimed group turn across a service restart before projecting its response', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId),
+    ])
+    const group = await h.service.createGroup({ name: 'Restart room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Survive the restart.', messageId: BotGroupMessageId('bot-group-message-restart') })
+    const betaAgent = h.agents[1]
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (betaAgent === undefined || delivered === undefined) throw new Error('restart delivery was not admitted')
+    const decision = await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+      messages: [delivered], turn: 3, step: 2, signal: new AbortController().signal,
+    }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+    expect(decision.kind).toBe('enter')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId),
+    ])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 3 })
+      resumedBeta.session.append('step/start', { turn: 3, step: 2 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 3,
+        step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-after-restart'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The restart was safe.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Survive the restart.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The restart was safe.' },
+        ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('does not project a later private step as a group response in the same turn', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Private guard room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Shared request.', messageId: BotGroupMessageId('bot-group-message-private-guard') })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('private-guard delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 4, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+
+      const privateMessage = freezeMessage({
+        id: MessageId('private-followup'), role: 'user' as const,
+        content: [{ type: 'text' as const, text: 'Keep this private.' }], source: { kind: 'user' as const },
+      })
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [privateMessage], turn: 4, step: 2, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [privateMessage] }))
+      betaAgent.session.append('user/message', privateMessage, { surfaceOp: 'append' })
+      const responseEvent = betaAgent.session.append('assistant/message', {
+        turn: 4, step: 2,
+        message: freezeMessage({
+          id: MessageId('assistant-private'), role: 'assistant',
+          content: [{ type: 'text', text: 'Private response.' }], source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, responseEvent)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Shared request.' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('ignores a compacted user-message replacement while rebuilding group claims', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Compaction room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Rebuild this turn.', messageId: BotGroupMessageId('bot-group-message-compaction') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('compaction delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 5 })
+      resumedBeta.session.append('step/start', { turn: 5, step: 1 })
+      const admitted = resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('user/message', freezeMessage({
+        id: MessageId('compacted-input'), role: 'user',
+        content: [{ type: 'text', text: 'A compacted view of the turn.' }], source: { kind: 'user' },
+      }), {
+        surfaceOp: { op: 'replace', startSeq: admitted.seq, endSeq: admitted.seq },
+        sourceEventSeqs: [admitted.seq],
+      })
+      resumedBeta.session.append('assistant/message', {
+        turn: 5,
+        step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-after-compaction'),
+          role: 'assistant',
+          content: [{ type: 'text', text: 'The compacted turn is restored.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Rebuild this turn.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The compacted turn is restored.' },
+        ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('keeps same-source responses from different Bots as separate transcript rows', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Same source room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Answer separately.', messageId: BotGroupMessageId('bot-group-message-same-source') })
+      for (const [index, agent] of h.agents.entries()) {
+        const delivered = h.followups[index]?.mock.calls[0]?.[0]
+        if (delivered === undefined) throw new Error('same-source delivery was not admitted')
+        const turn = index + 1
+        await agentEvents(h.ctx, agent).waterfall('agent/pre-step', {
+          messages: [delivered], turn, step: 1, signal: new AbortController().signal,
+        }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+        agent.session.append('user/message', delivered, { surfaceOp: 'append' })
+        const responseEvent = agent.session.append('assistant/message', {
+          turn, step: 1,
+          message: freezeMessage({
+            id: MessageId('same-assistant-source'), role: 'assistant',
+            content: [{ type: 'text', text: `${agent.id} response.` }], source: { kind: 'model', provider: 'test', model: 'test' },
+          }), stream: [],
+        }, { surfaceOp: 'append' })
+        h.ctx.emit('session/event', agent.session, responseEvent)
+      }
+
+      const transcript = (await h.service.inspectGroup({ groupId: group.group.id })).messages
+      expect(transcript).toHaveLength(3)
+      expect(transcript[0]).toMatchObject({ sender: { kind: 'user' }, text: 'Answer separately.' })
+      expect(transcript.slice(1)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
+        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
+      ]))
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not accept a client-supplied sender identity on a human group message', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Identity room', botIds: [alpha.bot.id, beta.bot.id] })
+      const spoofedRequest = {
+        groupId: group.group.id,
+        text: 'This must remain a human message.',
+        messageId: BotGroupMessageId('bot-group-message-spoof'),
+        senderBotId: alpha.bot.id,
+      }
+      await expect(h.service.sendGroupMessage(spoofedRequest)).resolves.toMatchObject({ status: 'accepted' })
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'This must remain a human message.' }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects duplicate members and groups with fewer than two Bots', async () => {
+    const h = await harness()
+    try {
+      const alpha = await h.service.create({ name: 'Alpha', cwd: '/tmp' })
+      await expect(h.service.createGroup({ name: 'Invalid', botIds: [alpha.bot.id] })).rejects.toThrow('at least two')
+      await expect(h.service.createGroup({ name: 'Invalid', botIds: [alpha.bot.id, alpha.bot.id] })).rejects.toThrow('unique')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries only the failed member of a partially delivered group message', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const liveAgents = new Map(h.agents.map(agent => [String(agent.id), agent]))
+      let failBeta = true
+      h.resolveAgent.mockImplementation(async (sessionId) => {
+        if (sessionId === beta.bot.sessionId && failBeta) {
+          failBeta = false
+          return { error: new Error('Beta is offline') }
+        }
+        const agent = liveAgents.get(String(sessionId))
+        return agent === undefined ? { error: new Error('Session is missing') } : { agent }
+      })
+      const group = await h.service.createGroup({ name: 'Release room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: 'Prepare the release.',
+        messageId: BotGroupMessageId('bot-group-message-partial'),
+      })).resolves.toMatchObject({
+        status: 'partial',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'accepted' },
+          { botId: beta.bot.id, status: 'failed' },
+          { botId: gamma.bot.id, status: 'accepted' },
+        ],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(h.followups[1]).toHaveBeenCalledTimes(0)
+      expect(h.followups[2]).toHaveBeenCalledTimes(1)
+
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: 'Prepare the release.',
+        messageId: BotGroupMessageId('bot-group-message-partial'),
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [
+          { botId: alpha.bot.id, status: 'duplicate' },
+          { botId: beta.bot.id, status: 'accepted' },
+          { botId: gamma.bot.id, status: 'duplicate' },
+        ],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(h.followups[1]).toHaveBeenCalledTimes(1)
+      expect(h.followups[2]).toHaveBeenCalledTimes(1)
     } finally {
       await close(h.ctx)
     }
@@ -2038,6 +4603,7 @@ describe('durable Bot roster', () => {
 
       const prompt = async () => renderPrompt(await second.ctx.systemPrompt.assemble({ scope: agent }))
       expect(await prompt()).toContain('Persistent identity')
+      expect(await prompt()).toContain(`Your Bot id is "${created.bot.id}".`)
       await second.service.rename({ botId: created.bot.id, name: 'Renamed identity' })
       expect(await prompt()).toContain('Renamed identity')
       expect(await prompt()).not.toContain('Persistent identity')
@@ -2459,6 +5025,231 @@ describe('durable Bot roster', () => {
         bots: [{ id: created.bot.id, pinned: false, hidden: false }],
       })
       expect(changes).toEqual([])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('reconciles a pending group delivery as failed after a restarted blocked turn', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Pending restart room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({ groupId: group.group.id, text: 'Resume the pending request.', messageId: BotGroupMessageId('bot-group-message-pending-restart') })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('pending restart delivery was not admitted')
+    const domain = first.ctx.storageDomain.get(botGroupDomain.name) as Domain<typeof botGroupDomain> | undefined
+    if (domain === undefined) throw new Error('group domain was not mounted')
+    const pendingEntry = [...domain.table('deliveries').entries()].find(([, delivery]) => delivery.messageId === 'bot-group-message-pending-restart')
+    if (pendingEntry === undefined) throw new Error('pending restart delivery record was not stored')
+    await domain.table('deliveries').put(pendingEntry[0], { ...pendingEntry[1], status: 'pending' })
+    await close(first.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Beta Agent was not created')
+      resumedBeta.session.append('turn/start', { turn: 14 })
+      resumedBeta.session.append('step/start', { turn: 14, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('step/end', { turn: 14, step: 1 })
+      resumedBeta.session.append('turn/end', { turn: 14, reason: { kind: 'blocked' } })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-pending-restart', botId: beta.bot.id,
+            status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
+          }),
+        ]),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('records a blocked group turn even when pre-step rejects the claimed input', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Blocked pre-step room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'This request will be blocked.', messageId: BotGroupMessageId('bot-group-message-blocked-pre-step') })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('blocked pre-step delivery was not admitted')
+      await expect(agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 15, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'reject' as const }))).resolves.toMatchObject({ kind: 'reject' })
+      const failure = betaAgent.session.append('turn/end', { turn: 15, reason: { kind: 'blocked' } })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-blocked-pre-step', botId: beta.bot.id, status: 'failed' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not retain a stale group claim when pre-step replaces it with private input', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const group = await h.service.createGroup({ name: 'Rewritten pre-step room', botIds: [alpha.bot.id, beta.bot.id] })
+      await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Do not claim this replacement.', messageId: BotGroupMessageId('bot-group-message-rewritten-pre-step') })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('rewritten pre-step delivery was not admitted')
+      const privateMessage = freezeMessage({
+        id: MessageId('private-replacement-input'), role: 'user',
+        content: [{ type: 'text', text: 'Keep this private.' }], source: { kind: 'user' },
+      })
+      await expect(agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 16, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [privateMessage] }))).resolves.toMatchObject({
+        kind: 'enter', messages: [privateMessage],
+      })
+      const failure = betaAgent.session.append('turn/end', {
+        turn: 16, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'private provider key missing' } },
+      })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-rewritten-pre-step', botId: beta.bot.id, status: 'accepted' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('atomically authorizes Bot group inspection across membership updates', async () => {
+    const h = await harness()
+    try {
+      const alpha = await h.service.create({ name: 'Alpha', cwd: '/tmp' })
+      const beta = await h.service.create({ name: 'Beta', cwd: '/tmp' })
+      const gamma = await h.service.create({ name: 'Gamma', cwd: '/tmp' })
+      const domain = h.ctx.storageDomain.get(botGroupDomain.name) as Domain<typeof botGroupDomain> | undefined
+      if (domain === undefined) throw new Error('group domain was not mounted')
+      const groupService = new BotGroupService(domain, {
+        listBots: async () => (await h.service.list({})).bots,
+        deliverToBot: async () => 'accepted',
+      })
+      const group = await groupService.create({ name: 'Atomic inspect room', botIds: [alpha.bot.id, beta.bot.id] })
+      const inspection = groupService.inspectAsBot(alpha.bot.id, { groupId: group.group.id })
+      const update = groupService.update({ groupId: group.group.id, name: 'Atomic inspect room', botIds: [beta.bot.id, gamma.bot.id] })
+      await expect(inspection).resolves.toMatchObject({ group: { id: group.group.id, botIds: [alpha.bot.id, beta.bot.id] } })
+      await update
+      await expect(groupService.inspectAsBot(alpha.bot.id, { groupId: group.group.id })).rejects.toThrow('not a member')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('settles a claimed response after its Bot is removed from the group', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Removed delivery room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await h.service.sendGroupMessage({
+        groupId: group.group.id, text: 'Beta should finish this after removal.', targetBotIds: [beta.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-removed-delivery'),
+      })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('removed delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 17, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      await h.service.updateGroup({ groupId: group.group.id, name: 'Removed delivery room', botIds: [alpha.bot.id, gamma.bot.id] })
+      betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+      const response = betaAgent.session.append('assistant/message', {
+        turn: 17, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-after-removal'), role: 'assistant',
+          content: [{ type: 'text', text: 'Beta completed the queued work.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', betaAgent.session, response)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [
+          { sender: { kind: 'user' }, text: 'Beta should finish this after removal.' },
+          { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta completed the queued work.' },
+        ],
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({ messageId: 'bot-group-message-removed-delivery', botId: beta.bot.id, status: 'responded' }),
+        ]),
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('settles a claimed failure after its Bot is removed from the group', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Removed failure room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await h.service.sendGroupMessage({
+        groupId: group.group.id, text: 'Beta should report this failure after removal.', targetBotIds: [beta.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-removed-failure'),
+      })
+      const betaAgent = h.agents[1]
+      const delivered = h.followups[1]?.mock.calls[0]?.[0]
+      if (betaAgent === undefined || delivered === undefined) throw new Error('removed failure delivery was not admitted')
+      await agentEvents(h.ctx, betaAgent).waterfall('agent/pre-step', {
+        messages: [delivered], turn: 18, step: 1, signal: new AbortController().signal,
+      }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
+      await h.service.updateGroup({ groupId: group.group.id, name: 'Removed failure room', botIds: [alpha.bot.id, gamma.bot.id] })
+      const failure = betaAgent.session.append('turn/end', {
+        turn: 18, reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+      })
+      h.ctx.emit('session/event', betaAgent.session, failure)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-removed-failure', botId: beta.bot.id, status: 'failed',
+            error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
+          }),
+        ]),
+      })
     } finally {
       await close(h.ctx)
     }

@@ -438,6 +438,58 @@ export interface BotConnectedAppAccessValue {
   readonly app: BotConnectedAppAccess
 }
 
+/** Browser-safe view of one active memory owned by a Bot. */
+export interface BotMemoryView {
+  /** Stable identity used when editing or removing the memory. */
+  readonly id: string
+  /** User-authored reference text retained by the Bot. */
+  readonly text: string
+  /** Session-log timestamp of the latest remember operation. */
+  readonly createdAt: number
+}
+
+/** Request to list the private memories belonging to one Bot. */
+export interface BotMemoryListRequest {
+  /** Bot whose memory projection should be read. */
+  readonly botId: BotId
+}
+
+/** Response containing active private memories for one Bot. */
+export interface BotMemoryListValue {
+  /** Active memories in creation order. */
+  readonly memories: readonly BotMemoryView[]
+}
+
+/** Request to replace one private memory while retaining its stable id. */
+export interface BotMemoryUpdateRequest {
+  /** Bot that owns the memory. */
+  readonly botId: BotId
+  /** Existing memory identity to update. */
+  readonly memoryId: string
+  /** New non-empty memory text. */
+  readonly text: string
+}
+
+/** Response containing the updated private memory. */
+export interface BotMemoryUpdateValue {
+  /** Updated memory row. */
+  readonly memory: BotMemoryView
+}
+
+/** Remote request to logically remove one private memory. */
+export interface BotMemoryForgetRemoteRequest {
+  /** Bot that owns the memory. */
+  readonly botId: BotId
+  /** Existing memory identity to remove. */
+  readonly memoryId: string
+}
+
+/** Empty response for a successful logical memory removal. */
+export interface BotMemoryForgetValue {
+  /** Stable response marker for generated remote clients. */
+  readonly removed: true
+}
+
 declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
     /** A shared profile write observed a newer Bot row and must be retried. */

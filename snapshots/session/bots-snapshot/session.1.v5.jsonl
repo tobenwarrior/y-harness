@@ -1,0 +1,6 @@
+{"type":"session","version":5,"id":"{{session:2}}","createdAt":1793352684844,"cwd":"{{cwd}}","isSeeded":false,"delegationDepth":0}
+{"type":"permission/preset","data":{"preset":"danger-full-access"}}
+{"type":"sandbox/mode","data":{"mode":"danger-full-access"}}
+{"type":"approval/policy","data":{"policy":"never"}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"content":[{"type":"text","text":"A group message remains queued after restart."}],"source":{"kind":"bot-group-message","groupId":"bot-group-snapshot","messageId":"bot-group-message-snapshot"},"role":"user","id":"bot-group-message-snapshot"}]}}
+{"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[],"outcome":"canceled"}}

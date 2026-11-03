@@ -55,7 +55,7 @@ Animated characters use the selected accent color throughout their bodies. The p
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client registration creates one controller for the Bot Remote, Session store, locale translator, and optional avatar-generation Remote. It injects the main panel, its selected-session conversation slot, and the sidebar entry as one effect; disposing the effect removes each registration and the change listener. Presentational components receive plain props, so Host persistence and Session navigation remain outside the UI package.
+The Client registration creates one controller for the Bot Remote, Session store, locale translator, and optional avatar-generation Remote. It injects the main panel, its selected-session conversation slot, and the sidebar entry as one effect; disposing the effect removes each registration and the change listener. Group create/send retry ids are persisted in the browser store before the Remote call, restored when the controller is recreated, and removed only after a complete result. Only a durable pending operation is reconciled, using its exact id; a new operation receives a new id, while an explicit id supports an intentional repeat. An unavailable persistence or reconciliation surface fails closed before an uncertain retry. Group transcripts render persisted per-recipient delivery states, show safe model-turn failures beside the source message, and retry only user-authored messages with their original message id. Presentational components receive plain props, so Host persistence and Session navigation remain outside the UI package.
 
 | File | Role |
 |---|---|

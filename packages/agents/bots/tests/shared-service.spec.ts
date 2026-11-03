@@ -150,6 +150,20 @@ class SharedBotHostFixture implements SharedBotHost {
 
   findBot = async (botId: BotId, _signal?: AbortSignal): Promise<BotView | undefined> => this.bots.find(bot => bot.id === botId)
 
+  withBot = async <T>(
+    botId: BotId,
+    signal: AbortSignal | undefined,
+    operation: (bot: BotView) => Promise<T>,
+  ): Promise<{ readonly found: true; readonly value: T } | { readonly found: false }> => {
+    signal?.throwIfAborted()
+    const bot = await this.findBot(botId, signal)
+    signal?.throwIfAborted()
+    if (bot === undefined) return { found: false }
+    const current = this.bots.find(candidate => candidate.id === botId)
+    if (current === undefined) return { found: false }
+    return { found: true, value: await operation(current) }
+  }
+
   createPrivateSession = async (
     bot: BotView,
     sessionId: SessionId,
@@ -227,6 +241,11 @@ class SharedBotHostFixture implements SharedBotHost {
     }
     this.bots[index] = updated
     return updated
+  }
+
+  removeBot(botId: BotId): void {
+    const index = this.bots.findIndex(bot => bot.id === botId)
+    if (index >= 0) this.bots.splice(index, 1)
   }
 }
 
@@ -576,6 +595,501 @@ describe('shared Bot service', () => {
       expect(mutation).not.toHaveBeenCalled()
       mutation.mockRestore()
     } finally {
+      await value.close()
+    }
+  })
+
+  it('does not return a roster after a deferred Bot deletion', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      let enteredResolve: (() => void) | undefined
+      let releaseResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalListBots = value.host.listBots
+      let first = true
+      value.host.listBots = async (signal) => {
+        const bots = await originalListBots(signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bots
+      }
+
+      const pending = value.service.handle(
+        'bots/share/list',
+        {},
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not return a profile after a deferred Bot deletion', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      let enteredResolve: (() => void) | undefined
+      let releaseResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalFindBot = value.host.findBot
+      let first = true
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const pending = value.service.handle(
+        'bots/share/read-profile',
+        { botId: 'bot-chief' },
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'bot/not-found' },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not return a private transcript after a deferred Bot deletion', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: 'bot-chief', text: 'establish a private Session' },
+        new AbortController().signal,
+        owner.peer,
+      )).resolves.toMatchObject({ ok: true })
+
+      let enteredResolve: (() => void) | undefined
+      let releaseResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalInspect = value.host.inspectPrivateSession
+      value.host.inspectPrivateSession = async (sessionId, signal) => {
+        const inspection = await originalInspect(sessionId, signal)
+        enteredResolve?.()
+        await release
+        return inspection
+      }
+
+      const pending = value.service.handle(
+        'bots/share/read-private-chat',
+        { botId: 'bot-chief' },
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'bot/not-found' },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not return shared memory after a deferred Bot deletion', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      let enteredResolve: (() => void) | undefined
+      let releaseResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalFindBot = value.host.findBot
+      let first = true
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const pending = value.service.handle(
+        'bots/share/read-memory',
+        { botId: 'bot-chief' },
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'bot/not-found' },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it.each([
+    ['write-memory', { botId: 'bot-chief', text: 'late note', consent: true }],
+    ['manage-memory', { botId: 'bot-chief', enabled: true }],
+  ] as const)('does not mutate shared memory for %s after a deferred Bot deletion', async (endpoint, payload) => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      if (endpoint === 'write-memory') {
+        await expect(value.service.setMemoryPolicy(BotId('bot-chief'), true)).resolves.toMatchObject({ enabled: true })
+      }
+      let enteredResolve: (() => void) | undefined
+      let releaseResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalFindBot = value.host.findBot
+      let first = true
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const pending = value.service.handle(
+        `bots/share/${endpoint}`,
+        payload,
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'bot/not-found' },
+      })
+      const snapshot = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      expect(snapshot.sharedMemory?.entries ?? []).toEqual([])
+      expect(snapshot.sharedMemory?.policies ?? []).toEqual(endpoint === 'write-memory' ? [
+        { botId: BotId('bot-chief'), enabled: true, updatedAt: 1_000 },
+      ] : [])
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not persist an operator policy after a deferred Bot deletion', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      await value.service.createInvite(BotId('bot-chief'), 'owner')
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalFindBot = value.host.findBot
+      let first = true
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const pending = value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).rejects.toMatchObject({ code: 'bot/not-found' })
+      const snapshot = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      expect(snapshot.sharedMemory?.policies ?? []).toEqual([])
+    } finally {
+      releaseResolve?.()
+      await value.close()
+    }
+  })
+
+  it('does not issue an invite after a Bot is deleted during the existence fence', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      const owner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const before = pendingInviteCount(value.records.get(credentialKey('client-connection', 'shared-access')))
+      const originalFindBot = value.host.findBot
+      let first = true
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const ownerPrincipal = await principal(value, owner)
+      const pending = value.service.createInvite(BotId('bot-chief'), 'collaborator', ownerPrincipal.botPrincipalId)
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).rejects.toMatchObject({ code: 'bot/not-found' })
+      expect(pendingInviteCount(value.records.get(credentialKey('client-connection', 'shared-access')))).toBe(before)
+    } finally {
+      releaseResolve?.()
+      await value.close()
+    }
+  })
+
+  it('does not redeem an invite after a Bot is deleted during the existence fence', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      const invite = await value.service.createInvite(BotId('bot-chief'), 'owner')
+      const originalFindBot = value.host.findBot
+      let first = true
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const pending = value.service.enroll(invite.code, enrollmentRequest())
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).rejects.toMatchObject({ code: 'bot/not-found' })
+      expect(pendingInviteCount(value.records.get(credentialKey('client-connection', 'shared-access')))).toBe(1)
+    } finally {
+      releaseResolve?.()
+      await value.close()
+    }
+  })
+
+  it('does not revoke a member after a Bot is deleted during the existence fence', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      const owner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaborator = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const originalFindBot = value.host.findBot
+      let first = true
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      value.host.findBot = async (botId, signal) => {
+        const bot = await originalFindBot(botId, signal)
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+        }
+        return bot
+      }
+
+      const ownerPrincipal = await principal(value, owner)
+      const collaboratorPrincipal = await principal(value, collaborator)
+      const pending = value.service.revokeMember(
+        BotId('bot-chief'), collaboratorPrincipal.botPrincipalId, ownerPrincipal.botPrincipalId,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).rejects.toMatchObject({ code: 'bot/not-found' })
+      const snapshot = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      expect(snapshot.memberships.filter(member => member.botId === BotId('bot-chief'))).toHaveLength(2)
+    } finally {
+      releaseResolve?.()
+      await value.close()
+    }
+  })
+
+  it('does not create a private Session after a Bot is deleted during the existence fence', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      const originalWithBot = value.host.withBot
+      let first = true
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      value.host.withBot = async (botId, signal, operation) => {
+        if (first) {
+          first = false
+          enteredResolve?.()
+          await release
+          return { found: false }
+        }
+        return originalWithBot(botId, signal, operation)
+      }
+
+      const pending = value.service.handle(
+        'bots/share/chat',
+        { botId: 'bot-chief', text: 'must not create a Session' },
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'bot/not-found' } })
+      expect(value.host.sessions).toEqual(new Map())
+    } finally {
+      releaseResolve?.()
+      await value.close()
+    }
+  })
+
+  it('does not inspect Bot storage while an authority mutation is held', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    try {
+      const originalFindBot = value.host.findBot
+      let authorityMutationActive = false
+      const originalMutation = value.authority.mutateExtension.bind(value.authority)
+      const mutation = vi.spyOn(value.authority, 'mutateExtension')
+      mutation.mockImplementation(async (...args) => {
+        authorityMutationActive = true
+        try {
+          return await originalMutation(...args)
+        } finally {
+          authorityMutationActive = false
+        }
+      })
+      value.host.findBot = async (botId, signal) => {
+        if (authorityMutationActive) throw new Error('nested Bot lookup while authority mutation is held')
+        return originalFindBot(botId, signal)
+      }
+
+      await expect(value.service.setMemoryPolicy(BotId('bot-chief'), true)).resolves.toMatchObject({ enabled: true })
+      mutation.mockRestore()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('checks Bot existence before emitting a private chat follow-up', async () => {
+    const value = await fixture(Number.MAX_SAFE_INTEGER)
+    let releaseResolve: (() => void) | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      const originalResolve = value.host.resolvePrivateAgent
+      value.host.resolvePrivateAgent = async (sessionId, signal) => {
+        const resolved = await originalResolve(sessionId, signal)
+        enteredResolve?.()
+        await release
+        return resolved
+      }
+
+      const pending = value.service.handle(
+        'bots/share/chat',
+        { botId: 'bot-chief', text: 'late follow-up' },
+        new AbortController().signal,
+        owner.peer,
+      )
+      await entered
+      value.host.removeBot(BotId('bot-chief'))
+      releaseResolve?.()
+
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'bot/not-found' },
+      })
+      expect(value.host.followups).not.toHaveBeenCalled()
+    } finally {
+      releaseResolve?.()
       await value.close()
     }
   })

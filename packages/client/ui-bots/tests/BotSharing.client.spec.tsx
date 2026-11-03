@@ -144,6 +144,26 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByText('principal-chief')).toBeNull()
   })
 
+  it('clears copied feedback when a subsequent copy fails', async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('clipboard unavailable'))
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const actions = ownerActions({ createInvite: vi.fn().mockResolvedValue({ code: 'invite-code', expiresAt: 2_000 }) })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    try {
+      await waitFor(() => { expect(screen.getByRole('switch', { name: 'Enable shared context' })).toBeTruthy() })
+      fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
+      await screen.findByLabelText('Invite code')
+      fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+      await screen.findByRole('button', { name: 'Copied' })
+      fireEvent.click(screen.getByRole('button', { name: 'Copied' }))
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Copy code' })).toBeTruthy() })
+    } finally {
+      if (descriptor === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', descriptor)
+    }
+  })
+
   it('does not apply stale invite-copy feedback to a newer Bot invite', async () => {
     const copy = Promise.withResolvers<undefined>()
     const writeText = vi.fn().mockReturnValue(copy.promise)
@@ -241,6 +261,63 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
   })
 
+  it('blocks membership operations while a shared-context policy update is pending', async () => {
+    const policyWrite = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['setMemoryPolicy']>>>>()
+    const actions = ownerActions({
+      listMembers: vi.fn().mockResolvedValue({ members: [
+        {
+          botId: BotId(bot.id), principalId: BotPrincipalId('principal-owner'), role: 'owner',
+          grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1,
+        },
+        {
+          botId: BotId(bot.id), principalId: BotPrincipalId('principal-member'), role: 'collaborator',
+          grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1,
+        },
+      ] }),
+      setMemoryPolicy: vi.fn().mockReturnValue(policyWrite.promise),
+    })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('switch', { name: 'Enable shared context' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable shared context' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Enable shared context?' })
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /visible to every member/i }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Enable context' }))
+
+    await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
+    expect((screen.getByRole('button', { name: 'Create invite' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Revoke access: principal-member' }) as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      policyWrite.resolve({ botId: BotId(bot.id), enabled: true, updatedAt: 2 })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  })
+
+  it('localizes owner membership role labels', async () => {
+    const actions = ownerActions({
+      listMembers: vi.fn().mockResolvedValue({ members: [
+        {
+          botId: BotId(bot.id), principalId: BotPrincipalId('principal-owner'), role: 'owner',
+          grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1,
+        },
+        {
+          botId: BotId(bot.id), principalId: BotPrincipalId('principal-member'), role: 'collaborator',
+          grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1,
+        },
+      ] }),
+    })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('principal-member')).toBeTruthy() })
+    const memberPrincipal = screen.getByText('principal-member')
+    const memberRow = memberPrincipal.parentElement?.parentElement
+    if (memberRow === null || memberRow === undefined) throw new Error('member row is missing')
+    expect(within(memberRow).getByText('Collaborator')).toBeTruthy()
+    expect(within(memberRow).queryByText('collaborator')).toBeNull()
+  })
+
   it('closes the owner policy confirmation when the share dialog closes', async () => {
     const actions = ownerActions()
     const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
@@ -265,6 +342,14 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByText('Visible to members')).toBeTruthy()
     expect(client.readPrivateChat).toHaveBeenCalledWith(bot.id)
     expect(client.readMemory).toHaveBeenCalledWith(bot.id)
+  })
+
+  it('localizes the collaborator role in the shared roster', async () => {
+    const client = sharedClient()
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Collaborator')).toBeTruthy() })
+    expect(screen.queryByText('collaborator')).toBeNull()
   })
 
   it('closes the collaborator shared-note confirmation when the dialog closes', async () => {

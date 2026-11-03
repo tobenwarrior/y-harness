@@ -34,6 +34,15 @@ import type { SharedBotsClient } from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
+function shareRoleLabel(role: BotShareRole, t: Translate): string {
+  switch (role) {
+    case 'owner': return t('shareRoleOwner')
+    case 'manager': return t('shareRoleManager')
+    case 'collaborator': return t('shareRoleCollaborator')
+    default: return t('sharedRole', { role })
+  }
+}
+
 function updatePendingBotIds(current: ReadonlySet<string>, botId: string, pending: boolean): ReadonlySet<string> {
   if (pending) {
     if (current.has(botId)) return current
@@ -140,7 +149,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   }, [bot.id, open])
 
   const createInvite = async (): Promise<void> => {
-    if (working !== null) return
+    if (!stateMatchesBot || working !== null || memoryWorking) return
     const requestedBotId = bot.id
     const viewGeneration = viewGenerationRef.current
     const workingGeneration = workingGenerationRef.current + 1
@@ -167,7 +176,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   }
 
   const revoke = async (member: BotShareMember): Promise<void> => {
-    if (member.role === 'owner' || working !== null) return
+    if (member.role === 'owner' || working !== null || memoryWorking) return
     const requestedBotId = bot.id
     const viewGeneration = viewGenerationRef.current
     const workingGeneration = workingGenerationRef.current + 1
@@ -242,7 +251,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           />
         </div>
         <div className={css.shareInviteRow}>
-          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null} icon={<IconLinkOutlineRegular size={14} />}>
+          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null || memoryWorking} icon={<IconLinkOutlineRegular size={14} />}>
             {stateMatchesBot && working === 'invite' ? t('creatingInvite') : t('createInvite')}
           </Button>
           {stateMatchesBot && invite !== null && (
@@ -258,7 +267,8 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                     const inviteCode = invite.code
                     const inviteBotId = bot.id
                     const viewGeneration = viewGenerationRef.current
-                    const inviteGeneration = inviteGenerationRef.current
+                    const inviteGeneration = ++inviteGenerationRef.current
+                    setCopied(false)
                     void writeClipboard(inviteCode).then((success) => {
                       if (
                         success &&
@@ -298,13 +308,13 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
               <span className={css.shareMemberIdentity}>
                 <span className={css.shareMemberDot} aria-hidden="true" />
                 <span className={css.shareMemberPrincipal}>{String(member.principalId)}</span>
-                <Tag tone={member.role === 'owner' ? 'info' : 'neutral'}>{member.role}</Tag>
+                <Tag tone={member.role === 'owner' ? 'info' : 'neutral'}>{shareRoleLabel(member.role, t)}</Tag>
               </span>
               {member.role === 'owner'
                 ? <span className={css.shareMemberHint}>{t('revokeOwnerDisabled')}</span>
                 : (
                   <Tooltip label={t('revokeMember')} side="top" portal>
-                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null} onClick={() => { void revoke(member) }} />
+                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking} onClick={() => { void revoke(member) }} />
                   </Tooltip>
                 )}
             </div>
@@ -588,7 +598,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
               {bots.map(bot => (
                 <button type="button" className={bot.id === selectedBotId ? css.sharedBotSelected : css.sharedBot} key={String(bot.id)} onClick={() => { const id = String(bot.id); setSelection(id); void readBot(id) }}>
                   <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} size="small" />
-                  <span><strong>{bot.name}</strong><small>{bot.role}</small></span>
+                  <span><strong>{bot.name}</strong><small>{shareRoleLabel(bot.role, t)}</small></span>
                 </button>
               ))}
             </div>
@@ -596,7 +606,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
               <section className={css.sharedConversation} aria-label={selected.name}>
                 <header className={css.sharedConversationHeader}>
                   <BotAvatar name={selected.name} identity={selected.identity} accent={selected.accent} />
-                  <div><strong>{selected.name}</strong><small>{selected.description ?? selected.role}</small></div>
+                  <div><strong>{selected.name}</strong><small>{selected.description ?? shareRoleLabel(selected.role, t)}</small></div>
                 </header>
                 <div className={css.sharedTranscript}>
                   <div className={css.sharedContextLabel}>{t('privateSessionLabel')}</div>

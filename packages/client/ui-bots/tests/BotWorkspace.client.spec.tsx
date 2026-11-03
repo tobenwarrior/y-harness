@@ -5,9 +5,10 @@ import { AttachmentId } from '@yharness/attachment'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
-import { BotDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type { SharedBotsClient } from '../src/client/shared-client.ts'
+import type { BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -36,6 +37,20 @@ const bots: readonly BotSummary[] = [
     accent: 'amber',
   },
 ]
+
+const sharedGroup: BotGroupSummary = {
+  id: 'group-release',
+  name: 'Release room',
+  bots: [bots[0]!, bots[1]!],
+}
+
+const groupDetail: BotGroupDetailData = {
+  ...sharedGroup,
+  messages: [
+    { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
+    { id: 'message-2', sender: { kind: 'bot', botId: 'research', name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
+  ],
+}
 
 function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
   const props: BotWorkspaceProps = {
@@ -92,6 +107,22 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByText('Persistent session surface')).toBeNull()
   })
 
+  it('hides shared-group controls when the group Remote surface is unavailable', () => {
+    render(<BotRoster
+      bots={bots}
+      groups={[sharedGroup]}
+      selectedBotId="research"
+      selectedGroupId={null}
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.queryByRole('heading', { name: 'Shared groups' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New group' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Release room' })).toBeNull()
+  })
+
   it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {
     const onSelectBot = vi.fn()
     const expandSidebar = vi.fn()
@@ -113,6 +144,28 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('dialog', { name: 'Create a bot' })).toBeTruthy()
   })
 
+  it('keeps the shared-Bot join action reachable in the collapsed rail', async () => {
+    const sharedClient = {
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [] } }),
+    } as SharedBotsClient
+    const expandSidebar = vi.fn()
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={sharedClient}
+      expandSidebar={expandSidebar}
+      wide={false}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Join a shared bot' }))
+
+    expect(expandSidebar).toHaveBeenCalledOnce()
+    expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
+  })
+
   it('renders the selected detail as a standalone main surface', () => {
     render(<BotDetail
       bot={bots[0]}
@@ -126,6 +179,71 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('region', { name: 'Research partner' })).toBeTruthy()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('opens the selected bot memory manager from the detail header without adding a sidebar', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => []),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
+    expect(actions.list).toHaveBeenCalledWith('research')
+    expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('does not apply a pending edit from the previous Bot after selection changes', async () => {
+    let resolveUpdate!: (memory: BotMemorySummary) => void
+    const pendingUpdate = new Promise<BotMemorySummary>((resolve) => { resolveUpdate = resolve })
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(async () => pendingUpdate),
+      remove: vi.fn(async () => {}),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
+    fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-shared', 'Updated research note') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
+    await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
+    expect(screen.queryByText('Updated research note')).toBeNull()
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {
@@ -366,6 +484,169 @@ describe('Bot roster and detail', () => {
 
     expect(screen.getByRole('button', { name: `State bot, ${label}` })).toBeTruthy()
     expect(screen.getByRole('button', { name: `State bot, ${label}` }).textContent).toContain(label)
+  })
+
+  it('keeps shared groups in the existing Bots sidebar and selects one without a second rail', () => {
+    const onSelectGroup = vi.fn()
+    render(<BotRoster
+      bots={bots}
+      groups={[sharedGroup]}
+      selectedBotId={null}
+      selectedGroupId={sharedGroup.id}
+      onSelectBot={vi.fn()}
+      onSelectGroup={onSelectGroup}
+      onCreateBot={vi.fn()}
+      onCreateGroup={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.getByRole('complementary', { name: 'Bot workspace' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Shared groups' })).toBeTruthy()
+    const row = screen.getByRole('button', { name: /Release room/ })
+    expect(row.getAttribute('aria-current')).toBe('page')
+    fireEvent.click(row)
+    expect(onSelectGroup).toHaveBeenCalledWith(sharedGroup.id)
+    expect(screen.queryByRole('complementary', { name: /Group/ })).toBeNull()
+  })
+
+  it('creates a shared group from two existing Bots', async () => {
+    const onCreateGroup = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={bots}
+      groups={[]}
+      selectedBotId={bots[0]!.id}
+      selectedGroupId={null}
+      onSelectBot={vi.fn()}
+      onSelectGroup={vi.fn()}
+      onCreateBot={vi.fn()}
+      onCreateGroup={onCreateGroup}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'New group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Research partner' }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Release captain' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }))
+
+    await waitFor(() => { expect(onCreateGroup).toHaveBeenCalledWith({ name: 'Launch room', botIds: ['research', 'release'] }) })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull() })
+  })
+
+  it('renders the persistent group transcript, sends with Enter, and keeps a failed draft', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getByRole('region', { name: 'Release room' })).toBeTruthy()
+    expect(screen.getByText('Plan the release together.')).toBeTruthy()
+    expect(screen.getByText('I found three useful sources.')).toBeTruthy()
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' })
+    fireEvent.change(composer, { target: { value: 'What is left?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => { expect(onSend).toHaveBeenCalledWith('What is left?') })
+
+    const failed = vi.fn().mockRejectedValue(new Error('delivery failed'))
+    rerender(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error="Some Bots could not receive this message."
+      onRetry={vi.fn()}
+      onSend={failed}
+      loadAvatar={undefined}
+      t={t}
+    />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Release room' }), { target: { value: 'Retry this' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
+    expect((screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement).value).toBe('Retry this')
+    expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
+  })
+
+  it('shows persisted per-Bot turn failures and retries only the failed user message', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={{
+        ...groupDetail,
+        deliveries: [
+          { messageId: 'message-1', botId: 'research', status: 'responded' },
+          { messageId: 'message-1', botId: 'release', status: 'failed', error: 'Provider credentials are missing.' },
+        ],
+      }}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getByText('Release captain could not reply: Provider credentials are missing.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry: Release captain' }))
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('Plan the release together.', 'message-1', undefined)
+    })
+  })
+
+  it('offers member mentions and sends only to the selected Bot ids', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
+    expect(screen.getByRole('listbox', { name: 'Mention a Bot' })).toBeTruthy()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: '@Research partner please review', selectionStart: 31 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('@Research partner please review', undefined, ['research'])
+    })
+  })
+
+  it('renames a group from its header edit dialog', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onUpdate={onUpdate}
+      onSend={vi.fn()}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch command room' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith({
+        groupId: 'group-release', name: 'Launch command room', botIds: ['research', 'release'],
+      })
+    })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit shared group' })).toBeNull() })
   })
 
   it('keeps loading and owner-provided failures explicit', () => {

@@ -99,6 +99,15 @@ export interface SharedBotHost {
   readonly listBots: (signal?: AbortSignal) => Promise<readonly BotView[]>
   /** Find one operator-owned Bot by stable id. */
   readonly findBot: (botId: BotId, signal?: AbortSignal) => Promise<BotView | undefined>
+  /**
+   * Run one operation while the Host serializes it with Bot-row lifecycle work.
+   * The result is marked missing when the durable Bot row is absent.
+   */
+  readonly withBot: <T>(
+    botId: BotId,
+    signal: AbortSignal | undefined,
+    operation: (bot: BotView) => Promise<T>,
+  ) => Promise<SharedBotHostOperationResult<T>>
   /** Commit one manager-authorized Bot profile update as one durable row. An expected version rejects stale writes. */
   readonly updateProfile: (
     botId: BotId,
@@ -117,8 +126,12 @@ export interface SharedBotHost {
     principalId: string,
     signal?: AbortSignal,
   ) => Promise<Pick<Agent, 'id' | 'cancel' | 'whenIdle'> | void>
-  /** Resume a private Session and return follow-up and cancellation capabilities. */
-  readonly resolvePrivateAgent: (sessionId: SessionId, signal: AbortSignal) => Promise<{
+  /**
+   * Resume a private Session and return follow-up and cancellation capabilities.
+   * The optional Bot id comes from the Host's authoritative private-session
+   * binding and lets a cold resume register its shared scope before creation.
+   */
+  readonly resolvePrivateAgent: (sessionId: SessionId, signal: AbortSignal, botId?: BotId) => Promise<{
     readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
   } | { readonly error: Error }>
   /** Inspect one private Session's durable events. */
@@ -126,6 +139,11 @@ export interface SharedBotHost {
   /** Wait until a private Session's latest message is durably stored. */
   readonly flushPrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
 }
+
+/** Result of one Host operation that requires a still-existing Bot row. */
+export type SharedBotHostOperationResult<T> =
+  | { readonly found: true; readonly value: T }
+  | { readonly found: false }
 
 /** Enrollment result with the Bot share association for the new principal. */
 export interface SharedBotEnrollment extends SharedAccessEnrollment {
@@ -389,7 +407,6 @@ export class SharedBotService {
    */
   async setMemoryPolicy(botId: BotId, enabled: boolean): Promise<BotShareMemoryPolicyValue> {
     return this.serialize(async () => {
-      await this.requireBot(botId)
       return this.mutateSharedMemory(botId, undefined, undefined, undefined, (memory) => {
         const updatedAt = this.now()
         const currentPolicy = memory.policies.find(candidate => candidate.botId === botId)
@@ -444,54 +461,57 @@ export class SharedBotService {
         if (pending !== undefined) await this.invites.delete(digest)
         throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite is invalid or expired')
       }
-      const bot = await this.findBotOrFault(pending.botId)
-      if (bot.state !== 'active') throw new SharedServiceFault('gateway/bad-request', 'shared Bot is not ready')
-      const current = this.membershipsFor(pending.botId)
-      const owner = current.find(member => member.role === 'owner')
-      if (pending.role === 'owner' ? owner !== undefined : owner === undefined) {
-        throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite can no longer be redeemed')
-      }
-      let enrollment: SharedAccessEnrollment
-      try {
-        enrollment = await this.authority.redeemInvite(code, request)
-      } catch {
-        throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite is invalid or expired')
-      }
-      const principalId = BotPrincipalId(String(enrollment.principalId))
-      const grantedBy = owner?.principalId ?? principalId
-      const now = this.now()
-      const membership: SharedMembershipRecord = {
-        botId: pending.botId,
-        principalId,
-        role: pending.role,
-        grantedBy,
-        createdAt: now,
-        updatedAt: now,
-      }
-      try {
-        await this.memberships.put(membershipKey(membership.botId, membership.principalId), membership)
-        await this.updateMemberships((memberships) => {
-          const existing = memberships.find(member =>
-            member.botId === membership.botId && member.principalId === membership.principalId)
-          if (existing !== undefined) {
-            throw new SharedServiceFault('gateway/bad-request', 'shared Bot principal is already enrolled')
-          }
-          if (membership.role === 'owner' && memberships.some(member =>
-            member.botId === membership.botId && member.role === 'owner')) {
-            throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
-          }
-          return { memberships: [...memberships, membership], value: undefined }
-        })
-        await this.invites.delete(digest)
-      } catch (error) {
-        await this.memberships.delete(membershipKey(membership.botId, membership.principalId)).catch(() => undefined)
-        await this.removeMembershipSnapshot(membership.botId, membership.principalId).catch(() => undefined)
-        await this.invites.delete(digest).catch(() => undefined)
-        await this.authority.revokePrincipal(SharedPrincipalId(String(enrollment.principalId))).catch(() => undefined)
-        if (error instanceof SharedServiceFault) throw error
-        throw new SharedServiceFault('gateway/internal', 'shared Bot enrollment could not be stored')
-      }
-      return { ...enrollment, botId: pending.botId, role: pending.role }
+      const operation = await this.host.withBot(pending.botId, undefined, async (bot) => {
+        if (bot.state !== 'active') throw new SharedServiceFault('gateway/bad-request', 'shared Bot is not ready')
+        const current = this.membershipsFor(pending.botId)
+        const owner = current.find(member => member.role === 'owner')
+        if (pending.role === 'owner' ? owner !== undefined : owner === undefined) {
+          throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite can no longer be redeemed')
+        }
+        let enrollment: SharedAccessEnrollment
+        try {
+          enrollment = await this.authority.redeemInvite(code, request)
+        } catch {
+          throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite is invalid or expired')
+        }
+        const principalId = BotPrincipalId(String(enrollment.principalId))
+        const grantedBy = owner?.principalId ?? principalId
+        const now = this.now()
+        const membership: SharedMembershipRecord = {
+          botId: pending.botId,
+          principalId,
+          role: pending.role,
+          grantedBy,
+          createdAt: now,
+          updatedAt: now,
+        }
+        try {
+          await this.memberships.put(membershipKey(membership.botId, membership.principalId), membership)
+          await this.updateMemberships((memberships) => {
+            const existing = memberships.find(member =>
+              member.botId === membership.botId && member.principalId === membership.principalId)
+            if (existing !== undefined) {
+              throw new SharedServiceFault('gateway/bad-request', 'shared Bot principal is already enrolled')
+            }
+            if (membership.role === 'owner' && memberships.some(member =>
+              member.botId === membership.botId && member.role === 'owner')) {
+              throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
+            }
+            return { memberships: [...memberships, membership], value: undefined }
+          })
+          await this.invites.delete(digest)
+        } catch (error) {
+          await this.memberships.delete(membershipKey(membership.botId, membership.principalId)).catch(() => undefined)
+          await this.removeMembershipSnapshot(membership.botId, membership.principalId).catch(() => undefined)
+          await this.invites.delete(digest).catch(() => undefined)
+          await this.authority.revokePrincipal(SharedPrincipalId(String(enrollment.principalId))).catch(() => undefined)
+          if (error instanceof SharedServiceFault) throw error
+          throw new SharedServiceFault('gateway/internal', 'shared Bot enrollment could not be stored')
+        }
+        return { ...enrollment, botId: pending.botId, role: pending.role }
+      })
+      if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+      return operation.value
     })
   }
 
@@ -747,13 +767,15 @@ export class SharedBotService {
     principalId: ReturnType<typeof BotPrincipalId>,
   ): Promise<ConnectionRpcHandlerResult> {
     signal.throwIfAborted()
-    const bots = await this.host.listBots(signal)
+    await this.host.listBots(signal)
     signal.throwIfAborted()
     await this.refreshMemberships(signal)
     signal.throwIfAborted()
+    const currentBots = await this.host.listBots(signal)
+    signal.throwIfAborted()
     const rows: SharedBotRosterEntry[] = []
     let memberSeen = false
-    for (const bot of bots) {
+    for (const bot of currentBots) {
       signal.throwIfAborted()
       const memberships = this.membershipsFor(bot.id)
       const roster = this.roster(bot.id, memberships)
@@ -776,12 +798,13 @@ export class SharedBotService {
   ): Promise<ConnectionRpcHandlerResult> {
     signal.throwIfAborted()
     this.requireAuthorization(payload.botId, principalId, 'read-profile')
-    const bot = await this.findBotOrFault(payload.botId, signal)
+    await this.findBotOrFault(payload.botId, signal)
     signal.throwIfAborted()
     await this.refreshMemberships(signal)
     signal.throwIfAborted()
     this.requireAuthorization(payload.botId, principalId, 'read-profile')
-    return { ok: true, value: { bot: publicProfile(bot) } }
+    const currentBot = await this.findBotOrFault(payload.botId, signal)
+    return { ok: true, value: { bot: publicProfile(currentBot) } }
   }
 
   private async readPrivateChat(
@@ -794,7 +817,10 @@ export class SharedBotService {
     signal.throwIfAborted()
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const binding = await this.authoritativeSessionFor(payload.botId, principalId, signal)
-      if (binding === undefined) return { ok: true, value: { botId: payload.botId, recent: [] } }
+      if (binding === undefined) {
+        await this.requireBot(payload.botId, signal)
+        return { ok: true, value: { botId: payload.botId, recent: [] } }
+      }
       let inspection: BotCollaborationInspection
       try {
         inspection = await this.host.inspectPrivateSession(binding.sessionId, signal)
@@ -811,12 +837,14 @@ export class SharedBotService {
         await this.refreshMemberships(signal)
         signal.throwIfAborted()
         this.requireAuthorization(payload.botId, principalId, 'read-private-chat', principalId)
+        await this.requireBot(payload.botId, signal)
         return { ok: true, value: { botId: payload.botId, recent: [] } }
       }
       signal.throwIfAborted()
       await this.refreshMemberships(signal)
       signal.throwIfAborted()
       this.requireAuthorization(payload.botId, principalId, 'read-private-chat', principalId)
+      await this.requireBot(payload.botId, signal)
       return {
         ok: true,
         value: { botId: payload.botId, sessionId: binding.sessionId, recent: projectBotTranscript(inspection.events) },
@@ -846,7 +874,9 @@ export class SharedBotService {
     await this.requireBot(payload.botId, signal)
     const memory = snapshot.sharedMemory ?? emptySharedMemorySnapshot()
     const policy = memoryPolicyFor(memory, payload.botId)
-    return { ok: true, value: memoryValueFor(memory, payload.botId, policy) }
+    const value = memoryValueFor(memory, payload.botId, policy)
+    await this.requireBot(payload.botId, signal)
+    return { ok: true, value }
   }
 
   private async writeMemory(
@@ -856,7 +886,6 @@ export class SharedBotService {
   ): Promise<ConnectionRpcHandlerResult> {
     signal.throwIfAborted()
     this.requireAuthorization(payload.botId, principalId, 'write-memory')
-    await this.requireBot(payload.botId, signal)
     const value = await this.mutateSharedMemory(
       payload.botId,
       signal,
@@ -887,6 +916,7 @@ export class SharedBotService {
         }
       },
     )
+    await this.requireBot(payload.botId, signal)
     return { ok: true, value }
   }
 
@@ -897,7 +927,6 @@ export class SharedBotService {
   ): Promise<ConnectionRpcHandlerResult> {
     signal.throwIfAborted()
     this.requireAuthorization(payload.botId, principalId, 'manage-memory')
-    await this.requireBot(payload.botId, signal)
     const value = await this.mutateSharedMemory(
       payload.botId,
       signal,
@@ -923,6 +952,7 @@ export class SharedBotService {
         }
       },
     )
+    await this.requireBot(payload.botId, signal)
     return { ok: true, value }
   }
 
@@ -962,7 +992,7 @@ export class SharedBotService {
     let resolved: Awaited<ReturnType<SharedBotHost['resolvePrivateAgent']>> | undefined
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        resolved = await this.host.resolvePrivateAgent(binding.sessionId, signal)
+        resolved = await this.host.resolvePrivateAgent(binding.sessionId, signal, binding.botId)
       } catch (error: unknown) {
         if (!isMissingPrivateSessionError(error) || attempt === 1) throw error
         await repairBinding()
@@ -984,12 +1014,18 @@ export class SharedBotService {
     const cancelOnAbort = (): void => { cancelledIdle = cancelAndWait().then(() => undefined) }
     signal.addEventListener('abort', cancelOnAbort, { once: true })
     try {
+      const operation = await this.host.withBot(payload.botId, signal, async () => {
+        signal.throwIfAborted()
+        resolved.agent.followup(createUserMessage({ content: [{ type: 'text', text: payload.text }], source: { kind: 'user' } }))
+        await this.flushPrivateSession(binding.sessionId, signal)
+        signal.throwIfAborted()
+        await this.touchPrivateSession(binding, signal)
+        return true as const
+      })
+      if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+      const currentBot = await this.findBotOrFault(payload.botId, signal)
       signal.throwIfAborted()
-      resolved.agent.followup(createUserMessage({ content: [{ type: 'text', text: payload.text }], source: { kind: 'user' } }))
-      await this.flushPrivateSession(binding.sessionId, signal)
-      signal.throwIfAborted()
-      await this.touchPrivateSession(binding, signal)
-      return { ok: true, value: { bot: publicProfile(bot), sessionId: binding.sessionId, accepted: true } }
+      return { ok: true, value: { bot: publicProfile(currentBot), sessionId: binding.sessionId, accepted: true } }
     } catch (error: unknown) {
       if (cancelledIdle === undefined && !signal.aborted) {
         cancelledIdle = cancelAndWait().then(() => undefined)
@@ -1026,88 +1062,94 @@ export class SharedBotService {
     actor?: ReturnType<typeof BotPrincipalId>,
     signal?: AbortSignal,
   ): Promise<{ readonly botId: BotId; readonly principalId: ReturnType<typeof BotPrincipalId>; readonly revoked: true }> {
-    signal?.throwIfAborted()
-    await this.requireBot(botId, signal)
-    signal?.throwIfAborted()
-    if (actor !== undefined) this.requireAuthorization(botId, actor, 'manage-members')
-    const target = this.membershipSnapshot.find(member =>
-      member.botId === botId && member.principalId === principalId)
-    if (target === undefined) throw new SharedServiceFault('gateway/not-found', 'shared Bot member was not found')
-    if (target.role === 'owner') throw new SharedServiceFault('gateway/forbidden', 'the shared Bot owner cannot be revoked')
-    const cleanupKey = sessionKey(botId, principalId)
-    this.deferredRemoteCleanup.add(cleanupKey)
-    let committedTarget: SharedMembershipRecord
-    try {
-      committedTarget = await this.updateMemberships((memberships, authorityState) => {
-        signal?.throwIfAborted()
-        const currentTarget = memberships.find(member =>
-          member.botId === botId && member.principalId === principalId)
-        if (currentTarget === undefined) {
-          throw new SharedServiceFault('gateway/not-found', 'shared Bot member was not found')
-        }
-        if (currentTarget.role === 'owner') {
-          throw new SharedServiceFault('gateway/forbidden', 'the shared Bot owner cannot be revoked')
-        }
-        if (currentTarget.createdAt !== target.createdAt
-          || currentTarget.updatedAt !== target.updatedAt
-          || currentTarget.role !== target.role
-          || String(currentTarget.grantedBy) !== String(target.grantedBy)) {
-          throw new SharedServiceFault('gateway/conflict', 'shared Bot membership changed during revocation')
-        }
-        if (actor !== undefined) {
-          const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
-          if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
-            throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
-          }
-          this.requireAuthorizationForMemberships(memberships, botId, actor, 'manage-members')
-          signal?.throwIfAborted()
-        }
-        return {
-          memberships: memberships.filter(member =>
-            !(member.botId === botId && member.principalId === currentTarget.principalId)),
-          value: currentTarget,
-        }
-      })
-    } catch (error) {
-      this.deferredRemoteCleanup.delete(cleanupKey)
-      throw error
-    }
-    const binding = await this.authoritativeSessionFor(botId, committedTarget.principalId, undefined, true)
-    // Membership removal is already committed in the authority extension. A
-    // later actor revocation must not leave the membership row behind. The
-    // private binding is retained when Agent quiescence cannot be proven so a
-    // later membership refresh can retry cleanup without losing the identity.
-    let quiescent = binding === undefined
-    try {
-      if (binding !== undefined) {
-        this.revokedBindings.set(cleanupKey, {
-          ...binding,
-          revokedAt: Math.max(this.now(), binding.updatedAt),
-        })
-        await this.markPrivateSessionRevoked(botId, committedTarget.principalId, binding.sessionId)
-      }
-      this.cancelActive(botId, committedTarget.principalId)
-      if (binding !== undefined) {
-        quiescent = await this.cancelAgent(binding.sessionId, sessionKey(botId, committedTarget.principalId))
-      }
-    } finally {
+    const operation = await this.host.withBot(botId, signal, async () => {
+      signal?.throwIfAborted()
+      if (actor !== undefined) this.requireAuthorization(botId, actor, 'manage-members')
+      const target = this.membershipSnapshot.find(member =>
+        member.botId === botId && member.principalId === principalId)
+      if (target === undefined) throw new SharedServiceFault('gateway/not-found', 'shared Bot member was not found')
+      if (target.role === 'owner') throw new SharedServiceFault('gateway/forbidden', 'the shared Bot owner cannot be revoked')
+      const cleanupKey = sessionKey(botId, principalId)
+      this.deferredRemoteCleanup.add(cleanupKey)
+      let committedTarget: SharedMembershipRecord
       try {
-        await this.memberships.delete(membershipKey(botId, committedTarget.principalId))
+        committedTarget = await this.updateMemberships((memberships, authorityState) => {
+          signal?.throwIfAborted()
+          const currentTarget = memberships.find(member =>
+            member.botId === botId && member.principalId === principalId)
+          if (currentTarget === undefined) {
+            throw new SharedServiceFault('gateway/not-found', 'shared Bot member was not found')
+          }
+          if (currentTarget.role === 'owner') {
+            throw new SharedServiceFault('gateway/forbidden', 'the shared Bot owner cannot be revoked')
+          }
+          if (currentTarget.createdAt !== target.createdAt
+            || currentTarget.updatedAt !== target.updatedAt
+            || currentTarget.role !== target.role
+            || String(currentTarget.grantedBy) !== String(target.grantedBy)) {
+            throw new SharedServiceFault('gateway/conflict', 'shared Bot membership changed during revocation')
+          }
+          if (actor !== undefined) {
+            const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
+            if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+              throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+            }
+            this.requireAuthorizationForMemberships(memberships, botId, actor, 'manage-members')
+            signal?.throwIfAborted()
+          }
+          return {
+            memberships: memberships.filter(member =>
+              !(member.botId === botId && member.principalId === currentTarget.principalId)),
+            value: currentTarget,
+          }
+        })
+      } catch (error) {
+        this.deferredRemoteCleanup.delete(cleanupKey)
+        throw error
+      }
+      const binding = await this.authoritativeSessionFor(botId, committedTarget.principalId, undefined, true)
+      // Membership removal is already committed in the authority extension. A
+      // later actor revocation must not leave the membership row behind. The
+      // private binding is retained when Agent quiescence cannot be proven so a
+      // later membership refresh can retry cleanup without losing the identity.
+      let quiescent = binding === undefined
+      try {
+        if (binding !== undefined) {
+          this.revokedBindings.set(cleanupKey, {
+            ...binding,
+            revokedAt: Math.max(this.now(), binding.updatedAt),
+          })
+          await this.markPrivateSessionRevoked(botId, committedTarget.principalId, binding.sessionId)
+        }
+        this.cancelActive(botId, committedTarget.principalId)
+        if (binding !== undefined) {
+          quiescent = await this.cancelAgent(
+            binding.sessionId,
+            sessionKey(botId, committedTarget.principalId),
+            botId,
+          )
+        }
       } finally {
-        if (quiescent) {
-          this.deferredRemoteCleanup.delete(cleanupKey)
-          this.revokedBindings.delete(cleanupKey)
-          this.privateSessionCache.delete(cleanupKey)
-          if (binding !== undefined) this.completedRemoteCleanup.add(cleanupKey)
-          else this.completedRemoteCleanup.delete(cleanupKey)
+        try {
+          await this.memberships.delete(membershipKey(botId, committedTarget.principalId))
+        } finally {
+          if (quiescent) {
+            this.deferredRemoteCleanup.delete(cleanupKey)
+            this.revokedBindings.delete(cleanupKey)
+            this.privateSessionCache.delete(cleanupKey)
+            if (binding !== undefined) this.completedRemoteCleanup.add(cleanupKey)
+            else this.completedRemoteCleanup.delete(cleanupKey)
+          }
         }
       }
-    }
-    if (!quiescent) {
-      throw new SharedServiceFault('gateway/unavailable', 'shared Bot Session cleanup is still in progress')
-    }
-    signal?.throwIfAborted()
-    return { botId, principalId: committedTarget.principalId, revoked: true }
+      if (!quiescent) {
+        throw new SharedServiceFault('gateway/unavailable', 'shared Bot Session cleanup is still in progress')
+      }
+      signal?.throwIfAborted()
+      return { botId, principalId: committedTarget.principalId, revoked: true as const }
+    })
+    if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+    return operation.value
   }
 
   private async markPrivateSessionRevoked(
@@ -1138,6 +1180,17 @@ export class SharedBotService {
     principalId: ReturnType<typeof BotPrincipalId>,
     signal?: AbortSignal,
   ): Promise<SharedPrivateSessionValue> {
+    const operation = await this.host.withBot(bot.id, signal, current =>
+      this.ensureSessionForBot(current, principalId, signal))
+    if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+    return operation.value
+  }
+
+  private async ensureSessionForBot(
+    bot: BotView,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal?: AbortSignal,
+  ): Promise<SharedPrivateSessionValue> {
     const key = sessionKey(bot.id, principalId)
     if (this.quarantinedSessions.has(key) || this.deferredRemoteCleanup.has(key)) {
       throw new SharedServiceFault('gateway/unavailable', 'shared Bot Session cleanup is still in progress')
@@ -1145,7 +1198,7 @@ export class SharedBotService {
     if (this.quarantineRetries.delete(key)) {
       signal?.throwIfAborted()
       const previous = this.sessionFor(bot.id, principalId)
-      if (previous !== undefined && !await this.cancelAgent(previous.sessionId, key)) {
+      if (previous !== undefined && !await this.cancelAgent(previous.sessionId, key, bot.id)) {
         throw new SharedServiceFault('gateway/unavailable', 'shared Bot Session cleanup is still in progress')
       }
       signal?.throwIfAborted()
@@ -1184,7 +1237,7 @@ export class SharedBotService {
       if (committed.created) return privateSessionValue(committed.binding)
       cancellationStarted = true
       const quiescent = created === undefined
-        ? await this.cancelAgent(sessionId, key)
+        ? await this.cancelAgent(sessionId, key, bot.id)
         : await this.cancelResolvedAgent(created, key)
       if (!quiescent) throw new SharedServiceFault('gateway/unavailable', 'shared Bot Session cleanup is still in progress')
       return privateSessionValue(committed.binding)
@@ -1194,7 +1247,7 @@ export class SharedBotService {
       // the Agent but before the private binding is durable. Prefer the
       // returned exact Agent; a Host that cannot return it is resolved by id.
       const quiescent = created === undefined
-        ? await this.cancelAgent(sessionId, key)
+        ? await this.cancelAgent(sessionId, key, bot.id)
         : await this.cancelResolvedAgent(created, key)
       if (!quiescent) {
         // Retain enough durable identity to let the next membership refresh
@@ -1274,10 +1327,12 @@ export class SharedBotService {
     if (target === undefined || target.role === 'owner') return
     this.cancelActive(parsed.data.botId, target.principalId)
     const binding = await this.authoritativeSessionFor(parsed.data.botId, target.principalId, signal)
-    if (binding !== undefined) await this.cancelAgent(binding.sessionId, sessionKey(parsed.data.botId, target.principalId))
+    if (binding !== undefined) {
+      await this.cancelAgent(binding.sessionId, sessionKey(parsed.data.botId, target.principalId), parsed.data.botId)
+    }
   }
 
-  private async cancelAgent(sessionId: SessionId, quarantineKey?: string): Promise<boolean> {
+  private async cancelAgent(sessionId: SessionId, quarantineKey?: string, botId?: BotId): Promise<boolean> {
     const cancellation = new AbortController()
     let releaseStopped: (() => void) | undefined
     const stopped = new Promise<void>((resolve) => { releaseStopped = resolve })
@@ -1296,7 +1351,7 @@ export class SharedBotService {
       timer.unref()
     })
     const quiescence = Promise.resolve().then(async () => {
-      const resolved = await this.host.resolvePrivateAgent(sessionId, cancellation.signal)
+      const resolved = await this.host.resolvePrivateAgent(sessionId, cancellation.signal, botId)
       if ('agent' in resolved) {
         resolved.agent.cancel({ kind: 'parent' })
         await resolved.agent.whenIdle()
@@ -1383,55 +1438,58 @@ export class SharedBotService {
     actor?: ReturnType<typeof BotPrincipalId>,
     signal?: AbortSignal,
   ): Promise<{ readonly code: SharedInviteCode; readonly expiresAt: number }> {
-    await this.requireBot(botId, signal)
-    signal?.throwIfAborted()
-    if (!BOT_SHARE_ROLES.includes(role)) throw new SharedServiceFault('gateway/bad-request', 'invalid shared Bot role')
-    const invite = await this.authority.createInviteIf((authorityState, extensions) => {
-      const snapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-      const memberships = snapshot.memberships.filter(member => member.botId === botId)
-      const owner = memberships.find(member => member.role === 'owner')
-      if (role === 'owner' && owner !== undefined) {
-        throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
-      }
-      if (role !== 'owner' && owner === undefined) {
-        throw new SharedServiceFault('gateway/bad-request', 'shared Bot must have an owner first')
-      }
-      if (actor !== undefined) {
-        const principal = authorityState.principals.find(candidate => String(candidate.id) === String(actor))
-        if (principal === undefined || principal.revokedAt !== undefined) {
-          throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+    const operation = await this.host.withBot(botId, signal, async () => {
+      signal?.throwIfAborted()
+      if (!BOT_SHARE_ROLES.includes(role)) throw new SharedServiceFault('gateway/bad-request', 'invalid shared Bot role')
+      const invite = await this.authority.createInviteIf((authorityState, extensions) => {
+        const snapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+        const memberships = snapshot.memberships.filter(member => member.botId === botId)
+        const owner = memberships.find(member => member.role === 'owner')
+        if (role === 'owner' && owner !== undefined) {
+          throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
         }
-        this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, 'manage-members')
+        if (role !== 'owner' && owner === undefined) {
+          throw new SharedServiceFault('gateway/bad-request', 'shared Bot must have an owner first')
+        }
+        if (actor !== undefined) {
+          const principal = authorityState.principals.find(candidate => String(candidate.id) === String(actor))
+          if (principal === undefined || principal.revokedAt !== undefined) {
+            throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+          }
+          this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, 'manage-members')
+        }
+        signal?.throwIfAborted()
+      })
+      try {
+        signal?.throwIfAborted()
+      } catch (error) {
+        await this.authority.cancelInvite(invite.code).catch(() => undefined)
+        throw error
       }
-      signal?.throwIfAborted()
+      const record: SharedInviteRecord = {
+        digest: sharedInviteDigest(invite.code),
+        botId,
+        role,
+        createdAt: this.now(),
+        expiresAt: invite.expiresAt,
+      }
+      try {
+        await this.invites.put(record.digest, record)
+      } catch {
+        await this.authority.cancelInvite(invite.code).catch(() => undefined)
+        throw new SharedServiceFault('gateway/internal', 'shared Bot invite could not be stored')
+      }
+      try {
+        signal?.throwIfAborted()
+      } catch (error) {
+        await this.invites.delete(record.digest).catch(() => undefined)
+        await this.authority.cancelInvite(invite.code).catch(() => undefined)
+        throw error
+      }
+      return invite
     })
-    try {
-      signal?.throwIfAborted()
-    } catch (error) {
-      await this.authority.cancelInvite(invite.code).catch(() => undefined)
-      throw error
-    }
-    const record: SharedInviteRecord = {
-      digest: sharedInviteDigest(invite.code),
-      botId,
-      role,
-      createdAt: this.now(),
-      expiresAt: invite.expiresAt,
-    }
-    try {
-      await this.invites.put(record.digest, record)
-    } catch {
-      await this.authority.cancelInvite(invite.code).catch(() => undefined)
-      throw new SharedServiceFault('gateway/internal', 'shared Bot invite could not be stored')
-    }
-    try {
-      signal?.throwIfAborted()
-    } catch (error) {
-      await this.invites.delete(record.digest).catch(() => undefined)
-      await this.authority.cancelInvite(invite.code).catch(() => undefined)
-      throw error
-    }
-    return invite
+    if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+    return operation.value
   }
 
   private async requireBot(botId: BotId, signal?: AbortSignal): Promise<BotView> {
@@ -1543,7 +1601,11 @@ export class SharedBotService {
       })
       await this.markPrivateSessionRevoked(binding.botId, binding.principalId, binding.sessionId)
       if (this.deferredRemoteCleanup.has(key) || this.completedRemoteCleanup.has(key)) return
-      const quiescent = await this.cancelAgent(binding.sessionId, sessionKey(binding.botId, binding.principalId))
+      const quiescent = await this.cancelAgent(
+        binding.sessionId,
+        sessionKey(binding.botId, binding.principalId),
+        binding.botId,
+      )
       if (quiescent) {
         this.deferredRemoteCleanup.delete(key)
         this.completedRemoteCleanup.add(key)
@@ -1584,32 +1646,36 @@ export class SharedBotService {
     },
   ): Promise<T> {
     signal?.throwIfAborted()
-    const result = await this.authority.mutateExtension(
-      SHARED_MEMBERSHIP_EXTENSION_KEY,
-      async (current, authorityState) => {
-        const snapshot = parseMembershipSnapshot(current)
-        if (actor !== undefined && operation !== undefined) {
-          const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
-          if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
-            throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+    const operationResult = await this.host.withBot(botId, signal, async () => {
+      const result = await this.authority.mutateExtension(
+        SHARED_MEMBERSHIP_EXTENSION_KEY,
+        async (current, authorityState) => {
+          const snapshot = parseMembershipSnapshot(current)
+          if (actor !== undefined && operation !== undefined) {
+            const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
+            if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+              throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+            }
+            this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, operation)
           }
-          this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, operation)
-        }
-        signal?.throwIfAborted()
-        const next = mutation(snapshot.sharedMemory ?? emptySharedMemorySnapshot())
-        signal?.throwIfAborted()
-        const parsedMemory = sharedMemorySnapshotSchema.safeParse(next.memory)
-        if (!parsedMemory.success) {
-          throw new SharedServiceFault('gateway/unavailable', 'shared Bot context limits were exceeded')
-        }
-        return {
-          value: { memberships: snapshot.memberships, value: next.value },
-          next: { ...snapshot, sharedMemory: parsedMemory.data },
-        }
-      },
-    )
-    this.membershipSnapshot = result.memberships
-    return result.value
+          signal?.throwIfAborted()
+          const next = mutation(snapshot.sharedMemory ?? emptySharedMemorySnapshot())
+          signal?.throwIfAborted()
+          const parsedMemory = sharedMemorySnapshotSchema.safeParse(next.memory)
+          if (!parsedMemory.success) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot context limits were exceeded')
+          }
+          return {
+            value: { memberships: snapshot.memberships, value: next.value },
+            next: { ...snapshot, sharedMemory: parsedMemory.data },
+          }
+        },
+      )
+      this.membershipSnapshot = result.memberships
+      return result.value
+    })
+    if (!operationResult.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+    return operationResult.value
   }
 
   private async removeMembershipSnapshot(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): Promise<void> {

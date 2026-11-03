@@ -28,6 +28,8 @@ export const remoteDefaultResponses: RemoteTable = {
     'agentPresets/list': ok({ presets: [] }),
     // ui-bots roster load with no durable Bot rows.
     'bots/list': ok({ bots: [] }),
+    // ui-bots group roster load with no durable group rows.
+    'bots/listGroups': ok({ groups: [] }),
     // ui-settings-coding-sessions controller at apply and on connection/reset.
     'codingSessions/getState': ok({ sources: [], mirrors: [] }),
     // cordis-client-runner `ClientCordisInspectRegistry.sync` at apply and on `connection/reset`.

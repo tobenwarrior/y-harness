@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import { createSessionFormatCatalogWithChildren, historicalSessionFormatCatalog } from '@yharness/session-format-catalog'
+import { SESSION_FORMAT_VERSION } from '@yharness/session'
 import { isSessionFormatJsonObject, type SessionFormatArtifact, type SessionFormatEvent, type SessionFormatJsonObject, type SessionFormatJsonValue } from '@yharness/session-format'
 import { historicalChildCatalogSource } from '../src/index.ts'
 import { mapEventMessages, rewritePluginSource } from '../src/sources.ts'
@@ -79,7 +80,7 @@ it('refuses recorded parent/child clock conflicts and migrates consistent copies
         }
         expect(migrate(parent.artifact, aligned), parent.path).toEqual({
           ...parent.artifact,
-          header: { ...parent.artifact.header, version: 4 },
+          header: { ...parent.artifact.header, version: SESSION_FORMAT_VERSION },
           events: parent.artifact.events.map(migrateEvent),
         })
       }

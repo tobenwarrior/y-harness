@@ -118,6 +118,62 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
+ * List durable multi-Bot groups and current member projections.
+ * @param request - Group list request.
+ * @returns The available groups and their members.
+ */
+@Remote('listGroups') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>
+
+/**
+ * Create or idempotently reuse one durable multi-Bot group.
+ * @param request - Group identity, name, and members.
+ * @returns The created or existing group.
+ */
+@Remote('createGroup') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>
+
+/**
+ * Update a durable multi-Bot group from the human workspace.
+ * @param request - Group identity, name, and members.
+ * @returns The updated group.
+ */
+@Remote('updateGroup') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>
+
+/**
+ * Read one durable group transcript.
+ * @param request - Group identity.
+ * @returns The group and its transcript.
+ */
+@Remote('inspectGroup') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>
+
+/**
+ * Persist and fan out one human group message to every member Bot.
+ * @param request - Group identity, message identity, and text.
+ * @returns The updated group transcript.
+ */
+@Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
+
+/**
+ * List active memories for a Bot without accepting a model-supplied Session id.
+ * @param request - Durable Bot id whose private projection should be read.
+ * @returns active memory rows owned by that Bot.
+ */
+@Remote('listMemory') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>
+
+/**
+ * Replace one active memory for a Bot while preserving its stable id.
+ * @param request - Bot id, memory id, and replacement text.
+ * @returns the updated memory row.
+ */
+@Remote('updateMemory') async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue>
+
+/**
+ * Logically remove one active memory for a Bot.
+ * @param request - Bot id and memory id to remove.
+ * @returns a stable success marker after the forget event is durable.
+ */
+@Remote('forgetMemory') async forgetMemory(request: BotMemoryForgetRemoteRequest): Promise<BotMemoryForgetValue>
+
+/**
  * Create one durable Bot and its exactly-one ordinary Session.
  *
  * A provisioning row is committed before Session creation. If Session creation

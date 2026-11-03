@@ -30,7 +30,8 @@ The index is generated from validated snapshots and the current writer constant.
 | 1 | PR #3349 | [V1](v1.md) | [JSON](v1.schema.json) | 54 / 415 |
 | 2 | `dsh-v0.1.3-alpha.2` | [V2](v2.md) | [JSON](v2.schema.json) | 56 / 435 |
 | 3 | PR #4320 | [V3](v3.md) | [JSON](v3.schema.json) | 60 / 467 |
-| 4 | Current checkout | [Current catalog](../../persistence-catalog.md) | [JSON](../../persistence-schema.json) | 73 / 694 |
+| 4 | PR #4320 | [V4](v4.md) | [JSON](v4.schema.json) | 73 / 693 |
+| 5 | Current checkout | [Current catalog](../../persistence-catalog.md) | [JSON](../../persistence-schema.json) | 73 / 696 |
 
 <!-- persistence-format-index:end -->
 
