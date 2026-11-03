@@ -33,6 +33,8 @@ The browser uses HTTP POST for Remote unary calls. API Gateway owns the `/api/re
 -----
 
 <a id="browser-authentication-and-request-trust"></a>
+RPC and shared routes follow the web server lifecycle: registrations can be made before the server is available, and are removed with their owning plugin.
+
 ## Browser authentication and request trust
 
 Every Host RPC method and WebSocket stream requires one browser session; there is no method-specific loopback tier. Each process mints a random launch token. `dsh-web-app` prints and opens its application URL with `?token=...`, preserving the caller's authority and mount; `frontend-static` delegates root and index requests to `ctx.connection.authorizeIndex`, which accepts that token only on `GET /`, writes an authority-bound signed cookie, and redirects to clean `./`, which drops the token and keeps the request's directory. A missing, expired, malformed, or wrong-authority cookie returns 401 before RPC dispatch. Static assets remain public. The HTTP carrier accepts no query token outside the root exchange and no Authorization-header token.

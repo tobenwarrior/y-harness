@@ -2,7 +2,7 @@
 
 import { Context, Service } from '@yharness/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { WebRoute, WebUpgradeRoute } from '@yharness/host-webserver'
+import type { WebRoute, WebServer, WebUpgradeRoute } from '@yharness/host-webserver'
 import type { PeerScope } from '@yharness/typert-protocol'
 import {
   RpcId,
@@ -213,6 +213,21 @@ export class HostConnectionService extends Service implements HostConnectionHand
     }, `client-connection: ${route.path} Fetch route`)
   }
 
+  private registerWebRoute(
+    owner: Context,
+    register: (webServer: WebServer) => () => void | Promise<void>,
+    label: string,
+  ): () => Promise<void> {
+    const webServer = owner.get('webServer')
+    if (webServer !== undefined) {
+      return owner.effect(() => register(webServer), label)
+    }
+    const fiber = owner.inject(['webServer'], (webCtx) => {
+      webCtx.effect(() => register(webCtx.webServer), label)
+    })
+    return () => fiber.dispose()
+  }
+
   private register(
     owner: Context,
     channel: string,
@@ -234,8 +249,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
         await bridge(req, res, fetchHandler)
       },
     }
-    return owner.effect(
-      () => owner.webServer.register(route),
+    return this.registerWebRoute(
+      owner,
+      webServer => webServer.register(route),
       `client-connection: ${channel} rpc channel`,
     )
   }
@@ -282,8 +298,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
         await bridgeSharedRequest(req, res, carrier, limits, bodyConcurrency, concurrency)
       },
     }
-    return owner.effect(
-      () => owner.webServer.register(route),
+    return this.registerWebRoute(
+      owner,
+      webServer => webServer.register(route),
       `client-connection: ${channel} shared collaborator rpc channel`,
     )
   }
@@ -315,8 +332,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
         await bridgeSharedRequest(req, res, carrier, limits, bodyConcurrency, concurrency)
       },
     }
-    return owner.effect(
-      () => owner.webServer.register(route),
+    return this.registerWebRoute(
+      owner,
+      webServer => webServer.register(route),
       `client-connection: ${path} shared collaborator enrollment`,
     )
   }
@@ -346,8 +364,9 @@ export class HostConnectionService extends Service implements HostConnectionHand
         }
       },
     }
-    return owner.effect(
-      () => owner.webServer.registerUpgrade(route),
+    return this.registerWebRoute(
+      owner,
+      webServer => webServer.registerUpgrade(route),
       `client-connection: ${channel} shared collaborator WebSocket`,
     )
   }
