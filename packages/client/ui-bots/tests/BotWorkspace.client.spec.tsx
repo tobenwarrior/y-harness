@@ -102,9 +102,9 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'New bot' })[1]!)
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Release partner' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot description' }), { target: { value: 'Keeps releases moving.' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot persona' }), { target: { value: 'Prefer concise evidence.' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Capability labels' }), { target: { value: 'chat, release-review' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'What it does' }), { target: { value: 'Keeps releases moving.' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Prefer concise evidence.' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Specialties' }), { target: { value: 'chat, release-review' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create bot' }))
 
     await waitFor(() => {
@@ -129,13 +129,13 @@ describe('Bot roster and detail', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'New bot' })[1]!)
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Retry partner' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot persona' }), { target: { value: 'Keep trying.' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep trying.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create bot' }))
 
     await waitFor(() => { expect(create).toHaveBeenCalledOnce() })
     expect(screen.getByRole('dialog', { name: 'Create a bot' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'Bot name' })).toHaveProperty('value', 'Retry partner')
-    expect(screen.getByRole('textbox', { name: 'Bot persona' })).toHaveProperty('value', 'Keep trying.')
+    expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep trying.')
   })
 
   it('edits profile fields without replacing the selected session surface', async () => {
@@ -154,9 +154,9 @@ describe('Bot roster and detail', () => {
     ><span>Persistent session surface</span></BotDetail>)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot description' }), { target: { value: 'Source scout updated' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot persona' }), { target: { value: 'Lead with evidence.' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Capability labels' }), { target: { value: 'chat, research, release-review' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'What it does' }), { target: { value: 'Source scout updated' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Lead with evidence.' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Specialties' }), { target: { value: 'chat, research, release-review' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
     await waitFor(() => {
@@ -179,11 +179,11 @@ describe('Bot roster and detail', () => {
     ><span /></BotDetail>)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Bot persona' }), { target: { value: 'Keep the draft.' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep the draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('The bot profile could not be saved')
-    expect(screen.getByRole('textbox', { name: 'Bot persona' })).toHaveProperty('value', 'Keep the draft.')
+    expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep the draft.')
   })
 
   it('renames the selected bot from its conversation header', async () => {

@@ -6,12 +6,13 @@
   - button "Edit avatar"
   - button "Bot templates"
   - button "New bot"
+  - button "Join a shared bot"
   - textbox "Search bots"
   - region "General":
     - heading "General" [level=2]
     - button "Scout, Idle":
       - img "Scout"
-      - text: Scout Idle
+      - text: Scout Keeps the team informed Idle
     - button "Bot actions for Scout"
     - button "Orbit, Idle":
       - img "Orbit"
@@ -23,8 +24,9 @@
   - button "App access"
 - region "Scout":
   - img "Scout"
-  - text: Scout
-  - button "Rename bot"
+  - text: Scout Keeps the team informed
+  - button "Edit bot profile"
+  - button "Share bot"
   - button "Manage memories"
   - text: Idle
   - textbox "Message or run a task, / commands, @ files or sessions"
@@ -39,7 +41,7 @@
   - region "Share a Bot":
     - text: Share a Bot Publish its profile, persona, capabilities, avatar, and preset—never its session or credentials.
     - img "Scout"
-    - text: Scout
+    - text: Scout Keeps the team informed
     - button "Share"
     - img "Orbit"
     - text: Orbit
@@ -62,3 +64,85 @@
     - strong: No saved memories
     - text: This bot has not saved any notes yet.
   - button "Close"
+- dialog "Edit bot profile":
+  - heading "Edit bot profile" [level=2]
+  - button "Cancel"
+  - paragraph: Update the bot’s name, role, persona, and capability labels. Its session stays with it.
+  - text: Bot name
+  - textbox "Bot name": Scout
+  - text: What it does
+  - textbox "What it does":
+    - /placeholder: What kind of work should this bot help with?
+    - text: Keeps the team informed
+  - text: A short description to help you choose a bot. Instructions
+  - textbox "Instructions":
+    - /placeholder: How should this bot approach its work?
+    - text: Give clear, concise updates.
+  - text: Tell the bot how you want it to work. Specialties
+  - textbox "Specialties":
+    - /placeholder: chat, research, release-review
+    - text: research, updates
+  - text: Labels for organizing bots; they do not grant app access.
+  - button "Cancel"
+  - button "Save profile"
+- dialog "Create a bot":
+  - heading "Create a bot" [level=2]
+  - button "Cancel"
+  - paragraph: Name your work partner, then choose its character and color. Its session stays with it.
+  - text: Bot name
+  - textbox "Bot name":
+    - /placeholder: e.g. Release captain
+    - text: Verifier
+  - text: Character
+  - radiogroup "Character":
+    - radio "Controller character" [checked]:
+      - img "Controller character"
+    - radio "Star character":
+      - img "Star character"
+    - radio "Barbell character":
+      - img "Barbell character"
+    - radio "Mug character":
+      - img "Mug character"
+    - radio "Flower character":
+      - img "Flower character"
+    - radio "Folder character":
+      - img "Folder character"
+    - radio "Round character":
+      - img "Round character"
+    - radio "Cloud character":
+      - img "Cloud character"
+    - radio "Square character":
+      - img "Square character"
+    - radio "Clover character":
+      - img "Clover character"
+    - radio "Heart character":
+      - img "Heart character"
+    - radio "Drop character":
+      - img "Drop character"
+    - radio "Oval character":
+      - img "Oval character"
+    - radio "Triangle character":
+      - img "Triangle character"
+  - text: Color
+  - radiogroup "Color":
+    - radio "Blue"
+    - radio "Teal"
+    - radio "Amber"
+    - radio "Violet" [checked]
+    - radio "Rose"
+    - radio "Lime"
+  - text: What it does
+  - textbox "What it does":
+    - /placeholder: What kind of work should this bot help with?
+    - text: Checks releases
+  - text: A short description to help you choose a bot. Instructions
+  - textbox "Instructions":
+    - /placeholder: How should this bot approach its work?
+    - text: Be thorough and concise.
+  - text: Tell the bot how you want it to work. Specialties
+  - textbox "Specialties":
+    - /placeholder: chat, research, release-review
+    - text: review
+  - text: Labels for organizing bots; they do not grant app access.
+  - button "Cancel"
+  - button "Create bot"

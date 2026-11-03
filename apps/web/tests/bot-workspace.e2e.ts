@@ -97,6 +97,33 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       return bounds === null ? null : page.viewportSize()!.height - (bounds.y + bounds.height)
     }).toBeLessThan(100)
 
+    await firstDetail.getByRole('button', { name: 'Edit bot profile', exact: true }).click()
+    const profileDialog = page.getByRole('dialog', { name: 'Edit bot profile', exact: true })
+    await profileDialog.getByLabel('What it does').fill('Keeps the team informed')
+    await profileDialog.getByLabel('Instructions').fill('Give clear, concise updates.')
+    await profileDialog.getByLabel('Specialties').fill('research, updates')
+    const profileDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Edit bot profile"]', scaffold.workspaceCwd,
+    )
+    await profileDialog.getByRole('button', { name: 'Save profile', exact: true }).click()
+    await profileDialog.waitFor({ state: 'hidden' })
+    await expect.poll(async () => (await scaffold.ctx.bots.list({})).bots.find(bot => bot.id === firstBot.id)?.description)
+      .toBe('Keeps the team informed')
+    await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(firstBot.sessionId)
+
+    await roster.getByRole('button', { name: 'New bot', exact: true }).click()
+    const createDialog = page.getByRole('dialog', { name: 'Create a bot', exact: true })
+    await createDialog.getByLabel('Bot name').fill('Verifier')
+    await createDialog.getByLabel('What it does').fill('Checks releases')
+    await createDialog.getByLabel('Instructions').fill('Be thorough and concise.')
+    await createDialog.getByLabel('Specialties').fill('review')
+    const createDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Create a bot"]', scaffold.workspaceCwd,
+    )
+    await createDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await createDialog.waitFor({ state: 'hidden' })
+
     await roster.getByRole('button', { name: 'Bot templates', exact: true }).click()
     const templateDialog = page.getByRole('dialog', { name: 'Bot templates', exact: true })
     await templateDialog.getByText('No shared templates yet.', { exact: true }).waitFor({ state: 'visible' })
@@ -152,9 +179,20 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         await captureStableAria(page, `section[aria-label="${firstBot.name}"]`, scaffold.workspaceCwd),
         templateDialogSnapshot,
         memoryDialogSnapshot,
+        profileDialogSnapshot,
+        createDialogSnapshot,
       ].join('\n'),
       MODE,
     )
+    await roster.getByRole('button', { name: 'New bot', exact: true }).click()
+    await createDialog.getByLabel('Bot name').fill('Verifier')
+    await createDialog.getByLabel('What it does').fill('Checks releases')
+    await createDialog.getByLabel('Instructions').fill('Be thorough and concise.')
+    await createDialog.getByLabel('Specialties').fill('review')
+    await createDialog.getByRole('button', { name: 'Create bot', exact: true }).click()
+    await createDialog.waitFor({ state: 'hidden' })
+    await expect.poll(async () => (await scaffold.ctx.bots.list({})).bots.find(bot => bot.name === 'Verifier')?.description)
+      .toBe('Checks releases')
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)
