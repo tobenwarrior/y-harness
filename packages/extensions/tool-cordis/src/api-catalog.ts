@@ -2204,9 +2204,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal, options?: ScheduleCreateOptions, ): Promise<ScheduleRecord>',
-        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading inside the serialized queue, after an idempotency lookup, so a retry that finds an existing task never allocates a fresh task id or timing anchor. A reused key with a different canonical request is rejected. Create-operation reconciliation and active listing use the same FIFO, so a lost native result cannot be resolved against a stale empty task set.',
+        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading inside the serialized queue, after an idempotency lookup, so a retry that finds an existing task never allocates a fresh task id or timing anchor. A reused key with a different canonical request is rejected. Create-operation reconciliation and active listing use the same FIFO, so a lost native result cannot be resolved against a stale empty task set. Bot approval reserves its operation before the external approval request; a reservation left by a stopped Host is retired on restart.',
         parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'signal', description: 'Optional cancellation checked before reads and persistence, and after a committed write.' }, { name: 'options', description: 'Optional operation-specific Host retry identity. A repeated key for this Session returns the original record only when the canonical request matches.' }],
         returns: 'The durably stored schedule. Cancellation does not roll back an in-flight write.',
+      },
+      {
+        signature: 'async reserveCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateReservation>',
+        description: 'Reserve one Bot create operation before its external approval completes.\n\nA reservation is intentionally not a task: it only prevents another native call from creating the same routine while approval is pending. Reservations left by a stopped Host are retired during service initialization.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity retained across approval retries.' }, { name: 'signal', description: 'Optional cancellation checked before reservation persistence.' }],
+        returns: 'A new pending reservation or an already committed task.',
+      },
+      {
+        signature: 'async releaseCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, ): Promise<ScheduleCreateResolution>',
+        description: 'Retire a Bot create operation that was denied or cancelled before a task committed.\n\nA committed operation record always wins over retirement, so a cancellation that arrived after the task write cannot erase or hide its durable receipt.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity retained across approval retries.' }],
+        returns: 'The committed operation, a durable absent resolution, or unknown when no reservation exists.',
       },
       {
         signature: 'async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateResolution>',
@@ -7434,6 +7446,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleCreateRequest',
     declaration: 'export interface ScheduleCreateRequest {\n    prompt: string;\n    title: string;\n    after_seconds?: number;\n    at?: AtInput;\n    every_seconds?: number;\n    daily?: DailyInput;\n    weekly?: WeeklyInput;\n    cron?: CronInput;\n}',
+  },
+  {
+    name: 'ScheduleCreateReservation',
+    declaration: 'export type ScheduleCreateReservation = {\n    readonly status: \'reserved\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
   },
   {
     name: 'ScheduleCreateResolution',

@@ -41,6 +41,11 @@ export type BotRoutineCreateResolution =
   | { readonly status: 'absent' }
   | { readonly status: 'committed'; readonly record: JsonObject }
 
+/** Host-owned reservation of a routine before native approval completes. */
+export type BotRoutineCreateReservation =
+  | { readonly status: 'reserved' }
+  | { readonly status: 'committed'; readonly record: JsonObject }
+
 /** One explicitly registered native Bot action. */
 export interface BotNativeTool {
   readonly name: string
@@ -83,6 +88,13 @@ export interface BotNativeToolHost {
     pending: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'>,
     context: BotNativeToolContext,
   ) => Promise<BotRoutineCreateResolution>
+  /** Reserve a routine identity before asking for approval. */
+  readonly routineReserve?: (
+    args: JsonObject,
+    context: BotNativeToolContext,
+  ) => Promise<BotRoutineCreateReservation>
+  /** Retire a denied or cancelled routine reservation. */
+  readonly routineRelease?: (args: JsonObject, context: BotNativeToolContext) => Promise<void>
   /** Report whether the calling Bot scope visibly mounts every routine tool. */
   readonly routineAvailable?: (sessionId: SessionId) => Promise<boolean>
 }
@@ -347,10 +359,13 @@ function priorRoutineCreateResult(
   },
 ): BotNativeToolResult | 'conflict' | undefined {
   const key = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
-  const matches = events.filter(event => event.name === 'schedule_create' && dynamicCallKey(event) === key)
-  const started = matches.findLast(event => event.phase === 'started')
+  const startedIndex = events.findLastIndex(event => event.name === 'schedule_create'
+    && dynamicCallKey(event) === key && event.phase === 'started')
+  const started = events[startedIndex]
   if (started !== undefined && canonicalRoutineArguments(started.arguments) !== canonicalRoutineArguments(current.arguments)) return 'conflict'
-  const settled = matches.findLast(event => event.phase === 'settled')
+  const settledIndex = events.findLastIndex((event, index) => index > startedIndex
+    && event.name === 'schedule_create' && dynamicCallKey(event) === key && event.phase === 'settled')
+  const settled = settledIndex < 0 ? undefined : events[settledIndex]
   if (settled !== undefined) {
     if (canonicalRoutineArguments(settled.arguments) !== canonicalRoutineArguments(current.arguments) || settled.result === undefined) return 'conflict'
     // A rejected approval, validation, or cancellation did not commit a
@@ -365,36 +380,47 @@ function priorRoutineCreateResult(
   return undefined
 }
 
-/** Detect another unresolved routine create with the same request. */
-function pendingRoutineCreate(
+interface RoutineCreateCandidate {
+  readonly call: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId' | 'arguments'>
+  readonly state: 'pending' | 'failed'
+}
+
+/** Detect another routine create whose result may not describe its Schedule write. */
+function routineCreateCandidate(
   events: readonly BotDynamicToolEvent[],
   sessionId: SessionId,
   current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
     readonly arguments: Readonly<Record<string, unknown>>
   },
-): Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> | undefined {
+): RoutineCreateCandidate | undefined {
   const currentKey = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
   const currentArguments = canonicalRoutineArguments(current.arguments)
   const keys = new Set(events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId).map(dynamicCallKey))
-  let pending: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> | undefined
-  let pendingIndex = -1
+  let candidate: RoutineCreateCandidate | undefined
+  let candidateIndex = -1
   for (const key of keys) {
     if (key === currentKey) continue
-    const matches = events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId
-      && dynamicCallKey(event) === key)
-    const startedIndex = matches.findLastIndex(event => event.phase === 'started')
-    if (startedIndex < 0 || canonicalRoutineArguments(matches[startedIndex]?.arguments ?? {}) !== currentArguments) continue
-    const settledIndex = matches.findLastIndex(event => event.phase === 'settled')
-    if (startedIndex <= settledIndex) continue
-    const started = matches[startedIndex]
-    if (started === undefined) continue
-    const absoluteIndex = events.findLastIndex(event => event === started)
-    if (absoluteIndex > pendingIndex) {
-      pendingIndex = absoluteIndex
-      pending = started
+    const startedIndex = events.findLastIndex(event => event.name === 'schedule_create'
+      && event.sessionId === sessionId && dynamicCallKey(event) === key && event.phase === 'started')
+    const started = events[startedIndex]
+    if (startedIndex < 0 || started === undefined || canonicalRoutineArguments(started.arguments) !== currentArguments) continue
+    const settledIndex = events.findLastIndex((event, index) => index > startedIndex
+      && event.name === 'schedule_create' && event.sessionId === sessionId
+      && dynamicCallKey(event) === key && event.phase === 'settled')
+    if (settledIndex >= 0 && events[settledIndex]?.result?.success === true) continue
+    const absoluteIndex = settledIndex >= 0 ? settledIndex : startedIndex
+    if (absoluteIndex > candidateIndex) {
+      candidateIndex = absoluteIndex
+      candidate = {
+        call: {
+          callId: started.callId, threadId: started.threadId, turnId: started.turnId,
+          arguments: started.arguments,
+        },
+        state: settledIndex >= 0 ? 'failed' : 'pending',
+      }
     }
   }
-  return pending
+  return candidate
 }
 
 function safeString(value: string): string {
@@ -602,6 +628,8 @@ function routineTool(
   action: 'create' | 'list' | 'update' | 'delete',
   routine: NonNullable<BotNativeToolHost['routine']>,
   reconcile: BotNativeToolHost['routineReconcile'],
+  reserve: BotNativeToolHost['routineReserve'],
+  release: BotNativeToolHost['routineRelease'],
   persist: BotNativeToolHost['persist'],
   replay: BotNativeToolHost['replay'],
   sessionId: SessionId,
@@ -646,6 +674,46 @@ function routineTool(
       if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
 
       const executeOnce = async (): Promise<BotNativeToolResult> => {
+        const current = {
+          callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_,
+        }
+        let reserved = false
+        const releaseReservation = async (fallback: BotNativeToolResult): Promise<BotNativeToolResult> => {
+          if (!reserved || release === undefined) return fallback
+          try {
+            await release(arguments_, context)
+            reserved = false
+            return fallback
+          } catch (error: unknown) {
+            return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+          }
+        }
+        const persistSettlement = async (
+          call: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'>,
+          callArguments: Readonly<Record<string, unknown>>,
+          result: BotNativeToolResult,
+        ): Promise<void> => {
+          const settled = safeResult(result)
+          await persist({
+            phase: 'settled', name, callId: call.callId, threadId: call.threadId, turnId: call.turnId,
+            sessionId, arguments: safeArguments(callArguments), ...(settled === undefined ? {} : { result: settled }),
+          })
+        }
+        const recover = async (
+          record: JsonObject,
+          pending?: RoutineCreateCandidate['call'],
+        ): Promise<BotNativeToolResult> => {
+          const recovered = output(record)
+          // Retire both the lost predecessor and the current retry. The latter
+          // matters when the current native response is lost immediately after
+          // Schedule reconciliation settles the predecessor.
+          if (pending !== undefined) await persistSettlement(pending, pending.arguments, recovered)
+          if (replayed.some(event => event.phase === 'started'
+            && event.name === name && nativeCallKey(sessionId, event) === nativeCallKey(sessionId, { name, ...current }))) {
+            await persistSettlement(current, arguments_, recovered)
+          }
+          return context.signal.aborted ? failure('cancelled', 'The Bot action was cancelled.') : recovered
+        }
         let replayed: readonly BotDynamicToolEvent[] = []
         if (action === 'create') {
           try {
@@ -654,16 +722,13 @@ function routineTool(
             return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
           }
           if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
-          const current = {
-            callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_,
-          }
           const prior = priorRoutineCreateResult(replayed, sessionId, current)
           if (prior === 'conflict') {
             return failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
           }
           if (prior !== undefined) return prior
-          const pending = pendingRoutineCreate(replayed, sessionId, current)
-          if (pending !== undefined) {
+          const candidate = routineCreateCandidate(replayed, sessionId, current)
+          if (candidate !== undefined) {
             if (reconcile === undefined) {
               return failure(
                 'uncertain-outcome',
@@ -671,44 +736,85 @@ function routineTool(
               )
             }
             try {
-              const resolution = await reconcile(arguments_, pending, context)
-              if (resolution.status === 'unknown') {
-                return failure(
-                  'uncertain-outcome',
-                  'The earlier routine has not reached the Schedule service yet. Wait for its approval result before retrying.',
-                )
-              }
+              const resolution = await reconcile(arguments_, candidate.call, context)
               if (resolution.status === 'committed') {
-                const recovered = output(resolution.record)
-                const settled = safeResult(recovered)
-                await persist({
-                  phase: 'settled', name, callId: pending.callId, threadId: pending.threadId, turnId: pending.turnId,
-                  sessionId, arguments: safeArguments(arguments_), ...(settled === undefined ? {} : { result: settled }),
-                })
-                return recovered
+                return recover(resolution.record, candidate.call)
               }
+              if (resolution.status === 'unknown') {
+                const pendingKey = nativeCallKey(sessionId, { name, ...candidate.call })
+                // An in-flight approval is still authoritative in this Host.
+                // A replayed start with no live execution is an abandoned call;
+                // retire its audit record so a restart cannot block forever.
+                const liveApproval = candidate.state === 'pending'
+                  && (createFlights.has(pendingKey) || reserve === undefined || release === undefined)
+                if (liveApproval) {
+                  return failure(
+                    'uncertain-outcome',
+                    'The earlier routine has not reached the Schedule service yet. Wait for its approval result before retrying.',
+                  )
+                }
+                if (candidate.state === 'pending') {
+                  if (release !== undefined) {
+                    try {
+                      await release(candidate.call.arguments, {
+                        ...context,
+                        callId: candidate.call.callId,
+                        threadId: candidate.call.threadId,
+                        turnId: candidate.call.turnId,
+                      })
+                    } catch (error: unknown) {
+                      return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+                    }
+                  }
+                  await persistSettlement(candidate.call, candidate.call.arguments,
+                    failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
+                }
+              }
+              else if (resolution.status === 'absent' && candidate.state === 'pending') {
+                // Schedule has durably proved that no task committed. Close the
+                // native lifecycle before permitting a new operation.
+                await persistSettlement(candidate.call, candidate.call.arguments,
+                  failure('uncertain-outcome', 'The earlier routine creation did not commit a routine.'))
+              }
+              // A settled failure or a registered operation with no task is safe
+              // to retry after Schedule has proved that it is absent.
+            } catch (error: unknown) {
+              return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+            }
+          }
+          if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')
+          if (reserve !== undefined) {
+            try {
+              const reservation = await reserve(arguments_, context)
+              if (reservation.status === 'committed') return recover(reservation.record)
+              reserved = true
             } catch (error: unknown) {
               return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
             }
           }
         }
         if (mutates) {
-          if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')
+          if (context.approvalPolicy === 'never') return releaseReservation(
+            failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.'),
+          )
           let approved: boolean
           try {
             approved = await context.requestApproval(`Change a routine for Bot Session "${String(context.sessionId)}".`)
           } catch (error: unknown) {
-            return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+            return releaseReservation(signalIsAborted(context.signal)
+              ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error))
           }
-          if (!approved) return failure('approval-denied', 'The Bot routine change was not approved.')
-          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          if (!approved) return releaseReservation(failure('approval-denied', 'The Bot routine change was not approved.'))
+          if (context.signal.aborted) return releaseReservation(failure('cancelled', 'The Bot action was cancelled.'))
         }
         try {
           const value = await routine(action, arguments_, context)
           context.signal.throwIfAborted()
+          reserved = false
           return output(value)
         } catch (error: unknown) {
-          return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+          const result = signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+          return releaseReservation(result)
         }
       }
 
@@ -801,10 +907,10 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         && host.routineAvailable !== undefined
         && await host.routineAvailable(sessionId)
       const routines = !routineEnabled || routine === undefined ? [] : [
-        routineTool('create', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('list', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('update', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('delete', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('create', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('list', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('update', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('delete', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },

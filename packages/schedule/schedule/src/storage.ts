@@ -56,7 +56,7 @@ const scheduleCreateOperationSchema = z.object({
   sessionId: z.string().min(1).transform(SessionId),
   idempotencyKey: z.string().min(1).max(256).refine(value => value.trim() === value),
   requestFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-  status: z.enum(['pending', 'committed', 'resolved_absent']),
+  status: z.enum(['reserved', 'pending', 'committed', 'resolved_absent']),
   record: recordSchema.optional(),
 }).strict().refine(operation => (operation.status === 'committed') === (operation.record !== undefined), {
   message: 'A committed create operation must have a record and an unresolved operation must not have one',

@@ -25,7 +25,7 @@ import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
-import type { BotNativeToolHost, BotRoutineCreateResolution } from './native-tools.ts'
+import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type {
@@ -530,6 +530,46 @@ export class BotService extends TypertRemoteService {
         } catch (error: unknown) {
           if (error instanceof BotCollaborationError) throw error
           if (context.signal.aborted) throw new BotCollaborationError('cancelled', 'The Bot routine was cancelled.', { cause: error })
+          if (error instanceof ScheduleInputError) {
+            throw new BotCollaborationError('message-invalid', error.message, { cause: error })
+          }
+          throw error
+        }
+      },
+      routineReserve: async (args, context): Promise<BotRoutineCreateReservation> => {
+        const sessionId = context.sessionId
+        if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
+          throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+        }
+        const schedule = ctx.get('schedule')
+        if (schedule === undefined) throw new Error('Bot routines are unavailable.')
+        try {
+          const request = routineCreateRequest(args)
+          const reservation = await schedule.reserveCreate(
+            sessionId, request, routineOperationKey(sessionId, context), context.signal,
+          )
+          if (reservation.status === 'committed') {
+            return { status: 'committed', record: { ...scheduleView(reservation.record, Date.now()) } }
+          }
+          return { status: 'reserved' }
+        } catch (error: unknown) {
+          if (error instanceof BotCollaborationError) throw error
+          if (context.signal.aborted) throw new BotCollaborationError('cancelled', 'The Bot routine was cancelled.', { cause: error })
+          if (error instanceof ScheduleInputError) {
+            throw new BotCollaborationError('message-invalid', error.message, { cause: error })
+          }
+          throw error
+        }
+      },
+      routineRelease: async (args, context): Promise<void> => {
+        const sessionId = context.sessionId
+        if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) return
+        const schedule = ctx.get('schedule')
+        if (schedule === undefined) return
+        try {
+          const request = routineCreateRequest(args)
+          await schedule.releaseCreate(sessionId, request, routineOperationKey(sessionId, context))
+        } catch (error: unknown) {
           if (error instanceof ScheduleInputError) {
             throw new BotCollaborationError('message-invalid', error.message, { cause: error })
           }

@@ -143,6 +143,29 @@ describe('shared Schedule management', () => {
     expect([...test.ctx.storageDomain.get('schedule')!.table('create_operations').entries()]).toEqual([])
   })
 
+  it('reserves approval operations and retires abandoned reservations after restart', async () => {
+    const test = await setup()
+    const sessionId = SessionId('reserved-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.reserveCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'reserved' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'unknown' })
+    await expect(test.service.releaseCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    await expect(test.service.reserveCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'reserved' })
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    const record = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'reserved-key' })
+    expect(await restarted.service.list({ sessionId })).toEqual([record])
+  })
+
   it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
     const test = await setup()
     const sessionId = SessionId('structured-at')
@@ -187,6 +210,20 @@ describe('shared Schedule management', () => {
     const second = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'repeat-two' })
     expect(second.id).not.toBe(first.id)
     expect(first.id).not.toBe(retriedSameOperation.id)
+  })
+
+  it('keeps a committed retry receipt when release follows task deletion', async () => {
+    const test = await setup()
+    const sessionId = SessionId('release-committed')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const record = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'committed-key' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    await domain.table('tasks').delete(record.id)
+    await expect(test.service.releaseCreate(sessionId, request, 'committed-key'))
+      .resolves.toEqual({ status: 'committed', record })
+    await expect(test.service.reconcileCreate(sessionId, request, 'committed-key'))
+      .resolves.toEqual({ status: 'committed', record })
   })
 
   it('returns an empty catalog when the Host has no active reminders', async () => {

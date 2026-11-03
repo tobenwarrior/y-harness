@@ -392,6 +392,11 @@ export interface ScheduleCreateOptions {
   readonly idempotencyKey?: string
 }
 
+/** Host-only reservation result for a Bot reminder approval flow. */
+export type ScheduleCreateReservation =
+  | { readonly status: 'reserved' }
+  | { readonly status: 'committed'; readonly record: ScheduleRecord }
+
 /**
  * Result of resolving one durable create operation after its native reply was lost.
  * Unknown means creation has not registered with Schedule.

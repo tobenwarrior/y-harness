@@ -4,7 +4,7 @@ Schedule stores reminders independently of Session activation and delivers them 
 
 ## Durable records
 
-Host retry-aware creation persists an operation-specific idempotency key and canonical request fingerprint in the task and create-operation records; legacy task rows without those fields remain valid, and a repeated key for the same Session returns the existing task only when its request fingerprint matches. Create-operation reconciliation, active listing, and catalog share the Schedule write queue, so a lost native reply is resolved against a linearized task state: an unregistered operation remains unknown, while an absent registered operation is durably retired for later intentional repeats.
+Host retry-aware creation persists an operation-specific idempotency key and canonical request fingerprint in the task and create-operation records; legacy task rows without those fields remain valid, and a repeated key for the same Session returns the existing task only when its request fingerprint matches. Bot approval reserves the create operation before asking for approval, so concurrent reconciliation remains unknown until approval releases the reservation or commits the task; reservations left by a stopped Host are retired during the next Schedule start. Create-operation reconciliation, active listing, and catalog share the Schedule write queue, so a lost native reply is resolved against a linearized task state: an unregistered operation remains unknown, while an absent registered operation is durably retired for later intentional repeats.
 
 `ScheduleId` is a globally unique [branded id](core.md#branded-ids). The version-1 `schedule` storage domain owns a `tasks` table whose entries bind a `ScheduleRecord` to its original `sessionId`, with stored `status: 'active' | 'inactive'` and optional `lastDelivery`. Records lacking status normalize to `active` without scanning or recreating historical Sessions. Creation canonicalizes the target into RFC 3339 UTC `scheduledAt`; `after` retains the submitted delay, `every` retains its fixed interval, `daily` and `weekly` retain normalized local `time` and their explicit `timeZone`, and `cron` retains its canonical five-field `expression` and explicit `timeZone`. Daily, weekly, and cron decoding preserve the committed instant and stored zone spelling. The stored task record declares a required `title`, the short name the task surfaces show; creation requires it and never derives it from the instruction. No stored record may omit its title: a record whose `title` is missing, blank after trimming, untrimmed, or longer than 120 characters fails durable decoding with `ScheduleLogError`, and the schedule domain declares no backup-and-skip policy, so one such stored task rejects the whole domain open instead of being dropped. Only explicit deletion removes a task; previously physically deleted tasks are not restored or fabricated.
 
@@ -295,6 +295,13 @@ interface ScheduleCreateOptions {
 ```
 
 ```ts type-equiv
+/** Host-only reservation result for a Bot reminder approval flow. */
+type ScheduleCreateReservation =
+  | { readonly status: 'reserved' }
+  | { readonly status: 'committed'; readonly record: ScheduleRecord }
+```
+
+```ts type-equiv
 /**
  * Result of resolving one durable create operation after its native reply was lost.
  * Unknown means creation has not registered with Schedule.
@@ -485,7 +492,8 @@ Shared management service; reads, deletion, and timing edits never activate a Se
  * a fresh task id or timing anchor. A reused key with a different canonical
  * request is rejected. Create-operation reconciliation and active listing use
  * the same FIFO, so a lost native result cannot be resolved against a stale
- * empty task set.
+ * empty task set. Bot approval reserves its operation before the external
+ * approval request; a reservation left by a stopped Host is retired on restart.
  * @param sessionId - Original Session receiving the reminder.
  * @param request - Validated tool selector, required title, and reminder content.
  * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
@@ -494,6 +502,32 @@ Shared management service; reads, deletion, and timing edits never activate a Se
  * @returns The durably stored schedule. Cancellation does not roll back an in-flight write.
  */
 async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal, options?: ScheduleCreateOptions, ): Promise<ScheduleRecord>
+
+/**
+ * Reserve one Bot create operation before its external approval completes.
+ *
+ * A reservation is intentionally not a task: it only prevents another native
+ * call from creating the same routine while approval is pending. Reservations
+ * left by a stopped Host are retired during service initialization.
+ * @param sessionId - Original Session receiving the reminder.
+ * @param request - Validated tool selector, required title, and reminder content.
+ * @param idempotencyKey - Operation identity retained across approval retries.
+ * @param signal - Optional cancellation checked before reservation persistence.
+ * @returns A new pending reservation or an already committed task.
+ */
+async reserveCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateReservation>
+
+/**
+ * Retire a Bot create operation that was denied or cancelled before a task committed.
+ *
+ * A committed operation record always wins over retirement, so a cancellation
+ * that arrived after the task write cannot erase or hide its durable receipt.
+ * @param sessionId - Original Session receiving the reminder.
+ * @param request - Validated tool selector, required title, and reminder content.
+ * @param idempotencyKey - Operation identity retained across approval retries.
+ * @returns The committed operation, a durable absent resolution, or unknown when no reservation exists.
+ */
+async releaseCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, ): Promise<ScheduleCreateResolution>
 
 /**
  * Resolve one Bot create operation after its native reply was lost.

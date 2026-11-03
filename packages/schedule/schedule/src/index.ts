@@ -8,7 +8,7 @@ import { delegationDepthOf } from '@yharness/subagent'
 import type { SessionId } from '@yharness/session'
 import type { SessionActivity } from '@yharness/workspace'
 import { ScheduleRuntime } from './runtime.ts'
-import { scheduleDomain, type ScheduleCreateOperation } from './storage.ts'
+import { scheduleDomain, type ScheduleCreateOperation, type ScheduleTask } from './storage.ts'
 import { deliveryHistoryPage } from './delivery-history.ts'
 import { resolveScheduleUpdate } from './update.ts'
 import {
@@ -18,8 +18,10 @@ import {
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleCreateOptions, ScheduleCreateResolution,
+  ScheduleCreateReservation,
   ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest,
   ScheduleRecord,
+  ScheduleId as ScheduleIdType,
   ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
 } from './types.ts'
 
@@ -102,6 +104,33 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(`[${typeof value}]`)
 }
 
+/** Reject a request that selects more than one reminder rule. */
+function validateCreateSelector(request: ScheduleCreateRequest): void {
+  if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
+    + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
+    + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
+    throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
+  }
+}
+
+/** Reject an invalid Host retry identity. */
+function validateIdempotencyKey(idempotencyKey: string): void {
+  if (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
+  }
+}
+
+/** Normalize the title and fingerprint shared by Host create-operation methods. */
+function createOperationInputs(
+  request: ScheduleCreateRequest,
+  idempotencyKey: string,
+): { readonly title: string; readonly requestFingerprint: string } {
+  validateCreateSelector(request)
+  const title = scheduleTitle(request.title)
+  validateIdempotencyKey(idempotencyKey)
+  return { title, requestFingerprint: scheduleCreateFingerprint(request, title) }
+}
+
 /** Hash the normalized selector request stored with a Host retry identity. */
 function scheduleCreateFingerprint(request: ScheduleCreateRequest, title: string): string {
   const canonical: Record<string, unknown> = { prompt: request.prompt.trim(), title }
@@ -132,6 +161,60 @@ function createOperation(
     sessionId, idempotencyKey, requestFingerprint, status,
     ...(record === undefined ? {} : { record }),
   }
+}
+
+/** Storage writer needed by the Host-only create-operation helpers. */
+interface CreateOperationWriter {
+  put: (key: string, value: ScheduleCreateOperation) => Promise<unknown>
+}
+
+/** Reject a retry identity whose canonical request changed. */
+function assertCreateFingerprint(
+  operation: ScheduleCreateOperation | undefined,
+  requestFingerprint: string,
+): void {
+  if (operation !== undefined && operation.requestFingerprint !== requestFingerprint) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+  }
+}
+
+/** Find a task for one Host create identity and reject a stored fingerprint conflict. */
+function existingCreateTask(
+  entries: Iterable<readonly [ScheduleIdType, ScheduleTask]>,
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+): readonly [ScheduleIdType, ScheduleTask] | undefined {
+  const existing = [...entries].find(([, task]) => task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+  if (existing !== undefined && existing[1].requestFingerprint !== requestFingerprint) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+  }
+  return existing
+}
+
+/** Persist one committed create-operation row after a task is found. */
+async function commitCreateOperation(
+  operations: CreateOperationWriter,
+  operationKey: string,
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+  record: ScheduleRecord,
+): Promise<void> {
+  await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'committed', record))
+}
+
+/** Retire an existing create operation that has no committed task. */
+async function resolveAbsentCreateOperation(
+  operations: CreateOperationWriter,
+  operationKey: string,
+  operation: ScheduleCreateOperation,
+  sessionId: SessionId,
+  idempotencyKey: string,
+): Promise<ScheduleCreateResolution> {
+  if (operation.status === 'resolved_absent') return { status: 'absent' }
+  await operations.put(operationKey, createOperation(sessionId, idempotencyKey, operation.requestFingerprint, 'resolved_absent'))
+  return { status: 'absent' }
 }
 
 /**
@@ -184,6 +267,18 @@ export class ScheduleService extends TypertRemoteService {
     })
     this.initialized = ctx.effect(async () => {
       const domain = await this.ready
+      try {
+        // Approval cannot survive a Host restart. Retire reservations left by a
+        // stopped native call before any retry can reconcile them.
+        const operations = domain.table('create_operations')
+        for (const [key, operation] of operations.entries()) {
+          if (operation.status === 'reserved') await operations.put(key, { ...operation, status: 'resolved_absent' })
+        }
+      } catch (error: unknown) {
+        this.stopping = true
+        await domain.close()
+        throw error
+      }
       let cleanup: () => Promise<void>
       try {
         cleanup = ctx.effect(() => async () => {
@@ -268,7 +363,8 @@ export class ScheduleService extends TypertRemoteService {
    * a fresh task id or timing anchor. A reused key with a different canonical
    * request is rejected. Create-operation reconciliation and active listing use
    * the same FIFO, so a lost native result cannot be resolved against a stale
-   * empty task set.
+   * empty task set. Bot approval reserves its operation before the external
+   * approval request; a reservation left by a stopped Host is retired on restart.
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
    * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
@@ -282,18 +378,10 @@ export class ScheduleService extends TypertRemoteService {
     signal?: AbortSignal,
     options?: ScheduleCreateOptions,
   ): Promise<ScheduleRecord> {
-    if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
-      + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
-      + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
-      throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
-    }
+    validateCreateSelector(request)
     const title = scheduleTitle(request.title)
     const idempotencyKey = options?.idempotencyKey
-    const invalidIdempotencyKey = idempotencyKey !== undefined
-      && (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey)
-    if (invalidIdempotencyKey) {
-      throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
-    }
+    if (idempotencyKey !== undefined) validateIdempotencyKey(idempotencyKey)
     const requestFingerprint = idempotencyKey === undefined ? undefined : scheduleCreateFingerprint(request, title)
     return this.serialize(async () => {
       const refusal = this.reminderTargetRefusal(sessionId)
@@ -375,6 +463,93 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
+   * Reserve one Bot create operation before its external approval completes.
+   *
+   * A reservation is intentionally not a task: it only prevents another native
+   * call from creating the same routine while approval is pending. Reservations
+   * left by a stopped Host are retired during service initialization.
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity retained across approval retries.
+   * @param signal - Optional cancellation checked before reservation persistence.
+   * @returns A new pending reservation or an already committed task.
+   */
+  async reserveCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ScheduleCreateReservation> {
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
+    return this.serialize(async () => {
+      const refusal = this.reminderTargetRefusal(sessionId)
+      if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
+      const domain = await this.getDomain()
+      signal?.throwIfAborted()
+      const operations = domain.table('create_operations')
+      const tasks = domain.table('tasks')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      assertCreateFingerprint(operation, requestFingerprint)
+      if (operation?.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        signal?.throwIfAborted()
+        return { status: 'committed', record }
+      }
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
+      if (existing !== undefined) {
+        signal?.throwIfAborted()
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
+        signal?.throwIfAborted()
+        return { status: 'committed', record: existing[1].record }
+      }
+      await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'reserved'))
+      // A reservation is durable even when cancellation arrives after its
+      // write; the native caller releases it before returning cancellation.
+      return { status: 'reserved' }
+    })
+  }
+
+  /**
+   * Retire a Bot create operation that was denied or cancelled before a task committed.
+   *
+   * A committed operation record always wins over retirement, so a cancellation
+   * that arrived after the task write cannot erase or hide its durable receipt.
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity retained across approval retries.
+   * @returns The committed operation, a durable absent resolution, or unknown when no reservation exists.
+   */
+  async releaseCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+  ): Promise<ScheduleCreateResolution> {
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const operations = domain.table('create_operations')
+      const tasks = domain.table('tasks')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      assertCreateFingerprint(operation, requestFingerprint)
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
+      if (existing !== undefined) {
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
+        return { status: 'committed', record: existing[1].record }
+      }
+      if (operation === undefined) return { status: 'unknown' }
+      if (operation.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        return { status: 'committed', record }
+      }
+      return resolveAbsentCreateOperation(operations, operationKey, operation, sessionId, idempotencyKey)
+    })
+  }
+
+  /**
    * Resolve one Bot create operation after its native reply was lost.
    *
    * Resolution runs in the same FIFO as creation, so a list cannot observe an
@@ -396,16 +571,7 @@ export class ScheduleService extends TypertRemoteService {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<ScheduleCreateResolution> {
-    if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
-      + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
-      + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
-      throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
-    }
-    const title = scheduleTitle(request.title)
-    if (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey) {
-      throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
-    }
-    const requestFingerprint = scheduleCreateFingerprint(request, title)
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
     return this.serialize(async () => {
       const domain = await this.getDomain()
       signal?.throwIfAborted()
@@ -413,9 +579,7 @@ export class ScheduleService extends TypertRemoteService {
       const operations = domain.table('create_operations')
       const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
       const operation = operations.get(operationKey)
-      if (operation !== undefined && operation.requestFingerprint !== requestFingerprint) {
-        throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
-      }
+      assertCreateFingerprint(operation, requestFingerprint)
       const committed = (record: ScheduleRecord): ScheduleCreateResolution => {
         return { status: 'committed', record }
       }
@@ -425,19 +589,16 @@ export class ScheduleService extends TypertRemoteService {
         signal?.throwIfAborted()
         return committed(record)
       }
-      const existing = [...tasks.entries()].find(([, task]) =>
-        task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
       if (existing !== undefined) {
-        if (existing[1].requestFingerprint !== requestFingerprint) {
-          throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
-        }
         signal?.throwIfAborted()
-        await operations.put(operationKey, createOperation(
-          sessionId, idempotencyKey, requestFingerprint, 'committed', existing[1].record,
-        ))
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
         return { status: 'committed', record: existing[1].record }
       }
       if (operation === undefined) return { status: 'unknown' }
+      // A reservation belongs to a live approval request. It is retired only
+      // after that request releases it or the Schedule service restarts.
+      if (operation.status === 'reserved') return { status: 'unknown' }
       if (operation.status === 'resolved_absent') return { status: 'absent' }
       signal?.throwIfAborted()
       await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'resolved_absent'))
