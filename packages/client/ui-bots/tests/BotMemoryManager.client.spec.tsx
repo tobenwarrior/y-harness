@@ -68,7 +68,7 @@ describe('BotMemoryManager', () => {
     fireEvent.click(within(row).getByRole('button', { name: 'Save memory' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('The memory could not be saved. Try again.')
-    expect(within(row).getByRole('textbox', { name: 'Memory text' }).value).toBe('New text')
+    expect(within(row).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'New text')
   })
 
   it('keeps the remove confirmation open and reports a removal failure inside it', async () => {
