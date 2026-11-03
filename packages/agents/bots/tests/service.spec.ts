@@ -3605,14 +3605,153 @@ describe('durable Bot roster', () => {
       const first = leftHost.deliverSharedGroup?.(request)
       await entered.promise
       const second = rightHost.deliverSharedGroup?.(request)
+      await vi.waitFor(() => { expect(right.inspect).toHaveBeenCalled() })
       release.resolve(undefined)
       await expect(first).resolves.toBe('accepted')
-      await expect(second).resolves.toBe('duplicate')
+      const secondResult = await second
+      if (secondResult === undefined || typeof secondResult === 'string') throw new Error('foreign recipient lease was not reported as busy')
+      expect(secondResult.kind).toBe('busy')
+      expect(typeof secondResult.retryAt).toBe('number')
       expect(left.followups[0]).toHaveBeenCalledTimes(1)
       expect(right.followups[0]).not.toHaveBeenCalled()
     } finally {
       await close(right.ctx)
       await close(left.ctx)
+    }
+  })
+
+  it('fails closed when a recipient claim changes before admission', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-claim-loss'
+    const h = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Recipient claim loss', cwd: '/tmp' })
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-claim-loss'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+      const deliveryRecordSchema = z.object({
+        version: z.literal(1),
+        messages: z.array(z.object({
+          targetSessionId: z.string(),
+          messageId: z.string(),
+          status: z.enum(['pending', 'accepted']),
+          claimToken: z.string().optional(),
+          claimLeaseUntil: z.number().optional(),
+        }).strict()),
+      }).strict()
+      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+      let replaced = false
+      h.credentials.modifyRecord = async (key, mutate) => {
+        const result = await originalModifyRecord(key, mutate)
+        if (!replaced && key === deliveryKey) {
+          const current = records.get(key)
+          const parsed = current?.kind === 'grant' ? deliveryRecordSchema.safeParse(current.payload) : undefined
+          if (parsed?.success && parsed.data.messages.some(message => message.status === 'pending')) {
+            replaced = true
+            await originalModifyRecord(key, async (stored) => {
+              if (stored?.kind !== 'grant') return stored
+              const next = deliveryRecordSchema.safeParse(stored.payload)
+              if (!next.success) return stored
+              return {
+                kind: 'grant',
+                payload: {
+                  version: 1,
+                  messages: next.data.messages.map(message => message.status === 'pending'
+                    ? { ...message, claimToken: 'foreign-recipient-claim', claimLeaseUntil: Date.now() + 30_000 }
+                    : message),
+                },
+              }
+            })
+          }
+        }
+        return result
+      }
+      await expect(host.deliverSharedGroup?.({
+        groupId: binding.groupId,
+        groupName: 'Recipient claim loss',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Do not enqueue after losing the claim.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-claim-loss'),
+      })).rejects.toThrow('claim was lost')
+      expect(replaced).toBe(true)
+      expect(h.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('prunes accepted shared-group receipts only after the Session log proves delivery', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Receipt pruning', cwd: '/tmp' })
+    await close(seed.ctx)
+    const sessionId = 'shared-session-group-receipt-pruning'
+    const groupId = BotGroupId('bot-group-receipt-pruning')
+    const deliveredMessageId = BotGroupMessageId('bot-group-message-ledger-0')
+    const seededMessage = freezeMessage({
+      id: MessageId(String(deliveredMessageId)),
+      role: 'user',
+      content: [{ type: 'text', text: 'Already durable.' }],
+      source: { kind: 'bot-group-message', groupId, messageId: deliveredMessageId },
+    })
+    const entries = Array.from({ length: 4_096 }, (_, index) => ({
+      targetSessionId: sessionId,
+      messageId: `bot-group-message-ledger-${String(index)}`,
+      status: 'accepted' as const,
+    }))
+    const records = new Map<CredentialKey, CredentialRecord>([
+      [credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+        kind: 'grant', payload: { version: 1, messages: entries },
+      }],
+    ])
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [sessionId],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const session = h.agents.find(agent => String(agent.id) === sessionId)?.session
+      if (session === undefined) throw new Error('receipt pruning Session was not created')
+      session.append('user/message', seededMessage, { surfaceOp: 'append' })
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Receipt pruning',
+        targetBotId: created.bot.id,
+        sessionId: binding.sessionId,
+        text: 'Make room for this receipt.',
+        messageId: BotGroupMessageId('bot-group-message-ledger-new'),
+      })).resolves.toBe('accepted')
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
     }
   })
 

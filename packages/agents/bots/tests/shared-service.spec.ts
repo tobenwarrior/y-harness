@@ -1170,6 +1170,21 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('bounds the startup authority read instead of hanging recovery', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true)
+    try {
+      vi.spyOn(value.authority, 'readExtension').mockImplementation(() => new Promise(() => {}))
+      const recovery = value.service.recoverSharedGroupDeliveries()
+      const rejected = expect(recovery).rejects.toMatchObject({ code: 'gateway/unavailable' })
+      await vi.advanceTimersByTimeAsync(5_001)
+      await rejected
+    } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a partial shared-group delivery retryable by message id', async () => {
     const value = await fixture(10, true)
     try {
