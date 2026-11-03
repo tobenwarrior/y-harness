@@ -94,6 +94,14 @@ const NO_EFFECT_FAILURES = new Set([
   'approval-required', 'approval-denied', 'cancelled', 'invalid-request',
   'message-invalid', 'sender-not-bot', 'self-message', 'target-not-found', 'target-unavailable',
 ])
+const GROUP_SETTLED_FAILURES = new Set([
+  ...NO_EFFECT_FAILURES,
+  'invalid', 'not-found', 'member-not-found', 'partial-delivery',
+])
+
+type NativeInvocation = Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
+  readonly arguments: Readonly<Record<string, unknown>>
+}
 
 /**
  * Native calls can be retried after the target accepted a message but before
@@ -414,6 +422,79 @@ function stringArrayArgument(arguments_: JsonObject, key: string): readonly stri
   return values
 }
 
+function effectiveGroupBotIds(senderId: string, botIds: readonly string[]): readonly string[] {
+  return [senderId, ...botIds.filter(botId => botId !== senderId)]
+}
+
+function groupArgumentKey(name: string, arguments_: Readonly<Record<string, unknown>>): string {
+  if (name === 'create_bot_group') {
+    return JSON.stringify([
+      textArgument(arguments_, 'name') ?? '',
+      stringArrayArgument(arguments_, 'botIds') ?? [],
+      textArgument(arguments_, 'groupId') ?? '',
+    ])
+  }
+  return JSON.stringify([
+    textArgument(arguments_, 'groupId') ?? '',
+    textArgument(arguments_, 'text') ?? '',
+    textArgument(arguments_, 'messageId') ?? '',
+  ])
+}
+
+function groupSettled(event: BotDynamicToolEvent): boolean {
+  if (event.phase !== 'settled') return false
+  if (event.result?.success === true) return true
+  return GROUP_SETTLED_FAILURES.has(eventErrorCode(event) ?? '')
+}
+
+function pendingGroupEvents(
+  events: readonly BotDynamicToolEvent[],
+  name: 'create_bot_group' | 'send_bot_group_message',
+  current: NativeInvocation,
+): readonly BotDynamicToolEvent[] {
+  const settled = new Set(events.filter(groupSettled).map(dynamicCallKey))
+  const currentIndex = events.findLastIndex(event => event.phase === 'started'
+    && event.name === name
+    && event.callId === current.callId
+    && event.threadId === current.threadId
+    && event.turnId === current.turnId
+    && groupArgumentKey(name, event.arguments) === groupArgumentKey(name, current.arguments))
+  return events.filter((event, index) => index !== currentIndex
+    && event.phase === 'started'
+    && event.name === name
+    && !settled.has(dynamicCallKey(event)))
+}
+
+function groupCreateMetadataKey(senderId: string, event: NativeInvocation): string | undefined {
+  const name = textArgument(event.arguments, 'name')
+  const botIds = stringArrayArgument(event.arguments, 'botIds')
+  if (name === undefined || botIds === undefined) return undefined
+  return JSON.stringify([
+    name,
+    effectiveGroupBotIds(senderId, botIds),
+  ])
+}
+
+function groupCreateIdForEvent(senderId: string, event: NativeInvocation): BotGroupId | undefined {
+  const name = textArgument(event.arguments, 'name')
+  const botIds = stringArrayArgument(event.arguments, 'botIds')
+  if (name === undefined || botIds === undefined) return undefined
+  const requested = textArgument(event.arguments, 'groupId')
+  return requested === undefined
+    ? implicitGroupId(senderId, event.threadId, event.turnId, name, effectiveGroupBotIds(senderId, botIds))
+    : BotGroupId(requested)
+}
+
+function groupSendIdForEvent(senderId: string, event: NativeInvocation): BotGroupMessageId | undefined {
+  const groupId = textArgument(event.arguments, 'groupId')
+  const text = textArgument(event.arguments, 'text')
+  if (groupId === undefined || text === undefined) return undefined
+  const requested = textArgument(event.arguments, 'messageId')
+  return requested === undefined
+    ? implicitGroupMessageId(senderId, event.threadId, event.turnId, groupId, text)
+    : BotGroupMessageId(requested)
+}
+
 function implicitGroupId(senderId: string, threadId: string, turnId: string, name: string, botIds: readonly string[]): BotGroupId {
   const digest = createHash('sha256')
     .update(senderId).update('\0')
@@ -494,15 +575,19 @@ function inspectGroupTool(groups: BotGroupToolHost): BotNativeTool {
   }
 }
 
-function createGroupTool(groups: BotGroupToolHost, client: BotCollaborationClient): BotNativeTool {
+function createGroupTool(
+  groups: BotGroupToolHost,
+  client: BotCollaborationClient,
+  replay: () => Promise<readonly BotDynamicToolEvent[]>,
+): BotNativeTool {
   return {
     name: 'create_bot_group',
-    description: 'Create a persistent shared group from two to six existing Bots when the user asks; this side effect requires approval.',
+    description: 'Create a persistent shared group with one to five other existing Bots when the user asks; the calling Bot is included automatically and this side effect requires approval.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'The display name for the shared group.' },
-        botIds: { type: 'array', items: { type: 'string' }, description: 'Two to six Bot ids from list_bots.' },
+        botIds: { type: 'array', items: { type: 'string' }, description: 'One to five other Bot ids from list_bots; the calling Bot is added automatically.' },
         groupId: { type: 'string', description: 'Optional retry identity for this group.' },
       },
       required: ['name', 'botIds'], additionalProperties: false,
@@ -519,11 +604,46 @@ function createGroupTool(groups: BotGroupToolHost, client: BotCollaborationClien
       catch (error: unknown) { return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error) }
       if (!approved) return failure('approval-denied', 'The Bot group was not created.')
       if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const current: NativeInvocation = {
+        callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_,
+      }
+      let replayed: readonly BotDynamicToolEvent[]
+      try {
+        replayed = await replay()
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+      }
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const pending = pendingGroupEvents(replayed, 'create_bot_group', current)
+      const senderId = String(client.sender.id)
+      const currentMetadata = groupCreateMetadataKey(senderId, current)
+      const prior = pending.length === 1 ? pending[0] : undefined
+      const priorMetadata = prior === undefined ? undefined : groupCreateMetadataKey(senderId, prior)
+      const requestedPendingId = requestedGroupId === undefined ? undefined : pending.some((event) => {
+        const id = groupCreateIdForEvent(senderId, event)
+        return id !== undefined && String(id) === requestedGroupId && groupCreateMetadataKey(senderId, event) === currentMetadata
+      })
+      const implicitRetry = requestedGroupId === undefined
+        && prior !== undefined
+        && priorMetadata === currentMetadata
+        && textArgument(prior.arguments, 'groupId') === undefined
+      if (pending.length > 0 && !(requestedPendingId === true || implicitRetry)) {
+        const ids = [...new Set(pending.flatMap((event) => {
+          const id = groupCreateIdForEvent(senderId, event)
+          return id === undefined ? [] : [String(id)]
+        }))].join(', ')
+        const suffix = ids === '' ? '' : ` Retry with one of these groupId values after confirming the group: ${ids}.`
+        return failure('uncertain-outcome', `A previous shared Bot group creation may already have completed.${suffix}`)
+      }
+      const groupId = requestedGroupId === undefined
+        ? implicitRetry && prior !== undefined
+          ? groupCreateIdForEvent(senderId, prior)
+            ?? implicitGroupId(senderId, context.threadId, context.turnId, name, effectiveGroupBotIds(senderId, botIds))
+          : implicitGroupId(senderId, context.threadId, context.turnId, name, effectiveGroupBotIds(senderId, botIds))
+        : BotGroupId(requestedGroupId)
       try {
         const result = await groups.create({
-          id: requestedGroupId === undefined
-            ? implicitGroupId(String(client.sender.id), context.threadId, context.turnId, name, botIds)
-            : BotGroupId(requestedGroupId),
+          id: groupId,
           name,
           botIds: botIds.map(BotId),
         })
@@ -533,7 +653,11 @@ function createGroupTool(groups: BotGroupToolHost, client: BotCollaborationClien
   }
 }
 
-function sendGroupTool(groups: BotGroupToolHost, client: BotCollaborationClient): BotNativeTool {
+function sendGroupTool(
+  groups: BotGroupToolHost,
+  client: BotCollaborationClient,
+  replay: () => Promise<readonly BotDynamicToolEvent[]>,
+): BotNativeTool {
   return {
     name: 'send_bot_group_message',
     description: 'Send one explicit message from this Bot to the other members of a shared group when the user asks; this side effect requires approval.',
@@ -558,19 +682,58 @@ function sendGroupTool(groups: BotGroupToolHost, client: BotCollaborationClient)
       if (!approved) return failure('approval-denied', 'The Bot group message was not sent.')
       if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
       const requestedId = textArgument(arguments_, 'messageId')
+      const current: NativeInvocation = {
+        callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_,
+      }
+      let replayed: readonly BotDynamicToolEvent[]
+      try {
+        replayed = await replay()
+      } catch (error: unknown) {
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+      }
+      if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
+      const senderId = String(client.sender.id)
+      const pending = pendingGroupEvents(replayed, 'send_bot_group_message', current)
+        .filter(event => textArgument(event.arguments, 'groupId') === groupId)
+      const prior = pending.length === 1 ? pending[0] : undefined
+      const pendingIds = pending.flatMap((event) => {
+        const id = groupSendIdForEvent(senderId, event)
+        return id === undefined ? [] : [String(id)]
+      })
+      const priorText = prior === undefined ? undefined : textArgument(prior.arguments, 'text')
+      const priorExplicitId = prior === undefined ? undefined : textArgument(prior.arguments, 'messageId')
+      const priorId = prior === undefined ? undefined : groupSendIdForEvent(senderId, prior)
+      const retryMatchesPending = requestedId !== undefined
+        ? pending.some((event) => {
+          const id = groupSendIdForEvent(senderId, event)
+          return id !== undefined && String(id) === requestedId && textArgument(event.arguments, 'text') === text
+        })
+        : prior !== undefined && priorExplicitId === undefined && priorText === text && priorId !== undefined
+      if (pending.length > 0 && !retryMatchesPending) {
+        const suffix = pendingIds.length === 0 ? '' : ` Retry with one of these messageId values after confirming delivery: ${[...new Set(pendingIds)].join(', ')}.`
+        return failure('uncertain-outcome', `A previous message to shared Bot group "${groupId}" may already have been delivered.${suffix}`)
+      }
+      const messageId = requestedId === undefined
+        ? priorId ?? implicitGroupMessageId(senderId, context.threadId, context.turnId, groupId, text)
+        : BotGroupMessageId(requestedId)
       try {
         const result = await groups.send({
           groupId: BotGroupId(groupId), text,
-          messageId: requestedId === undefined
-            ? implicitGroupMessageId(String(client.sender.id), context.threadId, context.turnId, groupId, text)
-            : BotGroupMessageId(requestedId),
+          messageId,
           signal: context.signal,
         })
-        return output({
+        const value = {
           ...result,
           messageId: String(result.messageId),
           deliveries: result.deliveries.map(delivery => ({ ...delivery, botId: String(delivery.botId) })),
-        })
+        }
+        return result.status === 'partial'
+          ? output({
+            ...value,
+            error: 'partial-delivery',
+            message: 'Some group members did not receive the message. Inspect deliveries and retry with the same messageId.',
+          }, false)
+          : output(value)
       } catch (error: unknown) { return groupFailure(error) }
     },
   }
@@ -634,7 +797,9 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       return [
         listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'),
         ...(groups === undefined ? [] : [
-          listGroupTool(groups), inspectGroupTool(groups), createGroupTool(groups, client), sendGroupTool(groups, client),
+          listGroupTool(groups), inspectGroupTool(groups),
+          createGroupTool(groups, client, () => host.replay(sessionId)),
+          sendGroupTool(groups, client, () => host.replay(sessionId)),
         ]),
       ]
     },

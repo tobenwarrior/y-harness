@@ -222,6 +222,8 @@ export interface BotGroupDeliveryHost {
     readonly targetBotId: BotId
     readonly groupId: BotGroupId
     readonly groupName: string
+    /** Display name of the Bot that authored the group message, when applicable. */
+    readonly senderName?: string
     readonly text: string
     readonly messageId: BotGroupMessageId
     readonly signal?: AbortSignal
@@ -436,6 +438,7 @@ export class BotGroupService {
       const sender = senderBotId === undefined
         ? ({ kind: 'user' } as const)
         : this.sender(group, senderBotId, bots)
+      const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
       const messageId = normalizeMessageId(request.messageId)
       const messages = this.domain.table('messages')
       let changed = false
@@ -472,6 +475,7 @@ export class BotGroupService {
             targetBotId: botId,
             groupId,
             groupName: group.name,
+            ...(senderName === undefined ? {} : { senderName }),
             text,
             messageId,
             ...(request.signal === undefined ? {} : { signal: request.signal }),

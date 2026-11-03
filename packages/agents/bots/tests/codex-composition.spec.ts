@@ -231,6 +231,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   if (senderAgent === undefined || targetAgent === undefined) throw new Error('Bot Session agents were not created')
   const senderPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: senderAgent }))
   expect(senderPrompt).toContain('Your Bot name is "Chief of staff".')
+  expect(senderPrompt).toContain('Your Bot id is "bot-sender".')
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
   senderAgent.session.append('turn/start', { turn: 1 })

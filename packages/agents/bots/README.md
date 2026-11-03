@@ -123,7 +123,7 @@ The service derives the sending identity from the live Bot Agent and rechecks th
 ##### Native send retry contract
 
 ```markdown
-If a native send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. Messaging follows the Session approval policy.
+If a native Bot or group send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. A group result with `status: "partial"` is returned as an explicit `partial-delivery` failure and includes each recipient's outcome; retry it with the returned messageId. Group creation uses a stable group id for the same request and reports an uncertain outcome instead of guessing after a lost settlement. Messaging follows the Session approval policy.
 ```
 
 #### Token effect
@@ -138,7 +138,7 @@ The collaboration tool set is stable for a Bot scope. A roster or tool-schema ch
 
 #### What the model sees
 
-The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. Live Bot Agents also receive the membership-scoped group tools, and the native Codex provider exposes the same operations. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. Human and Bot-authored group messages are delivered as normal user-role messages to every other member's existing Session; they never route all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn, with the final response allowed in a later step of that turn, and only when that delivery is the sole user input in the step.
+The Host exposes `listGroups`, `createGroup`, `inspectGroup`, and `sendGroupMessage` through the Bot Remote. Live Bot Agents also receive the membership-scoped group tools, and the native Codex provider exposes the same operations. A group has two through six existing active Bots, a durable transcript, and one delivery record per member for each message. A Bot-created group request names one to five other Bots from `list_bots`; the live calling Bot is added from its authenticated Session identity, so model arguments cannot omit or spoof membership. Human and Bot-authored group messages are delivered as normal user-role messages to every other member's existing Session, framed with the originating Bot name when applicable; they never route all members through one coordinator model. The Host records an assistant response only when the exact group delivery is claimed by that Bot in the same durable turn, with the final response allowed in a later step of that turn, and only when that delivery is the sole user input in the step.
 
 #### Token effect
 
@@ -157,7 +157,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **No delete or archive operation** — the first roster API can create, rename, list, update appearance and avatars, but it does not remove a Bot or archive its Session.
 - **Provisioning is retryable but not automatic** — a failed provisioning row stays visible for an explicit retry; Host startup does not wake every cold row.
 - **One preset is selected at creation** — `agentPreset` applies when the linked Session is first created and is not a live per-turn selector.
-- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs, synthetic runtime context, and concurrent group deliveries are left unprojected rather than guessed. Tool-call intermediate messages stay open until the final assistant response. Claims are rebuilt from the persisted Session inspection after restart, so a process loss does not make the Host attribute the next unrelated response to an old group message.
+- **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs, synthetic context, and concurrent group deliveries are left unprojected rather than guessed. Tool-call intermediate messages stay open until the final assistant response. Claims are rebuilt from raw durable inbox splices after restart, so surface replacements or later synthetic notices cannot make the Host attribute the next unrelated response to an old group message. Legacy logs without inbox splices retain their append-only compatibility fallback.
 - **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 
 <a id="dev-note"></a>

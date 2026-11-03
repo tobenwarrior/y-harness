@@ -22,6 +22,7 @@ import { BotId } from '../src/types.ts'
 declare module '@yharness/llm' {
   interface MessageSourceMap {
     'runtime-context': { kind: 'runtime-context' } & ContextFormed
+    'time-context': { kind: 'time-context' } & ContextFormed
   }
 }
 
@@ -172,15 +173,20 @@ describe('durable Bot roster', () => {
       const sendGroupMessage = tools.find(tool => tool.name === 'send_bot_group_message')
       if (createGroup === undefined || sendGroupMessage === undefined) throw new Error('native group tools were not registered')
       const groupResult = await createGroup.execute({
-        name: 'Native room', botIds: [created.bot.id, research.id],
+        name: 'Native room', botIds: [research.id],
       }, { ...context, callId: 'create-group-1' })
       expect(groupResult.success).toBe(true)
       const group = JSON.parse(groupResult.contentItems[0]?.text ?? '{}') as { readonly group?: { readonly id?: string } }
       const groupId = group.group?.id
       if (groupId === undefined) throw new Error('native group creation returned no id')
-      expect((await sendGroupMessage.execute({ groupId, text: 'Native group update.' }, {
+      expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({
+        group: { botIds: [created.bot.id, research.id] },
+      })
+      const nativeSendResult = await sendGroupMessage.execute({ groupId, text: 'Native group update.' }, {
         ...context, callId: 'send-group-1',
-      })).success).toBe(true)
+      })
+      expect(nativeSendResult.success).toBe(false)
+      expect(nativeSendResult.contentItems[0]?.text).toContain('partial-delivery')
       const cancelled = new AbortController()
       generator.generate.mockImplementation(async () => {
         cancelled.abort()
@@ -417,7 +423,9 @@ describe('durable Bot roster', () => {
         deliverToBot: async (request) => {
           target.followup(freezeMessage({
             id: MessageId(String(request.messageId)), role: 'user',
-            content: [{ type: 'text', text: `Message from group "${request.groupName}":\n${request.text}` }],
+            content: [{ type: 'text', text: request.senderName === undefined
+              ? `Message from group "${request.groupName}":\n${request.text}`
+              : `Message from ${request.senderName} in group "${request.groupName}":\n${request.text}` }],
             source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
           }))
           return 'accepted'
@@ -432,6 +440,9 @@ describe('durable Bot roster', () => {
 
       const delivered = h.followups[1]?.mock.calls[0]?.[0]
       if (delivered === undefined) throw new Error('Bot-authored delivery was not admitted')
+      expect(delivered.content).toEqual([{
+        type: 'text', text: 'Message from Alpha in group "Bot-authored room":\nAlpha asks Beta for a status.',
+      }])
       await agentEvents(h.ctx, target).waterfall('agent/pre-step', {
         messages: [delivered], turn: 7, step: 1, signal: new AbortController().signal,
       }, () => Promise.resolve({ kind: 'enter' as const, messages: [delivered] }))
@@ -547,6 +558,54 @@ describe('durable Bot roster', () => {
           { sender: { kind: 'user' }, text: 'Survive synthetic context.' },
           { sender: { kind: 'bot', botId: beta.bot.id }, text: 'The request survived restart.' },
         ],
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('uses raw inbox claims instead of surface appends when rebuilding restart attribution', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const alpha = await first.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await first.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await h.service.createGroup({ name: 'Raw inbox room', botIds: [alpha.bot.id, beta.bot.id] })
+    await h.service.sendGroupMessage({ groupId: group.group.id, text: 'Do not isolate this turn.', messageId: BotGroupMessageId('bot-group-message-raw-inbox') })
+    const delivered = h.followups[1]?.mock.calls[0]?.[0]
+    if (delivered === undefined) throw new Error('raw-inbox delivery was not admitted')
+    await close(h.ctx)
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    try {
+      const resumedBeta = reopened.agents[1]
+      if (resumedBeta === undefined) throw new Error('resumed Bot Agent was not created')
+      const synthetic = freezeMessage({
+        id: MessageId('time-context-input'), role: 'user',
+        content: [{ type: 'text', text: 'Current time: 12:00.' }], source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+      })
+      resumedBeta.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [delivered, synthetic],
+      })
+      resumedBeta.session.append('turn/start', { turn: 11 })
+      resumedBeta.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 2, inserted: [],
+      })
+      resumedBeta.session.append('step/start', { turn: 11, step: 1 })
+      resumedBeta.session.append('user/message', delivered, { surfaceOp: 'append' })
+      resumedBeta.session.append('assistant/message', {
+        turn: 11, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-beta-raw-inbox'), role: 'assistant',
+          content: [{ type: 'text', text: 'The group request was not isolated.' }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, { surfaceOp: 'append' })
+      await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
+      await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ sender: { kind: 'user' }, text: 'Do not isolate this turn.' }],
       })
     } finally {
       await close(reopened.ctx)
@@ -971,6 +1030,7 @@ describe('durable Bot roster', () => {
 
       const prompt = async () => renderPrompt(await second.ctx.systemPrompt.assemble({ scope: agent }))
       expect(await prompt()).toContain('Persistent identity')
+      expect(await prompt()).toContain(`Your Bot id is "${created.bot.id}".`)
       await second.service.rename({ botId: created.bot.id, name: 'Renamed identity' })
       expect(await prompt()).toContain('Renamed identity')
       expect(await prompt()).not.toContain('Persistent identity')

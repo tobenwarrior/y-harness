@@ -5,6 +5,8 @@ import {
   type BotCollaborationClient,
   type BotDynamicToolEvent,
 } from '../src/collaboration.ts'
+import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
+import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
 import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
 
@@ -29,6 +31,36 @@ function context(overrides: Partial<BotNativeToolContext> = {}): BotNativeToolCo
   }
 }
 
+type GroupHostFixture = BotGroupToolHost & {
+  readonly create: ReturnType<typeof vi.fn<BotGroupToolHost['create']>>
+  readonly send: ReturnType<typeof vi.fn<BotGroupToolHost['send']>>
+}
+
+function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixture {
+  const create = vi.fn<BotGroupToolHost['create']>(async request => ({
+    group: {
+      id: request.id ?? BotGroupId('bot-group-created'), name: request.name,
+      botIds: [BotId('bot-alpha'), ...request.botIds.filter(botId => botId !== BotId('bot-alpha'))],
+      bots: [], createdAt: 1, updatedAt: 1,
+    },
+  }))
+  const send = vi.fn<BotGroupToolHost['send']>(async request => ({
+    messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: sendResult,
+    deliveries: sendResult === 'partial'
+      ? [{ botId: BotId('bot-beta'), status: 'failed' as const, error: 'offline' }]
+      : [{ botId: BotId('bot-beta'), status: 'accepted' as const }],
+  }))
+  return {
+    list: vi.fn(async () => ({ groups: [] })),
+    inspect: vi.fn(async request => ({
+      group: { id: request.groupId, name: 'Room', botIds: [BotId('bot-alpha'), BotId('bot-beta')], bots: [], createdAt: 1, updatedAt: 1 },
+      messages: [],
+    })),
+    create,
+    send,
+  }
+}
+
 describe('native Bot actions', () => {
   it('offers bot creation and profile editing actions to a bot', async () => {
     const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [] })
@@ -45,6 +77,55 @@ describe('native Bot actions', () => {
     expect(manage).toHaveBeenCalledOnce()
     await create.execute({ name: 'Other' }, context({ requestApproval: async () => false }))
     expect(manage).toHaveBeenCalledOnce()
+  })
+  it('recovers native group creation by stable identity and rejects a different uncertain request', async () => {
+    const groupHost = groups()
+    const sessionId = SessionId('bot-session-alpha')
+    const replayed: readonly BotDynamicToolEvent[] = [{
+      phase: 'started', name: 'create_bot_group', callId: 'earlier', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+      arguments: { name: 'Room', botIds: ['bot-beta'] },
+    }]
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), groups: async () => groupHost, persist: async () => {}, replay: async () => replayed,
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'create_bot_group')
+    if (create === undefined) throw new Error('create_bot_group was not registered')
+    const uncertain = await create.execute({ name: 'Different room', botIds: ['bot-beta'] }, context())
+    expect(uncertain.success).toBe(false)
+    expect(uncertain.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(groupHost.create).not.toHaveBeenCalled()
+
+    const recovered = await create.execute({ name: 'Room', botIds: ['bot-beta'] }, context())
+    expect(recovered.success).toBe(true)
+    expect(groupHost.create).toHaveBeenCalledOnce()
+    expect(groupHost.create.mock.calls[0]?.[0].id).toMatch(/^bot-group-codex-/)
+  })
+  it('reuses a stable native group message id and reports partial delivery explicitly', async () => {
+    const groupHost = groups('partial')
+    const sessionId = SessionId('bot-session-alpha')
+    let replayed: readonly BotDynamicToolEvent[] = []
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), groups: async () => groupHost, persist: async () => {}, replay: async () => replayed,
+    })
+    const send = (await provider.resolve({ sessionId })).find(tool => tool.name === 'send_bot_group_message')
+    if (send === undefined) throw new Error('send_bot_group_message was not registered')
+    const first = await send.execute({ groupId: 'bot-group-room', text: 'Update the room.' }, context())
+    expect(first.success).toBe(false)
+    expect(first.contentItems[0]?.text).toContain('partial-delivery')
+    const firstRequest = groupHost.send.mock.calls[0]?.[0]
+    if (firstRequest?.messageId === undefined) throw new Error('expected a stable group message id')
+
+    replayed = [{
+      phase: 'started', name: 'send_bot_group_message', callId: 'earlier', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+      arguments: { groupId: 'bot-group-room', text: 'Update the room.' },
+    }]
+    await send.execute({ groupId: 'bot-group-room', text: 'Update the room.' }, context({ callId: 'retry' }))
+    expect(groupHost.send.mock.calls[1]?.[0].messageId).toBe(firstRequest.messageId)
+
+    const uncertain = await send.execute({ groupId: 'bot-group-room', text: 'A different update.' }, context({ callId: 'different' }))
+    expect(uncertain.success).toBe(false)
+    expect(uncertain.contentItems[0]?.text).toContain('uncertain-outcome')
+    expect(groupHost.send).toHaveBeenCalledTimes(2)
   })
   it('does not create another Bot when an earlier creation has an uncertain outcome', async () => {
     const manage = vi.fn(async () => ({ id: 'bot-created' }))

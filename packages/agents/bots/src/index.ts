@@ -261,6 +261,7 @@ function botIdentityPrompt(record: BotRecord): string {
   return [
     'You are a named Bot in Y Harness.',
     `Your Bot name is ${JSON.stringify(record.name)}.`,
+    `Your Bot id is ${JSON.stringify(record.id)}.`,
     'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
     ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
   ].join('\n\n')
@@ -359,6 +360,7 @@ export class BotService extends TypertRemoteService {
         targetBotId: request.targetBotId,
         groupId: request.groupId,
         groupName: request.groupName,
+        ...(request.senderName === undefined ? {} : { senderName: request.senderName }),
         text: request.text,
         messageId: BotMessageId(String(request.messageId)),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
@@ -932,11 +934,33 @@ export class BotService extends TypertRemoteService {
     const record = this.recordsBySession.get(String(agent.id))
     if (record === undefined) return
     const inputs = new Map<string, { readonly turn: number; readonly step: number; readonly messages: UserMessage[] }>()
+    const inbox: { 'next-turn': UserMessage[]; 'next-step': UserMessage[] } = {
+      'next-turn': [],
+      'next-step': [],
+    }
+    let rawInboxSeen = false
+    let claimedForStep: UserMessage[] = []
     let turn = 0
     let step = 0
     const inspection = await this.ctx.sessionController.inspect(agent.id)
     for (const event of inspection.events) {
+      if (event.type === 'agent/inbox/spliced') {
+        rawInboxSeen = true
+        const queue = inbox[event.data.target]
+        const removed = queue.splice(
+          event.data.start,
+          event.data.removedCount ?? 0,
+          ...event.data.inserted,
+        )
+        if ((event.data.removedCount ?? 0) > 0
+          && event.data.inserted.length === 0
+          && event.data.outcome === undefined) {
+          claimedForStep.push(...removed)
+        }
+        continue
+      }
       if (event.type === 'turn/start') {
+        if (rawInboxSeen) claimedForStep = []
         turn = event.data.turn
         step = 0
         continue
@@ -944,13 +968,19 @@ export class BotService extends TypertRemoteService {
       if (event.type === 'step/start') {
         turn = event.data.turn
         step = event.data.step
-        inputs.set(`${String(turn)}:${String(step)}`, { turn, step, messages: [] })
+        inputs.set(`${String(turn)}:${String(step)}`, {
+          turn,
+          step,
+          messages: rawInboxSeen ? claimedForStep.splice(0) : [],
+        })
         continue
       }
       if (event.type === 'user/message') {
-        // Reconciliation follows the raw inbox admission, not a later surface
-        // replacement produced by compaction or another history rewrite.
-        if (event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
+        // When inbox events are present, the pure deletion that admitted the
+        // step is authoritative. Surface appends can include synthetic notices
+        // or rewritten history that did not belong to that claim. Older logs
+        // without inbox events retain the append-only fallback for migration.
+        if (rawInboxSeen || event.surfaceOp !== 'append' || event.data.source.kind === RUNTIME_CONTEXT_SOURCE) continue
         const current = inputs.get(`${String(turn)}:${String(step)}`)
         if (current !== undefined) current.messages.push(event.data)
         continue
@@ -999,8 +1029,8 @@ export class BotService extends TypertRemoteService {
         return service.inspect(request)
       },
       create: async (request) => {
-        if (!request.botIds.includes(record.id)) throw new Error('A Bot-created group must include the calling Bot')
-        return service.create(request)
+        const botIds = [record.id, ...request.botIds.filter(botId => botId !== record.id)]
+        return service.create({ ...request, botIds })
       },
       send: async (request) => {
         await memberGroup(request.groupId)

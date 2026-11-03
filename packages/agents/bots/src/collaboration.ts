@@ -140,6 +140,8 @@ export interface SendExternalBotMessageRequest {
   readonly groupId: BotGroupId
   /** Display name of the group that originated the message. */
   readonly groupName: string
+  /** Display name of the Bot that authored the group message, when applicable. */
+  readonly senderName?: string
   /** Message text. */
   readonly text: string
   /** Stable retry identity. */
@@ -328,7 +330,9 @@ export class BotCollaborationService {
       resolved.agent.followup(freezeMessage({
         id: request.messageId,
         role: 'user',
-        content: [{ type: 'text', text: `Message from group "${request.groupName}":\n${text}` }],
+        content: [{ type: 'text', text: request.senderName === undefined
+          ? `Message from group "${request.groupName}":\n${text}`
+          : `Message from ${request.senderName} in group "${request.groupName}":\n${text}` }],
         source: { kind: 'bot-group-message', groupId: request.groupId, messageId: BotGroupMessageId(String(request.messageId)) },
       }))
       await this.flushTarget(target.sessionId, target.name)

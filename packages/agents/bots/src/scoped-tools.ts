@@ -195,7 +195,7 @@ export function installBotCollaborationTools(
       })))
       register(scope.tools.register(defineTool({
         name: 'create_bot_group',
-        description: 'Create a persistent shared group from two to six existing Bots when requested.',
+        description: 'Create a persistent shared group with one to five other existing Bots when requested; the calling Bot is added automatically.',
         parameters: {
           name: { type: 'string', required: true },
           botIds: { type: 'array', required: true, items: { type: 'string' } },
