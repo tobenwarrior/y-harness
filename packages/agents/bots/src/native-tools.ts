@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import type { GenerateOptions } from '@yharness/llm'
-import { canonicalizeCronExpression } from '@yharness/schedule'
+import { canonicalizeCronExpression, parseAtInput } from '@yharness/schedule'
 import type { SessionId } from '@yharness/session'
 import {
   BotCollaborationError,
@@ -37,6 +37,7 @@ export interface BotNativeToolContext {
 
 /** Host-owned resolution of an earlier routine create whose native reply was lost. */
 export type BotRoutineCreateResolution =
+  | { readonly status: 'unknown' }
   | { readonly status: 'absent' }
   | { readonly status: 'committed'; readonly record: JsonObject }
 
@@ -184,6 +185,17 @@ function canonicalRoutineAt(value: unknown): unknown {
   }
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
   const local = value as { readonly [key: string]: unknown }
+  if (Object.keys(local).length === 3
+    && typeof local['date'] === 'string'
+    && typeof local['time'] === 'string'
+    && typeof local['time_zone'] === 'string') {
+    try {
+      const timestamp = parseAtInput({ date: local['date'], time: local['time'], time_zone: local['time_zone'] })
+      return new Date(timestamp).toISOString()
+    } catch (error: unknown) {
+      void error /* Preserve invalid local input for safe comparison. */
+    }
+  }
   return {
     ...local,
     time: canonicalRoutineTime(local['time']),
@@ -590,6 +602,7 @@ function routineTool(
   action: 'create' | 'list' | 'update' | 'delete',
   routine: NonNullable<BotNativeToolHost['routine']>,
   reconcile: BotNativeToolHost['routineReconcile'],
+  persist: BotNativeToolHost['persist'],
   replay: BotNativeToolHost['replay'],
   sessionId: SessionId,
   createFlights: Map<string, RoutineCreateFlight>,
@@ -659,7 +672,21 @@ function routineTool(
             }
             try {
               const resolution = await reconcile(arguments_, pending, context)
-              if (resolution.status === 'committed') return output(resolution.record)
+              if (resolution.status === 'unknown') {
+                return failure(
+                  'uncertain-outcome',
+                  'The earlier routine has not reached the Schedule service yet. Wait for its approval result before retrying.',
+                )
+              }
+              if (resolution.status === 'committed') {
+                const recovered = output(resolution.record)
+                const settled = safeResult(recovered)
+                await persist({
+                  phase: 'settled', name, callId: pending.callId, threadId: pending.threadId, turnId: pending.turnId,
+                  sessionId, arguments: safeArguments(arguments_), ...(settled === undefined ? {} : { result: settled }),
+                })
+                return recovered
+              }
             } catch (error: unknown) {
               return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
             }
@@ -774,10 +801,10 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         && host.routineAvailable !== undefined
         && await host.routineAvailable(sessionId)
       const routines = !routineEnabled || routine === undefined ? [] : [
-        routineTool('create', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('list', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('update', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('delete', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('create', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('list', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('update', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('delete', routine, host.routineReconcile, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },

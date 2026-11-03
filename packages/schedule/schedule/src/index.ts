@@ -47,6 +47,7 @@ export {
   foldScheduleEvents,
   isRecurringScheduleRecord,
   normalizeWeekdays,
+  parseAtInput,
   parseCronInput,
   parseWeeklyInput,
   renderReminderFraming,
@@ -377,16 +378,17 @@ export class ScheduleService extends TypertRemoteService {
    * Resolve one Bot create operation after its native reply was lost.
    *
    * Resolution runs in the same FIFO as creation, so a list cannot observe an
-   * empty task set while an earlier create is still committing. A pending
-   * operation with no task is durably marked absent; later identical requests
-   * can therefore be intentional new operations instead of inheriting stale
+   * empty task set while an earlier create is still committing. An operation
+   * that has not reached Schedule remains unknown; a registered pending
+   * operation with no task is durably marked absent, so later identical
+   * requests can be intentional new operations instead of inheriting stale
    * uncertainty forever.
    *
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
    * @param idempotencyKey - Operation identity from the earlier native call.
    * @param signal - Optional cancellation checked before reads and resolution writes.
-   * @returns The committed task or a durable absent resolution.
+   * @returns The committed task, a durable absent resolution, or unknown when the operation was never registered.
    */
   async reconcileCreate(
     sessionId: SessionId,
@@ -435,7 +437,8 @@ export class ScheduleService extends TypertRemoteService {
         ))
         return { status: 'committed', record: existing[1].record }
       }
-      if (operation?.status === 'resolved_absent') return { status: 'absent' }
+      if (operation === undefined) return { status: 'unknown' }
+      if (operation.status === 'resolved_absent') return { status: 'absent' }
       signal?.throwIfAborted()
       await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'resolved_absent'))
       return { status: 'absent' }
@@ -465,13 +468,15 @@ export class ScheduleService extends TypertRemoteService {
    */
   @Remote('catalog')
   async catalog(): Promise<ScheduleCatalogEntry[]> {
-    const domain = await this.getDomain()
-    return [...domain.table('tasks').entries()]
-      .map(([, task]) => ({
-        ...task.record, sessionId: task.sessionId, status: task.status,
-        ...(task.lastDelivery === undefined ? {} : { lastDelivery: task.lastDelivery }),
-      }))
-      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      return [...domain.table('tasks').entries()]
+        .map(([, task]) => ({
+          ...task.record, sessionId: task.sessionId, status: task.status,
+          ...(task.lastDelivery === undefined ? {} : { lastDelivery: task.lastDelivery }),
+        }))
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
+    })
   }
 
   /**

@@ -525,9 +525,8 @@ export class BotService extends TypertRemoteService {
             sessionId, request, routineOperationKey(sessionId, pending), context.signal,
           )
           context.signal.throwIfAborted()
-          return resolution.status === 'absent'
-            ? resolution
-            : { status: 'committed', record: { ...scheduleView(resolution.record, Date.now()) } }
+          if (resolution.status === 'absent' || resolution.status === 'unknown') return resolution
+          return { status: 'committed', record: { ...scheduleView(resolution.record, Date.now()) } }
         } catch (error: unknown) {
           if (error instanceof BotCollaborationError) throw error
           if (context.signal.aborted) throw new BotCollaborationError('cancelled', 'The Bot routine was cancelled.', { cause: error })

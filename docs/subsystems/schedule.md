@@ -4,7 +4,7 @@ Schedule stores reminders independently of Session activation and delivers them 
 
 ## Durable records
 
-Host retry-aware creation persists an operation-specific idempotency key and canonical request fingerprint in the task and create-operation records; legacy task rows without those fields remain valid, and a repeated key for the same Session returns the existing task only when its request fingerprint matches. Create-operation reconciliation and active listing share the Schedule write queue, so a lost native reply is resolved against a linearized task state and an absent operation is durably retired for later intentional repeats.
+Host retry-aware creation persists an operation-specific idempotency key and canonical request fingerprint in the task and create-operation records; legacy task rows without those fields remain valid, and a repeated key for the same Session returns the existing task only when its request fingerprint matches. Create-operation reconciliation, active listing, and catalog share the Schedule write queue, so a lost native reply is resolved against a linearized task state: an unregistered operation remains unknown, while an absent registered operation is durably retired for later intentional repeats.
 
 `ScheduleId` is a globally unique [branded id](core.md#branded-ids). The version-1 `schedule` storage domain owns a `tasks` table whose entries bind a `ScheduleRecord` to its original `sessionId`, with stored `status: 'active' | 'inactive'` and optional `lastDelivery`. Records lacking status normalize to `active` without scanning or recreating historical Sessions. Creation canonicalizes the target into RFC 3339 UTC `scheduledAt`; `after` retains the submitted delay, `every` retains its fixed interval, `daily` and `weekly` retain normalized local `time` and their explicit `timeZone`, and `cron` retains its canonical five-field `expression` and explicit `timeZone`. Daily, weekly, and cron decoding preserve the committed instant and stored zone spelling. The stored task record declares a required `title`, the short name the task surfaces show; creation requires it and never derives it from the instruction. No stored record may omit its title: a record whose `title` is missing, blank after trimming, untrimmed, or longer than 120 characters fails durable decoding with `ScheduleLogError`, and the schedule domain declares no backup-and-skip policy, so one such stored task rejects the whole domain open instead of being dropped. Only explicit deletion removes a task; previously physically deleted tasks are not restored or fabricated.
 
@@ -295,8 +295,12 @@ interface ScheduleCreateOptions {
 ```
 
 ```ts type-equiv
-/** Result of resolving one durable create operation after its native reply was lost. */
+/**
+ * Result of resolving one durable create operation after its native reply was lost.
+ * Unknown means creation has not registered with Schedule.
+ */
 type ScheduleCreateResolution =
+  | { readonly status: 'unknown' }
   | { readonly status: 'absent' }
   | { readonly status: 'committed'; readonly record: ScheduleRecord }
 ```
@@ -495,16 +499,17 @@ async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abo
  * Resolve one Bot create operation after its native reply was lost.
  *
  * Resolution runs in the same FIFO as creation, so a list cannot observe an
- * empty task set while an earlier create is still committing. A pending
- * operation with no task is durably marked absent; later identical requests
- * can therefore be intentional new operations instead of inheriting stale
+ * empty task set while an earlier create is still committing. An operation
+ * that has not reached Schedule remains unknown; a registered pending
+ * operation with no task is durably marked absent, so later identical
+ * requests can be intentional new operations instead of inheriting stale
  * uncertainty forever.
  *
  * @param sessionId - Original Session receiving the reminder.
  * @param request - Validated tool selector, required title, and reminder content.
  * @param idempotencyKey - Operation identity from the earlier native call.
  * @param signal - Optional cancellation checked before reads and resolution writes.
- * @returns The committed task or a durable absent resolution.
+ * @returns The committed task, a durable absent resolution, or unknown when the operation was never registered.
  */
 async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateResolution>
 

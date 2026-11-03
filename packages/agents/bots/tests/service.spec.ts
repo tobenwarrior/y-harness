@@ -183,7 +183,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('keeps real routine ownership across restart and deduplicates uncertain cross-call retries', async () => {
+  it('keeps real routine ownership across restart and retires recovered native retries', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Routine owner', cwd: '/tmp' })
@@ -243,7 +243,7 @@ describe('durable Bot roster', () => {
       expect(sameCall).toEqual(result)
       const replayed = await createAfterRestart.execute(arguments_, newCallContext)
       expect(replayed.success).toBe(true)
-      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
+      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(2)
 
       const cancelled = new AbortController()
       cancelled.abort()
@@ -252,10 +252,50 @@ describe('durable Bot roster', () => {
       })
       expect(cancelledResult.success).toBe(false)
       expect(cancelledResult.contentItems[0]?.text).toContain('cancelled')
-      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
+      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(2)
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
       else await close(h.ctx)
+    }
+  })
+
+  it('does not reconcile a routine before its first approval reaches Schedule', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Approval owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    try {
+      const owner = h.agents[0]
+      if (owner === undefined) throw new Error('routine owner Agent was not created')
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('schedule_create missing')
+      const arguments_ = { title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }
+      const approval = Promise.withResolvers<boolean>()
+      const approvalRequested = Promise.withResolvers<true>()
+      const firstContext = {
+        callId: 'approval-first', threadId: 'approval-thread', turnId: 'approval-turn', sessionId: created.bot.sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const,
+        requestApproval: async () => { approvalRequested.resolve(true); return approval.promise },
+      }
+      await provider.observe({ phase: 'started', name: 'schedule_create', ...firstContext, arguments: arguments_ })
+      const firstCall = create.execute(arguments_, firstContext)
+      await approvalRequested.promise
+      const second = await create.execute(arguments_, {
+        ...firstContext, callId: 'approval-second', threadId: 'approval-second-thread', turnId: 'approval-second-turn',
+        requestApproval: async () => true,
+      })
+      expect(second.success).toBe(false)
+      expect(second.contentItems[0]?.text).toContain('uncertain-outcome')
+      expect(await h.ctx.schedule.list({ sessionId: created.bot.sessionId })).toEqual([])
+      approval.resolve(true)
+      await expect(firstCall).resolves.toMatchObject({ success: true })
+      expect(await h.ctx.schedule.list({ sessionId: created.bot.sessionId })).toHaveLength(1)
+    } finally {
+      await close(h.ctx)
     }
   })
 

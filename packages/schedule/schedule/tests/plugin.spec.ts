@@ -95,7 +95,7 @@ describe('shared Schedule management', () => {
     expect(await test.service.list({ sessionId })).toHaveLength(1)
   })
 
-  it('serializes reconciliation and listing behind an in-flight create', async () => {
+  it('serializes reconciliation, listing, and catalog behind an in-flight create', async () => {
     vi.useRealTimers()
     const pool = new MemoryMediaPool()
     const entered = Promise.withResolvers<undefined>()
@@ -116,17 +116,31 @@ describe('shared Schedule management', () => {
     await entered.promise
     const resolving = test.service.reconcileCreate(sessionId, request, 'lost-create')
     const listing = test.service.list({ sessionId })
+    const cataloging = test.service.catalog()
     let resolutionSettled = false
     let listingSettled = false
+    let catalogSettled = false
     void resolving.then(() => { resolutionSettled = true })
     void listing.then(() => { listingSettled = true })
+    void cataloging.then(() => { catalogSettled = true })
     await Promise.resolve()
     expect(resolutionSettled).toBe(false)
     expect(listingSettled).toBe(false)
+    expect(catalogSettled).toBe(false)
     release.resolve(undefined)
     const created = await creating
     await expect(resolving).resolves.toEqual({ status: 'committed', record: created })
     await expect(listing).resolves.toEqual([created])
+    await expect(cataloging).resolves.toEqual([{ ...created, sessionId, status: 'active' }])
+  })
+
+  it('does not retire an operation that has not reached Schedule yet', async () => {
+    const test = await setup()
+    const sessionId = SessionId('approval-pending')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.reconcileCreate(sessionId, request, 'approval-pending'))
+      .resolves.toEqual({ status: 'unknown' })
+    expect([...test.ctx.storageDomain.get('schedule')!.table('create_operations').entries()]).toEqual([])
   })
 
   it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
@@ -148,10 +162,19 @@ describe('shared Schedule management', () => {
     const test = await setup()
     const sessionId = SessionId('retired-create')
     const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
-    await expect(test.service.reconcileCreate(sessionId, request, 'lost-create'))
-      .resolves.toEqual({ status: 'absent' })
+    const seeded = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
     const domain = test.ctx.storageDomain.get('schedule')
     if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    const operations = domain.table('create_operations')
+    const operationEntry = [...operations.entries()].find(([, operation]) => operation.idempotencyKey === 'lost-create')
+    if (operationEntry === undefined) throw new Error('Create operation was not recorded')
+    const [operationKey, operation] = operationEntry
+    const { record: _record, ...pending } = operation
+    await tasks.delete(seeded.id)
+    await operations.put(operationKey, { ...pending, status: 'pending' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'lost-create'))
+      .resolves.toEqual({ status: 'absent' })
     expect([...domain.table('create_operations').entries()]).toHaveLength(1)
     await test.ctx.fiber.dispose()
 

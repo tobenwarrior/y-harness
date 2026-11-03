@@ -392,8 +392,12 @@ export interface ScheduleCreateOptions {
   readonly idempotencyKey?: string
 }
 
-/** Result of resolving one durable create operation after its native reply was lost. */
+/**
+ * Result of resolving one durable create operation after its native reply was lost.
+ * Unknown means creation has not registered with Schedule.
+ */
 export type ScheduleCreateResolution =
+  | { readonly status: 'unknown' }
   | { readonly status: 'absent' }
   | { readonly status: 'committed'; readonly record: ScheduleRecord }
 

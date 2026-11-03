@@ -2210,9 +2210,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateResolution>',
-        description: 'Resolve one Bot create operation after its native reply was lost.\n\nResolution runs in the same FIFO as creation, so a list cannot observe an empty task set while an earlier create is still committing. A pending operation with no task is durably marked absent; later identical requests can therefore be intentional new operations instead of inheriting stale uncertainty forever.',
+        description: 'Resolve one Bot create operation after its native reply was lost.\n\nResolution runs in the same FIFO as creation, so a list cannot observe an empty task set while an earlier create is still committing. An operation that has not reached Schedule remains unknown; a registered pending operation with no task is durably marked absent, so later identical requests can be intentional new operations instead of inheriting stale uncertainty forever.',
         parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity from the earlier native call.' }, { name: 'signal', description: 'Optional cancellation checked before reads and resolution writes.' }],
-        returns: 'The committed task or a durable absent resolution.',
+        returns: 'The committed task, a durable absent resolution, or unknown when the operation was never registered.',
       },
       {
         signature: '@Remote(\'list\') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>',
@@ -7437,7 +7437,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScheduleCreateResolution',
-    declaration: 'export type ScheduleCreateResolution = {\n    readonly status: \'absent\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
+    declaration: 'export type ScheduleCreateResolution = {\n    readonly status: \'unknown\';\n} | {\n    readonly status: \'absent\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
   },
   {
     name: 'ScheduleDeleteRequest',
