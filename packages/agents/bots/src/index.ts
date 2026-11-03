@@ -486,6 +486,13 @@ export class BotService extends TypertRemoteService {
         return { id: botId, updated: true }
       },
       routine: (action, args, context) => this.runRoutine(action, args, context),
+      routineAvailable: async (sessionId) => {
+        const agent = ctx.agents.get(sessionId)
+        if (agent === undefined) return false
+        await this.installPrompt(agent)
+        return ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']
+          .every(name => ctx.tools.get(name, agent) !== undefined)
+      },
       persist: async (event) => {
         await this.ready
         const session = ctx.sessions.get(event.sessionId)
@@ -932,7 +939,12 @@ export class BotService extends TypertRemoteService {
   /** Install the Bot identity in the Agent scope before its first model turn. */
   private async installPrompt(agent: Agent): Promise<void> {
     await this.ready
-    if (this.recordsBySession.get(String(agent.id)) === undefined || this.promptFibers.has(agent)) return
+    if (this.recordsBySession.get(String(agent.id)) === undefined) return
+    const existing = this.promptFibers.get(agent)
+    if (existing !== undefined) {
+      await existing
+      return
+    }
     const fiber = agent.ctx.inject(['systemPrompt', 'tools'], (scope) => {
       scope.systemPrompt.section({
         name: BOT_IDENTITY_SECTION,

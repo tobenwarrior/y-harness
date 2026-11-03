@@ -11,8 +11,11 @@ import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
+import ScheduleService from '../../../schedule/schedule/src/index.ts'
+import { registerScheduleTools } from '../../../schedule/tool-schedule/src/index.ts'
 import BotService from '../src/index.ts'
-import type { BotNativeToolProvider } from '../src/native-tools.ts'
+import type { BotDynamicToolEvent } from '../src/collaboration.ts'
+import type { BotNativeToolEvent, BotNativeToolProvider, BotNativeToolResult } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 
 async function harness(
@@ -23,6 +26,8 @@ async function harness(
     data: Uint8Array.of(1, 2, 3),
   })),
   existingSessionIds: readonly string[] = [],
+  withSchedule = false,
+  seedEvents: readonly BotDynamicToolEvent[] = [],
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -65,11 +70,13 @@ async function harness(
     }
     const scope = createScope(ctx, agent)
     Object.defineProperty(agent, 'ctx', { value: scope.ctx })
+    for (const event of seedEvents.filter(candidate => candidate.sessionId === id)) agent.session.append('bot/dynamic-tool', event)
     return agent
   })
   ctx.provide('agents', {
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
     list: () => [...agents],
+    withoutInitiator: async <T>(operation: () => Promise<T>) => operation(),
   } as never)
   ctx.provide('attachments', { readImage } as never)
   const inspect = vi.fn(async (sessionId: SessionId) => ({
@@ -86,6 +93,11 @@ async function harness(
   }
   ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
+  ctx.provide('sessionPersistence', {} as never)
+  if (withSchedule) await ctx.plugin(ScheduleService)
+  if (withSchedule) await Promise.all(agents.map(agent => agent.ctx.inject(
+    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+  )))
   const service = new BotService(ctx)
   try {
     await service[Service.init]()
@@ -124,10 +136,7 @@ describe('durable Bot roster', () => {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       expect(provider).toBeDefined()
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
-      expect(tools.map(tool => tool.name)).toEqual([
-        'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
-        'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
-      ])
+      expect(tools.map(tool => tool.name)).toEqual(['list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile'])
       const context = {
         callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
         signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
@@ -171,6 +180,73 @@ describe('durable Bot roster', () => {
       await expect(provider!.resolve({ sessionId: SessionId('ordinary-session') })).resolves.toEqual([])
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('keeps real routine ownership across restart and refuses cancelled duplicates', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Routine owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const sessionId = created.bot.sessionId
+    const h = await harness(pool, undefined, undefined, [String(sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      const owner = h.agents[0]
+      if (owner === undefined) throw new Error('routine owner Agent was not created')
+      expect(h.ctx.tools.schemas(owner).filter(tool => tool.name === 'schedule_create')).toHaveLength(1)
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId })
+      expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
+        'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+      ]))
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('schedule_create missing')
+      const arguments_ = { title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }
+      const context = {
+        callId: 'routine-create', threadId: 'thread-1', turnId: 'turn-1', sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const started: BotNativeToolEvent = { phase: 'started', name: 'schedule_create', ...context, arguments: arguments_ }
+      await provider.observe(started)
+      const result = await create.execute(arguments_, context)
+      expect(result.success).toBe(true)
+      const settled: BotNativeToolEvent = { ...started, phase: 'settled', result: result as BotNativeToolResult }
+      await provider.observe(settled)
+      const firstRecords = await h.ctx.schedule.list({ sessionId })
+      expect(firstRecords).toHaveLength(1)
+      expect(await h.ctx.schedule.list({ sessionId: SessionId('other-session') })).toEqual([])
+      const serviceCancelled = new AbortController()
+      serviceCancelled.abort()
+      await expect(h.ctx.schedule.create(sessionId, arguments_, serviceCancelled.signal)).rejects.toThrow()
+      expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
+      const durableEvents = h.agents[0]!.session.snapshotEvents()
+        .flatMap(event => event.type === 'bot/dynamic-tool' ? [event.data] : [])
+      await close(h.ctx)
+
+      reopened = await harness(pool, undefined, undefined, [String(sessionId)], true, durableEvents)
+      const providerAfterRestart = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (providerAfterRestart === undefined) throw new Error('restarted Bot provider was not mounted')
+      const toolsAfterRestart = await providerAfterRestart.resolve({ sessionId })
+      const createAfterRestart = toolsAfterRestart.find(tool => tool.name === 'schedule_create')
+      if (createAfterRestart === undefined) throw new Error('restarted schedule_create missing')
+      const replayed = await createAfterRestart.execute(arguments_, context)
+      expect(replayed).toEqual(result)
+      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
+
+      const cancelled = new AbortController()
+      cancelled.abort()
+      const cancelledResult = await createAfterRestart.execute(arguments_, {
+        ...context, callId: 'routine-cancelled', signal: cancelled.signal,
+      })
+      expect(cancelledResult.success).toBe(false)
+      expect(cancelledResult.contentItems[0]?.text).toContain('cancelled')
+      expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else await close(h.ctx)
     }
   })
 

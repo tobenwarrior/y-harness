@@ -30,6 +30,7 @@ import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
+import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 import { CodexBackendConnection } from '../../../llm/llm-pi-ai/src/codex-backend-connection.ts'
 import type { CodexPeer } from '../../../llm/llm-pi-ai/src/codex-backend.ts'
@@ -243,6 +244,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   // preset scope and the Bot child-scope shadowing it must provide.
   await ctx.plugin(AgentPresets, { default: 'standard' })
   await ctx.agentPresets.register({ id: 'standard', plugins: [{ name: '@yharness/tool-schedule' }] })
+  await ctx.agentPresets.register({ id: 'minimal', plugins: [] })
   expect(ctx.agentPresets.inspectCompositions()).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'standard', modules: expect.arrayContaining([
       expect.objectContaining({ moduleName: expect.stringContaining('tool-schedule') }),
@@ -252,18 +254,20 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
 
   const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root, agentPreset: 'standard' })
   const target = await ctx.bots.create({ id: BotId('bot-target'), name: 'Grok bot', cwd: root, agentPreset: 'standard' })
+  const minimal = await ctx.bots.create({ id: BotId('bot-minimal'), name: 'Minimal bot', cwd: root, agentPreset: 'minimal' })
   expect(ctx.get('codexDynamicTools')).toBeDefined()
   expect(ctx.llm.listProviders()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'codex-backend' })]))
   const senderAgent = createdAgents.get(sender.bot.sessionId)
   const targetAgent = createdAgents.get(target.bot.sessionId)
-  if (senderAgent === undefined || targetAgent === undefined) throw new Error('Bot Session agents were not created')
+  const minimalAgent = createdAgents.get(minimal.bot.sessionId)
+  if (senderAgent === undefined || targetAgent === undefined || minimalAgent === undefined) throw new Error('Bot Session agents were not created')
   const senderPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: senderAgent }))
   expect(senderPrompt).toContain('Your Bot name is "Chief of staff".')
   const presetLease = await ctx.agentPresets.acquireScope('standard')
   try {
     const presetScheduleCreate = ctx.tools.get('schedule_create', presetLease.key)
     expect(presetScheduleCreate).toBeDefined()
-    expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(presetScheduleCreate)
+    expect(ctx.tools.get('schedule_create', senderAgent)).toBe(presetScheduleCreate)
   } finally {
     await presetLease[Symbol.asyncDispose]()
   }
@@ -273,6 +277,11 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ]))
   expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
   expect(scopeOf(senderAgent.ctx)).toBeDefined()
+  expect(ctx.tools.get('schedule_create', minimalAgent)).toBeUndefined()
+  const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
+  expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
+    'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+  ]))
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
   senderAgent.session.append('turn/start', { turn: 1 })
@@ -286,10 +295,17 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   if (threadStart === undefined) throw new Error(`Codex stream did not reach turn: ${JSON.stringify(chunks)}`)
   expect(threadStart?.params.dynamicTools, JSON.stringify(peerFixture.requests)).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'list_bots' }), expect.objectContaining({ name: 'inspect_bot' }), expect.objectContaining({ name: 'send_bot_message' }),
+    expect.objectContaining({ name: 'schedule_create' }), expect.objectContaining({ name: 'schedule_list' }),
+    expect.objectContaining({ name: 'schedule_update' }), expect.objectContaining({ name: 'schedule_delete' }),
   ]))
   if (peerFixture.toolResults.length !== 3) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })
-  expect(JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)).toEqual([expect.objectContaining({ id: 'bot-target', name: 'Grok bot' })])
+  const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)
+  expect(listedBots).toHaveLength(2)
+  expect(listedBots).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'bot-target', name: 'Grok bot' }),
+    expect.objectContaining({ id: 'bot-minimal', name: 'Minimal bot' }),
+  ]))
   expect(output(peerFixture.toolResults[1]?.result)).toMatchObject({ success: true })
   expect(output(peerFixture.toolResults[2]?.result), JSON.stringify(peerFixture.toolResults[2])).toMatchObject({ success: true })
   expect(JSON.parse(output(peerFixture.toolResults[2]?.result).contentItems[0]!.text)).toMatchObject({ status: 'accepted', sender: { id: 'bot-sender' }, target: { id: 'bot-target' } })

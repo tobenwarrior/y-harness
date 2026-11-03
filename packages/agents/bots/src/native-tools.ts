@@ -70,6 +70,8 @@ export interface BotNativeToolHost {
     args: JsonObject,
     context: BotNativeToolContext,
   ) => Promise<unknown>
+  /** Report whether the calling Bot scope visibly mounts every routine tool. */
+  readonly routineAvailable?: (sessionId: SessionId) => Promise<boolean>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -117,7 +119,26 @@ function implicitMessageId(
 }
 
 function dynamicCallKey(event: BotDynamicToolEvent): string {
-  return [event.name, event.callId, event.threadId, event.turnId].join('\0')
+  return [String(event.sessionId ?? ''), event.name, event.callId, event.threadId, event.turnId].join('\0')
+}
+
+function nativeCallKey(
+  sessionId: SessionId,
+  event: Pick<BotDynamicToolEvent, 'name' | 'callId' | 'threadId' | 'turnId'>,
+): string {
+  return [String(sessionId), event.name, event.callId, event.threadId, event.turnId].join('\0')
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(item => stableJson(item)).join(',')}]`
+  if (typeof value === 'object') {
+    const objectValue = value as { readonly [key: string]: unknown }
+    return `{${Object.keys(objectValue).sort().map(key => `${JSON.stringify(key)}:${stableJson(objectValue[key])}`).join(',')}}`
+  }
+  return JSON.stringify(`[${typeof value}]`)
 }
 
 function sendArgumentKey(arguments_: Readonly<Record<string, unknown>>): string {
@@ -130,7 +151,12 @@ function sendArgumentKey(arguments_: Readonly<Record<string, unknown>>): string 
 
 function eventErrorCode(event: BotDynamicToolEvent): string | undefined {
   if (event.phase !== 'settled' || event.result?.success !== false) return undefined
-  const text = event.result.contentItems[0]?.text
+  return resultErrorCode(event.result)
+}
+
+function resultErrorCode(result: BotNativeToolResult): string | undefined {
+  if (result.success) return undefined
+  const text = result.contentItems[0]?.text
   if (text === undefined) return undefined
   try {
     const parsed: unknown = JSON.parse(text)
@@ -206,31 +232,61 @@ function priorExplicitMessageIds(
   }))]
 }
 
+/** Read a durable result for the exact native schedule-create identity. */
+function priorRoutineCreateResult(
+  events: readonly BotDynamicToolEvent[],
+  sessionId: SessionId,
+  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
+    readonly arguments: Readonly<Record<string, unknown>>
+  },
+): BotNativeToolResult | 'conflict' | 'uncertain' | undefined {
+  const key = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
+  const matches = events.filter(event => event.name === 'schedule_create' && dynamicCallKey(event) === key)
+  const started = matches.findLast(event => event.phase === 'started')
+  if (started !== undefined && stableJson(started.arguments) !== stableJson(current.arguments)) return 'conflict'
+  const settled = matches.findLast(event => event.phase === 'settled')
+  if (settled !== undefined) {
+    if (stableJson(settled.arguments) !== stableJson(current.arguments) || settled.result === undefined) return 'conflict'
+    if (!settled.result.success && !NO_EFFECT_FAILURES.has(eventErrorCode(settled) ?? '')) return 'uncertain'
+    // A rejected approval, validation, or cancellation did not commit a
+    // routine. The same native call may be retried after the user fixes the
+    // cause; only successful creates are durable idempotency receipts.
+    if (!settled.result.success) return undefined
+    return {
+      success: settled.result.success,
+      contentItems: settled.result.contentItems.map(item => ({ type: 'inputText' as const, text: item.text })),
+    }
+  }
+  return undefined
+}
+
 /**
  * Detect a schedule creation whose side effect may have completed without a
- * durable native result. A successful schedule listing is the explicit
- * recovery checkpoint: after it, a fresh creation is safe to attempt.
+ * durable native result. Listing is deliberately not a recovery checkpoint:
+ * a list can race a still-pending native create and cannot prove that retrying
+ * is safe.
  * @param events - durable native lifecycle records for one Bot Session.
+ * @param sessionId - Bot Session owning the native call.
  * @param current - the native call currently being executed.
  * @returns true when an earlier schedule creation remains unresolved.
  */
 function pendingRoutineCreate(
   events: readonly BotDynamicToolEvent[],
+  sessionId: SessionId,
   current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'>,
+  liveStarts: ReadonlySet<string>,
 ): boolean {
-  const currentIndex = events.findLastIndex(event => event.phase === 'started'
-    && event.name === 'schedule_create'
-    && event.callId === current.callId
-    && event.threadId === current.threadId
-    && event.turnId === current.turnId)
-  const previous = events.filter((_event, index) => index !== currentIndex)
-  const completed = new Set(previous.filter(event => event.phase === 'settled'
+  const key = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
+  if (liveStarts.has(key)) return false
+  const completed = new Set(events.filter(event => event.phase === 'settled'
     && (event.result?.success === true || NO_EFFECT_FAILURES.has(eventErrorCode(event) ?? ''))).map(dynamicCallKey))
-  const lastRoutineCheck = previous.findLastIndex(event => event.phase === 'settled'
-    && event.name === 'schedule_list' && event.result?.success === true)
-  return previous.some((event, index) => index > lastRoutineCheck
-    && event.phase === 'started'
+  // Only an unresolved create with this exact native identity can be a retry
+  // of the same side effect. Independent native calls are separate user
+  // intents and must not be held hostage by an abandoned call after restart.
+  return events.some(event =>
+    event.phase === 'started'
     && event.name === 'schedule_create'
+    && dynamicCallKey(event) === key
     && !completed.has(dynamicCallKey(event)))
 }
 
@@ -424,12 +480,25 @@ function sendTool(client: BotCollaborationClient, host: BotNativeToolHost, sessi
   }
 }
 
+interface RoutineCreateFlight {
+  readonly argumentsKey: string
+  readonly result: Promise<BotNativeToolResult>
+}
+
+interface RoutineCreateReceipt {
+  readonly argumentsKey: string
+  readonly result: BotNativeToolResult
+}
+
 /** Build one native routine action over the Host Schedule adapter. */
 function routineTool(
   action: 'create' | 'list' | 'update' | 'delete',
   routine: NonNullable<BotNativeToolHost['routine']>,
   replay: BotNativeToolHost['replay'],
   sessionId: SessionId,
+  createFlights: Map<string, RoutineCreateFlight>,
+  createReceipts: Map<string, RoutineCreateReceipt>,
+  liveStarts: Set<string>,
 ): BotNativeTool {
   const name = `schedule_${action}`
   const mutates = action !== 'list'
@@ -467,33 +536,73 @@ function routineTool(
     },
     execute: async (arguments_, context) => {
       if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
-      if (mutates) {
-        if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')
-        let approved: boolean
+
+      const executeOnce = async (): Promise<BotNativeToolResult> => {
+        let replayed: readonly BotDynamicToolEvent[] = []
+        if (action === 'create') {
+          try {
+            replayed = await replay(sessionId)
+          } catch (error: unknown) {
+            return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+          }
+          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          const current = {
+            callId: context.callId, threadId: context.threadId, turnId: context.turnId, arguments: arguments_,
+          }
+          const prior = priorRoutineCreateResult(replayed, sessionId, current)
+          if (prior === 'conflict') {
+            return failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
+          }
+          if (prior === 'uncertain') {
+            return failure('uncertain-outcome', 'This native routine call has an unknown outcome. Start a new native call after checking the Bot routines.')
+          }
+          if (prior !== undefined) return prior
+          if (pendingRoutineCreate(replayed, sessionId, current, liveStarts)) {
+            return failure('uncertain-outcome', 'An earlier routine creation may have completed. Start a new native call after resolving it.')
+          }
+        }
+        if (mutates) {
+          if (context.approvalPolicy === 'never') return failure('approval-required', 'Bot routine changes are disabled by this Session approval policy.')
+          let approved: boolean
+          try {
+            approved = await context.requestApproval(`Change a routine for Bot Session "${String(context.sessionId)}".`)
+          } catch (error: unknown) {
+            return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+          }
+          if (!approved) return failure('approval-denied', 'The Bot routine change was not approved.')
+          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+        }
         try {
-          approved = await context.requestApproval(`Change a routine for Bot Session "${String(context.sessionId)}".`)
+          return output(await routine(action, arguments_, context))
         } catch (error: unknown) {
-          return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
-        }
-        if (!approved) return failure('approval-denied', 'The Bot routine change was not approved.')
-        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
-      }
-      if (action === 'create') {
-        let replayed: readonly BotDynamicToolEvent[]
-        try {
-          replayed = await replay(sessionId)
-        } catch (error: unknown) {
-          return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
-        }
-        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
-        if (pendingRoutineCreate(replayed, context)) {
-          return failure('uncertain-outcome', 'An earlier routine creation may have completed. List routines before trying again.')
+          return collaborationFailure(error)
         }
       }
+
+      if (action !== 'create') return executeOnce()
+      const key = nativeCallKey(sessionId, { name, callId: context.callId, threadId: context.threadId, turnId: context.turnId })
+      const argumentsKey = stableJson(arguments_)
+      const receipt = createReceipts.get(key)
+      if (receipt !== undefined) {
+        return receipt.argumentsKey === argumentsKey
+          ? receipt.result
+          : failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
+      }
+      const inFlight = createFlights.get(key)
+      if (inFlight !== undefined) {
+        return inFlight.argumentsKey === argumentsKey
+          ? inFlight.result
+          : failure('uncertain-outcome', 'This native routine call identity is already running with different arguments.')
+      }
+      const result = executeOnce()
+      createFlights.set(key, { argumentsKey, result })
       try {
-        return output(await routine(action, arguments_, context))
-      } catch (error: unknown) {
-        return collaborationFailure(error)
+        const settled = await result
+        if (settled.success) createReceipts.set(key, { argumentsKey, result: settled })
+        else if (!NO_EFFECT_FAILURES.has(resultErrorCode(settled) ?? '')) liveStarts.delete(key)
+        return settled
+      } finally {
+        if (createFlights.get(key)?.result === result) createFlights.delete(key)
       }
     },
   }
@@ -505,6 +614,9 @@ function routineTool(
  * @returns Native action provider callbacks for the Codex bridge.
  */
 export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeToolProvider {
+  const routineCreateFlights = new Map<string, RoutineCreateFlight>()
+  const routineCreateReceipts = new Map<string, RoutineCreateReceipt>()
+  const liveRoutineStarts = new Set<string>()
   return {
     resolve: async (options) => {
       const sessionId = options.sessionId
@@ -554,9 +666,14 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         },
       })
       const routine = host.routine
-      const routines = routine === undefined ? [] : [
-        routineTool('create', routine, host.replay, sessionId), routineTool('list', routine, host.replay, sessionId),
-        routineTool('update', routine, host.replay, sessionId), routineTool('delete', routine, host.replay, sessionId),
+      const routineEnabled = routine !== undefined
+        && host.routineAvailable !== undefined
+        && await host.routineAvailable(sessionId)
+      const routines = !routineEnabled || routine === undefined ? [] : [
+        routineTool('create', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts, liveRoutineStarts),
+        routineTool('list', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts, liveRoutineStarts),
+        routineTool('update', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts, liveRoutineStarts),
+        routineTool('delete', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts, liveRoutineStarts),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },
@@ -564,11 +681,22 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       if (!BOT_TOOL_NAME_SET.has(event.name)) throw new Error('Unknown Bot native action.')
       if (event.sessionId === undefined) throw new Error('Bot native actions require a live Session id.')
       const result = safeResult(event.result)
+      const key = nativeCallKey(event.sessionId, event)
       await host.persist({
         phase: event.phase, name: event.name, callId: event.callId, threadId: event.threadId,
         turnId: event.turnId, sessionId: event.sessionId, arguments: safeArguments(event.arguments),
         ...(result === undefined ? {} : { result }),
       })
+      // Keep the in-memory reconciliation state behind the durable lifecycle
+      // write. A persistence failure must leave retries conservative rather
+      // than allowing a second schedule allocation.
+      if (event.name === 'schedule_create') {
+        if (event.phase === 'started') liveRoutineStarts.add(key)
+        else {
+          liveRoutineStarts.delete(key)
+          routineCreateReceipts.delete(key)
+        }
+      }
     },
     replay: async (options) => {
       const sessionId = options.sessionId

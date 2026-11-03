@@ -6,6 +6,7 @@ import { Session, SessionId } from '@yharness/session'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
+import { registerScheduleTools } from '@yharness/tool-schedule'
 import { installBotRoutineTools } from '../src/routine-tools.ts'
 
 async function fixture() {
@@ -24,6 +25,8 @@ async function fixture() {
     catalog: vi.fn(async () => []),
   }
   ctx.provide('schedule', schedule as never)
+  const scheduleTools = agent.ctx.inject(['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope))
+  await scheduleTools
   const fiber = installBotRoutineTools(agent.ctx)
   await fiber
   return { ctx, agent, schedule, dispose: () => scope.dispose() }

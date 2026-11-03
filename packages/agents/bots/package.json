@@ -62,6 +62,7 @@
     "@yharness/llm": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
+    "@yharness/scope": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
     "@yharness/tool-schedule": "workspace:*",

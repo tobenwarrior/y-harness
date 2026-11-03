@@ -5,6 +5,7 @@ import type { AgentHandle } from '@yharness/agent'
 import type {} from '@yharness/agent-default-model'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
+import { registerScheduleTools } from '../../../../schedule/tool-schedule/src/index.ts'
 import { BotId } from '../../../../agents/bots/src/types.ts'
 import { botDomain } from '../../../../agents/bots/src/storage.ts'
 
@@ -18,10 +19,9 @@ export const inject = ['agentDefaultModel', 'agents', 'storageDomain']
  */
 export async function apply(ctx: Context): Promise<void> {
   const cwd = process.cwd()
-  // The snapshot exercises the Bot-scoped routine registrations without
-  // pulling the live Host scheduler into the headless profile. No routine is
-  // executed in this scenario; the adapter only needs to be present while
-  // each Bot scope assembles its model-visible tools.
+  // The snapshot exercises the Bot-scoped routine policy without pulling the
+  // live Host scheduler into the headless profile. Mount the same model-facing
+  // definitions that the standard preset contributes; no routine is executed.
   ctx.provide('schedule', {
     create: async () => { throw new Error('schedule create is not used by this snapshot') },
     list: async () => [],
@@ -37,6 +37,17 @@ export async function apply(ctx: Context): Promise<void> {
       agentOptions: { provider: selection.provider, model: selection.model },
     }))
   }
+  await Promise.all(handles.map(handle => handle.agent.ctx.inject(
+    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+  )))
+  // The headless runner later adopts these persisted Sessions and creates new
+  // Agent scopes. Keep the same Schedule tool composition on those scopes so
+  // the replay header reflects the standard Bot capability set as well.
+  ctx.on('agent/created', async ({ agent }) => {
+    await agent.ctx.inject(
+      ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+    )
+  })
   const domain = await ctx.storageDomain.open(botDomain)
   const bots = domain.table('bots')
   const records = [
