@@ -5624,6 +5624,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
   },
   {
+    name: 'BotMemoryForgetRemoteRequest',
+    declaration: 'export interface BotMemoryForgetRemoteRequest {\n    readonly botId: BotId;\n    readonly memoryId: string;\n}',
+  },
+  {
+    name: 'BotMemoryForgetRequest',
+    declaration: 'export interface BotMemoryForgetRequest {\n    readonly memoryId: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'BotMemoryForgetValue',
     declaration: 'export interface BotMemoryForgetValue {\n    readonly removed: true;\n}',
   },

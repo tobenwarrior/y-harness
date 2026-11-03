@@ -314,8 +314,8 @@ export interface BotMemoryUpdateValue {
   readonly memory: BotMemoryView
 }
 
-/** Request to logically remove one private memory. */
-export interface BotMemoryForgetRequest {
+/** Remote request to logically remove one private memory. */
+export interface BotMemoryForgetRemoteRequest {
   /** Bot that owns the memory. */
   readonly botId: BotId
   /** Existing memory identity to remove. */

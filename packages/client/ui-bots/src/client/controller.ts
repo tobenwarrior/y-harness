@@ -28,7 +28,7 @@ import type {
   BotListRequest,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
-  BotMemoryForgetRequest,
+  BotMemoryForgetRemoteRequest,
   BotMemoryForgetValue,
   BotMemoryListRequest,
   BotMemoryListValue,
@@ -68,7 +68,7 @@ export interface BotWorkspaceRemote {
 
   listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
   updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
-  forgetMemory?: (request: BotMemoryForgetRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
+  forgetMemory?: (request: BotMemoryForgetRemoteRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>

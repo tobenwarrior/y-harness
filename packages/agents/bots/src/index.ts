@@ -506,7 +506,6 @@ export class BotService extends TypertRemoteService {
         }
         throw error
       }
-      await this.recoverPendingMemoryUpdates(domain.table('bots'))
       for (const [, record] of domain.table('bots').entries()) this.recordsBySession.set(String(record.sessionId), record)
       return domain
     })
@@ -728,6 +727,18 @@ export class BotService extends TypertRemoteService {
 
   async [Service.init](): Promise<void> {
     await this.initialized
+    const domain = await this.ready
+    try {
+      await this.recoverPendingMemoryUpdates(domain.table('bots'))
+    } catch (error: unknown) {
+      this.stopping = true
+      try {
+        await domain.close()
+      } catch (closeError: unknown) {
+        this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+      }
+      throw error
+    }
     await Promise.all(this.ctx.agents.list().map(async (agent) => {
       await this.installPrompt(agent)
       await this.reconcileGroupSession(agent)
@@ -892,7 +903,15 @@ export class BotService extends TypertRemoteService {
     if (latest.pendingMemoryUpdate.memoryId !== intent.memoryId || latest.pendingMemoryUpdate.text !== intent.text) return
     const { pendingMemoryUpdate: ignored, ...withoutPending } = latest
     void ignored
-    await bots.put(record.id, withoutPending)
+    try {
+      await bots.put(record.id, withoutPending)
+    } catch (error: unknown) {
+      throw new BotMemoryError(
+        'durability-failed',
+        'The Bot memory was updated, but its recovery marker could not be cleared.',
+        { cause: error },
+      )
+    }
     this.recordsBySession.set(String(withoutPending.sessionId), withoutPending)
   }
 

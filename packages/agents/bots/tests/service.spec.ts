@@ -46,8 +46,11 @@ async function harness(
   })),
   existingSessionIds: readonly string[] = [],
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
-  existingSessionSeeds: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
+  existingSessionSeeds: ReadonlyMap<string, readonly SessionEvent[]> | boolean = new Map(),
+  resumeColdSessions = false,
 ) {
+  const sessionSeeds = typeof existingSessionSeeds === 'boolean' ? new Map<string, readonly SessionEvent[]>() : existingSessionSeeds
+  const shouldResumeColdSessions = typeof existingSessionSeeds === 'boolean' ? existingSessionSeeds : resumeColdSessions
   const ctx = new Context()
   await ctx.plugin(Storage)
   await ctx.plugin(SystemPrompt)
@@ -65,12 +68,13 @@ async function harness(
       unmount()
     }
   })
-  const followups = existingSessionIds.map(() => vi.fn<(message: UserMessage) => void>())
-  const agents = existingSessionIds.map((sessionId, index) => {
-    const followup = followups[index]
-    if (followup === undefined) throw new Error('test followup was not created')
+  const followups: Array<ReturnType<typeof vi.fn<(message: UserMessage) => void>>> = []
+  const agents: Agent[] = []
+  const createAgent = (sessionId: string): Agent => {
+    const followup = vi.fn<(message: UserMessage) => void>()
+    followups.push(followup)
     const id = SessionId(sessionId)
-    const seed = existingSessionSeeds.get(sessionId)
+    const seed = sessionSeeds.get(sessionId)
     const agent: Agent = {
       id,
       options: {},
@@ -95,8 +99,10 @@ async function harness(
     }
     const scope = createScope(ctx, agent)
     Object.defineProperty(agent, 'ctx', { value: scope.ctx })
+    agents.push(agent)
     return agent
-  })
+  }
+  for (const sessionId of existingSessionIds) createAgent(sessionId)
   ctx.provide('agents', {
     get: (sessionId: SessionId) => agents.find(agent => agent.id === sessionId),
     list: () => [...agents],
@@ -107,11 +113,16 @@ async function harness(
   ctx.provide('attachments', { readImage, saveImages } as never)
   const inspect = vi.fn(async (sessionId: SessionId) => ({
     events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
-      ?? existingSessionSeeds.get(String(sessionId))
+      ?? sessionSeeds.get(String(sessionId))
+      ?? existingSessionEvents.get(String(sessionId))
       ?? [],
   }))
   const resolveAgent = vi.fn(async (sessionId: SessionId) => {
-    const agent = agents.find(candidate => candidate.id === sessionId)
+    let agent = agents.find(candidate => candidate.id === sessionId)
+    if (agent === undefined && shouldResumeColdSessions && existingSessionEvents.has(String(sessionId))) {
+      agent = createAgent(String(sessionId))
+      await ctx.serial('agent/created', { agent, source: 'resume' })
+    }
     return agent === undefined ? { error: new Error('session not found') } : { agent }
   })
   const flush = vi.fn(async () => true)
@@ -477,6 +488,83 @@ describe('durable Bot roster', () => {
       expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
         'remember', 'forget', 'remember',
       ])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a pending edit while resuming its cold Session during startup', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Cold recovery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const firstRun = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const agent = firstRun.agents[0]
+      if (agent === undefined) throw new Error('cold recovery Agent was not created')
+      const memory = (await firstRun.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('cold recovery memory was not bound')
+      const memoryId = BotMemoryId('memory-cold-recovery')
+      await memory.remember({ memoryId, text: 'The original cold-start note.' })
+      firstRun.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+      await expect(firstRun.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The repaired cold-start note.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+      events = agent.session.snapshotEvents()
+    } finally {
+      await close(firstRun.ctx)
+    }
+
+    const resumed = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map([[String(owner.bot.sessionId), events]]),
+      true,
+    )
+    try {
+      await expect(resumed.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: 'memory-cold-recovery', text: 'The repaired cold-start note.' }],
+      })
+      expect(resumed.agents).toHaveLength(1)
+    } finally {
+      await close(resumed.ctx)
+    }
+  })
+
+  it('reports a recovery-marker failure after the replacement is durable', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Marker failure owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('marker failure Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('marker failure memory was not bound')
+      const memoryId = BotMemoryId('memory-marker-failure')
+      await memory.remember({ memoryId, text: 'The old marker note.' })
+      h.flush
+        .mockImplementationOnce(async () => true)
+        .mockImplementationOnce(async () => {
+          pool.failNextWrites = 1
+          return true
+        })
+
+      await expect(h.service.updateMemory({
+        botId: owner.bot.id, memoryId, text: 'The durable replacement.',
+      })).rejects.toMatchObject({
+        code: 'durability-failed',
+        message: 'The Bot memory was updated, but its recovery marker could not be cleared.',
+      })
+      await expect(h.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: String(memoryId), text: 'The durable replacement.' }],
+      })
     } finally {
       await close(h.ctx)
     }
