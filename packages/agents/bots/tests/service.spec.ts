@@ -56,6 +56,7 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
+import type { SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { BotId } from '../src/types.ts'
 import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import z from 'zod'
@@ -478,6 +479,95 @@ describe('durable Bot roster', () => {
     })
     expect(sharedBotWorkingDirectory(sessionId)).toContain('y-harness-shared-bots')
     expect(sharedBotSessionRequest(sessionId).cwd).not.toBe('/tmp')
+  })
+
+  it('fails shared-group admission when the Session flush is not durable and retries the same pending message once', async () => {
+    const sharedSessionId = SessionId('shared-session-group-flush-regression')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Flush regression', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-flush-regression'),
+        botId: created.bot.id,
+        sessionId: sharedSessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      host.registerSharedGroupSessions?.([binding])
+      h.flush.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Flush regression',
+        targetBotId: created.bot.id,
+        sessionId: sharedSessionId,
+        text: 'Keep one pending admission.',
+        messageId: BotGroupMessageId('bot-group-message-flush-regression'),
+      }
+      await expect(host.deliverSharedGroup?.(request)).rejects.toThrow('durable')
+      const delivered = h.followups[0]?.mock.calls[0]?.[0]
+      const agent = h.agents[0]
+      if (delivered === undefined || agent === undefined) throw new Error('flush regression did not queue a message')
+      agent.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [delivered],
+      })
+      await expect(host.deliverSharedGroup?.(request)).resolves.toBe('accepted')
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retains a retired shared-group Session binding for in-flight attribution but rejects new delivery', async () => {
+    const sharedSessionId = SessionId('shared-session-group-retirement-regression')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Retirement regression', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-retirement-regression'),
+        botId: created.bot.id,
+        sessionId: sharedSessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      host.registerSharedGroupSessions?.([binding])
+      host.registerSharedGroupSessions?.([])
+      await expect(host.inspectSharedGroupSession?.(sharedSessionId, new AbortController().signal)).resolves.toMatchObject({ events: [] })
+      await expect(host.deliverSharedGroup?.({
+        groupId: binding.groupId,
+        groupName: 'Retirement regression',
+        targetBotId: created.bot.id,
+        sessionId: sharedSessionId,
+        text: 'Must not be admitted after removal.',
+        messageId: BotGroupMessageId('bot-group-message-retirement-regression'),
+      })).rejects.toThrow('no longer active')
+      expect(h.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
   })
 
   it('does not expose root MCP tools or resource instructions to a shared Session', async () => {

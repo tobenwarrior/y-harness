@@ -134,6 +134,7 @@ const sharedGroupSessionSchema = z.object({
   groupId: groupIdSchema,
   botId: botIdSchema,
   sessionId: sharedGroupSessionIdSchema,
+  botName: z.string().min(1).max(MAX_GROUP_NAME).optional(),
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
   revokedAt: timestampSchema.optional(),
@@ -160,6 +161,7 @@ export const sharedGroupSnapshotSchema = z.object({
   deliveries: z.array(sharedGroupDeliverySchema).max(MAX_SHARED_GROUP_DELIVERIES),
   sessions: z.array(sharedGroupSessionSchema).max(MAX_SHARED_GROUP_SESSIONS),
   invites: z.array(sharedGroupInviteSchema).max(MAX_SHARED_GROUP_INVITES),
+  responseReservations: z.array(z.string().min(1).max(256)).max(MAX_SHARED_GROUP_MESSAGES).optional().default([]),
 }).strict().superRefine((snapshot, context) => {
   const groupIds = new Set<string>()
   for (const group of snapshot.groups) {
@@ -195,6 +197,9 @@ export const sharedGroupSnapshotSchema = z.object({
     if (!snapshot.groups.some(group => group.id === invite.groupId)) {
       context.addIssue({ code: 'custom', message: 'shared group invite must target an existing group', path: ['invites'] })
     }
+  }
+  if (new Set(snapshot.responseReservations).size !== snapshot.responseReservations.length) {
+    context.addIssue({ code: 'custom', message: 'shared group response reservations must be unique', path: ['responseReservations'] })
   }
 })
 
@@ -232,7 +237,7 @@ export interface SharedGroupHost {
   /** Inspect only the durable events of an isolated shared-group Session. */
   readonly inspectSharedGroupSession?: (sessionId: SessionId, signal: AbortSignal) => Promise<{ readonly events: readonly import('@yharness/session').SessionEvent[] }>
   /** Flush one isolated shared-group Session after message admission. */
-  readonly flushSharedGroupSession?: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
+  readonly flushSharedGroupSession?: (sessionId: SessionId, signal?: AbortSignal) => Promise<boolean>
   /** Register newly committed bindings before the caller can send a retry. */
   readonly registerSharedGroupSessions?: (bindings: readonly SharedGroupSessionBinding[]) => void
   /** Queue one idempotent message into the exact isolated group Session. */
@@ -331,6 +336,7 @@ export class SharedBotGroupService {
           groupId: id,
           botId,
           sessionId: SessionId(`shared-session-group-${randomUUID()}`),
+          botName: bots.find(bot => bot.id === botId)?.name,
           createdAt: now,
           updatedAt: now,
         })),
@@ -414,6 +420,7 @@ export class SharedBotGroupService {
           groupId: group.id,
           botId,
           sessionId: SessionId(`shared-session-group-${randomUUID()}`),
+          botName: bots.find(bot => bot.id === botId)?.name,
           createdAt: now,
           updatedAt: now,
         }))
@@ -462,7 +469,7 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** Persist and deliver one principal-authored shared-group message under the authority lock. */
+  /** Persist one principal-authored shared-group message, then deliver outside the authority lock. */
   async send(
     request: BotGroupSendRemoteRequest,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -478,11 +485,6 @@ export class SharedBotGroupService {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'write-group')
       const targetBotIds = requestedRecipients(group, request.targetBotIds)
-      // A group may have been created or updated by another Host after this
-      // process mounted. Refresh the exact durable bindings before admission;
-      // the authority lock keeps this registration and authorization view
-      // aligned with the delivery reservation.
-      this.host.registerSharedGroupSessions?.(snapshot.sessions.filter(session => session.revokedAt === undefined))
       const existing = snapshot.messages.find(message => message.id === messageId)
       if (existing !== undefined) {
         if (existing.groupId !== group.id || existing.text !== text
@@ -491,9 +493,63 @@ export class SharedBotGroupService {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different content`)
         }
       }
+      if (existing === undefined && snapshot.messages.length >= MAX_SHARED_GROUP_MESSAGES) {
+        throw new SharedGroupError('gateway/unavailable', 'shared Bot group transcript capacity is exhausted')
+      }
       let messages = snapshot.messages
       let deliveries = snapshot.deliveries
+      let responseReservations = snapshot.responseReservations
       let changed = false
+      let newDeliveryCount = 0
+      let newResponseReservationCount = 0
+      const bindings = new Map<string, SharedGroupSessionBinding>()
+      const attempts: SharedGroupDeliveryPlan[] = []
+      const failedRows = new Map<string, SharedGroupDeliveryRecord>()
+      const outcomes = new Map<string, BotGroupDeliveryView>()
+
+      for (const botId of targetBotIds) {
+        const deliveryId = deliveryKey(messageId, botId)
+        const current = snapshot.deliveries.find(delivery => delivery.id === deliveryId)
+        if (current?.status === 'responded') {
+          outcomes.set(String(botId), { botId, status: 'duplicate' })
+          continue
+        }
+        if (current?.status === 'accepted') {
+          outcomes.set(String(botId), { botId, status: 'duplicate' })
+          if (!snapshot.responseReservations.includes(deliveryId)) newResponseReservationCount += 1
+          continue
+        }
+        const binding = snapshot.sessions.find(
+          session => session.groupId === group.id && session.botId === botId && session.revokedAt === undefined,
+        )
+        if (binding === undefined) {
+          if (current === undefined) newDeliveryCount += 1
+          failedRows.set(deliveryId, {
+            id: deliveryId,
+            groupId: group.id,
+            messageId,
+            botId,
+            status: 'failed',
+            error: 'Shared Bot group Session is unavailable',
+            authorizationRevision: group.revision,
+            senderPrincipalId: principalId,
+            updatedAt: this.now(),
+          })
+          outcomes.set(String(botId), { botId, status: 'failed', error: 'Shared Bot group Session is unavailable' })
+          continue
+        }
+        bindings.set(String(botId), binding)
+        if (current === undefined) newDeliveryCount += 1
+        if (!snapshot.responseReservations.includes(deliveryId)) newResponseReservationCount += 1
+        attempts.push({ botId, sessionId: binding.sessionId, deliveryId })
+      }
+      if (snapshot.deliveries.length + newDeliveryCount > MAX_SHARED_GROUP_DELIVERIES) {
+        throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery capacity is exhausted')
+      }
+      if (snapshot.messages.length + (existing === undefined ? 1 : 0)
+        + snapshot.responseReservations.length + newResponseReservationCount > MAX_SHARED_GROUP_MESSAGES) {
+        throw new SharedGroupError('gateway/unavailable', 'shared Bot group response capacity is exhausted')
+      }
       if (existing === undefined) {
         const message: BotGroupMessageRecord = {
           id: messageId,
@@ -506,33 +562,27 @@ export class SharedBotGroupService {
         messages = [...messages, message]
         changed = true
       }
-      const outcomes = new Map<string, BotGroupDeliveryView>()
       for (const botId of targetBotIds) {
         const deliveryId = deliveryKey(messageId, botId)
         const current = deliveries.find(delivery => delivery.id === deliveryId)
-        if (current?.status === 'accepted' || current?.status === 'responded') {
-          outcomes.set(String(botId), { botId, status: 'duplicate' })
-          continue
-        }
-        const binding = snapshot.sessions.find(
-          session => session.groupId === group.id && session.botId === botId && session.revokedAt === undefined,
-        )
-        if (binding === undefined) {
-          outcomes.set(String(botId), { botId, status: 'failed', error: 'Shared Bot group Session is unavailable' })
-          deliveries = putDelivery(deliveries, {
-            id: deliveryId,
-            groupId: group.id,
-            messageId,
-            botId,
-            status: 'failed',
-            error: 'Shared Bot group Session is unavailable',
-            authorizationRevision: group.revision,
-            senderPrincipalId: principalId,
-            updatedAt: this.now(),
-          })
+        if (current?.status === 'responded') continue
+        if (current?.status === 'accepted') {
+          if (!responseReservations.includes(deliveryId)) {
+            responseReservations = [...responseReservations, deliveryId]
+            changed = true
+          }
           changed = true
           continue
         }
+        const failed = failedRows.get(deliveryId)
+        if (failed !== undefined) {
+          deliveries = putDelivery(deliveries, failed)
+          responseReservations = responseReservations.filter(id => id !== deliveryId)
+          changed = true
+          continue
+        }
+        const binding = bindings.get(String(botId))
+        if (binding === undefined) continue
         const pending: SharedGroupDeliveryRecord = {
           id: deliveryId,
           groupId: group.id,
@@ -542,30 +592,11 @@ export class SharedBotGroupService {
           authorizationRevision: group.revision,
           senderPrincipalId: principalId,
           updatedAt: this.now(),
+          ...(current?.claim === undefined ? {} : { claim: current.claim }),
         }
         deliveries = putDelivery(deliveries, pending)
+        if (!responseReservations.includes(deliveryId)) responseReservations = [...responseReservations, deliveryId]
         changed = true
-        try {
-          const deliverSharedGroup = this.host.deliverSharedGroup
-          if (deliverSharedGroup === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
-          const deliveryResult = await deliverSharedGroup({
-            groupId: group.id,
-            groupName: group.name,
-            targetBotId: botId,
-            sessionId: binding.sessionId,
-            text,
-            messageId,
-            signal,
-          })
-          const accepted: SharedGroupDeliveryRecord = { ...pending, status: 'accepted', updatedAt: this.now() }
-          deliveries = putDelivery(deliveries, accepted)
-          outcomes.set(String(botId), { botId, status: deliveryResult })
-        } catch (error: unknown) {
-          const detail = error instanceof Error ? error.message : String(error)
-          const safeError = detail.trim().slice(0, 400) || 'Bot delivery failed'
-          deliveries = putDelivery(deliveries, { ...pending, status: 'failed', error: safeError, updatedAt: this.now() })
-          outcomes.set(String(botId), { botId, status: 'failed', error: safeError })
-        }
       }
       const nextGroup = changed ? { ...group, updatedAt: Math.max(this.now(), group.updatedAt), revision: snapshot.revision + 1 } : group
       const next: SharedGroupSnapshot = {
@@ -574,17 +605,75 @@ export class SharedBotGroupService {
         groups: changed ? snapshot.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate) : snapshot.groups,
         messages,
         deliveries,
+        responseReservations,
       }
-      const ordered = targetBotIds.flatMap((botId) => {
-        const outcome = outcomes.get(String(botId))
-        return outcome === undefined ? [] : [outcome]
-      })
-      const status: BotGroupSendValue['status'] = ordered.some(outcome => outcome.status === 'failed')
-        ? 'partial'
-        : ordered.some(outcome => outcome.status === 'accepted') ? 'accepted' : 'duplicate'
-      return { snapshot: next, value: { messageId, status, deliveries: ordered } }
+      return {
+        snapshot: next,
+        value: {
+          plan: {
+            groupId: group.id,
+            groupName: group.name,
+            text,
+            messageId,
+            targetBotIds,
+            attempts,
+            outcomes,
+            senderPrincipalId: principalId,
+          },
+        },
+      }
     })
-    return result.value
+    this.host.registerSharedGroupSessions?.(result.snapshot.sessions.filter(session => session.revokedAt === undefined))
+    const { plan } = result.value
+    const outcomes = new Map(plan.outcomes)
+    for (const attempt of plan.attempts) {
+      const binding = result.snapshot.sessions.find(session => session.sessionId === attempt.sessionId)
+      if (binding === undefined) {
+        const error = 'Shared Bot group Session is unavailable'
+        outcomes.set(String(attempt.botId), { botId: attempt.botId, status: 'failed', error })
+        await this.recordDeliveryOutcome(attempt.deliveryId, 'failed', error)
+        continue
+      }
+      const authorization = await this.deliveryAuthorization(plan, attempt)
+      if (authorization === 'duplicate') {
+        outcomes.set(String(attempt.botId), { botId: attempt.botId, status: 'duplicate' })
+        continue
+      }
+      if (authorization === 'denied') {
+        const error = 'Shared Bot group authorization changed before delivery'
+        await this.recordDeliveryOutcome(attempt.deliveryId, 'failed', error)
+        outcomes.set(String(attempt.botId), { botId: attempt.botId, status: 'failed', error })
+        continue
+      }
+      try {
+        const deliverSharedGroup = this.host.deliverSharedGroup
+        if (deliverSharedGroup === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
+        const deliveryResult = await deliverSharedGroup({
+          groupId: plan.groupId,
+          groupName: plan.groupName,
+          targetBotId: attempt.botId,
+          sessionId: binding.sessionId,
+          text: plan.text,
+          messageId: plan.messageId,
+          signal,
+        })
+        await this.recordDeliveryOutcome(attempt.deliveryId, 'accepted')
+        outcomes.set(String(attempt.botId), { botId: attempt.botId, status: deliveryResult })
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error)
+        const safeError = detail.trim().slice(0, 400) || 'Bot delivery failed'
+        await this.recordDeliveryOutcome(attempt.deliveryId, 'failed', safeError)
+        outcomes.set(String(attempt.botId), { botId: attempt.botId, status: 'failed', error: safeError })
+      }
+    }
+    const ordered = plan.targetBotIds.flatMap((botId) => {
+      const outcome = outcomes.get(String(botId))
+      return outcome === undefined ? [] : [outcome]
+    })
+    const status: BotGroupSendValue['status'] = ordered.some(outcome => outcome.status === 'failed')
+      ? 'partial'
+      : ordered.some(outcome => outcome.status === 'accepted') ? 'accepted' : 'duplicate'
+    return { messageId: plan.messageId, status, deliveries: ordered }
   }
 
   /** Create one explicit group ACL invitation. */
@@ -599,6 +688,9 @@ export class SharedBotGroupService {
       const group = findGroup(groups, groupId)
       if (group.ownerPrincipalId !== principalId) throw new SharedGroupError('gateway/forbidden', 'only the shared group owner may invite members')
       requireBotAccess(snapshot.memberships, group.botIds, principalId, 'write-group')
+      if (pruneExpiredInvites(groups.invites, this.now()).length >= MAX_SHARED_GROUP_INVITES) {
+        throw new SharedGroupError('gateway/unavailable', 'shared group invitation capacity is exhausted')
+      }
     })
     try {
       await this.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
@@ -608,10 +700,12 @@ export class SharedBotGroupService {
         if (group === undefined || group.ownerPrincipalId !== principalId) throw new SharedGroupError('gateway/conflict', 'shared Bot group changed before its invite was stored')
         requireBotAccess(snapshot.memberships, group.botIds, principalId, 'write-group')
         const now = this.now()
+        const invites = pruneExpiredInvites(groups.invites, now)
+        if (invites.length >= MAX_SHARED_GROUP_INVITES) throw new SharedGroupError('gateway/unavailable', 'shared group invitation capacity is exhausted')
         const next: SharedGroupSnapshot = {
           ...groups,
           revision: groups.revision + 1,
-          invites: [...groups.invites, {
+          invites: [...invites, {
             digest: sharedInviteDigest(invite.code),
             groupId,
             createdBy: principalId,
@@ -649,6 +743,10 @@ export class SharedBotGroupService {
     const pendingGroups = parseGroups(beforeSnapshot.sharedGroups)
     const pendingGroup = findGroup(pendingGroups, pending.groupId)
     requireBotAccess(beforeSnapshot.memberships, pendingGroup.botIds, admittedPrincipalId, 'read-group')
+    if (!pendingGroup.memberPrincipalIds.some(member => String(member) === String(admittedPrincipalId))
+      && pendingGroup.memberPrincipalIds.length >= 256) {
+      throw new SharedGroupError('gateway/unavailable', 'shared group member capacity is exhausted')
+    }
     const enrollment = await this.authority.redeemInvite(code, request).catch(() => {
       throw new SharedGroupError('gateway/bad-request', 'shared group invite is invalid or expired')
     })
@@ -664,8 +762,14 @@ export class SharedBotGroupService {
           throw new SharedGroupError('gateway/forbidden', 'shared group is no longer available')
         }
         requireBotAccess(snapshot.memberships, group.botIds, principalId, 'read-group')
+        const now = this.now()
+        const currentInvite = groups.invites.find(invite => invite.digest === digest)
+        if (currentInvite === undefined || now >= currentInvite.expiresAt) {
+          throw new SharedGroupError('gateway/bad-request', 'shared group invite is invalid or expired')
+        }
+        const invites = pruneExpiredInvites(groups.invites, now).filter(invite => invite.digest !== digest)
         if (!group.memberPrincipalIds.some(member => String(member) === String(principalId))) {
-          const now = this.now()
+          if (group.memberPrincipalIds.length >= 256) throw new SharedGroupError('gateway/unavailable', 'shared group member capacity is exhausted')
           const nextGroup = {
             ...group,
             memberPrincipalIds: [...group.memberPrincipalIds, principalId],
@@ -680,7 +784,7 @@ export class SharedBotGroupService {
                 ...groups,
                 revision: groups.revision + 1,
                 groups: groups.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate),
-                invites: groups.invites.filter(invite => invite.digest !== digest),
+                invites,
               },
             },
           }
@@ -691,7 +795,8 @@ export class SharedBotGroupService {
             ...snapshot,
             [SHARED_GROUPS_FIELD]: {
               ...groups,
-              invites: groups.invites.filter(invite => invite.digest !== digest),
+              revision: groups.revision + 1,
+              invites,
             },
           },
         }
@@ -729,12 +834,16 @@ export class SharedBotGroupService {
       const deliveries = snapshot.deliveries.map(delivery => delivery.groupId === group.id && delivery.senderPrincipalId === principalId && delivery.status === 'pending'
         ? { ...delivery, status: 'failed' as const, error: 'Shared group membership was revoked', updatedAt: now }
         : delivery)
+      const failedIds = new Set(deliveries
+        .filter((delivery, index) => delivery !== snapshot.deliveries[index] && delivery.status === 'failed')
+        .map(delivery => delivery.id))
       return {
         snapshot: {
           ...snapshot,
           revision: snapshot.revision + 1,
           groups: snapshot.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate),
           deliveries,
+          responseReservations: snapshot.responseReservations.filter(id => !failedIds.has(id)),
         },
         value: { groupId, principalId, revoked: true as const },
       }
@@ -810,14 +919,37 @@ export class SharedBotGroupService {
       if (pending === undefined) return snapshot
       const responseId = responseMessageId(groupId, botId, sourceMessageId)
       const now = Math.max(this.now(), snapshot.messages.find(message => message.id === pending.messageId)?.createdAt ?? 0)
-      const messages = snapshot.messages.some(message => message.id === responseId)
+      const hasResponse = snapshot.messages.some(message => message.id === responseId)
+      if (!hasResponse && snapshot.messages.length >= MAX_SHARED_GROUP_MESSAGES) {
+        return {
+          ...snapshot,
+          revision: snapshot.revision + 1,
+          deliveries: putDelivery(snapshot.deliveries, {
+            ...pending,
+            status: 'failed',
+            error: 'Shared Bot group transcript capacity is exhausted',
+            updatedAt: now,
+          }),
+          responseReservations: snapshot.responseReservations.filter(id => id !== pending.id),
+        }
+      }
+      const senderName = snapshot.sessions.find(session => session.groupId === groupId && session.botId === botId)?.botName
+      const messages = hasResponse
         ? snapshot.messages
-        : [...snapshot.messages, { id: responseId, groupId, sender: { kind: 'bot', botId }, text: messageText, createdAt: now } satisfies BotGroupMessageRecord]
+        : [...snapshot.messages, {
+          id: responseId,
+          groupId,
+          sender: { kind: 'bot', botId },
+          ...(senderName === undefined ? {} : { senderName }),
+          text: messageText,
+          createdAt: now,
+        } satisfies BotGroupMessageRecord]
       return {
         ...snapshot,
         revision: snapshot.revision + 1,
         messages,
         deliveries: putDelivery(snapshot.deliveries, { ...pending, status: 'responded', responseMessageId: responseId, updatedAt: now }),
+        responseReservations: snapshot.responseReservations.filter(id => id !== pending.id),
       }
     })
   }
@@ -839,8 +971,73 @@ export class SharedBotGroupService {
         return { ...delivery, status: 'failed' as const, error: safeError, updatedAt: now }
       })
       if (!deliveries.some((delivery, index) => delivery !== snapshot.deliveries[index])) return snapshot
-      return { ...snapshot, deliveries, revision: snapshot.revision + 1 }
+      const failedIds = new Set(deliveries
+        .filter((delivery, index) => delivery !== snapshot.deliveries[index] && delivery.status === 'failed')
+        .map(delivery => delivery.id))
+      return {
+        ...snapshot,
+        deliveries,
+        responseReservations: snapshot.responseReservations.filter(id => !failedIds.has(id)),
+        revision: snapshot.revision + 1,
+      }
     })
+  }
+
+  private async recordDeliveryOutcome(
+    deliveryId: string,
+    status: 'accepted' | 'failed',
+    error?: string,
+  ): Promise<void> {
+    await this.mutateWithoutActor((snapshot) => {
+      const current = snapshot.deliveries.find(delivery => delivery.id === deliveryId)
+      if (current === undefined) return snapshot
+      const now = this.now()
+      if (status === 'failed') {
+        return {
+          ...snapshot,
+          revision: snapshot.revision + 1,
+          deliveries: putDelivery(snapshot.deliveries, {
+            ...current,
+            status: 'failed',
+            ...(error === undefined ? {} : { error }),
+            updatedAt: now,
+          }),
+          responseReservations: snapshot.responseReservations.filter(id => id !== deliveryId),
+        }
+      }
+      return {
+        ...snapshot,
+        revision: snapshot.revision + 1,
+        deliveries: putDelivery(snapshot.deliveries, {
+          ...current,
+          status: current.status === 'responded' || current.status === 'failed' ? current.status : 'accepted',
+          updatedAt: now,
+        }),
+      }
+    })
+  }
+
+  private async deliveryAuthorization(
+    plan: SharedGroupSendPlan,
+    attempt: SharedGroupDeliveryPlan,
+  ): Promise<'authorized' | 'duplicate' | 'denied'> {
+    const result = await this.authority.mutateExtension<'authorized' | 'duplicate' | 'denied'>(
+      'agent-bots/shared-memberships',
+      (current) => {
+        const membershipSnapshot = parseMembershipExtension(current)
+        const groups = parseGroups(membershipSnapshot.sharedGroups)
+        const group = groups.groups.find(candidate => candidate.id === plan.groupId)
+        const delivery = groups.deliveries.find(candidate => candidate.id === attempt.deliveryId)
+        if (group === undefined || delivery === undefined) return { value: 'denied', next: current }
+        if (delivery.status === 'accepted' || delivery.status === 'responded') return { value: 'duplicate', next: current }
+        const authorized = group.memberPrincipalIds.some(member => String(member) === String(plan.senderPrincipalId))
+          && group.botIds.includes(attempt.botId)
+          && groups.sessions.some(session => session.groupId === group.id
+            && session.botId === attempt.botId && session.sessionId === attempt.sessionId && session.revokedAt === undefined)
+        return { value: authorized ? 'authorized' : 'denied', next: current }
+      },
+    )
+    return result
   }
 
   private async locked<T>(
@@ -921,7 +1118,16 @@ function validateSnapshot(value: SharedGroupSnapshot): SharedGroupSnapshot {
 }
 
 function emptySnapshot(): SharedGroupSnapshot {
-  return { version: SHARED_GROUPS_VERSION, revision: 0, groups: [], messages: [], deliveries: [], sessions: [], invites: [] }
+  return {
+    version: SHARED_GROUPS_VERSION,
+    revision: 0,
+    groups: [],
+    messages: [],
+    deliveries: [],
+    sessions: [],
+    invites: [],
+    responseReservations: [],
+  }
 }
 
 function normalizeGroupId(value: ReturnType<typeof BotGroupId>): ReturnType<typeof BotGroupId> {
@@ -947,6 +1153,13 @@ function normalizeBotIds(botIds: readonly BotId[]): BotId[] {
   if (botIds.length < 2 || botIds.length > MAX_GROUP_MEMBERS) throw new SharedGroupError('gateway/bad-request', `a shared Bot group must contain 2-${String(MAX_GROUP_MEMBERS)} Bots`)
   if (new Set(botIds.map(String)).size !== botIds.length) throw new SharedGroupError('gateway/bad-request', 'shared Bot group members must be unique')
   return [...botIds]
+}
+
+function pruneExpiredInvites(
+  invites: readonly z.infer<typeof sharedGroupInviteSchema>[],
+  now: number,
+): z.infer<typeof sharedGroupInviteSchema>[] {
+  return invites.filter(invite => invite.expiresAt > now)
 }
 
 function findGroup(snapshot: SharedGroupSnapshot, groupId: ReturnType<typeof BotGroupId>): SharedGroupRecord {
@@ -1019,6 +1232,23 @@ function sameIdSet(left: readonly BotId[], right: readonly BotId[]): boolean {
 
 type SharedGroupRecord = z.infer<typeof sharedGroupRecordSchema>
 
+interface SharedGroupDeliveryPlan {
+  readonly botId: BotId
+  readonly sessionId: SessionId
+  readonly deliveryId: string
+}
+
+interface SharedGroupSendPlan {
+  readonly groupId: BotGroupId
+  readonly groupName: string
+  readonly text: string
+  readonly messageId: BotGroupMessageId
+  readonly targetBotIds: readonly BotId[]
+  readonly attempts: readonly SharedGroupDeliveryPlan[]
+  readonly outcomes: ReadonlyMap<string, BotGroupDeliveryView>
+  readonly senderPrincipalId: ReturnType<typeof BotPrincipalId>
+}
+
 function groupView(record: SharedGroupRecord, bots: readonly BotView[]): BotGroupView {
   const projected: BotView[] = []
   for (const botId of record.botIds) {
@@ -1058,7 +1288,7 @@ function messageView(message: BotGroupMessageRecord, bots: readonly BotView[]): 
   const bot = bots.find(candidate => candidate.id === sender.botId)
   return {
     ...message,
-    sender: { kind: 'bot', botId: sender.botId, name: bot?.name ?? String(sender.botId) },
+    sender: { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) },
   }
 }
 

@@ -59,6 +59,8 @@ export interface BotGroupMessageRecord {
   readonly groupId: BotGroupId
   /** Human or Bot sender. */
   readonly sender: BotGroupMessageSender
+  /** Historical display name captured for Bot responses that outlive a roster removal. */
+  readonly senderName?: string
   /** User-visible text. */
   readonly text: string
   /** Recipients selected by the author; omitted in legacy records that broadcast to the group. */
@@ -339,6 +341,7 @@ export const botGroupMessageRecordSchema = z.object({
   id: messageIdSchema,
   groupId: groupIdSchema,
   sender: senderSchema,
+  senderName: z.string().min(1).max(MAX_GROUP_NAME).optional(),
   text: groupTextSchema,
   targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
   createdAt: z.number().safe().int().nonnegative(),
@@ -346,6 +349,7 @@ export const botGroupMessageRecordSchema = z.object({
   id: value.id,
   groupId: value.groupId,
   sender: value.sender,
+  ...(value.senderName === undefined ? {} : { senderName: value.senderName }),
   text: value.text,
   ...(value.targetBotIds === undefined ? {} : { targetBotIds: value.targetBotIds }),
   createdAt: value.createdAt,
@@ -931,7 +935,12 @@ export class BotGroupService {
       let changed = false
       if (messages.get(messageId) === undefined) {
         await messages.put(messageId, {
-          id: messageId, groupId: group.id, sender: { kind: 'bot', botId }, text: messageText, createdAt: now,
+          id: messageId,
+          groupId: group.id,
+          sender: { kind: 'bot', botId },
+          senderName: bot.name,
+          text: messageText,
+          createdAt: now,
         })
         changed = true
       }
@@ -1001,7 +1010,7 @@ export class BotGroupService {
     const bot = bots.find(candidate => candidate.id === sender.botId)
     return {
       ...message,
-      sender: { kind: 'bot', botId: sender.botId, name: bot?.name ?? String(sender.botId) },
+      sender: { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) },
     }
   }
 

@@ -1209,11 +1209,9 @@ export class BotWorkspaceController {
     const normalizedTargetIds = targetBotIds?.map(id => id.trim())
     const pendingKey = `${current.selectedGroupId}\u0000${normalizedText}\u0000${canonicalTargetIds(normalizedTargetIds).join('\u0000')}`
     const normalizedExplicitId = explicitMessageId?.trim()
-    const pending = normalizedExplicitId === undefined ? this.pendingGroupMessages.get(pendingKey) : undefined
+    const pending = this.pendingGroupMessages.get(pendingKey)
     let messageId: BotGroupMessageIdType
-    if (normalizedExplicitId !== undefined && normalizedExplicitId !== '') {
-      messageId = brandString<BotGroupMessageIdType>(normalizedExplicitId)
-    } else if (pending !== undefined) {
+    if (pending !== undefined) {
       try {
         this.requirePendingDurability()
         await this.reconcileGroupMessage(current.selectedGroupId, pending.messageId, normalizedText, pending.targetBotIds)
@@ -1223,6 +1221,8 @@ export class BotWorkspaceController {
         throw new Error(message)
       }
       messageId = pending.messageId
+    } else if (normalizedExplicitId !== undefined && normalizedExplicitId !== '') {
+      messageId = brandString<BotGroupMessageIdType>(normalizedExplicitId)
     } else {
       try {
         this.requirePendingDurability()
@@ -1233,8 +1233,7 @@ export class BotWorkspaceController {
       }
       messageId = brandString<BotGroupMessageIdType>(`bot-group-message-${randomUUID()}`)
     }
-    const retainsPending = normalizedExplicitId === undefined || normalizedExplicitId === ''
-    if (retainsPending && pending === undefined) {
+    if (pending === undefined) {
       this.pendingGroupMessages.set(pendingKey, {
         text: normalizedText, messageId,
         ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
@@ -1254,6 +1253,10 @@ export class BotWorkspaceController {
       })
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
+      if (!this.disposed && this.selectionGeneration === operationSelectionGeneration
+        && this.source.getSnapshot().selectedGroupId === current.selectedGroupId) {
+        await this.refreshGroup(current.selectedGroupId, operationSelectionGeneration)
+      }
       this.setGroupError(message, undefined, operationSelectionGeneration)
       throw new Error(message)
     }
@@ -1263,13 +1266,21 @@ export class BotWorkspaceController {
     }
     if (result.value.status === 'partial') {
       const message = this.groupDeliveryFailure()
+      if (!this.disposed && this.selectionGeneration === operationSelectionGeneration
+        && this.source.getSnapshot().selectedGroupId === current.selectedGroupId) {
+        await this.refreshGroup(current.selectedGroupId, operationSelectionGeneration)
+      }
       this.setGroupError(message, undefined, operationSelectionGeneration)
       throw new Error(message)
     }
-    if (retainsPending && this.pendingGroupMessages.get(pendingKey)?.messageId === messageId) {
+    if (this.pendingGroupMessages.get(pendingKey)?.messageId === messageId) {
       this.pendingGroupMessages.delete(pendingKey)
       if (!this.persistPendingGroupOperations()) {
-        this.pendingGroupMessages.set(pendingKey, { text: normalizedText, messageId })
+        this.pendingGroupMessages.set(pendingKey, {
+          text: normalizedText,
+          messageId,
+          ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
+        })
         const message = this.retryStorageMessage('groupSendRetryCleanupFailed')
         this.setGroupError(message, undefined, operationSelectionGeneration)
         throw new Error(message)

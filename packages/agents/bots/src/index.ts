@@ -68,6 +68,7 @@ import type {
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupId,
+  BotGroupMessageId,
 } from './group-chat.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
@@ -1119,6 +1120,11 @@ export class BotService extends TypertRemoteService {
   private readonly sharedRecordsBySession = new Map<string, BotRecord>()
   private readonly sharedSessionIds = new Set<string>()
   private readonly sharedGroupSessionsBySession = new Map<string, { readonly groupId: BotGroupId; readonly botId: BotId }>()
+  private readonly activeSharedGroupSessionKeys = new Set<string>()
+  private readonly sharedGroupPendingMessages = new Map<string, {
+    readonly messageId: BotGroupMessageId
+    readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
+  }>()
   private readonly sharedGroupDeliveryTails = new Map<string, Promise<void>>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
@@ -3720,6 +3726,13 @@ export class BotService extends TypertRemoteService {
     this.sharedScopeAgents.delete(agent)
     this.sharedScopeInstallations.delete(agent)
     this.releaseSharedScopeFence(agent)
+    const sessionKey = String(agent.id)
+    if (!this.activeSharedGroupSessionKeys.has(sessionKey)) {
+      this.sharedGroupSessionsBySession.delete(sessionKey)
+      this.sharedRecordsBySession.delete(sessionKey)
+      this.sharedSessionIds.delete(sessionKey)
+      this.sharedGroupPendingMessages.delete(sessionKey)
+    }
     const fiber = this.promptFibers.get(agent)
     if (fiber === undefined) return
     this.promptFibers.delete(agent)
@@ -4020,6 +4033,7 @@ export class BotService extends TypertRemoteService {
         } catch {
           continue
         }
+        this.activeSharedGroupSessionKeys.add(String(binding.sessionId))
         this.sharedRecordsBySession.set(sessionKey, { ...bot, ownerId: this.ownerId, sessionId: binding.sessionId })
         const agent = this.ctx.agents.get(binding.sessionId)
         if (agent !== undefined && !this.sharedScopeAgents.has(agent)) {
@@ -4058,6 +4072,8 @@ export class BotService extends TypertRemoteService {
         this.sharedRecordsBySession.clear()
         this.sharedSessionIds.clear()
         this.sharedGroupSessionsBySession.clear()
+        this.activeSharedGroupSessionKeys.clear()
+        this.sharedGroupPendingMessages.clear()
         this.sharedGroupDeliveryTails.clear()
       }
     } catch (error) {
@@ -4201,17 +4217,13 @@ export class BotService extends TypertRemoteService {
     for (const binding of bindings) {
       const key = String(binding.sessionId)
       this.ensureSharedGroupSessionBinding(binding.sessionId, binding.groupId, binding.botId)
+      this.activeSharedGroupSessionKeys.add(key)
       const bot = this.recordsBySession.size === 0
         ? undefined
         : [...this.recordsBySession.values()].find(record => record.id === binding.botId)
       if (bot !== undefined) this.sharedRecordsBySession.set(key, { ...bot, sessionId: binding.sessionId })
     }
-    for (const [key] of this.sharedGroupSessionsBySession) {
-      if (activeKeys.has(key)) continue
-      this.sharedGroupSessionsBySession.delete(key)
-      this.sharedRecordsBySession.delete(key)
-      this.sharedSessionIds.delete(key)
-    }
+    for (const key of this.activeSharedGroupSessionKeys) if (!activeKeys.has(key)) this.activeSharedGroupSessionKeys.delete(key)
   }
 
   private ensureSharedGroupSessionBinding(sessionId: SessionId, groupId: BotGroupId, botId: BotId): void {
@@ -4276,9 +4288,8 @@ export class BotService extends TypertRemoteService {
     const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
     signal.throwIfAborted()
     if (inspection.meta.cwd !== expected.cwd || inspection.meta.agentPreset !== expected.agentPreset) {
-      this.sharedGroupSessionsBySession.delete(key)
+      this.activeSharedGroupSessionKeys.delete(key)
       this.sharedSessionIds.delete(key)
-      this.sharedRecordsBySession.delete(key)
       return { error: new Error('shared Bot group Session does not use its isolated preset and directory') }
     }
     this.fenceExistingSharedAgent(sessionId)
@@ -4319,7 +4330,7 @@ export class BotService extends TypertRemoteService {
     }
   }
 
-  private async flushSharedGroupSession(sessionId: SessionId, signal?: AbortSignal): Promise<void> {
+  private async flushSharedGroupSession(sessionId: SessionId, signal?: AbortSignal): Promise<boolean> {
     signal?.throwIfAborted()
     let session = this.ctx.sessions.get(sessionId)
     if (session === undefined) {
@@ -4331,8 +4342,9 @@ export class BotService extends TypertRemoteService {
     }
     if (session === undefined) throw new Error(`Shared Bot group Session "${String(sessionId)}" is not live.`)
     signal?.throwIfAborted()
-    await this.ctx.sessions.flush(session)
+    const durable = await this.ctx.sessions.flush(session)
     signal?.throwIfAborted()
+    return durable
   }
 
   private async deliverSharedGroup(request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0]): Promise<'accepted' | 'duplicate'> {
@@ -4340,6 +4352,9 @@ export class BotService extends TypertRemoteService {
     const prior = this.sharedGroupDeliveryTails.get(key) ?? Promise.resolve()
     const run = prior.then(async () => {
       request.signal?.throwIfAborted()
+      if (!this.activeSharedGroupSessionKeys.has(key)) {
+        throw new Error('shared Bot group Session is no longer active')
+      }
       this.ensureSharedGroupSessionBinding(request.sessionId, request.groupId, request.targetBotId)
       let inspection: { readonly events: readonly SessionEvent[] }
       try {
@@ -4351,13 +4366,35 @@ export class BotService extends TypertRemoteService {
         await this.createSharedGroupSession(bot, request.sessionId, request.groupId, request.signal)
         inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
       }
-      if (inspection.events.some(event => event.type === 'user/message'
-        && event.surfaceOp === 'append'
-        && event.data.source.kind === 'bot-group-message'
-        && String(event.data.source.groupId) === String(request.groupId)
-        && String(event.data.source.messageId) === String(request.messageId))) {
-        await this.flushSharedGroupSession(request.sessionId, request.signal)
-        return 'duplicate' as const
+      const messageId = BotMessageId(String(request.messageId))
+      if (botMessageWasDelivered(inspection.events, messageId)) {
+        const matchingSource = inspection.events.some(event => event.type === 'user/message'
+          && event.surfaceOp === 'append'
+          && event.data.id === messageId
+          && event.data.source.kind === 'bot-group-message'
+          && String(event.data.source.groupId) === String(request.groupId)
+          && String(event.data.source.messageId) === String(request.messageId))
+        if (matchingSource) {
+          this.sharedGroupPendingMessages.delete(key)
+          return 'duplicate' as const
+        }
+        const matchingPending = inspection.events.some(event => event.type === 'agent/inbox/spliced'
+          && event.data.inserted.some(message => message.id === messageId
+            && message.source.kind === 'bot-group-message'
+            && String(message.source.groupId) === String(request.groupId)
+            && String(message.source.messageId) === String(request.messageId)))
+        if (!matchingPending) throw new Error('shared Bot group message id is already used by another source')
+        const pendingResolved = await this.resolveSharedGroupAgent(
+          request.sessionId,
+          request.groupId,
+          request.targetBotId,
+          request.signal ?? new AbortController().signal,
+        )
+        if (!('agent' in pendingResolved)) throw pendingResolved.error
+        const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
+        if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
+        this.sharedGroupPendingMessages.delete(key)
+        return 'accepted' as const
       }
       const resolved = await this.resolveSharedGroupAgent(
         request.sessionId,
@@ -4366,13 +4403,30 @@ export class BotService extends TypertRemoteService {
         request.signal ?? new AbortController().signal,
       )
       if (!('agent' in resolved)) throw resolved.error
-      resolved.agent.followup(freezeMessage({
-        id: BotMessageId(String(request.messageId)),
+      const pending = this.sharedGroupPendingMessages.get(key)
+      if (pending !== undefined && pending.messageId === request.messageId && pending.agent === resolved.agent) {
+        const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
+        if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
+        this.sharedGroupPendingMessages.delete(key)
+        return 'accepted' as const
+      }
+      if (pending !== undefined) this.sharedGroupPendingMessages.delete(key)
+      const message = freezeMessage({
+        id: messageId,
         role: 'user',
         content: [{ type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` }],
         source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
-      }))
-      await this.flushSharedGroupSession(request.sessionId, request.signal)
+      })
+      try {
+        resolved.agent.followup(message)
+      } catch (error) {
+        this.sharedGroupPendingMessages.delete(key)
+        throw error
+      }
+      this.sharedGroupPendingMessages.set(key, { messageId: request.messageId, agent: resolved.agent })
+      const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
+      if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
+      this.sharedGroupPendingMessages.delete(key)
       return 'accepted' as const
     })
     const tail = run.then(() => undefined, () => undefined)

@@ -1422,6 +1422,53 @@ describe('BotWorkspaceController', () => {
     expect(remote.sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(remote.sendGroupMessage.mock.calls[0]?.[0].messageId)
   })
 
+  it('refreshes per-Bot delivery status after a partial group send while retaining its retry id', async () => {
+    const first = bot('bot-first-partial-status', 'session-first-partial-status')
+    const second = bot('bot-second-partial-status', 'session-second-partial-status')
+    const group = groupView('bot-group-partial-status', 'Partial status room', [first, second])
+    const initial: BotGroupInspectValue = { group, messages: [] }
+    const committed: BotGroupInspectValue = {
+      group,
+      messages: [{
+        id: brandString<BotGroupMessageId>('bot-group-message-partial-status'),
+        groupId: group.id,
+        sender: { kind: 'user' },
+        text: 'Show the outcomes.',
+        createdAt: 1,
+      }],
+      deliveries: [
+        { messageId: brandString<BotGroupMessageId>('bot-group-message-partial-status'), botId: first.id, status: 'accepted' },
+        { messageId: brandString<BotGroupMessageId>('bot-group-message-partial-status'), botId: second.id, status: 'failed', error: 'offline' },
+      ],
+    }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => remote.inspectGroup!.mock.calls.length === 1
+      ? { ok: true as const, value: initial }
+      : { ok: true as const, value: committed })
+    remote.sendGroupMessage = vi.fn(async request => ({ ok: true as const, value: {
+      messageId: request.messageId!, status: 'partial' as const,
+      deliveries: [{ botId: first.id, status: 'accepted' as const }, { botId: second.id, status: 'failed' as const, error: 'offline' }],
+    } }))
+    const controller = new BotWorkspaceController(
+      remote, sessionsFixture().sessions, () => 'unexpected response', undefined,
+      () => 'Some Bots could not receive this message.', pendingStoreFixture(),
+    )
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await expect(controller.face().sendGroupMessage('Show the outcomes.')).rejects.toThrow('Some Bots could not receive this message.')
+    await vi.waitFor(() => {
+      expect(controller.source.getSnapshot().selectedGroup?.deliveries).toEqual([
+        { messageId: 'bot-group-message-partial-status', botId: first.id, status: 'accepted' },
+        { messageId: 'bot-group-message-partial-status', botId: second.id, status: 'failed', error: 'offline' },
+      ])
+    })
+    expect(remote.inspectGroup).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
   it('re-reads a selected group when a change arrives during an in-flight refresh', async () => {
     const first = bot('bot-first-refresh-race', 'session-first-refresh-race')
     const second = bot('bot-second-refresh-race', 'session-second-refresh-race')

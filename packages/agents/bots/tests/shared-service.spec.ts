@@ -28,7 +28,7 @@ import {
   BotGroupMessageId,
 } from '../src/group-chat.ts'
 import { SharedBotService, SHARED_BOT_ENDPOINTS, type SharedBotHost } from '../src/shared-service.ts'
-import type { SharedGroupSessionBinding } from '../src/shared-group.ts'
+import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import {
   sharedInviteSchema,
   sharedMemorySnapshotSchema,
@@ -206,7 +206,7 @@ class SharedBotHostFixture implements SharedBotHost {
     _signal: AbortSignal,
   ): Promise<{ readonly events: readonly never[] }> => ({ events: [] })
 
-  flushSharedGroupSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
+  flushSharedGroupSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<boolean> => true
 
   resolvePrivateAgent = async (sessionId: SessionId, signal: AbortSignal): Promise<{ agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'> } | { error: Error }> => {
     signal.throwIfAborted()
@@ -680,6 +680,278 @@ describe('shared Bot service', () => {
         value: { status: 'accepted', deliveries: [{ status: 'duplicate' }, { status: 'accepted' }] },
       })
       expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(3)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not overwrite a durable delivery failure that races the isolated Session response', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Delivery fence room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const original = value.host.deliverSharedGroup.getMockImplementation()
+      value.host.deliverSharedGroup.mockImplementation(async (requestValue) => {
+        await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+          const deliveries = groups.deliveries.map(delivery => delivery.messageId === requestValue.messageId
+            && delivery.botId === requestValue.targetBotId
+            ? { ...delivery, status: 'failed' as const, error: 'membership revoked during delivery' }
+            : delivery)
+          return {
+            value: undefined,
+            next: {
+              ...membership,
+              sharedGroups: {
+                ...groups,
+                deliveries,
+                responseReservations: groups.responseReservations.filter(id =>
+                  deliveries.some(delivery => delivery.id === id && delivery.status !== 'failed')),
+              },
+            },
+          }
+        })
+        return original === undefined ? 'accepted' : await original(requestValue)
+      })
+
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Race this delivery.',
+        messageId: BotGroupMessageId('bot-group-message-delivery-fence'),
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { deliveries: [{ status: 'failed', error: 'membership revoked during delivery' }] },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects a group send before delivery when the durable transcript has no response capacity', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Capacity room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const messages = Array.from({ length: 8_192 }, (_, index) => ({
+          id: BotGroupMessageId(`bot-group-message-capacity-${String(index)}`),
+          groupId,
+          sender: { kind: 'user' as const, principalId: owner.botPrincipalId },
+          text: 'Reserved transcript slot.',
+          createdAt: index + 1,
+        }))
+        return {
+          value: undefined,
+          next: { ...membership, sharedGroups: { ...groups, messages } },
+        }
+      })
+      value.host.deliverSharedGroup.mockClear()
+      const result = await value.service.handle('bots/share/send-group-message', {
+        groupId,
+        text: 'This must not reach a Session.',
+        messageId: BotGroupMessageId('bot-group-message-capacity-new'),
+      }, new AbortController().signal, owner.peer)
+      expect(result).toMatchObject({ ok: false, error: { code: 'gateway/unavailable' } })
+      expect(value.host.deliverSharedGroup).not.toHaveBeenCalled()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('turns a response into a durable failure when projection capacity is exhausted after delivery', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Projection capacity room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const sourceMessageId = BotGroupMessageId('bot-group-message-projection-capacity')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        text: 'Reserve a response slot.',
+        messageId: sourceMessageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: sourceMessageId }],
+        1,
+        1,
+        true,
+        false,
+      )
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const fillers = Array.from({ length: 8_192 - groups.messages.length }, (_, index) => ({
+          id: BotGroupMessageId(`bot-group-message-projection-filler-${String(index)}`),
+          groupId,
+          sender: { kind: 'user' as const, principalId: owner.botPrincipalId },
+          text: 'Reserved transcript slot.',
+          createdAt: 2_000 + index,
+        }))
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: { ...groups, messages: [...groups.messages, ...fillers] },
+          },
+        }
+      })
+
+      await expect(value.service.recordSharedGroupResponse(
+        groupId,
+        BotId('bot-chief'),
+        1,
+        1,
+        'The response cannot be projected.',
+        'model-response-projection-capacity',
+      )).resolves.toBeUndefined()
+
+      const stored = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      const groups = sharedGroupSnapshotSchema.parse(stored.sharedGroups)
+      const delivery = groups.deliveries.find(candidate => candidate.groupId === groupId
+        && candidate.botId === BotId('bot-chief') && candidate.messageId === sourceMessageId)
+      expect(delivery).toMatchObject({
+        status: 'failed',
+        error: 'Shared Bot group transcript capacity is exhausted',
+      })
+      expect(delivery === undefined ? true : groups.responseReservations.includes(delivery.id)).toBe(false)
+      expect(groups.messages).toHaveLength(8_192)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('prunes expired group invites and rejects a full member append before authority redemption', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Invite capacity room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const expiredInvites = Array.from({ length: 1_024 }, () => ({
+          digest: 'a'.repeat(43),
+          groupId,
+          createdBy: owner.botPrincipalId,
+          createdAt: 0,
+          expiresAt: 1,
+        }))
+        return { value: undefined, next: { ...membership, sharedGroups: { ...groups, invites: expiredInvites } } }
+      })
+      const expiredInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      expect(expiredInvite).toMatchObject({ ok: true, value: { expiresAt: 61_000 } })
+      let snapshot = sharedGroupSnapshotSchema.parse(
+        sharedMembershipSnapshotSchema.parse(
+          (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+        ).sharedGroups,
+      )
+      expect(snapshot.invites).toHaveLength(1)
+
+      const collaboratorChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(collaboratorChief)),
+      )
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const groupInviteCode = groupInviteCodeFromResult(groupInvite)
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const group = groups.groups.find(candidate => candidate.id === groupId)
+        if (group === undefined) throw new Error('group missing in member-capacity fixture')
+        const members = [group.ownerPrincipalId, ...Array.from({ length: 255 }, (_, index) =>
+          BotPrincipalId(`principal-full-member-${String(index)}`))]
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...groups,
+              groups: groups.groups.map(candidate => candidate.id === groupId
+                ? { ...candidate, memberPrincipalIds: members }
+                : candidate),
+            },
+          },
+        }
+      })
+      await expect(value.service.enroll(groupInviteCode, request(cookie(collaboratorSecond))))
+        .rejects.toMatchObject({ code: 'gateway/unavailable' })
+      snapshot = sharedGroupSnapshotSchema.parse(
+        sharedMembershipSnapshotSchema.parse(
+          (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+        ).sharedGroups,
+      )
+      expect(snapshot.groups.find(group => group.id === groupId)?.memberPrincipalIds).toHaveLength(256)
+      expect(snapshot.invites).toEqual(expect.arrayContaining([
+        expect.objectContaining({ groupId, digest: sharedInviteDigest(groupInviteCode) }),
+      ]))
     } finally {
       await value.close()
     }
