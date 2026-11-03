@@ -4,6 +4,8 @@ Schedule stores reminders independently of Session activation and delivers them 
 
 ## Durable records
 
+Host retry-aware creation may persist an optional idempotency key beside the task record; legacy rows without that key remain valid, and a repeated key for the same Session returns the existing task instead of allocating another one.
+
 `ScheduleId` is a globally unique [branded id](core.md#branded-ids). The version-1 `schedule` storage domain owns a `tasks` table whose entries bind a `ScheduleRecord` to its original `sessionId`, with stored `status: 'active' | 'inactive'` and optional `lastDelivery`. Records lacking status normalize to `active` without scanning or recreating historical Sessions. Creation canonicalizes the target into RFC 3339 UTC `scheduledAt`; `after` retains the submitted delay, `every` retains its fixed interval, `daily` and `weekly` retain normalized local `time` and their explicit `timeZone`, and `cron` retains its canonical five-field `expression` and explicit `timeZone`. Daily, weekly, and cron decoding preserve the committed instant and stored zone spelling. The stored task record declares a required `title`, the short name the task surfaces show; creation requires it and never derives it from the instruction. No stored record may omit its title: a record whose `title` is missing, blank after trimming, untrimmed, or longer than 120 characters fails durable decoding with `ScheduleLogError`, and the schedule domain declares no backup-and-skip policy, so one such stored task rejects the whole domain open instead of being dropped. Only explicit deletion removes a task; previously physically deleted tasks are not restored or fabricated.
 
 ```ts type-equiv
@@ -285,6 +287,14 @@ interface ScheduleCreateRequest {
 ```
 
 ```ts type-equiv
+/** Host-only retry identity for a durable reminder creation. */
+interface ScheduleCreateOptions {
+  /** Stable identity reused when a caller cannot tell whether an earlier write committed. */
+  readonly idempotencyKey?: string
+}
+```
+
+```ts type-equiv
 /** Session-scoped task list, without Agent activation. */
 interface ScheduleListRequest {
   /** Original Session binding. */
@@ -459,15 +469,16 @@ Shared management service; reads, deletion, and timing edits never activate a Se
  * title rejects with `invalid_prompt` instead of deriving one from the prompt.
  * A Session a delegated child owns rejects with `subagent_session`, because delivery
  * can never reach it: the child is one whose delegation depth is above zero.
- * The record is built from the clock reading taken before the request joins the
- * serialized queue, so a create that waits behind a longer operation keeps its
- * request-time anchor and may already be due when the queue reaches it.
+ * The record is built from the clock reading inside the serialized queue, after
+ * an idempotency lookup, so a retry that finds an existing task never allocates
+ * a fresh task id or timing anchor.
  * @param sessionId - Original Session receiving the reminder.
  * @param request - Validated tool selector, required title, and reminder content.
- * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+ * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
+ * @param options - Optional Host retry identity. A repeated key for this Session returns the original record.
  * @returns The durably stored schedule. Cancellation does not roll back an in-flight write.
  */
-async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>
+async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal, options?: ScheduleCreateOptions, ): Promise<ScheduleRecord>
 
 /**
  * Read the selected Session's active tasks without resuming its Agent.

@@ -53,7 +53,7 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledWith('create', { title: 'Daily check' }, expect.anything())
   })
 
-  it('allows a new native routine call after an unrelated uncertain create', async () => {
+  it('retries an uncertain native routine through the Host idempotency seam', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({
@@ -71,7 +71,7 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledOnce()
   })
 
-  it('does not treat a racing routine listing as a recovery checkpoint for the same call', async () => {
+  it('retries the same call when a routine listing raced the uncertain create', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({
@@ -88,9 +88,8 @@ describe('native Bot actions', () => {
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (create === undefined) throw new Error('schedule_create missing')
     const result = await create.execute({ title: 'Daily check' }, context({ sessionId }))
-    expect(result.success).toBe(false)
-    expect(result.contentItems[0]?.text).toContain('uncertain-outcome')
-    expect(routine).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+    expect(routine).toHaveBeenCalledOnce()
   })
 
   it('retries a settled no-effect failure instead of replaying it forever', async () => {
@@ -203,6 +202,23 @@ describe('native Bot actions', () => {
     await expect(update.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: false })
     routine.mockRejectedValueOnce(new Error('routine unavailable'))
     await expect(remove.execute({ id: 'routine-1' }, context())).resolves.toMatchObject({ success: false })
+  })
+
+  it('returns cancellation when a routine adapter finishes after the signal aborts', async () => {
+    const controller = new AbortController()
+    const routine = vi.fn(async () => {
+      controller.abort()
+      return []
+    })
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], routine,
+      routineAvailable: async () => true,
+    })
+    const list = (await provider.resolve({ sessionId: SessionId('bot-session-alpha') })).find(tool => tool.name === 'schedule_list')
+    if (list === undefined) throw new Error('schedule_list missing')
+    const result = await list.execute({}, context({ signal: controller.signal }))
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('cancelled')
   })
 
   it('offers bot creation and profile editing actions to a bot', async () => {

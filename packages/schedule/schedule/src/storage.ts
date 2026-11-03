@@ -36,6 +36,7 @@ const deliveryHistorySchema = z.object({
 /** Stored task binds one schedule to its original Session; absent status decodes as active. */
 export const scheduleTaskSchema = z.object({
   sessionId: z.string().min(1).transform(SessionId),
+  idempotencyKey: z.string().min(1).max(256).refine(value => value.trim() === value).optional(),
   record: recordSchema,
   status: z.enum(['active', 'inactive']).default('active'),
   lastDelivery: deliveryReceiptSchema.optional(),

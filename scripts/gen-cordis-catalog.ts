@@ -526,6 +526,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   ScheduleDeliveryHistoryRequest: 'schedule.md',
   ScheduleDeliveryHistoryResult: 'schedule.md',
   ScheduleCreateRequest: 'schedule.md',
+  ScheduleCreateOptions: 'schedule.md',
   ScheduleListRequest: 'schedule.md',
   ScheduleDeleteRequest: 'schedule.md',
   ScheduleDeleteResult: 'schedule.md',

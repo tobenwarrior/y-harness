@@ -409,6 +409,11 @@
     },
     {
       "doc": "docs/subsystems/schedule.md",
+      "symbol": "ScheduleCreateOptions",
+      "source": "packages/schedule/schedule/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/schedule.md",
       "symbol": "ScheduleListRequest",
       "source": "packages/schedule/schedule/src/types.ts"
     },

@@ -15,7 +15,7 @@ import ScheduleService from '../../../schedule/schedule/src/index.ts'
 import { registerScheduleTools } from '../../../schedule/tool-schedule/src/index.ts'
 import BotService from '../src/index.ts'
 import type { BotDynamicToolEvent } from '../src/collaboration.ts'
-import type { BotNativeToolEvent, BotNativeToolProvider, BotNativeToolResult } from '../src/native-tools.ts'
+import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 
 async function harness(
@@ -183,7 +183,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('keeps real routine ownership across restart and refuses cancelled duplicates', async () => {
+  it('keeps real routine ownership across restart and deduplicates uncertain cross-call retries', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Routine owner', cwd: '/tmp' })
@@ -213,11 +213,18 @@ describe('durable Bot roster', () => {
       await provider.observe(started)
       const result = await create.execute(arguments_, context)
       expect(result.success).toBe(true)
-      const settled: BotNativeToolEvent = { ...started, phase: 'settled', result: result as BotNativeToolResult }
-      await provider.observe(settled)
       const firstRecords = await h.ctx.schedule.list({ sessionId })
       expect(firstRecords).toHaveLength(1)
       expect(await h.ctx.schedule.list({ sessionId: SessionId('other-session') })).toEqual([])
+      // The native result is intentionally not settled. A new native call is
+      // allowed to reconcile the uncertain call through the durable Schedule
+      // idempotency key without allocating a second task.
+      const newCallContext = {
+        ...context, callId: 'routine-new-call', threadId: 'thread-new', turnId: 'turn-new',
+      }
+      const duplicate = await create.execute(arguments_, newCallContext)
+      expect(duplicate).toEqual(result)
+      expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
       const serviceCancelled = new AbortController()
       serviceCancelled.abort()
       await expect(h.ctx.schedule.create(sessionId, arguments_, serviceCancelled.signal)).rejects.toThrow()
@@ -232,7 +239,9 @@ describe('durable Bot roster', () => {
       const toolsAfterRestart = await providerAfterRestart.resolve({ sessionId })
       const createAfterRestart = toolsAfterRestart.find(tool => tool.name === 'schedule_create')
       if (createAfterRestart === undefined) throw new Error('restarted schedule_create missing')
-      const replayed = await createAfterRestart.execute(arguments_, context)
+      const sameCall = await createAfterRestart.execute(arguments_, context)
+      expect(sameCall).toEqual(result)
+      const replayed = await createAfterRestart.execute(arguments_, newCallContext)
       expect(replayed).toEqual(result)
       expect(await reopened.ctx.schedule.list({ sessionId })).toHaveLength(1)
 

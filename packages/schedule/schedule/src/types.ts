@@ -386,6 +386,12 @@ export interface ScheduleCreateRequest {
   cron?: CronInput
 }
 
+/** Host-only retry identity for a durable reminder creation. */
+export interface ScheduleCreateOptions {
+  /** Stable identity reused when a caller cannot tell whether an earlier write committed. */
+  readonly idempotencyKey?: string
+}
+
 /** Session-scoped task list, without Agent activation. */
 export interface ScheduleListRequest {
   /** Original Session binding. */

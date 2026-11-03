@@ -125,6 +125,12 @@ The service derives the sending identity from the live Bot Agent and rechecks th
 If a native send reports uncertain-outcome, reuse its messageId when retrying. The same messageId prevents duplicate delivery; choose a new messageId only for an intentional repeat. Messaging follows the Session approval policy.
 ```
 
+##### Native routine retry contract
+
+```markdown
+Bot routine creation supplies the Host Schedule service with a durable identity derived from the Bot Session and normalized request. If a native call loses its result after the Schedule write, a later native call with the same routine request returns the existing task instead of allocating another task id; this remains true after Host restart. A different request is a separate routine and still requires approval.
+```
+
 #### Token effect
 
 Tool schemas and bounded inspection results add tokens when used. Peer delivery itself adds the framed message to the recipient's next request, not to the sender's history.

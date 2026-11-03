@@ -18,7 +18,7 @@ import {
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteRequest, ScheduleDeleteResult,
-  ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest, ScheduleRecord,
+  ScheduleCreateOptions, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest, ScheduleRecord,
   ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
 } from './types.ts'
 
@@ -217,47 +217,68 @@ export class ScheduleService extends TypertRemoteService {
    * title rejects with `invalid_prompt` instead of deriving one from the prompt.
    * A Session a delegated child owns rejects with `subagent_session`, because delivery
    * can never reach it: the child is one whose delegation depth is above zero.
-   * The record is built from the clock reading taken before the request joins the
-   * serialized queue, so a create that waits behind a longer operation keeps its
-   * request-time anchor and may already be due when the queue reaches it.
+   * The record is built from the clock reading inside the serialized queue, after
+   * an idempotency lookup, so a retry that finds an existing task never allocates
+   * a fresh task id or timing anchor.
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
-   * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+   * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
+   * @param options - Optional Host retry identity. A repeated key for this Session returns the original record.
    * @returns The durably stored schedule. Cancellation does not roll back an in-flight write.
    */
-  async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord> {
+  async create(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    signal?: AbortSignal,
+    options?: ScheduleCreateOptions,
+  ): Promise<ScheduleRecord> {
     if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
       + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
       + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
       throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
     }
     const title = scheduleTitle(request.title)
-    const id = ScheduleId(`schedule-${randomUUID()}`)
-    const now = Date.now()
-    let record: ScheduleRecord
-    if (request.at !== undefined) {
-      record = createAtScheduleRecord(id, request.prompt, request.at, now, title)
+    const idempotencyKey = options?.idempotencyKey
+    const invalidIdempotencyKey = idempotencyKey !== undefined
+      && (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey)
+    if (invalidIdempotencyKey) {
+      throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
     }
-    else if (request.after_seconds !== undefined) {
-      record = createAfterScheduleRecord(id, request.prompt, request.after_seconds, now, title)
-    }
-    else if (request.every_seconds !== undefined) {
-      record = createEveryScheduleRecord(id, request.prompt, request.every_seconds, now, title)
-    }
-    else if (request.daily !== undefined) record = createDailyScheduleRecord(id, request.prompt, request.daily, now, title)
-    else if (request.weekly !== undefined) record = createWeeklyScheduleRecord(id, request.prompt, request.weekly, now, title)
-    else if (request.cron !== undefined) record = createCronScheduleRecord(id, request.prompt, request.cron, now, title)
-    else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
     return this.serialize(async () => {
       const refusal = this.reminderTargetRefusal(sessionId)
       if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
       const domain = await this.getDomain()
       signal?.throwIfAborted()
+      if (idempotencyKey !== undefined) {
+        const existing = [...domain.table('tasks').entries()].find(([, task]) =>
+          task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+        signal?.throwIfAborted()
+        if (existing !== undefined) return existing[1].record
+      }
+      const id = ScheduleId(`schedule-${randomUUID()}`)
+      const now = Date.now()
+      let record: ScheduleRecord
+      if (request.at !== undefined) {
+        record = createAtScheduleRecord(id, request.prompt, request.at, now, title)
+      }
+      else if (request.after_seconds !== undefined) {
+        record = createAfterScheduleRecord(id, request.prompt, request.after_seconds, now, title)
+      }
+      else if (request.every_seconds !== undefined) {
+        record = createEveryScheduleRecord(id, request.prompt, request.every_seconds, now, title)
+      }
+      else if (request.daily !== undefined) record = createDailyScheduleRecord(id, request.prompt, request.daily, now, title)
+      else if (request.weekly !== undefined) record = createWeeklyScheduleRecord(id, request.prompt, request.weekly, now, title)
+      else if (request.cron !== undefined) record = createCronScheduleRecord(id, request.prompt, request.cron, now, title)
+      else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
       await domain.table('tasks').put(id, {
-        sessionId, record, status: 'active', deliveryHistory: { records: [], earlierRecordsUnavailable: false },
+        sessionId, record, status: 'active',
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        deliveryHistory: { records: [], earlierRecordsUnavailable: false },
       })
       this.emitChanged()
       this.runtime?.requestDrive()
+      signal?.throwIfAborted()
       return record
     })
   }

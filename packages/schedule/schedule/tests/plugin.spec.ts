@@ -13,7 +13,11 @@ afterEach(async () => {
   await Promise.all(tests.splice(0).map(test => test.ctx.fiber.dispose()))
   vi.useRealTimers()
 })
-async function setup() { const test = await harness(); tests.push(test); return test }
+async function setup(options: Parameters<typeof harness>[0] = {}) {
+  const test = await harness(options)
+  tests.push(test)
+  return test
+}
 /** Build one seeded historical Schedule event, including deliberately unreadable payloads. */
 function scheduleEvent(data: unknown, seq: number): SessionEvent {
   return { type: 'schedule/change', seq: SessionSeq(seq), time: Date.now(), data } as SessionEvent
@@ -27,6 +31,43 @@ describe('shared Schedule management', () => {
     expect(pool.media.get('schedule')!.tables.get('tasks')!.get(record.id)).toEqual({
       record, sessionId, status: 'active', deliveryHistory: { records: [], earlierRecordsUnavailable: false },
     })
+  })
+
+  it('reuses a Host idempotency key across native retries and restart', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const options = { idempotencyKey: 'bot-routine-create-key' }
+    const first = await test.service.create(sessionId, request, undefined, options)
+    const retry = await test.service.create(sessionId, request, undefined, options)
+    expect(retry).toEqual(first)
+    expect(await test.service.list({ sessionId })).toEqual([first])
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    const afterRestart = await restarted.service.create(sessionId, request, undefined, options)
+    expect(afterRestart).toEqual(first)
+    expect(await restarted.service.list({ sessionId })).toEqual([first])
+    expect(await restarted.service.catalog()).toHaveLength(1)
+  })
+
+  it('honors cancellation after an idempotent task read', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-read-cancel')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const options = { idempotencyKey: 'cancel-after-read' }
+    await test.service.create(sessionId, request, undefined, options)
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    const entries = tasks.entries.bind(tasks)
+    const controller = new AbortController()
+    vi.spyOn(tasks, 'entries').mockImplementation(() => {
+      controller.abort()
+      return entries()
+    })
+    await expect(test.service.create(sessionId, request, controller.signal, options)).rejects.toThrow()
+    expect(await test.service.list({ sessionId })).toHaveLength(1)
   })
 
   it('returns an empty catalog when the Host has no active reminders', async () => {

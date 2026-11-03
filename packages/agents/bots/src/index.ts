@@ -196,7 +196,9 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
 
 function routineText(args: RoutineArguments, key: string): string | undefined {
   const value = args[key]
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text === '' ? undefined : text
 }
 
 function routineRecord(value: unknown): Record<string, unknown> | undefined {
@@ -244,7 +246,7 @@ function routineWeekly(value: unknown): WeeklyInput {
     || weekdays === undefined) {
     throw new BotCollaborationError('message-invalid', 'A weekly routine needs time, time_zone, and weekdays.')
   }
-  return { time: record.time, time_zone: record.time_zone, weekdays }
+  return { time: record.time, time_zone: record.time_zone, weekdays: [...weekdays].sort((a, b) => a - b) }
 }
 
 function routineCron(value: unknown): CronInput {
@@ -273,6 +275,16 @@ function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
     throw new BotCollaborationError('message-invalid', 'A routine needs exactly one timing selector.')
   }
   return { ...request, ...selectors }
+}
+
+/** Stable Host retry identity for one Bot Session's semantic routine request. */
+function routineIdempotencyKey(sessionId: SessionId, request: ScheduleCreateRequest): string {
+  return createHash('sha256')
+    .update('bot-routine-create\0')
+    .update(String(sessionId))
+    .update('\0')
+    .update(JSON.stringify(request) ?? '')
+    .digest('hex')
 }
 
 function routineUpdateContent(args: RoutineArguments): { readonly title?: string; readonly prompt?: string } {
@@ -576,10 +588,17 @@ export class BotService extends TypertRemoteService {
     context.signal.throwIfAborted()
     try {
       if (action === 'create') {
-        return scheduleView(await schedule.create(sessionId, routineCreateRequest(args), context.signal), Date.now())
+        const request = routineCreateRequest(args)
+        const record = await schedule.create(sessionId, request, context.signal, {
+          idempotencyKey: routineIdempotencyKey(sessionId, request),
+        })
+        context.signal.throwIfAborted()
+        return scheduleView(record, Date.now())
       }
       if (action === 'list') {
-        return (await schedule.list({ sessionId })).map(record => scheduleView(record, Date.now()))
+        const records = await schedule.list({ sessionId })
+        context.signal.throwIfAborted()
+        return records.map(record => scheduleView(record, Date.now()))
       }
       if (action === 'delete') {
         const id = routineId(args)
@@ -587,8 +606,11 @@ export class BotService extends TypertRemoteService {
       }
       const id = routineId(args)
       const expected = (await schedule.list({ sessionId })).find(record => String(record.id) === id)
+      context.signal.throwIfAborted()
       if (expected === undefined) {
-        const ended = (await schedule.catalog()).some(entry => entry.sessionId === sessionId && String(entry.id) === id)
+        const catalog = await schedule.catalog()
+        context.signal.throwIfAborted()
+        const ended = catalog.some(entry => entry.sessionId === sessionId && String(entry.id) === id)
         return { id, updated: false, code: ended ? 'schedule_ended' : 'schedule_not_found' }
       }
       const content = routineUpdateContent(args)
@@ -606,6 +628,7 @@ export class BotService extends TypertRemoteService {
       return 'record' in result ? scheduleView(result.record, Date.now()) : result
     } catch (error: unknown) {
       if (error instanceof BotCollaborationError) throw error
+      if (context.signal.aborted) throw new BotCollaborationError('cancelled', 'The Bot routine was cancelled.', { cause: error })
       if (error instanceof ScheduleInputError) {
         throw new BotCollaborationError('message-invalid', error.message, { cause: error })
       }
