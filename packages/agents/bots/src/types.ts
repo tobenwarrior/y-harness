@@ -427,6 +427,26 @@ export interface BotRenameValue {
   readonly bot: BotView
 }
 
+/** Replace the user-authored profile fields without changing the Bot's Session. */
+export interface BotProfileUpdateRequest {
+  /** Bot whose profile should change. */
+  readonly botId: BotId
+  /** Optional replacement display name. */
+  readonly name?: string
+  /** Replacement routing description, or null to clear it. */
+  readonly description?: string | null
+  /** Replacement model-facing persona, or null to clear it. */
+  readonly persona?: string | null
+  /** Replacement capability declarations, or null to clear them. */
+  readonly capabilities?: readonly string[] | null
+}
+
+/** Bot profile update response. */
+export interface BotProfileUpdateValue {
+  /** The committed row with its existing Session binding. */
+  readonly bot: BotView
+}
+
 /** Change one Bot's roster placement without changing its Session mapping. */
 export interface BotOrganizationUpdateRequest {
   /** Bot whose roster placement should change. */

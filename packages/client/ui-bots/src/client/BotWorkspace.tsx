@@ -20,7 +20,7 @@ import { BotMemoryManager } from './BotMemoryManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
-  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps,
+  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
@@ -720,6 +720,69 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   )
 }
 
+function profileCapabilityList(value: string): readonly string[] {
+  return [...new Set(value.split(/[,\n]/u).map(item => item.trim()).filter(Boolean))]
+}
+
+function profileCapabilityText(values: readonly string[] | undefined): string {
+  return values?.join(', ') ?? ''
+}
+
+function BotProfileFields({
+  description, persona, capabilities, onDescriptionChange, onPersonaChange, onCapabilitiesChange, disabled, t,
+}: {
+  description: string
+  persona: string
+  capabilities: string
+  onDescriptionChange: (value: string) => void
+  onPersonaChange: (value: string) => void
+  onCapabilitiesChange: (value: string) => void
+  disabled: boolean
+  t: BotWorkspaceViewProps['t']
+}): ReactNode {
+  return (
+    <>
+      <div className={css.dialogField}>
+        <label className={css.dialogLabel} htmlFor="yharness-bot-profile-description">{t('botDescription')}</label>
+        <textarea
+          id="yharness-bot-profile-description"
+          className={css.profileTextarea}
+          value={description}
+          maxLength={240}
+          placeholder={t('botDescriptionPlaceholder')}
+          onChange={(event) => { onDescriptionChange(event.currentTarget.value) }}
+          disabled={disabled}
+        />
+        <span className={css.dialogHelper}>{t('botDescriptionHelp')}</span>
+      </div>
+      <div className={css.dialogField}>
+        <label className={css.dialogLabel} htmlFor="yharness-bot-profile-persona">{t('botPersona')}</label>
+        <textarea
+          id="yharness-bot-profile-persona"
+          className={css.profileTextarea}
+          value={persona}
+          maxLength={4000}
+          placeholder={t('botPersonaPlaceholder')}
+          onChange={(event) => { onPersonaChange(event.currentTarget.value) }}
+          disabled={disabled}
+        />
+        <span className={css.dialogHelper}>{t('botPersonaHelp')}</span>
+      </div>
+      <div className={css.dialogField}>
+        <label className={css.dialogLabel} htmlFor="yharness-bot-profile-capabilities">{t('botCapabilities')}</label>
+        <Input
+          id="yharness-bot-profile-capabilities"
+          value={capabilities}
+          placeholder={t('botCapabilitiesPlaceholder')}
+          onChange={(event) => { onCapabilitiesChange(event.currentTarget.value) }}
+          disabled={disabled}
+        />
+        <span className={css.dialogHelper}>{t('botCapabilitiesHelp')}</span>
+      </div>
+    </>
+  )
+}
+
 function NewBotDialog({ open, onClose, onCreate, error, t }: {
   open: boolean
   onClose: () => void
@@ -730,16 +793,30 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   const [name, setName] = useState('')
   const [identity, setIdentity] = useState<BotIdentity>('agent')
   const [accent, setAccent] = useState<BotAccent>('violet')
+  const [description, setDescription] = useState('')
+  const [persona, setPersona] = useState('')
+  const [capabilities, setCapabilities] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const submit = async () => {
     const next = name.trim()
     if (next === '' || submitting) return
     setSubmitting(true)
     try {
-      await onCreate({ name: next, identity, accent })
+      const descriptionValue = description.trim()
+      const personaValue = persona.trim()
+      const capabilityValues = profileCapabilityList(capabilities)
+      await onCreate({
+        name: next, identity, accent,
+        ...(descriptionValue === '' ? {} : { description: descriptionValue }),
+        ...(personaValue === '' ? {} : { persona: personaValue }),
+        ...(capabilityValues.length === 0 ? {} : { capabilities: capabilityValues }),
+      })
       setName('')
       setIdentity('agent')
       setAccent('violet')
+      setDescription('')
+      setPersona('')
+      setCapabilities('')
       onClose()
     } catch {
       // The owner keeps the request and publishes its failure for this dialog.
@@ -786,17 +863,28 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
         disabled={submitting}
         t={t}
       />
+      <BotProfileFields
+        description={description}
+        persona={persona}
+        capabilities={capabilities}
+        onDescriptionChange={setDescription}
+        onPersonaChange={setPersona}
+        onCapabilitiesChange={setCapabilities}
+        disabled={submitting}
+        t={t}
+      />
     </Modal>
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, share, memoryManager, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
+  onUpdateProfile?: ((id: string, profile: BotProfileUpdate) => Promise<void>) | undefined
   share?: BotShareActions | undefined
   memoryManager?: BotMemoryManagerActions | undefined
   loading: boolean
@@ -805,6 +893,13 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
   const [renameError, setRenameError] = useState(false)
+  const [profileTarget, setProfileTarget] = useState<string | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [profileDescription, setProfileDescription] = useState('')
+  const [profilePersona, setProfilePersona] = useState('')
+  const [profileCapabilities, setProfileCapabilities] = useState('')
+  const [profileError, setProfileError] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   if (bot === undefined) {
     if (loading) {
@@ -835,7 +930,20 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
           </span>
         </span>
         <span className={css.detailActions}>
-          {onRename !== undefined && (
+          {onUpdateProfile !== undefined && (
+            <Tooltip label={t('editBotProfile')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('editBotProfile')} icon={<IconEditOutlineRegular size={14} />}
+                onClick={() => {
+                  setProfileName(bot.name)
+                  setProfileDescription(bot.description ?? '')
+                  setProfilePersona(bot.persona ?? '')
+                  setProfileCapabilities(profileCapabilityText(bot.capabilities))
+                  setProfileError(false)
+                  setProfileTarget(bot.id)
+                }} />
+            </Tooltip>
+          )}
+          {onUpdateProfile === undefined && onRename !== undefined && (
             <Tooltip label={t('renameBot')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('renameBot')} icon={<IconEditOutlineRegular size={14} />}
                 onClick={() => { setName(bot.name); setRenameError(false); setRenameTarget(bot.id) }} />
@@ -869,6 +977,57 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
       <div className={css.thread}>
         {children ?? <div className={css.threadEmpty} role="status"><p>{t(bot.status === 'preparing' ? 'preparingBot' : 'conversationUnavailable')}</p></div>}
       </div>
+      {onUpdateProfile !== undefined && <Modal
+        open={profileTarget !== null}
+        onClose={() => { if (!profileSaving) setProfileTarget(null) }}
+        title={t('editBotProfile')}
+        description={t('editBotProfileDescription')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => { setProfileTarget(null) }} disabled={profileSaving}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={profileSaving || profileName.trim() === ''}
+              onClick={() => {
+                if (profileTarget === null) return
+                setProfileSaving(true)
+                setProfileError(false)
+                const profile: BotProfileUpdate = {
+                  name: profileName.trim(),
+                  description: profileDescription.trim(),
+                  persona: profilePersona.trim(),
+                  capabilities: profileCapabilityList(profileCapabilities),
+                }
+                void onUpdateProfile(profileTarget, profile).then(() => { setProfileTarget(null) }, () => { setProfileError(true) })
+                  .finally(() => { setProfileSaving(false) })
+              }}
+            >{t(profileSaving ? 'savingProfile' : 'saveProfile')}</Button>
+          </>
+        )}
+      >
+        {profileError && <div className={css.dialogNotice} role="alert">{t('profileSaveFailed')}</div>}
+        <div className={css.dialogField} aria-busy={profileSaving}>
+          <label className={css.dialogLabel} htmlFor="yharness-bot-profile-name">{t('newBotName')}</label>
+          <Input
+            id="yharness-bot-profile-name"
+            data-modal-autofocus
+            value={profileName}
+            disabled={profileSaving}
+            onChange={(event) => { setProfileName(event.currentTarget.value) }}
+          />
+        </div>
+        <BotProfileFields
+          description={profileDescription}
+          persona={profilePersona}
+          capabilities={profileCapabilities}
+          onDescriptionChange={setProfileDescription}
+          onPersonaChange={setProfilePersona}
+          onCapabilitiesChange={setProfileCapabilities}
+          disabled={profileSaving}
+          t={t}
+        />
+      </Modal>}
       {onRename !== undefined && <Modal open={renameTarget !== null} onClose={() => { if (!saving) setRenameTarget(null) }}
         title={t('renameBot')} description={t('renameDescription')} closeLabel={t('cancel')}
         footer={<><Button variant="ghost" onClick={() => { setRenameTarget(null) }} disabled={saving}>{t('cancel')}</Button>

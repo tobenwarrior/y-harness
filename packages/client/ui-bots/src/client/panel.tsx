@@ -47,6 +47,8 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     id: bot.id,
     name: bot.name,
     ...(bot.description === undefined ? {} : { description: bot.description }),
+    ...(bot.persona === undefined ? {} : { persona: bot.persona }),
+    ...(bot.capabilities === undefined ? {} : { capabilities: bot.capabilities }),
     ...(bot.group === undefined ? {} : { group: bot.group }),
     pinned: bot.pinned,
     hidden: bot.hidden,
@@ -105,7 +107,8 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, groupsAvailable, loadAvatar, rename, memoryManager,
+  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, groupsAvailable, loadAvatar,
+  rename, updateProfile, memoryManager,
   SessionProvider, renderSlot, t, share,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
@@ -141,6 +144,7 @@ export function BotsPanel({
       t={t}
       loadAvatar={loadAvatar}
       onRename={rename}
+      onUpdateProfile={updateProfile}
       {...(share === undefined ? {} : { share })}
       memoryManager={memoryManager}
       loading={state.phase === 'loading' && bots.length === 0}

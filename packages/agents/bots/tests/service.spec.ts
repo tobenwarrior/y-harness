@@ -4230,6 +4230,59 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('updates a Bot profile without changing its Session binding', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Profile partner', description: 'Source scout', persona: 'Compare sources first.',
+        capabilities: ['chat', 'research'], cwd: '/tmp',
+      })
+      const updated = await h.service.updateProfile({
+        botId: created.bot.id,
+        name: 'Profile partner updated',
+        description: 'Release scout',
+        persona: 'Lead with evidence.',
+        capabilities: ['chat', 'release-review'],
+      })
+
+      expect(updated.bot).toMatchObject({
+        id: created.bot.id,
+        sessionId: created.bot.sessionId,
+        cwd: created.bot.cwd,
+        name: 'Profile partner updated',
+        description: 'Release scout',
+        persona: 'Lead with evidence.',
+        capabilities: ['chat', 'release-review'],
+      })
+      expect(updated.bot.agentPreset).toBe(created.bot.agentPreset)
+      await expect(h.service.updateProfile({
+        botId: created.bot.id,
+        description: null,
+        persona: null,
+        capabilities: null,
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          name: 'Profile partner updated',
+        },
+      })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          name: 'Profile partner updated',
+        }],
+      })
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('description')
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('persona')
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('capabilities')
+      expect(h.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('persists per-Bot connected-app grants and blocks an ungranted MCP tool before dispatch', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

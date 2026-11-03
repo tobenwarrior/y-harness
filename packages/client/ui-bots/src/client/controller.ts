@@ -28,6 +28,8 @@ import type {
   BotListRequest,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotProfileUpdateRequest,
+  BotProfileUpdateValue,
   BotTemplateImportRequest,
   BotTemplateImportValue,
   BotTemplateApproveRequest,
@@ -75,7 +77,8 @@ import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
 import type {
-  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
+  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
+  BotGroupUpdate, BotProfileUpdate,
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
 
@@ -85,6 +88,7 @@ export interface BotWorkspaceRemote {
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
+  updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
   listTemplates?: (request: BotTemplateListRequest) => Promise<RemoteResult<BotTemplateListValue>>
@@ -183,6 +187,8 @@ export interface BotWorkspaceFace {
   readonly groupsAvailable: boolean
 
   readonly rename: (id: string, name: string) => Promise<void>
+  /** Update the Bot's name and user-authored profile fields without replacing its Session. */
+  readonly updateProfile?: (id: string, profile: BotProfileUpdate) => Promise<void>
   readonly organize?: (id: string, patch: BotOrganizationPatch) => Promise<void>
   readonly createGroup: (creation: BotGroupCreation) => Promise<void>
   readonly updateGroup: (update: BotGroupUpdate) => Promise<void>
@@ -463,6 +469,9 @@ export class BotWorkspaceController {
           bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot,
         ) })
       },
+      ...(this.remote.updateProfile === undefined
+        ? {}
+        : { updateProfile: (id: string, profile: BotProfileUpdate) => this.updateProfile(id, profile) }),
       ...(this.remote.updateOrganization === undefined
         ? {}
         : { organize: (id: string, patch: BotOrganizationPatch) => this.organize(id, patch) }),
@@ -1592,8 +1601,32 @@ export class BotWorkspaceController {
       name: creation.name,
       identity: creation.identity,
       accent: creation.accent,
+      ...(creation.description === undefined || creation.description.trim() === '' ? {} : { description: creation.description.trim() }),
+      ...(creation.persona === undefined || creation.persona.trim() === '' ? {} : { persona: creation.persona.trim() }),
+      ...(creation.capabilities === undefined ? {} : { capabilities: creation.capabilities }),
     }
     return this.retryPendingCreate()
+  }
+
+  private async updateProfile(id: string, profile: BotProfileUpdate): Promise<void> {
+    const updateProfile = this.remote.updateProfile
+    if (updateProfile === undefined) throw new Error('Bot profile editing is not mounted.')
+    const result = await updateProfile({
+      botId: brandString<BotIdType>(id),
+      name: profile.name,
+      description: profile.description.trim() === '' ? null : profile.description.trim(),
+      persona: profile.persona.trim() === '' ? null : profile.persona.trim(),
+      capabilities: profile.capabilities,
+    })
+    if (!result.ok) throw new Error(result.error.message)
+    if (result.value.bot.id !== id) throw new Error(this.unexpectedResponse())
+    if (this.disposed) return
+    const current = this.source.getSnapshot()
+    this.source.set({
+      ...current,
+      bots: current.bots.map(bot => bot.id === id && bot.updatedAt <= result.value.bot.updatedAt ? result.value.bot : bot),
+      error: null,
+    })
   }
 
   private retryPendingCreate(): Promise<void> {

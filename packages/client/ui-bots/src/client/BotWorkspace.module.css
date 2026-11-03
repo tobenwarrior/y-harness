@@ -1079,6 +1079,42 @@
   margin-top: 16px;
 }
 
+.profileTextarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-md);
+  outline: none;
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.profileTextarea::placeholder {
+  color: var(--yh-alias-label-tertiary);
+}
+
+.profileTextarea:focus {
+  border-color: var(--yh-alias-state-business-primary);
+  box-shadow: 0 0 0 1px var(--yh-alias-state-business-primary);
+}
+
+.profileTextarea:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.dialogHelper {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .dialogNotice {
   margin-top: 16px;
   padding: 8px 10px;

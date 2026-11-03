@@ -116,6 +116,8 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotProfileUpdateRequest,
+  BotProfileUpdateValue,
   BotMemoryForgetRemoteRequest,
   BotMemoryForgetValue,
   BotMemoryListRequest,
@@ -4959,6 +4961,73 @@ export class BotService extends TypertRemoteService {
         name,
         updatedAt: Math.max(Date.now(), current.updatedAt + 1),
       }), undefined, signal)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
+      this.emitChanged()
+      return { bot: this.view(next) }
+    })
+  }
+
+  /**
+   * Update a Bot's user-authored profile without changing its Session binding.
+   * @param request - Bot id and profile fields; null clears optional text or declarations.
+   * @returns the committed row.
+   */
+  @Remote('updateProfile')
+  async updateProfile(request: BotProfileUpdateRequest): Promise<BotProfileUpdateValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot profile request must be an object')
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const name = request.name === undefined ? undefined : normalizeName(request.name)
+      const description = request.description === null
+        ? undefined
+        : normalizeOptionalText('Bot description', request.description, 240)
+      const persona = request.persona === null
+        ? undefined
+        : normalizeOptionalText('Bot persona', request.persona, 4000)
+      const capabilities = request.capabilities === null
+        ? undefined
+        : normalizeCapabilities(request.capabilities)
+      if (request.name === undefined && request.description === undefined
+        && request.persona === undefined && request.capabilities === undefined) {
+        return badRequest('Bot profile request must change a field')
+      }
+      const next = await this.commitBotMutation(id, (current) => {
+        let updated: BotStoredRecord = {
+          ...current,
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+        if (name !== undefined) updated = { ...updated, name }
+        if (request.description !== undefined) {
+          if (description === undefined) {
+            const { description: ignoredDescription, ...withoutDescription } = updated
+            void ignoredDescription
+            updated = withoutDescription
+          } else {
+            updated = { ...updated, description }
+          }
+        }
+        if (request.persona !== undefined) {
+          if (persona === undefined) {
+            const { persona: ignoredPersona, ...withoutPersona } = updated
+            void ignoredPersona
+            updated = withoutPersona
+          } else {
+            updated = { ...updated, persona }
+          }
+        }
+        if (request.capabilities !== undefined) {
+          if (capabilities === undefined) {
+            const { capabilities: ignoredCapabilities, ...withoutCapabilities } = updated
+            void ignoredCapabilities
+            updated = withoutCapabilities
+          } else {
+            updated = { ...updated, capabilities }
+          }
+        }
+        return updated
+      })
       this.recordsBySession.set(String(next.sessionId), next)
       this.refreshSharedRecords(next)
       this.emitChanged()
