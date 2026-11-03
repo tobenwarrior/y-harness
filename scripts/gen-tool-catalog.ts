@@ -434,7 +434,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     dir: 'tool-schedule',
     source: 'packages/schedule/tool-schedule/src/index.ts',
     requires: ['ctx.tools', 'ctx.schedule'],
-    writes: ['tool/call', 'Schedule storage domain create, update, or delete', 'tool/result'],
+    writes: ['tool/call', 'Schedule storage domain create, update, delete, pause, resume, or history read', 'tool/result'],
     async mount(ctx) {
       // Schema harvest never executes a tool, so the Host service is a
       // declaration-only stub.
@@ -442,11 +442,13 @@ const TOOL_PACKAGES: ToolPackage[] = [
       await ctx.plugin(ToolSchedule)
     },
     note:
-      'A preset or Agent scope mounts this package; the preset decides which agents receive the four '
+      'A preset or Agent scope mounts this package; the preset decides which agents receive the seven '
       + 'management tools. Each call acts on the calling Agent\'s Session. '
       + 'Accepts after_seconds, explicit absolute at, bounded fixed-rate every_seconds, daily and weekly '
       + 'local times in an explicit IANA zone, and cron as a five-field expression. '
-      + 'Management uses the Host storage domain; due messages resume the original Session.',
+      + 'Management uses the Host storage domain; due messages resume the original Session. '
+      + 'Pause and resume preserve the task and saved delivery history; history reports inbox delivery receipts, not model execution. '
+      + 'Event-triggered routines are not supported without a Host event-source adapter.',
   },
   {
     pkg: '@yharness/tool-lsp',

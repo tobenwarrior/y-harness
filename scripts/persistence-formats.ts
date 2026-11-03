@@ -16,7 +16,7 @@ const CURRENT_DOCUMENT = 'docs/persistence-catalog.md'
 const CURRENT_SCHEMA = 'docs/persistence-schema.json'
 
 /** Historical checkout that supplies a format's complete declared persistence inventory. */
-export type PersistenceFormatSource = { readonly tag: string } | { readonly pullRequest: number }
+export type PersistenceFormatSource = { readonly tag: string } | { readonly pullRequest: number } | { readonly commit: string }
 
 /** One complete format reference; the current catalog follows the historical entries. */
 export interface PersistenceFormatEntry {
@@ -62,6 +62,11 @@ function machineBlock(document: string, label: string): string {
 }
 
 function parseSource(source: unknown, label: string): PersistenceFormatSource {
+  if (source !== null && typeof source === 'object' && 'commit' in source) {
+    const commit = fields(source, ['commit'], `${label} source`).commit
+    if (typeof commit !== 'string' || !/^[a-f0-9]{40}$/u.test(commit)) throw new Error(`${label}: invalid source commit`)
+    return { commit }
+  }
   if (source !== null && typeof source === 'object' && 'tag' in source) {
     const tag = fields(source, ['tag'], `${label} source`).tag
     if (typeof tag !== 'string' || !/^dsh-[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(tag)) throw new Error(`${label}: invalid source tag`)

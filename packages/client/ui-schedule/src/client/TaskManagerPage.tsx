@@ -65,10 +65,12 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
       Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt))
   }, [records, search, statusFilter])
 
-  // An inactive-only filter is its own empty state: no task is inactive, rather than no task matched.
-  const emptyTitle = statusFilter === 'inactive' && search.trim() === ''
-    ? 'list.emptyInactive'
-    : records.length === 0 ? 'list.empty' : 'list.noMatches'
+  // Paused and inactive filters have distinct empty states when the catalog is settled but empty for that status.
+  const emptyTitle = statusFilter === 'paused' && search.trim() === ''
+    ? 'list.emptyPaused'
+    : statusFilter === 'inactive' && search.trim() === ''
+      ? 'list.emptyInactive'
+      : records.length === 0 ? 'list.empty' : 'list.noMatches'
   // The list's frequency line omits a rule zone equal to the host's and otherwise
   // names it, the same way the detail's Repeat row does.
   const systemZone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -123,7 +125,7 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
             </div>
             <div className={css.filters} data-yh-terminal="toolbar">
               <div className={css.filterTabs} role="group" aria-label={t('statusFilter.label')}>
-                {(['all', 'active', 'inactive'] as const).map(value => (
+                {(['all', 'active', 'paused', 'inactive'] as const).map(value => (
                   <button
                     key={value}
                     type="button"
@@ -183,6 +185,8 @@ export function TaskManagerPage(props: TaskManagerPageProps) {
                         <span className={css.rowContent}>
                           <span className={css.rowTitle}>{taskName(record)}</span>
                           <span className={css.rowSummary} id={`${detailId}-metadata-${record.id}`} data-yh-terminal="metadata">
+                            {record.status === 'paused'
+                              && <span className={css.metadata}>{t('status.paused')}</span>}
                             {record.status === 'inactive'
                               && <span className={css.metadata}>{t('status.inactive')}</span>}
                             <span className={css.metadata}>{frequency(record)}</span>

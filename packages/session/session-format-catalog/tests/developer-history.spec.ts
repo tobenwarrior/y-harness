@@ -2,11 +2,11 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import { createDeveloperMessage } from '@yharness/llm'
 import type { ToolAdditionBlock, ToolSchema } from '@yharness/llm'
-import { Session, SessionId, SessionLogOffset } from '@yharness/session'
+import { SESSION_FORMAT_VERSION, Session, SessionId, SessionLogOffset } from '@yharness/session'
 import type { SessionEvent, SessionHeader } from '@yharness/session'
 import { buildForkSeed } from '@yharness/session/fork'
 import { createSessionFormatCatalog } from '@yharness/session-format'
-import { restoreReleasedV5Artifact } from '@yharness/session-format-v4-to-v5'
+import { restoreReleasedV6Artifact } from '@yharness/session-format-v5-to-v6'
 import { sessionFormatCatalogOptions } from '../src/generated.ts'
 import type { SessionFormatEvent } from '@yharness/session-format'
 import { sessionFormatCatalog } from '../src/index.ts'
@@ -53,7 +53,7 @@ function toolStates(session: Session): (ToolSchema | undefined)[] {
 describe('developer tool history', () => {
 
   it.each([false, true])('defers ignorable developer interpretation until catalog completion (known: %s)', (knowsDeveloper) => {
-    const header = { version: 5, id: 'opaque-developer', createdAt: 1, isSeeded: false, delegationDepth: 0 }
+    const header = { version: SESSION_FORMAT_VERSION, id: 'opaque-developer', createdAt: 1, isSeeded: false, delegationDepth: 0 }
     const events: SessionFormatEvent[] = [
       { type: 'developer/message', seq: 0, time: 1, ignorable: true, surfaceOp: { future: true }, data: {
         message: { role: 'developer', source: { kind: 'plugin' } }, future: true,
@@ -65,7 +65,7 @@ describe('developer tool history', () => {
     if (!knowsDeveloper) known.delete('developer/message')
     const catalog = createSessionFormatCatalog({
       ...sessionFormatCatalogOptions,
-      restoreCurrent: candidate => restoreReleasedV5Artifact(candidate, known),
+      restoreCurrent: candidate => restoreReleasedV6Artifact(candidate, known),
     })
     const reader = catalog.createRestore(sessionFormatCatalog.encodeCurrentHeader(header, 0), { recovery: 'strict', validation: 'current' })
     for (const event of events) reader.decodeRow(event)

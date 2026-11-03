@@ -47,7 +47,8 @@ function formatIndex(formats: PersistenceFormats, language: Language): string {
     '|---|---|---|---|---|',
     ...formats.entries.map((entry) => {
       const source = entry.source === undefined ? language === 'en' ? 'Current checkout' : '\u5f53\u524d\u5de5\u4f5c\u6811'
-        : 'tag' in entry.source ? `\`${entry.source.tag}\`` : `PR #${entry.source.pullRequest}`
+        : 'tag' in entry.source ? `\`${entry.source.tag}\``
+          : 'commit' in entry.source ? `\`${entry.source.commit}\`` : `PR #${entry.source.pullRequest}`
       const label = entry.version === formats.currentVersion ? language === 'en' ? 'Current catalog' : '\u5f53\u524d\u76ee\u5f55' : `V${entry.version}`
       return `| ${entry.version} | ${source} | [${label}](${path(entry.document)}) | [JSON](${path(entry.schemaPath)}) | ${entry.inventory.roots.length} / ${entry.inventory.types.length} |`
     }),

@@ -7,7 +7,7 @@ const child = (id: string) => ({ childId: id, childCreatedAt: 2, descriptorCount
   descriptor: { version: 3, provider: 'spawn', mode: 'one-shot' } })
 
 describe('parent-specific catalog assembly', () => {
-  it('requires explicit children for historical bodies while retaining header and native V5 reads', () => {
+  it('requires explicit children for historical bodies while retaining header and V5 reads', () => {
     expect(sessionFormatCatalog.readHeader(header).status).toBe('migration-required')
     expect(() => sessionFormatCatalog.createRestore(header, policy)).toThrow('explicit historical child facts')
     expect(createSessionFormatCatalogWithChildren([]).createRestore(header, policy).finish().events).toEqual([])

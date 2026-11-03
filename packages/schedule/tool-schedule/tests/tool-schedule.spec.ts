@@ -36,13 +36,30 @@ async function executeBody(test: Awaited<ReturnType<typeof setup>>, name: string
 }
 
 describe('Schedule model tools', () => {
-  it('registers the four tools only in the mounting Agent scope', async () => {
+  it('registers the Schedule tools only in the mounting Agent scope', async () => {
     const test = await setup()
-    for (const name of ['schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update']) {
+    for (const name of [
+      'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update',
+      'schedule_pause', 'schedule_resume', 'schedule_history',
+    ]) {
       expect(test.ctx.tools.get(name, test.agent)).toBeDefined()
       expect(test.ctx.tools.get(name)).toBeUndefined()
       expect(test.ctx.tools.get(name, agentFor(test.ctx, `unrelated-${name}`))).toBeUndefined()
     }
+  })
+
+  it('pauses, resumes, and reads delivery history for the calling Session', async () => {
+    const test = await setup()
+    const record = await test.service.create(test.agent.session.id, {
+      prompt: 'Check', every_seconds: 300, title: 'Check',
+    })
+    const paused = await execute(test, 'schedule_pause', { id: record.id })
+    expect(paused.value).toMatchObject({ id: record.id, paused: true, status: 'paused' })
+    expect((await execute(test, 'schedule_list', {})).value).toEqual([])
+    const resumed = await execute(test, 'schedule_resume', { id: record.id })
+    expect(resumed.value).toMatchObject({ id: record.id, resumed: true, status: 'active' })
+    const history = await execute(test, 'schedule_history', { id: record.id, limit: 10 })
+    expect(history.value).toMatchObject({ id: record.id, records: [], retention: expect.any(Object) })
   })
 
   it('refuses a call dispatched without a caller Agent in every tool', async () => {
@@ -53,6 +70,9 @@ describe('Schedule model tools', () => {
       ['schedule_list', {}],
       ['schedule_delete', { id: 'task-1' }],
       ['schedule_update', { id: 'task-1', title: 'Check' }],
+      ['schedule_pause', { id: 'task-1' }],
+      ['schedule_resume', { id: 'task-1' }],
+      ['schedule_history', { id: 'task-1' }],
     ] as const
     for (const [name, args] of cases) {
       const result = await test.ctx.tools.execute({
@@ -73,6 +93,9 @@ describe('Schedule model tools', () => {
       ['schedule_list', {}],
       ['schedule_delete', { id: 'task-1' }],
       ['schedule_update', { id: 'task-1', title: 'Check' }],
+      ['schedule_pause', { id: 'task-1' }],
+      ['schedule_resume', { id: 'task-1' }],
+      ['schedule_history', { id: 'task-1' }],
     ] as const
     for (const [name, args] of cases) {
       const result = await test.ctx.tools.execute({
@@ -353,7 +376,10 @@ describe('Schedule model tools', () => {
     expect((await execute(test, 'schedule_create', { prompt: 'Failed', after_seconds: 60, title: 'Failed' })).value)
       .toMatchObject({ code: 'internal_error' })
     await test.scope.dispose()
-    for (const name of ['schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update']) {
+    for (const name of [
+      'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update',
+      'schedule_pause', 'schedule_resume', 'schedule_history',
+    ]) {
       expect(test.ctx.tools.get(name, test.agent)).toBeUndefined()
     }
     expect((await execute(test, 'schedule_list', {})).isError).toBe(true)
@@ -572,7 +598,7 @@ describe('Schedule model tools', () => {
 
   it('withholds storage details from an update read failure', async () => {
     const test = await setup()
-    vi.spyOn(test.service, 'list').mockRejectedValueOnce(new Error('private backend location'))
+    vi.spyOn(test.service, 'catalog').mockRejectedValueOnce(new Error('private backend location'))
     expect((await execute(test, 'schedule_update', { id: 'task-1', title: 'Nope' })).value)
       .toEqual({ code: 'internal_error', message: 'The schedule operation failed.' })
   })

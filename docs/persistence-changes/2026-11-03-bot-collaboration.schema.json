@@ -1,0 +1,45 @@
+{
+  "formatVersion": 2,
+  "roots": [
+    {
+      "key": "event:bot/collaboration",
+      "kind": "event",
+      "event": "bot/collaboration",
+      "surface": false,
+      "digest": "c18d481bf8e13be60dc6f553f37e9edd5163f4ae015724d7f3384c6520f301af",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              { "name": "data", "type": 1, "optional": false },
+              { "name": "ignorable", "type": 6, "optional": true },
+              { "name": "seq", "type": 7, "optional": false },
+              { "name": "time", "type": 7, "optional": false },
+              { "name": "type", "type": 8, "optional": false }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              { "name": "messageId", "type": 2, "optional": false },
+              { "name": "senderSessionId", "type": 2, "optional": false },
+              { "name": "status", "type": 3, "optional": false }
+            ],
+            "indices": []
+          },
+          { "kind": "primitive", "type": "string" },
+          { "kind": "union", "types": [4, 5] },
+          { "kind": "literal", "value": "accepted" },
+          { "kind": "literal", "value": "canceled" },
+          { "kind": "literal", "value": true },
+          { "kind": "primitive", "type": "number" },
+          { "kind": "literal", "value": "bot/collaboration" }
+        ]
+      }
+    }
+  ],
+  "types": []
+}

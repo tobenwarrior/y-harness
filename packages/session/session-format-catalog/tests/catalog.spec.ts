@@ -133,7 +133,7 @@ describe('first-party Session format catalog', () => {
     reopened.decodeRow(valid)
     reopened.decodeRow(restart)
     expect(reopened.finish()).toMatchObject({
-      header: { version: 5, id: 'group-inbox-restart' },
+      header: { version: SESSION_FORMAT_VERSION, id: 'group-inbox-restart' },
       events: [valid, restart],
     })
   })

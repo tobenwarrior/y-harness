@@ -213,8 +213,8 @@ export interface ScheduleDeliveryRecord extends ScheduleDeliveryReceipt {
 export type ScheduleCatalogEntry = ScheduleRecord & {
   /** Session receiving this reminder when it becomes due. */
   readonly sessionId: SessionId
-  /** Inactive reminders remain visible but never schedule another delivery. */
-  readonly status: 'active' | 'inactive'
+  /** Paused reminders remain visible but never schedule another delivery. Inactive reminders are ended. */
+  readonly status: 'active' | 'paused' | 'inactive'
   /** Most recent durably acknowledged inbox delivery, when available. */
   readonly lastDelivery?: ScheduleDeliveryReceipt
 }
@@ -267,6 +267,12 @@ export type ScheduleView = ScheduleRecord & {
   readonly state: ScheduleState
   /** Reminder delivery never leaves the owning session. */
   readonly deliveryMode: ScheduleDeliveryMode
+}
+
+/** Execution-local view returned by pause and resume transitions. */
+export type ScheduleLifecycleView = ScheduleView & {
+  /** Whether the retained task is currently armed or paused. */
+  readonly status: 'active' | 'paused'
 }
 
 /** Stable error returned for an empty, over-long, or untrimmed reminder prompt or title. */
@@ -386,6 +392,26 @@ export interface ScheduleCreateRequest {
   cron?: CronInput
 }
 
+/** Host-only retry identity for a durable reminder creation. */
+export interface ScheduleCreateOptions {
+  /** Stable identity for one operation, reused only when its earlier write outcome is unknown. */
+  readonly idempotencyKey?: string
+}
+
+/** Host-only reservation result for a Bot reminder approval flow. */
+export type ScheduleCreateReservation =
+  | { readonly status: 'reserved' }
+  | { readonly status: 'committed'; readonly record: ScheduleRecord }
+
+/**
+ * Result of resolving one durable create operation after its native reply was lost.
+ * Unknown means creation has not registered with Schedule.
+ */
+export type ScheduleCreateResolution =
+  | { readonly status: 'unknown' }
+  | { readonly status: 'absent' }
+  | { readonly status: 'committed'; readonly record: ScheduleRecord }
+
 /** Session-scoped task list, without Agent activation. */
 export interface ScheduleListRequest {
   /** Original Session binding. */
@@ -437,6 +463,21 @@ export type ScheduleUpdateResult =
 
 /** Canonical `schedule_update` value: the committed record as a view, or the non-mutating lookup/conflict result. */
 export type ScheduleUpdateValue = ScheduleView | ScheduleUpdateMiss | ScheduleToolError
+
+/** Session and task identity used by pause and resume transitions. */
+export interface ScheduleLifecycleRequest extends ScheduleDeleteRequest {}
+
+/** Successful pause or a non-mutating lookup/ended result. */
+export type SchedulePauseValue =
+  | (ScheduleLifecycleView & { readonly paused: true })
+  | { readonly id: ScheduleId; readonly paused: false; readonly code: 'schedule_not_found' | 'schedule_ended' }
+  | ScheduleToolError
+
+/** Successful resume or a non-mutating lookup/ended result. */
+export type ScheduleResumeValue =
+  | (ScheduleLifecycleView & { readonly resumed: true })
+  | { readonly id: ScheduleId; readonly resumed: false; readonly code: 'schedule_not_found' | 'schedule_ended' }
+  | ScheduleToolError
 
 /** Explicitly bounded saved-delivery query within one Session binding. */
 export interface ScheduleDeliveryHistoryRequest extends ScheduleDeleteRequest {

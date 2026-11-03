@@ -13,7 +13,7 @@ import {
   SessionFormatUnsupportedMigrationError,
   sessionFormatCatalog,
 } from '@yharness/session-format-catalog'
-import { assertV5RowAdmission } from '@yharness/session-format-v4-to-v5'
+import { assertV6RowAdmission } from '@yharness/session-format-v5-to-v6'
 import { readdirSync, type Dirent } from 'node:fs'
 import { open, mkdir, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -283,8 +283,8 @@ class JsonlSessionPersistence extends SessionPersistence {
     this.generationFormat = {
       currentVersion: sessionFormatCatalog.currentVersion,
       assertHistoricalRowAdmission: (row, sourceVersion) => {
-        if (sourceVersion !== 4) return
-        assertV5RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
+        if (sourceVersion !== 4 && sourceVersion !== 5) return
+        assertV6RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
       },
       encodeHeader: (header, inheritedEventCount) =>
         sessionFormatCatalog.encodeCurrentHeader(header, inheritedEventCount),

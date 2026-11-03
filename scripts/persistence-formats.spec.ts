@@ -212,6 +212,13 @@ describe('complete persistence format references', () => {
     expect(formats.entries[3]?.source).toBeUndefined()
   })
 
+  it('accepts an exact commit as historical source evidence', () => {
+    const root = fixture()
+    const commit = 'a'.repeat(40)
+    editPair(root, 1, 'pullRequest: 3349', `commit: ${commit}`)
+    expect(loadPersistenceFormats(root).entries[1]?.source).toEqual({ commit })
+  })
+
   it('accepts a version-zero writer without a historical directory', () => {
     const root = fixture(0)
     rmSync(join(root, 'docs/persistence-changes/historical-formats'), { recursive: true })
@@ -258,6 +265,8 @@ describe('complete persistence format references', () => {
     ['pullRequest: 3349', 'pullRequest: 0', 'positive integer'],
     ['pullRequest: 3349', 'pullRequest: 1.5', 'positive integer'],
     ['pullRequest: 3349', 'pullRequest: 3349\n  tag: dsh-v0.1.0', 'expected fields'],
+    ['pullRequest: 3349', 'commit: abc123', 'invalid source commit'],
+    ['pullRequest: 3349', `commit: ${'a'.repeat(40)}\n  tag: dsh-v0.1.0`, 'expected fields'],
     ['pullRequest: 3349', 'other: 3349', 'expected fields'],
     ['source:\n  pullRequest: 3349', 'source: null', 'expected an object'],
     ['schemaVersion: 1', 'schemaVersion: 1\nunknown: true', 'expected fields'],

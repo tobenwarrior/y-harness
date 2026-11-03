@@ -1,14 +1,15 @@
 /**
- * Model-facing `schedule_create`, `schedule_list`, `schedule_update`, and
- * `schedule_delete` tools over the Host `ctx.schedule` service. Mounting the
- * plugin registers them in the mounting scope, so a preset decides which
- * agents receive them; every call acts on the calling Agent's Session.
+ * Model-facing Schedule management tools over the Host `ctx.schedule` service.
+ * Mounting the plugin registers create, list, update, delete, pause, resume,
+ * and history in the mounting scope, so a preset decides which agents receive
+ * them; every call acts on the calling Agent's Session.
  * @module @yharness/tool-schedule
  */
 
 import type { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import type { ContentBlock } from '@yharness/llm'
+import { MessageId } from '@yharness/llm/brand'
 import { delegationDepthOf } from '@yharness/subagent'
 import { defineTool } from '@yharness/tools'
 import type { GenericCallView } from '@yharness/tools'
@@ -17,7 +18,8 @@ import {
 } from '@yharness/schedule'
 import type {
   AtInput, CronInput, DailyInput, WeeklyInput, InternalScheduleError, ScheduleCreateValue, ScheduleDeleteValue,
-  ScheduleListValue, ScheduleTimingChange, ScheduleToolError, ScheduleUpdateValue,
+  ScheduleCatalogEntry, ScheduleDeliveryHistoryResult, ScheduleListValue, SchedulePauseValue, ScheduleRecord,
+  ScheduleResumeValue, ScheduleTimingChange, ScheduleToolError, ScheduleUpdateValue,
 } from '@yharness/schedule'
 
 /** Plugin name registered with the Loader. */
@@ -180,6 +182,78 @@ const UPDATE_OUTPUT_SCHEMA = {
   ],
 } as const
 
+const LIFECYCLE_VIEW_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...SHARED_VIEW_PROPERTIES,
+    kind: { type: 'string', required: true },
+    afterSeconds: { type: 'integer' },
+    everySeconds: { type: 'integer' },
+    time: { type: 'string' },
+    timeZone: { type: 'string' },
+    weekdays: { type: 'array', items: { type: 'integer' } },
+    expression: { type: 'string' },
+    status: { type: 'string', required: true, enum: ['active', 'paused'] },
+    paused: { type: 'boolean' },
+    resumed: { type: 'boolean' },
+  },
+} as const
+
+const LIFECYCLE_MISS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    paused: { type: 'boolean', const: false },
+    resumed: { type: 'boolean', const: false },
+    code: { type: 'string', required: true, enum: ['schedule_not_found', 'schedule_ended'] },
+  },
+} as const
+
+const PAUSE_OUTPUT_SCHEMA = { oneOf: [LIFECYCLE_VIEW_SCHEMA, LIFECYCLE_MISS_SCHEMA, ...ERROR_SCHEMAS] } as const
+const RESUME_OUTPUT_SCHEMA = { oneOf: [LIFECYCLE_VIEW_SCHEMA, LIFECYCLE_MISS_SCHEMA, ...ERROR_SCHEMAS] } as const
+
+const HISTORY_OUTPUT_SCHEMA = {
+  oneOf: [
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', required: true },
+        records: {
+          type: 'array', required: true,
+          items: {
+            type: 'object', additionalProperties: false,
+            properties: {
+              scheduledAt: { type: 'string', required: true },
+              deliveredAt: { type: 'string', required: true },
+              messageId: { type: 'string', required: true },
+              prompt: { type: 'string' },
+            },
+          },
+        },
+        earlierRecordsUnavailable: { type: 'boolean', required: true },
+        earlierRecordsPruned: { type: 'boolean', required: true },
+        retention: {
+          type: 'object', required: true, additionalProperties: false,
+          properties: { days: { type: 'integer', required: true }, records: { type: 'integer', required: true } },
+        },
+        nextBefore: { type: 'string' },
+      },
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        id: { type: 'string', required: true },
+        code: { type: 'string', required: true, enum: ['schedule_not_found', 'delivery_cursor_not_found'] },
+      },
+    },
+    ...ERROR_SCHEMAS,
+  ],
+} as const
+
 const CREATE_DESCRIPTION =
   'Create a reminder in the current session that delivers prompt when it becomes due. '
   + 'Supply exactly one timing parameter: after_seconds, at, every_seconds, daily, weekly, or cron. '
@@ -194,6 +268,18 @@ const DELETE_DESCRIPTION =
 const UPDATE_DESCRIPTION =
   'Change a reminder in place, keeping its id. Supply a new title, prompt, or at most one timing parameter; '
   + 'omitted fields keep their stored values. To change a relative delay, create a new reminder.'
+
+const PAUSE_DESCRIPTION =
+  'Pause a reminder in the current session without deleting it or its delivery history. '
+  + 'A paused reminder does not deliver until schedule_resume is called.'
+
+const RESUME_DESCRIPTION =
+  'Resume a paused reminder in the current session. Its existing timing target is retained, '
+  + 'so an overdue recurring reminder is handled by the normal Host runtime.'
+
+const HISTORY_DESCRIPTION =
+  'Read retained delivery receipts for a reminder in the current session. '
+  + 'This is delivery history, not the model transcript or a claim of model execution completion.'
 
 /** Deterministic model content for every canonical Schedule value. */
 function renderValue(_args: unknown, value: unknown): ContentBlock[] {
@@ -215,6 +301,15 @@ function internalError(): InternalScheduleError {
 /** Translate invalid input while withholding internal storage failures. */
 function operationError(error: unknown): ScheduleToolError {
   return error instanceof ScheduleInputError ? { code: error.code, message: error.message } : internalError()
+}
+
+/** Remove catalog-only ownership and lifecycle fields before compare-and-update. */
+function catalogRecord(entry: ScheduleCatalogEntry): ScheduleRecord {
+  const { sessionId, status, lastDelivery, ...record } = entry
+  void sessionId
+  void status
+  void lastDelivery
+  return record
 }
 
 /**
@@ -425,7 +520,7 @@ const SELECTOR_PARAMETERS = {
 } as const
 
 /**
- * Register the four Schedule tools in the mounting scope.
+ * Register the seven Schedule tools in the mounting scope.
  *
  * Each call mutates the Session of the Agent that dispatched it, so a mount
  * outside an agent scope still registers the tools but every call without a
@@ -437,11 +532,15 @@ export function apply(ctx: Context): void {
 }
 
 /**
- * Register the four reminder tools in the scope that resolved the Schedule
- * service.
- * @param ctx - Scope whose `schedule` service the tools act through.
+ * Register the Schedule tools in an already-resolved scope.
+ *
+ * This lower-level entry point lets an agent-owned scope reuse the exact Host
+ * Schedule implementation while adding a scope-specific policy, such as a
+ * Bot approval gate. Callers must resolve `ctx.schedule` before invoking it.
+ *
+ * @param ctx - Scope whose `tools` registry and resolved `schedule` service are used.
  */
-function registerScheduleTools(ctx: Context): void {
+export function registerScheduleTools(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'schedule_create',
     description: CREATE_DESCRIPTION,
@@ -554,15 +653,11 @@ function registerScheduleTools(ctx: Context): void {
       const id = ScheduleId(args.id)
       try {
         const sessionId = agent.session.id
-        const expected = (await ctx.schedule.list({ sessionId }))
-          .find(record => record.id === id)
-        if (expected === undefined) {
-          // The catalog also holds inactive reminders, which is the one not-found
-          // case the model can act on: it has to create a new reminder instead.
-          const ended = (await ctx.schedule.catalog())
-            .some(entry => entry.sessionId === sessionId && entry.id === id)
-          return { id, updated: false, code: ended ? 'schedule_ended' : 'schedule_not_found' }
-        }
+        const entry = (await ctx.schedule.catalog())
+          .find(candidate => candidate.sessionId === sessionId && candidate.id === id)
+        if (entry === undefined) return { id, updated: false, code: 'schedule_not_found' }
+        if (entry.status === 'inactive') return { id, updated: false, code: 'schedule_ended' }
+        const expected = catalogRecord(entry)
         const change = timingChangeFrom(args)
         const result = await ctx.schedule.update({
           sessionId,
@@ -578,5 +673,87 @@ function registerScheduleTools(ctx: Context): void {
       }
     },
     presentCall: args => present('Update reminder', 'other', args.id),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'schedule_pause',
+    description: PAUSE_DESCRIPTION,
+    parameters: {
+      id: { type: 'string', required: true, description: 'Schedule id returned by schedule_list.' },
+    },
+    output: { schema: PAUSE_OUTPUT_SCHEMA, render: renderValue },
+    async execute(args, exec): Promise<SchedulePauseValue> {
+      const agent = exec.agent
+      if (agent === undefined) return internalError()
+      const refusal = subagentCallerRefusal(agent)
+      if (refusal !== undefined) return refusal
+      if (args.id.length === 0 || args.id.trim() !== args.id) {
+        return { code: 'invalid_rule', message: 'schedule_pause id must be non-empty without surrounding whitespace.' }
+      }
+      if (exec.signal.aborted) return internalError()
+      try {
+        return await ctx.schedule.pause({ sessionId: agent.session.id, id: ScheduleId(args.id) }, exec.signal)
+      } catch (error: unknown) {
+        return operationError(error)
+      }
+    },
+    presentCall: args => present('Pause reminder', 'other', args.id),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'schedule_resume',
+    description: RESUME_DESCRIPTION,
+    parameters: {
+      id: { type: 'string', required: true, description: 'Schedule id returned by schedule_list.' },
+    },
+    output: { schema: RESUME_OUTPUT_SCHEMA, render: renderValue },
+    async execute(args, exec): Promise<ScheduleResumeValue> {
+      const agent = exec.agent
+      if (agent === undefined) return internalError()
+      const refusal = subagentCallerRefusal(agent)
+      if (refusal !== undefined) return refusal
+      if (args.id.length === 0 || args.id.trim() !== args.id) {
+        return { code: 'invalid_rule', message: 'schedule_resume id must be non-empty without surrounding whitespace.' }
+      }
+      if (exec.signal.aborted) return internalError()
+      try {
+        return await ctx.schedule.resume({ sessionId: agent.session.id, id: ScheduleId(args.id) }, exec.signal)
+      } catch (error: unknown) {
+        return operationError(error)
+      }
+    },
+    presentCall: args => present('Resume reminder', 'other', args.id),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'schedule_history',
+    description: HISTORY_DESCRIPTION,
+    parameters: {
+      id: { type: 'string', required: true, description: 'Schedule id returned by schedule_list.' },
+      limit: { type: 'number', description: 'Maximum number of retained deliveries to return (1-100, default 50).' },
+      before: { type: 'string', description: 'Exclusive message id cursor returned as nextBefore by an earlier page.' },
+    },
+    output: { schema: HISTORY_OUTPUT_SCHEMA, render: renderValue },
+    async execute(args, exec): Promise<ScheduleDeliveryHistoryResult | ScheduleToolError> {
+      const agent = exec.agent
+      if (agent === undefined) return internalError()
+      const refusal = subagentCallerRefusal(agent)
+      if (refusal !== undefined) return refusal
+      if (args.id.length === 0 || args.id.trim() !== args.id) {
+        return { code: 'invalid_rule', message: 'schedule_history id must be non-empty without surrounding whitespace.' }
+      }
+      if (exec.signal.aborted) return internalError()
+      try {
+        return await ctx.schedule.history({
+          sessionId: agent.session.id,
+          id: ScheduleId(args.id),
+          limit: args.limit ?? 50,
+          ...(args.before === undefined ? {} : { before: MessageId(args.before) }),
+        })
+      } catch (error: unknown) {
+        return operationError(error)
+      }
+    },
+    presentCall: args => present('Read reminder history', 'read', args.id),
   }))
 }

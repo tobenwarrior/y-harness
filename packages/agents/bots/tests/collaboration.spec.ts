@@ -124,6 +124,27 @@ describe('Bot collaboration seam', () => {
     ]))
   })
 
+  it('does not leak event-routine prompts or results through generic peer inspection', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: '[BOT EVENT ROUTINE]\nPrivate routine prompt.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'bot-event-routine-private', triggerEventSeq: 3,
+      },
+    }), 1))
+    targetEvents.push(assistantEvent('Private routine result.', 2))
+
+    const client = await h.client
+    const inspected = await client.inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Private routine prompt.')
+    expect(text).not.toContain('Private routine result.')
+  })
+
   it('delivers to the target Session with durable sender identity and is idempotent', async () => {
     const h = harness()
     const client = await h.client
@@ -144,6 +165,74 @@ describe('Bot collaboration seam', () => {
       text: 'Please check the release queue.', messageId,
     })).resolves.toMatchObject({ status: 'duplicate', messageId })
     expect(followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not acknowledge a peer message canceled during the durability flush', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async sessionId => ({ events: events.get(String(sessionId)) ?? [] }),
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => {
+        const message = followup.mock.calls[0]?.[0]
+        if (message === undefined) throw new Error('peer message was not admitted before flush')
+        events.get('bot-session-beta')!.push({
+          type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+          data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+        })
+      }),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This must not be acknowledged.', messageId: BotMessageId('peer-canceled-after-flush'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(host.flushSession).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a peer message canceled after the first receipt check', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    let targetInspections = 0
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async (sessionId) => {
+        const targetEvents = events.get(String(sessionId)) ?? []
+        if (String(sessionId) === 'bot-session-beta') {
+          targetInspections += 1
+          if (targetInspections === 2) {
+            queueMicrotask(() => {
+              targetEvents.push({
+                type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+                data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+              })
+            })
+          }
+        }
+        return { events: [...targetEvents] }
+      },
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => undefined),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This late cancellation must be rejected.', messageId: BotMessageId('peer-late-cancel'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(targetInspections).toBe(3)
   })
 
   it('checks cancellation after target resume and before followup', async () => {
@@ -221,6 +310,78 @@ describe('Bot collaboration seam', () => {
     expect(delivery).toHaveBeenCalledTimes(2)
     expect(h.followups.get('bot-session-beta')).toBeUndefined()
     expect(h.events.get('bot-session-beta')).toHaveLength(1)
+  })
+
+  it('recognizes a claimed inbox receipt before the target surface event', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-claimed')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const claimed = followup.mock.calls[0]?.[0]
+    if (claimed === undefined) throw new Error('expected a claimed message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [claimed] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId,
+    })).resolves.toMatchObject({ status: 'duplicate', messageId })
+    expect(followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes a claimed group inbox receipt before the target surface event', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async sessionId => ({ events: events.get(String(sessionId)) ?? [] }),
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: async () => undefined,
+    }
+    const service = new BotCollaborationService(host)
+    const request = {
+      targetBotId: BotId('bot-beta'), groupId: BotGroupId('bot-group-claimed'), groupName: 'Claimed room',
+      text: 'Do not duplicate this group message.', messageId: BotMessageId('bot-group-message-claimed'),
+    }
+
+    await expect(service.sendExternal(request)).resolves.toBe('accepted')
+    events.get('bot-session-beta')!.push({
+      type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+      data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] },
+    })
+    await expect(service.sendExternal(request)).resolves.toBe('duplicate')
+    expect(followup).toHaveBeenCalledOnce()
+  })
+
+  it('retries a canceled inbox delivery with the same message id', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-canceled')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const canceled = followup.mock.calls[0]?.[0]
+    if (canceled === undefined) throw new Error('expected a canceled message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [canceled] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId,
+    })).resolves.toMatchObject({ status: 'accepted', messageId })
+    expect(followup).toHaveBeenCalledTimes(2)
   })
 
   it('rejects unbounded message identities before touching the target Session', async () => {

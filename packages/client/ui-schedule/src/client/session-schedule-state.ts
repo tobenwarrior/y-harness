@@ -3,7 +3,7 @@
  * row mark and the row hover-card task section.
  *
  * Both project the ONE Host catalog the page already owns — `schedule/catalog()`
- * returns active and ended tasks with their originating `sessionId` — so N
+ * returns active, paused, and ended tasks with their originating `sessionId` — so N
  * visible rows share one Remote read and follow one `schedule/changed`
  * invalidation instead of issuing a query per row. The Session-header catalog
  * keeps its own per-Session `schedule/list` source because it also lists the
@@ -59,7 +59,7 @@ const NO_RECORDS: readonly ScheduleCatalogEntry[] = []
 /**
  * Project the shared Host catalog onto one Session's active tasks.
  *
- * `schedule/catalog()` returns active and ended tasks for every Session, so
+ * `schedule/catalog()` returns active, paused, and ended tasks for every Session, so
  * both facts come from this one snapshot filtered by `sessionId` and
  * `status === 'active'`. A read that never settled answers no active task; a
  * refresh republishes `loading` over the records of the last successful read, and

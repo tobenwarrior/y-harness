@@ -60,7 +60,7 @@ it.each([true, false])('persists same-ID daily edits with saved history=%s witho
   expect(JSON.parse(bytes)).toEqual({
     unit: { name: 'schedule', version: 1 },
     global: null,
-    tables: { tasks: { [id]: { ...task, record: updated } } },
+    tables: { tasks: { [id]: { ...task, record: updated } }, create_operations: {} },
   })
   expect(first.resolve).not.toHaveBeenCalled()
   expect(first.flush).not.toHaveBeenCalled()

@@ -505,7 +505,7 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByText('Analyst answer')).toBeTruthy() })
     fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'Analyst follow up' } })
 
-    expect(screen.getByRole('button', { name: 'Send message' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => { expect(client.chat).toHaveBeenCalledWith(analystBot.id, 'Analyst follow up') })
   })
@@ -530,13 +530,13 @@ describe('shared Bot collaboration surfaces', () => {
     expect(client.chat).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      staleChat.resolve({ ok: true, value: { bot, sessionId: 'stale-session', accepted: true } })
+      staleChat.resolve({ ok: true, value: { bot: { ...bot, id: BotId(bot.id), identity: bot.identity ?? 'agent', accent: bot.accent ?? 'amber', state: 'active', availability: 'idle' }, sessionId: 'stale-session', accepted: true } })
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('Second request')
-    expect(screen.getByRole('button', { name: 'Send message' }).disabled).toBe(false)
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', 'Second request')
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
   })
 
   it('keeps another Bot shared-note publishing usable while the first Bot write is pending', async () => {
@@ -572,7 +572,7 @@ describe('shared Bot collaboration surfaces', () => {
     const analystConfirmation = screen.getByRole('dialog', { name: 'Publish to shared context?' })
     fireEvent.click(within(analystConfirmation).getByRole('checkbox', { name: /shared with every member/i }))
 
-    expect(within(analystConfirmation).getByRole('button', { name: 'Publish' }).disabled).toBe(false)
+    expect(within(analystConfirmation).getByRole('button', { name: 'Publish' })).toHaveProperty('disabled', false)
     fireEvent.click(within(analystConfirmation).getByRole('button', { name: 'Publish' }))
     await waitFor(() => { expect(client.writeMemory).toHaveBeenCalledWith(analystBot.id, 'Analyst note') })
   })
@@ -597,15 +597,15 @@ describe('shared Bot collaboration surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(analystBot.name) }))
     await waitFor(() => { expect(screen.getByText('Analyst answer')).toBeTruthy() })
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('')
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', '')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', '')
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'Analyst message' } })
     fireEvent.change(screen.getByPlaceholderText('Add a note for the shared context'), { target: { value: 'Analyst note' } })
     fireEvent.click(screen.getByRole('button', { name: new RegExp(bot.name) }))
     await waitFor(() => { expect(screen.getByText('Chief answer')).toBeTruthy() })
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('Chief message')
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('Chief note')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', 'Chief message')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', 'Chief note')
   })
 
   it('does not refresh a sent Bot response after switching to another Bot', async () => {
@@ -691,7 +691,7 @@ describe('shared Bot collaboration surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(bot.name) }))
     await waitFor(() => { expect(screen.getByText('Chief answer')).toBeTruthy() })
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', '')
   })
 
   it('preserves a newer Bot draft while a sent chat completes off selection', async () => {
@@ -729,7 +729,7 @@ describe('shared Bot collaboration surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(bot.name) }))
     await waitFor(() => { expect(screen.getByText('Chief answer')).toBeTruthy() })
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('New Chief draft')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', 'New Chief draft')
   })
 
   it('clears a sent Bot note draft after completion while another Bot is selected', async () => {
@@ -766,7 +766,7 @@ describe('shared Bot collaboration surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(bot.name) }))
     await waitFor(() => { expect(screen.getByText('Chief decision')).toBeTruthy() })
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', '')
   })
 
   it('preserves a newer Bot draft while a shared note completes off selection', async () => {
@@ -808,7 +808,7 @@ describe('shared Bot collaboration surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(bot.name) }))
     await waitFor(() => { expect(screen.getByText('Chief decision')).toBeTruthy() })
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('New Chief note')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', 'New Chief note')
   })
 
   it('preserves a newer Bot selection when enrollment refresh returns late', async () => {
@@ -852,7 +852,10 @@ describe('shared Bot collaboration surfaces', () => {
     })
     await waitFor(() => { expect(client.list).toHaveBeenCalledTimes(2) })
     await act(async () => {
-      delayedRefresh.resolve({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }, { ...analystBot, role: 'collaborator' }] } })
+      delayedRefresh.resolve({ ok: true, value: { bots: [
+        { ...bot, id: BotId(bot.id), identity: bot.identity ?? 'agent', accent: bot.accent ?? 'amber', state: 'active', availability: 'idle', role: 'collaborator' },
+        { ...analystBot, id: BotId(analystBot.id), identity: analystBot.identity ?? 'agent', accent: analystBot.accent ?? 'amber', state: 'active', availability: 'idle', role: 'collaborator' },
+      ] } })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -895,7 +898,7 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(client.list).toHaveBeenCalledTimes(2) })
 
     await act(async () => {
-      staleList.resolve({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } })
+      staleList.resolve({ ok: true, value: { bots: [{ ...bot, id: BotId(bot.id), identity: bot.identity ?? 'agent', accent: bot.accent ?? 'amber', state: 'active', availability: 'idle', role: 'collaborator' }] } })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -904,7 +907,7 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByText('Stale Chief decision')).toBeNull()
 
     await act(async () => {
-      currentList.resolve({ ok: true, value: { bots: [{ ...analystBot, role: 'collaborator' }] } })
+      currentList.resolve({ ok: true, value: { bots: [{ ...analystBot, id: BotId(analystBot.id), identity: analystBot.identity ?? 'agent', accent: analystBot.accent ?? 'amber', state: 'active', availability: 'idle', role: 'collaborator' }] } })
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -981,7 +984,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByRole('textbox', { name: 'Invite code' }).value).toBe('first-code')
+    expect(screen.getByRole('textbox', { name: 'Invite code' })).toHaveProperty('value', 'first-code')
   })
 
   it('preserves a new chat message typed while sending is pending', async () => {
@@ -1002,7 +1005,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('first message')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', 'first message')
   })
 
   it('keeps a pending chat reconciled across closing and reopening', async () => {
@@ -1018,7 +1021,7 @@ describe('shared Bot collaboration surfaces', () => {
     view.rerender(<SharedBotsDialog client={client} open={false} onClose={vi.fn()} t={t} />)
     view.rerender(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
     await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
-    expect(screen.getByRole('button', { name: 'Send message' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true)
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(client.chat).toHaveBeenCalledTimes(1)
 
@@ -1028,7 +1031,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByRole('textbox', { name: 'Message this shared bot' }).value).toBe('')
+    expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', '')
     expect(client.chat).toHaveBeenCalledTimes(1)
   })
 
@@ -1054,7 +1057,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('first note')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', 'first note')
   })
 
   it('keeps a pending shared-note publish reconciled across closing and reopening', async () => {
@@ -1073,7 +1076,7 @@ describe('shared Bot collaboration surfaces', () => {
     view.rerender(<SharedBotsDialog client={client} open={false} onClose={vi.fn()} t={t} />)
     view.rerender(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
     await waitFor(() => { expect(screen.getByPlaceholderText('Add a note for the shared context')).toBeTruthy() })
-    expect(screen.getByRole('button', { name: 'Publish' }).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Publish' })).toHaveProperty('disabled', true)
     fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
     expect(client.writeMemory).toHaveBeenCalledTimes(1)
 
@@ -1083,7 +1086,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByPlaceholderText('Add a note for the shared context').value).toBe('')
+    expect(screen.getByPlaceholderText('Add a note for the shared context')).toHaveProperty('value', '')
     expect(client.writeMemory).toHaveBeenCalledTimes(1)
   })
 
@@ -1110,7 +1113,7 @@ describe('shared Bot collaboration surfaces', () => {
     })
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'next message' } })
-    expect(screen.getByRole('button', { name: 'Send message' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
   })
 
   it('does not allow a pending shared-note publish to overlap chat', async () => {
@@ -1138,6 +1141,6 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByRole('button', { name: 'Send message' }).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
   })
 })

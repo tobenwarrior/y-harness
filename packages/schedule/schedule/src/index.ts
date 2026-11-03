@@ -1,5 +1,5 @@
 /** Host-wide durable reminders and shared human/model management. */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import z from '@yharness/schemastery'
 import { Context, Service } from '@yharness/cordis'
 import { TypertRemoteService, Remote } from '@yharness/typert-protocol'
@@ -8,17 +8,21 @@ import { delegationDepthOf } from '@yharness/subagent'
 import type { SessionId } from '@yharness/session'
 import type { SessionActivity } from '@yharness/workspace'
 import { ScheduleRuntime } from './runtime.ts'
-import { scheduleDomain } from './storage.ts'
+import { scheduleDomain, type ScheduleCreateOperation, type ScheduleTask } from './storage.ts'
 import { deliveryHistoryPage } from './delivery-history.ts'
 import { resolveScheduleUpdate } from './update.ts'
 import {
   foldScheduleEvents, ScheduleInputError, ScheduleLogError, ScheduleId, createAfterScheduleRecord, createAtScheduleRecord,
   createEveryScheduleRecord, createDailyScheduleRecord, createWeeklyScheduleRecord, createCronScheduleRecord,
-  scheduleTitle,
+  parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle, scheduleView,
 } from './domain.ts'
 import type {
-  DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteRequest, ScheduleDeleteResult,
-  ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest, ScheduleRecord,
+  DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleCreateOptions, ScheduleCreateResolution,
+  ScheduleCreateReservation,
+  ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleLifecycleRequest,
+  ScheduleLifecycleView, ScheduleListRequest, SchedulePauseValue,
+  ScheduleRecord,
+  ScheduleId as ScheduleIdType, ScheduleResumeValue,
   ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
 } from './types.ts'
 
@@ -46,6 +50,7 @@ export {
   foldScheduleEvents,
   isRecurringScheduleRecord,
   normalizeWeekdays,
+  parseAtInput,
   parseCronInput,
   parseWeeklyInput,
   renderReminderFraming,
@@ -87,6 +92,136 @@ const DEFAULT_DELIVERY_HISTORY_DAYS = 30
 
 /** Retained delivery-history record cap applied when the deployment states none. */
 const DEFAULT_DELIVERY_HISTORY_RECORDS = 200
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(item => canonicalJson(item)).join(',')}]`
+  if (typeof value === 'object') {
+    const objectValue = value as { readonly [key: string]: unknown }
+    return `{${Object.keys(objectValue).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(objectValue[key])}`).join(',')}}`
+  }
+  return JSON.stringify(`[${typeof value}]`)
+}
+
+/** Reject a request that selects more than one reminder rule. */
+function validateCreateSelector(request: ScheduleCreateRequest): void {
+  if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
+    + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
+    + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
+    throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
+  }
+}
+
+/** Reject an invalid Host retry identity. */
+function validateIdempotencyKey(idempotencyKey: string): void {
+  if (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
+  }
+}
+
+/** Normalize the title and fingerprint shared by Host create-operation methods. */
+function createOperationInputs(
+  request: ScheduleCreateRequest,
+  idempotencyKey: string,
+): { readonly title: string; readonly requestFingerprint: string } {
+  validateCreateSelector(request)
+  const title = scheduleTitle(request.title)
+  validateIdempotencyKey(idempotencyKey)
+  return { title, requestFingerprint: scheduleCreateFingerprint(request, title) }
+}
+
+/** Hash the normalized selector request stored with a Host retry identity. */
+function scheduleCreateFingerprint(request: ScheduleCreateRequest, title: string): string {
+  const canonical: Record<string, unknown> = { prompt: request.prompt.trim(), title }
+  if (request.after_seconds !== undefined) canonical.after_seconds = request.after_seconds
+  if (request.at !== undefined) canonical.at = new Date(parseAtInput(request.at)).toISOString()
+  if (request.every_seconds !== undefined) canonical.every_seconds = request.every_seconds
+  if (request.daily !== undefined) canonical.daily = parseDailyInput(request.daily)
+  if (request.weekly !== undefined) {
+    const weekly = parseWeeklyInput(request.weekly)
+    canonical.weekly = { ...weekly, weekdays: [...weekly.weekdays] }
+  }
+  if (request.cron !== undefined) canonical.cron = parseCronInput(request.cron)
+  return createHash('sha256').update(canonicalJson(canonical)).digest('hex')
+}
+
+function scheduleOperationKey(sessionId: SessionId, idempotencyKey: string): string {
+  return createHash('sha256').update(String(sessionId)).update('\0').update(idempotencyKey).digest('hex')
+}
+
+function createOperation(
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+  status: ScheduleCreateOperation['status'],
+  record?: ScheduleRecord,
+): ScheduleCreateOperation {
+  return {
+    sessionId, idempotencyKey, requestFingerprint, status,
+    ...(record === undefined ? {} : { record }),
+  }
+}
+
+/** Add the durable lifecycle status to a management view without changing the record. */
+function lifecycleView(record: ScheduleRecord, status: 'active' | 'paused'): ScheduleLifecycleView {
+  return { ...scheduleView(record, Date.now()), status }
+}
+
+/** Storage writer needed by the Host-only create-operation helpers. */
+interface CreateOperationWriter {
+  put: (key: string, value: ScheduleCreateOperation) => Promise<unknown>
+}
+
+/** Reject a retry identity whose canonical request changed. */
+function assertCreateFingerprint(
+  operation: ScheduleCreateOperation | undefined,
+  requestFingerprint: string,
+): void {
+  if (operation !== undefined && operation.requestFingerprint !== requestFingerprint) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+  }
+}
+
+/** Find a task for one Host create identity and reject a stored fingerprint conflict. */
+function existingCreateTask(
+  entries: Iterable<readonly [ScheduleIdType, ScheduleTask]>,
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+): readonly [ScheduleIdType, ScheduleTask] | undefined {
+  const existing = [...entries].find(([, task]) => task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+  if (existing !== undefined && existing[1].requestFingerprint !== requestFingerprint) {
+    throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+  }
+  return existing
+}
+
+/** Persist one committed create-operation row after a task is found. */
+async function commitCreateOperation(
+  operations: CreateOperationWriter,
+  operationKey: string,
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+  record: ScheduleRecord,
+): Promise<void> {
+  await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'committed', record))
+}
+
+/** Retire an existing create operation that has no committed task. */
+async function resolveAbsentCreateOperation(
+  operations: CreateOperationWriter,
+  operationKey: string,
+  operation: ScheduleCreateOperation,
+  sessionId: SessionId,
+  idempotencyKey: string,
+): Promise<ScheduleCreateResolution> {
+  if (operation.status === 'resolved_absent') return { status: 'absent' }
+  await operations.put(operationKey, createOperation(sessionId, idempotencyKey, operation.requestFingerprint, 'resolved_absent'))
+  return { status: 'absent' }
+}
 
 /**
  * Shared management service; reads, deletion, and timing edits never activate a Session.
@@ -138,6 +273,18 @@ export class ScheduleService extends TypertRemoteService {
     })
     this.initialized = ctx.effect(async () => {
       const domain = await this.ready
+      try {
+        // Approval cannot survive a Host restart. Retire reservations left by a
+        // stopped native call before any retry can reconcile them.
+        const operations = domain.table('create_operations')
+        for (const [key, operation] of operations.entries()) {
+          if (operation.status === 'reserved') await operations.put(key, { ...operation, status: 'resolved_absent' })
+        }
+      } catch (error: unknown) {
+        this.stopping = true
+        await domain.close()
+        throw error
+      }
       let cleanup: () => Promise<void>
       try {
         cleanup = ctx.effect(() => async () => {
@@ -217,48 +364,251 @@ export class ScheduleService extends TypertRemoteService {
    * title rejects with `invalid_prompt` instead of deriving one from the prompt.
    * A Session a delegated child owns rejects with `subagent_session`, because delivery
    * can never reach it: the child is one whose delegation depth is above zero.
-   * The record is built from the clock reading taken before the request joins the
-   * serialized queue, so a create that waits behind a longer operation keeps its
-   * request-time anchor and may already be due when the queue reaches it.
+   * The record is built from the clock reading inside the serialized queue, after
+   * an idempotency lookup, so a retry that finds an existing task never allocates
+   * a fresh task id or timing anchor. A reused key with a different canonical
+   * request is rejected. Create-operation reconciliation and active listing use
+   * the same FIFO, so a lost native result cannot be resolved against a stale
+   * empty task set. Bot approval reserves its operation before the external
+   * approval request; a reservation left by a stopped Host is retired on restart.
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
-   * @param signal - Optional cancellation checked before persistence begins, including after FIFO waits.
+   * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
+   * @param options - Optional operation-specific Host retry identity. A repeated key for this
+   * Session returns the original record only when the canonical request matches.
    * @returns The durably stored schedule. Cancellation does not roll back an in-flight write.
    */
-  async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord> {
-    if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
-      + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
-      + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
-      throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
-    }
+  async create(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    signal?: AbortSignal,
+    options?: ScheduleCreateOptions,
+  ): Promise<ScheduleRecord> {
+    validateCreateSelector(request)
     const title = scheduleTitle(request.title)
-    const id = ScheduleId(`schedule-${randomUUID()}`)
-    const now = Date.now()
-    let record: ScheduleRecord
-    if (request.at !== undefined) {
-      record = createAtScheduleRecord(id, request.prompt, request.at, now, title)
-    }
-    else if (request.after_seconds !== undefined) {
-      record = createAfterScheduleRecord(id, request.prompt, request.after_seconds, now, title)
-    }
-    else if (request.every_seconds !== undefined) {
-      record = createEveryScheduleRecord(id, request.prompt, request.every_seconds, now, title)
-    }
-    else if (request.daily !== undefined) record = createDailyScheduleRecord(id, request.prompt, request.daily, now, title)
-    else if (request.weekly !== undefined) record = createWeeklyScheduleRecord(id, request.prompt, request.weekly, now, title)
-    else if (request.cron !== undefined) record = createCronScheduleRecord(id, request.prompt, request.cron, now, title)
-    else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
+    const idempotencyKey = options?.idempotencyKey
+    if (idempotencyKey !== undefined) validateIdempotencyKey(idempotencyKey)
+    const requestFingerprint = idempotencyKey === undefined ? undefined : scheduleCreateFingerprint(request, title)
     return this.serialize(async () => {
       const refusal = this.reminderTargetRefusal(sessionId)
       if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
       const domain = await this.getDomain()
       signal?.throwIfAborted()
+      if (idempotencyKey !== undefined) {
+        const operationId = idempotencyKey
+        const fingerprint = requestFingerprint
+        if (fingerprint === undefined) throw new ScheduleLogError('A retry operation is missing its request fingerprint.')
+        const tasks = domain.table('tasks')
+        const operations = domain.table('create_operations')
+        const operationKey = scheduleOperationKey(sessionId, operationId)
+        const operation = operations.get(operationKey)
+        if (operation !== undefined && operation.requestFingerprint !== fingerprint) {
+          throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+        }
+        if (operation?.status === 'committed') {
+          const committed = operation.record
+          if (committed === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+          // Keep the read inside the serialized operation so cancellation after
+          // an idempotent lookup remains observable even if the task was later deleted.
+          const matching = [...tasks.entries()].find(([, task]) =>
+            task.sessionId === sessionId && task.idempotencyKey === operationId)
+          if (matching !== undefined && matching[1].requestFingerprint !== fingerprint) {
+            throw new ScheduleLogError('A committed create operation conflicts with its stored task.')
+          }
+          signal?.throwIfAborted()
+          return committed
+        }
+        const existing = [...tasks.entries()].find(([, task]) =>
+          task.sessionId === sessionId && task.idempotencyKey === operationId)
+        signal?.throwIfAborted()
+        if (existing !== undefined) {
+          if (existing[1].requestFingerprint !== fingerprint) {
+            throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+          }
+          await operations.put(operationKey, createOperation(
+            sessionId, operationId, fingerprint, 'committed', existing[1].record,
+          ))
+          signal?.throwIfAborted()
+          return existing[1].record
+        }
+        await operations.put(operationKey, createOperation(sessionId, operationId, fingerprint, 'pending'))
+        signal?.throwIfAborted()
+      }
+      const id = ScheduleId(`schedule-${randomUUID()}`)
+      const now = Date.now()
+      let record: ScheduleRecord
+      if (request.at !== undefined) {
+        record = createAtScheduleRecord(id, request.prompt, request.at, now, title)
+      }
+      else if (request.after_seconds !== undefined) {
+        record = createAfterScheduleRecord(id, request.prompt, request.after_seconds, now, title)
+      }
+      else if (request.every_seconds !== undefined) {
+        record = createEveryScheduleRecord(id, request.prompt, request.every_seconds, now, title)
+      }
+      else if (request.daily !== undefined) record = createDailyScheduleRecord(id, request.prompt, request.daily, now, title)
+      else if (request.weekly !== undefined) record = createWeeklyScheduleRecord(id, request.prompt, request.weekly, now, title)
+      else if (request.cron !== undefined) record = createCronScheduleRecord(id, request.prompt, request.cron, now, title)
+      else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
       await domain.table('tasks').put(id, {
-        sessionId, record, status: 'active', deliveryHistory: { records: [], earlierRecordsUnavailable: false },
+        sessionId, record, status: 'active',
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey, requestFingerprint }),
+        deliveryHistory: { records: [], earlierRecordsUnavailable: false },
       })
+      if (idempotencyKey !== undefined && requestFingerprint !== undefined) {
+        await domain.table('create_operations').put(
+          scheduleOperationKey(sessionId, idempotencyKey),
+          createOperation(sessionId, idempotencyKey, requestFingerprint, 'committed', record),
+        )
+      }
       this.emitChanged()
       this.runtime?.requestDrive()
+      signal?.throwIfAborted()
       return record
+    })
+  }
+
+  /**
+   * Reserve one Bot create operation before its external approval completes.
+   *
+   * A reservation is intentionally not a task: it only prevents another native
+   * call from creating the same routine while approval is pending. Reservations
+   * left by a stopped Host are retired during service initialization.
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity retained across approval retries.
+   * @param signal - Optional cancellation checked before reservation persistence.
+   * @returns A new pending reservation or an already committed task.
+   */
+  async reserveCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ScheduleCreateReservation> {
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
+    return this.serialize(async () => {
+      const refusal = this.reminderTargetRefusal(sessionId)
+      if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
+      const domain = await this.getDomain()
+      signal?.throwIfAborted()
+      const operations = domain.table('create_operations')
+      const tasks = domain.table('tasks')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      assertCreateFingerprint(operation, requestFingerprint)
+      if (operation?.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        signal?.throwIfAborted()
+        return { status: 'committed', record }
+      }
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
+      if (existing !== undefined) {
+        signal?.throwIfAborted()
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
+        signal?.throwIfAborted()
+        return { status: 'committed', record: existing[1].record }
+      }
+      await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'reserved'))
+      // A reservation is durable even when cancellation arrives after its
+      // write; the native caller releases it before returning cancellation.
+      return { status: 'reserved' }
+    })
+  }
+
+  /**
+   * Retire a Bot create operation that was denied or cancelled before a task committed.
+   *
+   * A committed operation record always wins over retirement, so a cancellation
+   * that arrived after the task write cannot erase or hide its durable receipt.
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity retained across approval retries.
+   * @returns The committed operation, a durable absent resolution, or unknown when no reservation exists.
+   */
+  async releaseCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+  ): Promise<ScheduleCreateResolution> {
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const operations = domain.table('create_operations')
+      const tasks = domain.table('tasks')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      assertCreateFingerprint(operation, requestFingerprint)
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
+      if (existing !== undefined) {
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
+        return { status: 'committed', record: existing[1].record }
+      }
+      if (operation === undefined) return { status: 'unknown' }
+      if (operation.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        return { status: 'committed', record }
+      }
+      return resolveAbsentCreateOperation(operations, operationKey, operation, sessionId, idempotencyKey)
+    })
+  }
+
+  /**
+   * Resolve one Bot create operation after its native reply was lost.
+   *
+   * Resolution runs in the same FIFO as creation, so a list cannot observe an
+   * empty task set while an earlier create is still committing. An operation
+   * that has not reached Schedule remains unknown; a registered pending
+   * operation with no task is durably marked absent, so later identical
+   * requests can be intentional new operations instead of inheriting stale
+   * uncertainty forever.
+   *
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity from the earlier native call.
+   * @param signal - Optional cancellation checked before reads and resolution writes.
+   * @returns The committed task, a durable absent resolution, or unknown when the operation was never registered.
+   */
+  async reconcileCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ScheduleCreateResolution> {
+    const { requestFingerprint } = createOperationInputs(request, idempotencyKey)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      signal?.throwIfAborted()
+      const tasks = domain.table('tasks')
+      const operations = domain.table('create_operations')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      assertCreateFingerprint(operation, requestFingerprint)
+      const committed = (record: ScheduleRecord): ScheduleCreateResolution => {
+        return { status: 'committed', record }
+      }
+      if (operation?.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        signal?.throwIfAborted()
+        return committed(record)
+      }
+      const existing = existingCreateTask(tasks.entries(), sessionId, idempotencyKey, requestFingerprint)
+      if (existing !== undefined) {
+        signal?.throwIfAborted()
+        await commitCreateOperation(operations, operationKey, sessionId, idempotencyKey, requestFingerprint, existing[1].record)
+        return { status: 'committed', record: existing[1].record }
+      }
+      if (operation === undefined) return { status: 'unknown' }
+      // A reservation belongs to a live approval request. It is retired only
+      // after that request releases it or the Schedule service restarts.
+      if (operation.status === 'reserved') return { status: 'unknown' }
+      if (operation.status === 'resolved_absent') return { status: 'absent' }
+      signal?.throwIfAborted()
+      await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'resolved_absent'))
+      return { status: 'absent' }
     })
   }
 
@@ -269,27 +619,31 @@ export class ScheduleService extends TypertRemoteService {
    */
   @Remote('list')
   async list(request: ScheduleListRequest): Promise<ScheduleRecord[]> {
-    const domain = await this.getDomain()
-    return [...domain.table('tasks').entries()]
-      .filter(([, task]) => task.sessionId === request.sessionId && task.status === 'active')
-      .map(([, task]) => task.record)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      return [...domain.table('tasks').entries()]
+        .filter(([, task]) => task.sessionId === request.sessionId && task.status === 'active')
+        .map(([, task]) => task.record)
+    })
   }
 
   /**
-   * Read all active and inactive Host reminders with their original Session bindings.
+   * Read all active, paused, and inactive Host reminders with their original Session bindings.
    * A deleted reminder has no row, so it is absent here.
    * Does not activate Sessions or read Session history.
    * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
    */
   @Remote('catalog')
   async catalog(): Promise<ScheduleCatalogEntry[]> {
-    const domain = await this.getDomain()
-    return [...domain.table('tasks').entries()]
-      .map(([, task]) => ({
-        ...task.record, sessionId: task.sessionId, status: task.status,
-        ...(task.lastDelivery === undefined ? {} : { lastDelivery: task.lastDelivery }),
-      }))
-      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      return [...domain.table('tasks').entries()]
+        .map(([, task]) => ({
+          ...task.record, sessionId: task.sessionId, status: task.status,
+          ...(task.lastDelivery === undefined ? {} : { lastDelivery: task.lastDelivery }),
+        }))
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt) || a.id.localeCompare(b.id))
+    })
   }
 
   /**
@@ -309,6 +663,66 @@ export class ScheduleService extends TypertRemoteService {
       return { id: request.id, code: 'schedule_not_found' }
     }
     return deliveryHistoryPage(task, request, this.retention)
+  }
+
+  /**
+   * Pause one active routine without deleting its target or saved delivery history.
+   *
+   * A repeated pause is idempotent and returns the paused view. Ended tasks remain
+   * in the catalog but cannot be re-armed; a foreign Session never reveals the row.
+   * @param request - Session binding and task identity.
+   * @param signal - Cancellation checked before the lifecycle write.
+   * @returns The paused view or a bounded lookup/ended result.
+   */
+  @Remote('pause')
+  async pause(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<SchedulePauseValue> {
+    return this.serialize<SchedulePauseValue>(async () => {
+      const refusal = this.reminderTargetRefusal(request.sessionId)
+      if (refusal !== undefined) return refusal
+      const tasks = (await this.getDomain()).table('tasks')
+      signal?.throwIfAborted()
+      const current = tasks.get(request.id)
+      if (current === undefined || current.sessionId !== request.sessionId) {
+        return { id: request.id, paused: false, code: 'schedule_not_found' }
+      }
+      if (current.status === 'inactive') return { id: request.id, paused: false, code: 'schedule_ended' }
+      if (current.status === 'active') {
+        await tasks.put(request.id, { ...current, status: 'paused' })
+        this.emitChanged()
+        this.runtime?.requestDrive()
+      }
+      return { ...lifecycleView(current.record, 'paused'), paused: true }
+    })
+  }
+
+  /**
+   * Resume one paused routine without changing its committed target.
+   *
+   * A repeated resume is idempotent. A recurring task whose target is already
+   * overdue is picked up by the normal Host runtime after it is re-armed.
+   * @param request - Session binding and task identity.
+   * @param signal - Cancellation checked before the lifecycle write.
+   * @returns The active view or a bounded lookup/ended result.
+   */
+  @Remote('resume')
+  async resume(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<ScheduleResumeValue> {
+    return this.serialize<ScheduleResumeValue>(async () => {
+      const refusal = this.reminderTargetRefusal(request.sessionId)
+      if (refusal !== undefined) return refusal
+      const tasks = (await this.getDomain()).table('tasks')
+      signal?.throwIfAborted()
+      const current = tasks.get(request.id)
+      if (current === undefined || current.sessionId !== request.sessionId) {
+        return { id: request.id, resumed: false, code: 'schedule_not_found' }
+      }
+      if (current.status === 'inactive') return { id: request.id, resumed: false, code: 'schedule_ended' }
+      if (current.status === 'paused') {
+        await tasks.put(request.id, { ...current, status: 'active' })
+        this.emitChanged()
+        this.runtime?.requestDrive()
+      }
+      return { ...lifecycleView(current.record, 'active'), resumed: true }
+    })
   }
 
   /**
@@ -339,7 +753,7 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
-   * Update the name, instruction, and timing of an active task within the original Session
+   * Update the name, instruction, and timing of an active or paused task within the original Session
    * binding without activating the Session or changing saved deliveries.
    *
    * Each supplied field replaces its stored value; an omitted field keeps it. A name or
