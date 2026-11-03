@@ -40,7 +40,8 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
   const [draft, setDraft] = useState('')
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [working, setWorking] = useState<string | null>(null)
-  const [error, setError] = useState<'load' | 'update' | 'remove' | null>(null)
+  const [error, setError] = useState<'load' | 'update' | null>(null)
+  const [removeError, setRemoveError] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -49,6 +50,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     setError(null)
     setEditingId(null)
     setConfirmingId(null)
+    setRemoveError(false)
     void actions.list(bot.id).then((next) => {
       if (!live) return
       setMemories(next)
@@ -65,6 +67,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     setDraft(text)
     setError(null)
     setConfirmingId(null)
+    setRemoveError(false)
   }
 
   const cancelEdit = (): void => {
@@ -92,13 +95,15 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     if (working !== null) return
     setWorking(id)
     setError(null)
+    setRemoveError(false)
     try {
       await actions.remove(bot.id, id)
       setMemories(current => current.filter(memory => memory.id !== id))
       setConfirmingId(null)
+      setRemoveError(false)
       if (editingId === id) cancelEdit()
     } catch {
-      setError('remove')
+      setRemoveError(true)
     } finally {
       setWorking(current => current === id ? null : current)
     }
@@ -108,9 +113,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     ? t('memoryLoadFailed')
     : error === 'update'
       ? t('memorySaveFailed')
-      : error === 'remove'
-        ? t('memoryRemoveFailed')
-        : undefined
+      : undefined
 
   return (
     <>
@@ -183,7 +186,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
                         <Button variant="ghost" size="sm" aria-label={`${t('memoryEdit')} ${memory.id}`} icon={<IconEditOutlineRegular size={14} />} onClick={() => { beginEdit(memory.id, memory.text) }} />
                       </Tooltip>
                       <Tooltip label={t('memoryRemove')} side="top" portal>
-                        <Button variant="ghost" size="sm" aria-label={`${t('memoryRemove')} ${memory.id}`} icon={<IconTrashOutlineRegular size={14} />} onClick={() => { setConfirmingId(memory.id); setError(null) }} />
+                        <Button variant="ghost" size="sm" aria-label={`${t('memoryRemove')} ${memory.id}`} icon={<IconTrashOutlineRegular size={14} />} onClick={() => { setConfirmingId(memory.id); setError(null); setRemoveError(false) }} />
                       </Tooltip>
                     </div>
                   )}
@@ -195,7 +198,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
       </Modal>
       <Modal
         open={confirmingId !== null}
-        onClose={() => { if (working === null) setConfirmingId(null) }}
+        onClose={() => { if (working === null) { setConfirmingId(null); setRemoveError(false) } }}
         title={t('memoryRemoveTitle')}
         description={t('memoryRemoveDescription')}
         closeLabel={t('cancel')}
@@ -207,7 +210,9 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
             </Button>
           </>
         )}
-      />
+      >
+        {removeError && <div className={css.memoryNotice} role="alert">{t('memoryRemoveFailed')}</div>}
+      </Modal>
     </>
   )
 }

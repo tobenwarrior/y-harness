@@ -95,6 +95,7 @@ import type {
   BotView,
 } from './types.ts'
 import { BOT_APPEARANCE_MIGRATION_VERSION, botDomain, imageAttachmentRefSchema } from './storage.ts'
+import type { BotStoredRecord } from './storage.ts'
 
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
@@ -460,7 +461,7 @@ export class BotService extends TypertRemoteService {
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
   private readonly initialized: PromiseLike<unknown>
-  private readonly recordsBySession = new Map<string, BotRecord>()
+  private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
@@ -505,6 +506,7 @@ export class BotService extends TypertRemoteService {
         }
         throw error
       }
+      await this.recoverPendingMemoryUpdates(domain.table('bots'))
       for (const [, record] of domain.table('bots').entries()) this.recordsBySession.set(String(record.sessionId), record)
       return domain
     })
@@ -837,6 +839,63 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /** Finish a pending two-event edit recorded in the durable Bot row. */
+  private async recoverPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  ): Promise<void> {
+    const pending = record.pendingMemoryUpdate
+    if (pending === undefined) return
+    const id = parseBotMemoryId(pending.memoryId)
+    const text = normalizeBotMemoryText(pending.text)
+    await this.ensureMemoryLoaded(record)
+    await this.reconcilePendingMemory(record.sessionId)
+    const memories = this.memoriesBySession.get(String(record.sessionId))
+    if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
+    const current = memories.get(String(id))
+    if (current === undefined) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    } else if (current.text !== text) {
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'forget' })
+      await this.appendMemoryEvent(record.sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+    }
+    await this.clearPendingMemoryUpdate(record, bots, pending)
+  }
+
+  /** Recover all Bot edits that were interrupted after their intent was saved. */
+  private async recoverPendingMemoryUpdates(bots: KvTable<BotRecord['id'], BotStoredRecord>): Promise<void> {
+    for (const [, record] of bots.entries()) {
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
+    }
+  }
+
+  /** Save an edit intent before mutating its append-only memory log. */
+  private async savePendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<BotStoredRecord> {
+    const next: BotStoredRecord = { ...record, pendingMemoryUpdate: intent }
+    await bots.put(record.id, next)
+    this.recordsBySession.set(String(next.sessionId), next)
+    return next
+  }
+
+  /** Remove a completed edit intent without changing the public Bot row. */
+  private async clearPendingMemoryUpdate(
+    record: BotStoredRecord,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    intent: NonNullable<BotStoredRecord['pendingMemoryUpdate']>,
+  ): Promise<void> {
+    const latest = bots.get(record.id)
+    if (latest === undefined || latest.pendingMemoryUpdate === undefined) return
+    if (latest.pendingMemoryUpdate.memoryId !== intent.memoryId || latest.pendingMemoryUpdate.text !== intent.text) return
+    const { pendingMemoryUpdate: ignored, ...withoutPending } = latest
+    void ignored
+    await bots.put(record.id, withoutPending)
+    this.recordsBySession.set(String(withoutPending.sessionId), withoutPending)
+  }
+
   /** Append one memory mutation, update the live projection, and await durability. */
   private async appendMemoryEvent(
     sessionId: SessionId,
@@ -880,7 +939,9 @@ export class BotService extends TypertRemoteService {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const text = normalizeBotMemoryText(request.text)
@@ -906,7 +967,9 @@ export class BotService extends TypertRemoteService {
   private async listMemoryForSession(sessionId: SessionId, signal?: AbortSignal): Promise<readonly BotMemoryRecord[]> {
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
+    const bots = (await this.getDomain()).table('bots')
     await this.ensureMemoryLoaded(record, signal)
+    if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
     await this.reconcilePendingMemory(sessionId, signal)
     this.throwIfMemoryCancelled(signal)
     const memories = this.memoriesBySession.get(String(sessionId))
@@ -921,7 +984,9 @@ export class BotService extends TypertRemoteService {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const signal = request.signal
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record, signal)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       const pending = await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
       const id = parseBotMemoryId(String(request.memoryId))
@@ -1099,7 +1164,9 @@ export class BotService extends TypertRemoteService {
       const record = this.recordsBySession.get(String(sessionId))
       if (record === undefined) throw new BotMemoryError('sender-not-bot', 'The sending Session is not owned by a Bot.')
       const text = normalizeBotMemoryText(request.text)
+      const bots = (await this.getDomain()).table('bots')
       await this.ensureMemoryLoaded(record)
+      if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId)
       this.throwIfMemoryCancelled()
       const id = parseBotMemoryId(String(request.memoryId))
@@ -1108,8 +1175,11 @@ export class BotService extends TypertRemoteService {
       const current = memories.get(String(id))
       if (current === undefined) throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
       if (current.text === text) return current
-      await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'forget' })
-      const appended = await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'remember', text })
+      const intent = { memoryId: String(id), text }
+      const pendingRecord = await this.savePendingMemoryUpdate(record, bots, intent)
+      await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'forget' })
+      const appended = await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'remember', text })
+      await this.clearPendingMemoryUpdate(pendingRecord, bots, intent)
       return { id, text, createdAt: appended.time }
     })
   }
@@ -1830,12 +1900,14 @@ export class BotService extends TypertRemoteService {
     void task.finally(() => { this.promptDisposals.delete(task) })
   }
 
-  private view(record: BotRecord): BotView {
+  private view(record: BotStoredRecord): BotView {
     const agent = this.ctx.agents.get(record.sessionId)
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
-    return { ...record, pinned: record.pinned ?? false, hidden: record.hidden ?? false, availability }
+    const { pendingMemoryUpdate: ignored, ...publicRecord } = record
+    void ignored
+    return { ...publicRecord, pinned: publicRecord.pinned ?? false, hidden: publicRecord.hidden ?? false, availability }
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {

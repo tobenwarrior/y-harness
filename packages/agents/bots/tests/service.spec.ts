@@ -400,6 +400,88 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('reconstructs an edit after an uncertain flush without exposing the old text', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Atomic edit owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const memoryId = BotMemoryId('memory-atomic-edit')
+
+    const firstRun = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    let events: readonly SessionEvent[] = []
+    try {
+      const agent = firstRun.agents[0]
+      if (agent === undefined) throw new Error('atomic edit Agent was not created')
+      const memory = (await firstRun.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('atomic edit memory was not bound')
+      await memory.remember({ memoryId, text: 'The old launch window.' })
+      firstRun.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+
+      await expect(firstRun.service.updateMemory({
+        botId: owner.bot.id,
+        memoryId,
+        text: 'The revised launch window.',
+      })).rejects.toMatchObject({ code: 'durability-failed' })
+      events = agent.session.snapshotEvents()
+      expect(events.filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual(['remember', 'forget'])
+      expect((await firstRun.service.list({})).bots[0]).not.toHaveProperty('pendingMemoryUpdate')
+    } finally {
+      await close(firstRun.ctx)
+    }
+
+    const secondRun = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(owner.bot.sessionId)],
+      new Map([[String(owner.bot.sessionId), events]]),
+    )
+    try {
+      const agent = secondRun.agents[0]
+      if (agent === undefined) throw new Error('restarted atomic edit Agent was not created')
+      await expect(secondRun.service.listMemory({ botId: owner.bot.id })).resolves.toMatchObject({
+        memories: [{ id: String(memoryId), text: 'The revised launch window.' }],
+      })
+      expect(secondRun.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
+        'remember', 'forget', 'remember',
+      ])
+      const prompt = renderPrompt(await secondRun.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('The revised launch window.')
+      expect(prompt).not.toContain('The old launch window.')
+    } finally {
+      await close(secondRun.ctx)
+    }
+  })
+
+  it('retries a failed edit from its durable intent without losing the replacement', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const owner = await first.service.create({ name: 'Retry edit owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(owner.bot.sessionId)])
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('retry edit Agent was not created')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('retry edit memory was not bound')
+      const memoryId = BotMemoryId('memory-retry-edit')
+      await memory.remember({ memoryId, text: 'The first schedule.' })
+      h.flush.mockResolvedValueOnce(false).mockResolvedValue(true)
+
+      const request = { botId: owner.bot.id, memoryId, text: 'The corrected schedule.' }
+      await expect(h.service.updateMemory(request)).rejects.toMatchObject({ code: 'durability-failed' })
+      await expect(h.service.updateMemory(request)).resolves.toMatchObject({
+        memory: { id: String(memoryId), text: 'The corrected schedule.' },
+      })
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
+        'remember', 'forget', 'remember',
+      ])
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('rejects malformed required memory events instead of silently dropping them', async () => {
     const event = {
       type: 'bot/memory', seq: SessionSeq(0), time: 1,

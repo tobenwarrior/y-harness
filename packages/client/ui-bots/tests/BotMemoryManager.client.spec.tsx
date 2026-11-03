@@ -70,4 +70,21 @@ describe('BotMemoryManager', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('The memory could not be saved. Try again.')
     expect(within(row).getByRole('textbox', { name: 'Memory text' }).value).toBe('New text')
   })
+
+  it('keeps the remove confirmation open and reports a removal failure inside it', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [{ id: 'memory-one', text: 'Keep handoffs concise.', createdAt: 1 }]),
+      update: vi.fn(async (_botId: string, memoryId: string, text: string) => ({ id: memoryId, text, createdAt: 2 })),
+      remove: vi.fn(async () => { throw new Error('memory service unavailable') }),
+    }
+
+    renderManager(actions)
+    const row = await screen.findByRole('listitem', { name: /memory-one/ })
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-one' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('The memory could not be removed. Try again.')
+    expect(screen.getByRole('heading', { name: 'Remove memory?' })).toBeTruthy()
+    expect(screen.getByRole('listitem', { name: /memory-one/ })).toBeTruthy()
+  })
 })

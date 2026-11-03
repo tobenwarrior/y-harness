@@ -7,6 +7,7 @@ import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'
+import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 
 /** Durable image reference admitted by the attachment store. */
 export const imageAttachmentRefSchema = z.object({
@@ -45,6 +46,11 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
   message: 'Text values must be trimmed',
 })
 
+const pendingMemoryUpdateSchema = z.object({
+  memoryId: z.string().regex(/^memory-[A-Za-z0-9][A-Za-z0-9-]*$/).max(256),
+  text: boundedText(BOT_MEMORY_TEXT_LIMIT),
+}).strict()
+
 /** Stored Bot row; malformed authoritative records reject domain opening. */
 export const botRecordSchema = z.object({
   id: botIdSchema,
@@ -78,6 +84,7 @@ export const botRecordSchema = z.object({
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
+  pendingMemoryUpdate: pendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {
@@ -103,7 +110,7 @@ export const botDomain = defineDomain({
     initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
   },
   tables: {
-    bots: domainTable<BotRecord['id'], BotRecord>(botRecordSchema),
+    bots: domainTable<BotRecord['id'], z.infer<typeof botRecordSchema>>(botRecordSchema),
   },
 })
 
