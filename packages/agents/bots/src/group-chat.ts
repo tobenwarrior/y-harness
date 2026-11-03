@@ -53,13 +53,15 @@ export interface BotGroupMessageRecord {
   readonly sender: BotGroupMessageSender
   /** User-visible text. */
   readonly text: string
+  /** Recipients selected by the author; omitted in legacy records that broadcast to the group. */
+  readonly targetBotIds?: readonly BotId[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
 
 /** Durable per-recipient delivery state for one group message. */
 export interface BotGroupDeliveryRecord {
-  /** Composite key `${messageId}:${botId}`. */
+  /** Stable path-safe key derived from the message and recipient identities. */
   readonly id: string
   /** Parent group. */
   readonly groupId: BotGroupId
@@ -123,6 +125,8 @@ export interface BotGroupMessageView {
   readonly sender: BotGroupMessageSenderView
   /** User-visible text. */
   readonly text: string
+  /** Recipients selected by the author, in the original mention order. */
+  readonly targetBotIds?: readonly BotId[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
@@ -155,6 +159,22 @@ export interface BotGroupCreateValue {
   readonly group: BotGroupView
 }
 
+/** Group metadata and membership replacement request. */
+export interface BotGroupUpdateRequest {
+  /** Group to update. */
+  readonly groupId: BotGroupId
+  /** New non-empty display name. */
+  readonly name: string
+  /** Two through six existing Bot ids in their new display order. */
+  readonly botIds: readonly BotId[]
+}
+
+/** Group update response. */
+export interface BotGroupUpdateValue {
+  /** Updated group projection. */
+  readonly group: BotGroupView
+}
+
 /** Group transcript request. */
 export interface BotGroupInspectRequest {
   /** Group to inspect. */
@@ -177,6 +197,8 @@ export interface BotGroupSendRequest {
   readonly text: string
   /** Optional retry identity. */
   readonly messageId?: BotGroupMessageId
+  /** Optional targeted recipients; omitted messages are delivered to every other member. */
+  readonly targetBotIds?: readonly BotId[]
   /** Cancellation for delivery admission. */
   readonly signal?: AbortSignal
 }
@@ -189,6 +211,8 @@ export interface BotGroupSendRemoteRequest {
   readonly text: string
   /** Optional retry identity. */
   readonly messageId?: BotGroupMessageId
+  /** Optional targeted recipients; omitted messages are delivered to every group member. */
+  readonly targetBotIds?: readonly BotId[]
 }
 
 /** One recipient's group delivery outcome. */
@@ -274,8 +298,16 @@ export const botGroupMessageRecordSchema = z.object({
   groupId: groupIdSchema,
   sender: senderSchema,
   text: groupTextSchema,
+  targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
   createdAt: z.number().safe().int().nonnegative(),
-}).strict()
+}).strict().transform((value): BotGroupMessageRecord => ({
+  id: value.id,
+  groupId: value.groupId,
+  sender: value.sender,
+  text: value.text,
+  ...(value.targetBotIds === undefined ? {} : { targetBotIds: value.targetBotIds }),
+  createdAt: value.createdAt,
+}))
 
 /** Stored per-recipient delivery schema. */
 export const botGroupDeliveryRecordSchema = z.object({
@@ -353,6 +385,12 @@ function sameIds(left: readonly BotId[], right: readonly BotId[]): boolean {
   return left.length === right.length && left.every((id, index) => id === right[index])
 }
 
+function sameIdSet(left: readonly BotId[], right: readonly BotId[]): boolean {
+  if (left.length !== right.length) return false
+  const rightIds = new Set(right.map(String))
+  return new Set(left.map(String)).size === rightIds.size && left.every(id => rightIds.has(String(id)))
+}
+
 /** Durable group roster and fan-out delivery owner. */
 export class BotGroupService {
   private chain: Promise<unknown> = Promise.resolve()
@@ -392,7 +430,7 @@ export class BotGroupService {
       const groups = this.domain.table('groups')
       const existing = groups.get(id)
       if (existing !== undefined) {
-        if (existing.name === name && sameIds(existing.botIds, botIds)) return { group: this.view(existing, bots) }
+        if (existing.name === name && sameIdSet(existing.botIds, botIds)) return { group: this.view(existing, bots) }
         throw new BotGroupError('invalid', `Bot group "${String(id)}" already exists with different metadata`)
       }
       const now = Date.now()
@@ -400,6 +438,48 @@ export class BotGroupService {
       await groups.put(id, record)
       this.host.changed?.()
       return { group: this.view(record, bots) }
+    })
+  }
+
+  /** Update a group from the human workspace while preserving its durable identity. */
+  async update(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return this.updateInternal(request)
+  }
+
+  /** Update a group from a live member Bot after re-checking membership. */
+  async updateAsBot(senderBotId: BotId, request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return this.updateInternal(request, senderBotId)
+  }
+
+  private async updateInternal(request: BotGroupUpdateRequest, senderBotId?: BotId): Promise<BotGroupUpdateValue> {
+    return this.serialize(async () => {
+      const groupId = normalizeGroupId(request.groupId)
+      const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
+      const botIds = [...request.botIds]
+      if (botIds.length < 2) throw new BotGroupError('invalid', 'A Bot group must contain at least two Bots')
+      if (botIds.length > MAX_GROUP_MEMBERS) throw new BotGroupError('invalid', `A Bot group may contain at most ${String(MAX_GROUP_MEMBERS)} Bots`)
+      if (new Set(botIds.map(String)).size !== botIds.length) throw new BotGroupError('invalid', 'Bot group members must be unique')
+      const groups = this.domain.table('groups')
+      const group = groups.get(groupId)
+      if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
+      const bots = await this.host.listBots()
+      if (senderBotId !== undefined && !group.botIds.includes(senderBotId)) {
+        throw new BotGroupError('member-not-found', `Bot "${String(senderBotId)}" is not a member of this group`)
+      }
+      if (senderBotId !== undefined && !botIds.includes(senderBotId)) {
+        throw new BotGroupError('invalid', 'The Bot making this change must remain a member of the group')
+      }
+      for (const botId of botIds) {
+        const bot = bots.find(candidate => candidate.id === botId)
+        if (bot === undefined) throw new BotGroupError('member-not-found', `Bot "${String(botId)}" was not found`)
+        if (bot.state !== 'active') throw new BotGroupError('member-not-found', `Bot "${String(botId)}" is not active`)
+      }
+      if (group.name === name && sameIds(group.botIds, botIds)) return { group: this.view(group, bots) }
+      const updatedAt = Math.max(Date.now(), group.updatedAt)
+      const next = { ...group, name, botIds, updatedAt }
+      await groups.put(groupId, next)
+      this.host.changed?.()
+      return { group: this.view(next, bots) }
     })
   }
 
@@ -439,26 +519,27 @@ export class BotGroupService {
         ? ({ kind: 'user' } as const)
         : this.sender(group, senderBotId, bots)
       const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
+      const targetBotIds = this.recipientIds(group, sender, request.targetBotIds)
       const messageId = normalizeMessageId(request.messageId)
       const messages = this.domain.table('messages')
       let changed = false
       const existing = messages.get(messageId)
       if (existing !== undefined) {
         if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
-          || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)) {
+          || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
+          || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)) {
           throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
         }
       } else {
         await messages.put(messageId, {
-          id: messageId, groupId, sender, text, createdAt: Date.now(),
+          id: messageId, groupId, sender, text, targetBotIds, createdAt: Date.now(),
         })
         changed = true
       }
       const deliveries = this.domain.table('deliveries')
       const outcomes: BotGroupDeliveryView[] = []
       let admitted = false
-      for (const botId of group.botIds) {
-        if (sender.kind === 'bot' && sender.botId === botId) continue
+      for (const botId of targetBotIds) {
         const id = deliveryId(messageId, botId)
         const current = deliveries.get(id)
         if (current?.status === 'accepted' || current?.status === 'responded') {
@@ -613,6 +694,28 @@ export class BotGroupService {
     return { kind: 'bot', botId }
   }
 
+  private recipientIds(
+    group: BotGroupRecord,
+    sender: BotGroupMessageSender,
+    requested?: readonly BotId[],
+  ): readonly BotId[] {
+    const defaults = group.botIds.filter(botId => sender.kind !== 'bot' || botId !== sender.botId)
+    if (requested === undefined) return defaults
+    if (requested.length === 0 || requested.length > MAX_GROUP_MEMBERS) {
+      throw new BotGroupError('invalid', `Bot group targets must contain 1-${String(MAX_GROUP_MEMBERS)} members`)
+    }
+    if (new Set(requested.map(String)).size !== requested.length) {
+      throw new BotGroupError('invalid', 'Bot group targets must be unique')
+    }
+    for (const botId of requested) {
+      if (!group.botIds.includes(botId)) throw new BotGroupError('member-not-found', `Bot "${String(botId)}" is not a member of this group`)
+      if (sender.kind === 'bot' && sender.botId === botId) {
+        throw new BotGroupError('invalid', 'A Bot cannot target itself in a group message')
+      }
+    }
+    return [...requested]
+  }
+
   private view(record: BotGroupRecord, bots: readonly BotView[]): BotGroupView {
     return {
       ...record,
@@ -645,7 +748,7 @@ export class BotGroupService {
 }
 
 function deliveryId(messageId: BotGroupMessageId, botId: BotId): string {
-  return `${String(messageId)}:${String(botId)}`
+  return `delivery-${createHash('sha256').update(`${String(messageId)}:${String(botId)}`).digest('hex')}`
 }
 
 /** Keep the table type visible to BotService without exposing its implementation. */

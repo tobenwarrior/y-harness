@@ -65,6 +65,8 @@ export interface BotGroupMessageSummary {
     | { readonly kind: 'bot'; readonly botId: string; readonly name: string }
   /** User-visible message text. */
   readonly text: string
+  /** Exact Bot ids selected by mentions for this message, when it was targeted. */
+  readonly targetBotIds?: readonly string[]
   /** Unix timestamp used for stable transcript ordering. */
   readonly createdAt: number
 }
@@ -83,6 +85,16 @@ export interface BotGroupCreation {
   readonly botIds: readonly string[]
   /** Optional explicit retry/new-operation identity. */
   readonly groupId?: string
+}
+
+/** Group metadata and member selection submitted by the edit dialog. */
+export interface BotGroupUpdate {
+  /** Existing group identity. */
+  readonly groupId: string
+  /** New display name. */
+  readonly name: string
+  /** Complete member selection in display order. */
+  readonly botIds: readonly string[]
 }
 
 /** User choice passed to the owner when creating a bot. */
@@ -130,6 +142,8 @@ export interface BotWorkspaceProps {
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
   /** Create a shared group from existing Bot identities. */
   readonly onCreateGroup?: ((creation: BotGroupCreation) => Promise<void>) | undefined
+  /** Rename a shared group or replace its members. */
+  readonly onUpdateGroup?: ((update: BotGroupUpdate) => Promise<void>) | undefined
   /** Optional callback for the connections action. */
   readonly onConnectApps?: (() => void) | undefined
   /** Optional settings deep-link for configuring the avatar provider. */

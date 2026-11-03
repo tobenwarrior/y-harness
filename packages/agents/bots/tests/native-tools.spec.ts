@@ -33,6 +33,7 @@ function context(overrides: Partial<BotNativeToolContext> = {}): BotNativeToolCo
 
 type GroupHostFixture = BotGroupToolHost & {
   readonly create: ReturnType<typeof vi.fn<BotGroupToolHost['create']>>
+  readonly update: ReturnType<typeof vi.fn<BotGroupToolHost['update']>>
   readonly send: ReturnType<typeof vi.fn<BotGroupToolHost['send']>>
 }
 
@@ -50,6 +51,12 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
       ? [{ botId: BotId('bot-beta'), status: 'failed' as const, error: 'offline' }]
       : [{ botId: BotId('bot-beta'), status: 'accepted' as const }],
   }))
+  const update = vi.fn<BotGroupToolHost['update']>(async request => ({
+    group: {
+      id: request.groupId, name: request.name, botIds: request.botIds,
+      bots: [], createdAt: 1, updatedAt: 1,
+    },
+  }))
   return {
     list: vi.fn(async () => ({ groups: [] })),
     inspect: vi.fn(async request => ({
@@ -57,6 +64,7 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
       messages: [],
     })),
     create,
+    update,
     send,
   }
 }

@@ -588,6 +588,37 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
   })
 
+  it('persists an edited group roster through the Remote and refreshes the selected group', async () => {
+    const first = bot('bot-first-update', 'session-first-update')
+    const second = bot('bot-second-update', 'session-second-update')
+    const third = bot('bot-third-update', 'session-third-update')
+    const group = groupView('bot-group-update', 'Original room', [first, second])
+    let currentGroup = group
+    const remote = remoteFixture([first, second, third])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [currentGroup] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group: currentGroup, messages: [] } }))
+    remote.updateGroup = vi.fn(async (request) => {
+      currentGroup = groupView(String(request.groupId), request.name, [first, third])
+      return { ok: true as const, value: { group: currentGroup } }
+    })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await controller.face().updateGroup({
+      groupId: String(group.id), name: 'Updated room', botIds: [String(first.id), String(third.id)],
+    })
+
+    expect(remote.updateGroup).toHaveBeenCalledWith({
+      groupId: group.id, name: 'Updated room', botIds: [first.id, third.id],
+    })
+    expect(controller.source.getSnapshot().selectedGroup).toMatchObject({
+      id: String(group.id), name: 'Updated room', bots: [{ id: first.id }, { id: third.id }],
+    })
+    controller.dispose()
+  })
+
   it('fails closed instead of allocating a group id when reconciliation is unavailable', async () => {
     const first = bot('bot-first-create-fail-closed', 'session-first-create-fail-closed')
     const second = bot('bot-second-create-fail-closed', 'session-second-create-fail-closed')

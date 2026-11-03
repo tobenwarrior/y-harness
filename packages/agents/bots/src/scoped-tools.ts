@@ -16,6 +16,8 @@ import {
   type BotGroupInspectRequest,
   type BotGroupInspectValue,
   type BotGroupListValue,
+  type BotGroupUpdateRequest,
+  type BotGroupUpdateValue,
   type BotGroupSendRequest,
   type BotGroupSendValue,
 } from './group-chat.ts'
@@ -83,7 +85,7 @@ const GROUP_MESSAGE_SCHEMA = {
     id: { type: 'string', required: true }, groupId: { type: 'string', required: true },
     sender: { type: 'object', required: true, additionalProperties: false, properties: {
       kind: { type: 'string', required: true }, botId: { type: 'string' }, name: { type: 'string' },
-    } }, text: { type: 'string', required: true }, createdAt: { type: 'number', required: true },
+    } }, text: { type: 'string', required: true }, targetBotIds: { type: 'array', items: { type: 'string' } }, createdAt: { type: 'number', required: true },
   },
 } as const
 const GROUP_LIST_RESULT_SCHEMA = { type: 'array', items: GROUP_SCHEMA } as const
@@ -99,6 +101,7 @@ const GROUP_SEND_RESULT_SCHEMA = { type: 'object', additionalProperties: false, 
 const GROUP_CREATE_RESULT_SCHEMA = { type: 'object', additionalProperties: false, properties: {
   group: { ...GROUP_SCHEMA, required: true },
 } } as const
+const GROUP_UPDATE_RESULT_SCHEMA = GROUP_CREATE_RESULT_SCHEMA
 
 function scopedGroupId(operationKey: string): BotGroupId {
   const digest = createHash('sha256').update(operationKey).digest('hex')
@@ -114,6 +117,10 @@ function canonicalBotIds(botIds: readonly string[]): string[] {
   return botIds.map(botId => botId.trim()).sort()
 }
 
+function canonicalTargetBotIds(botIds: readonly string[] | undefined): string[] {
+  return botIds === undefined ? [] : [...new Set(botIds.map(botId => botId.trim()))].sort()
+}
+
 function canonicalGroupMemberIds(senderId: string, botIds: readonly string[]): string[] {
   return [...new Set([senderId, ...botIds].map(botId => botId.trim()))].sort()
 }
@@ -123,6 +130,7 @@ export interface BotGroupToolHost {
   readonly list: () => Promise<BotGroupListValue>
   readonly inspect: (request: BotGroupInspectRequest) => Promise<BotGroupInspectValue>
   readonly create: (request: BotGroupCreateRequest) => Promise<BotGroupCreateValue>
+  readonly update: (request: BotGroupUpdateRequest) => Promise<BotGroupUpdateValue>
   readonly send: (request: BotGroupSendRequest) => Promise<BotGroupSendValue>
 }
 
@@ -204,7 +212,9 @@ export function installBotCollaborationTools(
               })),
             },
             messages: value.messages.map(message => ({
-              ...message, id: String(message.id), groupId: String(message.groupId), text: frameUntrustedTranscript(message.text),
+              id: String(message.id), groupId: String(message.groupId),
+              text: frameUntrustedTranscript(message.text), createdAt: message.createdAt,
+              ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
               sender: {
                 ...message.sender,
                 ...(message.sender.kind === 'bot' ? { botId: String(message.sender.botId) } : {}),
@@ -243,21 +253,48 @@ export function installBotCollaborationTools(
         },
       })))
       register(scope.tools.register(defineTool({
+        name: 'update_bot_group',
+        description: 'Rename a shared Bot group or replace its members when requested; the calling Bot must remain a member and this action requires approval.',
+        parameters: {
+          groupId: { type: 'string', required: true }, name: { type: 'string', required: true },
+          botIds: { type: 'array', required: true, items: { type: 'string' } },
+        },
+        output: jsonOutput(GROUP_UPDATE_RESULT_SCHEMA),
+        async execute(args) {
+          const value = await (await groups()).update({
+            groupId: BotGroupId(args.groupId.trim()), name: args.name.trim(), botIds: args.botIds.map(botId => BotId(botId.trim())),
+          })
+          return {
+            group: {
+              id: String(value.group.id), name: value.group.name,
+              bots: value.group.bots.map(bot => ({
+                id: String(bot.id), name: bot.name,
+                ...(bot.description === undefined ? {} : { description: bot.description }),
+                availability: bot.availability, state: bot.state,
+              })),
+            },
+          }
+        },
+      })))
+      register(scope.tools.register(defineTool({
         name: 'send_bot_group_message',
-        description: 'Send a message to every other Bot in a shared group when the user explicitly requests it; this action requires approval. Reusing the same group and text is retry-safe; provide messageId to intentionally send identical text again.',
+        description: 'Send a message to other Bots in a shared group when the user explicitly requests it; this action requires approval. Supply targetBotIds to address only mentioned members.',
         parameters: {
           groupId: { type: 'string', required: true }, text: { type: 'string', required: true }, messageId: { type: 'string' },
+          targetBotIds: { type: 'array', items: { type: 'string' }, description: 'Optional exact Bot ids selected by @mentions.' },
         },
         output: jsonOutput(GROUP_SEND_RESULT_SCHEMA),
         async execute(args, exec) {
           const client = await bind()
           const groupId = args.groupId.trim()
           const text = args.text.trim()
+          const targetBotIds = args.targetBotIds === undefined ? undefined : canonicalTargetBotIds(args.targetBotIds).map(BotId)
           const messageId = args.messageId === undefined
-            ? scopedGroupMessageId([String(client.sender.id), groupId, text].join('\u0000'))
+            ? scopedGroupMessageId([String(client.sender.id), groupId, text, ...canonicalTargetBotIds(args.targetBotIds)].join('\u0000'))
             : BotGroupMessageId(args.messageId.trim())
           const value = await (await groups()).send({
             groupId: BotGroupId(groupId), text,
+            ...(targetBotIds === undefined ? {} : { targetBotIds }),
             ...(messageId === undefined ? {} : { messageId }), signal: exec.signal,
           })
           return {
@@ -335,7 +372,7 @@ export function installBotCollaborationTools(
         },
       })))
     }
-    register(scope.on('tools/pre-execute', (exec, next) => ['send_bot_message', 'create_bot', 'edit_bot_profile', 'create_bot_group', 'send_bot_group_message'].includes(exec.name)
+    register(scope.on('tools/pre-execute', (exec, next) => ['send_bot_message', 'create_bot', 'edit_bot_profile', 'create_bot_group', 'update_bot_group', 'send_bot_group_message'].includes(exec.name)
       ? Promise.resolve({ kind: 'ask', reason: 'This action changes a Bot or its durable Session.' as const })
       : next()))
   } catch (error: unknown) {

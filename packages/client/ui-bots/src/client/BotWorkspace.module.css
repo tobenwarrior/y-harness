@@ -639,6 +639,7 @@
 }
 
 .groupComposerWrap {
+  position: relative;
   display: flex;
   flex: none;
   align-items: flex-end;
@@ -675,6 +676,66 @@
 .groupComposerWrap:focus-within {
   border-color: var(--yh-alias-state-business-primary);
   box-shadow: 0 0 0 1px var(--yh-alias-state-business-primary);
+}
+
+.mentionMenu {
+  position: absolute;
+  right: 48px;
+  bottom: calc(100% + 8px);
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  max-height: 220px;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+  box-shadow: var(--yh-elevation-prominent);
+}
+
+.mentionOption {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mentionOption:hover,
+.mentionOptionSelected {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.mentionOptionCopy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mentionOptionName {
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mentionOptionHint {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .threadEmpty {

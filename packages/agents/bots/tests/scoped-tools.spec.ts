@@ -46,6 +46,9 @@ async function harness(withManagement = false, withGroups = false) {
     list: vi.fn(async () => ({ groups: [] })),
     inspect: vi.fn(async request => ({ group: { id: request.groupId, name: 'Room', botIds: [], bots: [], createdAt: 1, updatedAt: 1 }, messages: [] })),
     create: vi.fn(async request => ({ group: { id: request.id ?? BotGroupId('bot-group-created'), name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1 } })),
+    update: vi.fn(async request => ({ group: {
+      id: request.groupId, name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1,
+    } })),
     send: vi.fn(async request => ({ messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: 'accepted' as const, deliveries: [] })),
   }
   const dispose = installBotCollaborationTools(
@@ -142,12 +145,23 @@ describe('scoped Bot collaboration tools', () => {
         name: 'Self canonical room', botIds: ['bot-alpha', 'bot-beta'],
       }, 'create-self-included')
       expect(vi.mocked(h.groupTools.create).mock.calls[5]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[4]?.[0].id)
+      const updated = await execute(h.ctx, h.agent, 'update_bot_group', {
+        groupId: 'bot-group-room', name: 'Renamed room', botIds: ['bot-alpha', 'bot-beta'],
+      }, 'update-room')
+      expect(updated.isError).toBe(false)
+      expect(vi.mocked(h.groupTools.update).mock.calls[0]?.[0]).toMatchObject({
+        groupId: BotGroupId('bot-group-room'), name: 'Renamed room', botIds: [BotId('bot-alpha'), BotId('bot-beta')],
+      })
       const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-first')
       expect(sent.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-tool-/)
       const sentRetry = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-after-lost-response')
       expect(sentRetry.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[1]?.[0].messageId).toBe(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId)
+      await execute(h.ctx, h.agent, 'send_bot_group_message', {
+        groupId: 'bot-group-room', text: 'hello Beta', targetBotIds: ['bot-beta'],
+      }, 'send-mentioned')
+      expect(vi.mocked(h.groupTools.send).mock.calls[2]?.[0].targetBotIds).toEqual([BotId('bot-beta')])
       await execute(h.ctx, h.agent, 'create_bot_group', {
         name: 'Explicit room', botIds: ['bot-beta'], groupId: 'bot-group-explicit',
       }, 'create-explicit')
@@ -155,7 +169,7 @@ describe('scoped Bot collaboration tools', () => {
         groupId: ' bot-group-room ', text: ' hello ', messageId: 'bot-group-message-explicit',
       }, 'send-explicit')
       expect(vi.mocked(h.groupTools.create).mock.calls[6]?.[0].id).toBe('bot-group-explicit')
-      expect(vi.mocked(h.groupTools.send).mock.calls[2]?.[0].messageId).toBe('bot-group-message-explicit')
+      expect(vi.mocked(h.groupTools.send).mock.calls[3]?.[0].messageId).toBe('bot-group-message-explicit')
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

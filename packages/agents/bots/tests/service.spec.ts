@@ -137,7 +137,7 @@ describe('durable Bot roster', () => {
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
       expect(tools.map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
-        'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'send_bot_group_message',
+        'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
       ])
       const context = {
         callId: 'create-1', threadId: 'thread-1', turnId: 'turn-1', sessionId: created.bot.sessionId,
@@ -170,8 +170,9 @@ describe('durable Bot roster', () => {
       expect((await edit.execute({ botId: research.id, pictureDescription: 'A friendly fox' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.find(bot => bot.id === research.id)).toMatchObject({ avatar })
       const createGroup = tools.find(tool => tool.name === 'create_bot_group')
+      const updateGroup = tools.find(tool => tool.name === 'update_bot_group')
       const sendGroupMessage = tools.find(tool => tool.name === 'send_bot_group_message')
-      if (createGroup === undefined || sendGroupMessage === undefined) throw new Error('native group tools were not registered')
+      if (createGroup === undefined || updateGroup === undefined || sendGroupMessage === undefined) throw new Error('native group tools were not registered')
       const groupResult = await createGroup.execute({
         name: 'Native room', botIds: [research.id],
       }, { ...context, callId: 'create-group-1' })
@@ -181,6 +182,13 @@ describe('durable Bot roster', () => {
       if (groupId === undefined) throw new Error('native group creation returned no id')
       expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({
         group: { botIds: [created.bot.id, research.id] },
+      })
+      const nativeUpdateResult = await updateGroup.execute({
+        groupId, name: 'Native room renamed', botIds: [created.bot.id, research.id],
+      }, { ...context, callId: 'update-group-1' })
+      expect(nativeUpdateResult.success).toBe(true)
+      expect(JSON.parse(nativeUpdateResult.contentItems[0]?.text ?? '{}')).toMatchObject({
+        group: { name: 'Native room renamed' },
       })
       const nativeSendResult = await sendGroupMessage.execute({ groupId, text: 'Native group update.' }, {
         ...context, callId: 'send-group-1',
@@ -348,6 +356,93 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!h.ctx.disposed) await close(h.ctx)
+    }
+  })
+
+  it('updates a group name and membership with live-member authorization and persistence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const created = await h.service.createGroup({
+        name: 'Launch room', botIds: [alpha.bot.id, beta.bot.id],
+      })
+      await expect(h.service.updateGroupAsBot(gamma.bot.id, {
+        groupId: created.group.id, name: 'Unauthorized room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id],
+      })).rejects.toThrow('not a member')
+      await expect(h.service.updateGroupAsBot(alpha.bot.id, {
+        groupId: created.group.id, name: 'Removed owner', botIds: [beta.bot.id, gamma.bot.id],
+      })).rejects.toThrow('remain a member')
+
+      const updated = await h.service.updateGroupAsBot(alpha.bot.id, {
+        groupId: created.group.id, name: 'Launch command room', botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id],
+      })
+      expect(updated.group).toMatchObject({
+        id: created.group.id,
+        name: 'Launch command room',
+        botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id],
+      })
+
+      await close(h.ctx)
+      const reopened = await harness(pool, undefined, undefined, [
+        String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+      ])
+      try {
+        await expect(reopened.service.listGroups({})).resolves.toMatchObject({
+          groups: [{ id: created.group.id, name: 'Launch command room', botIds: [beta.bot.id, alpha.bot.id, gamma.bot.id] }],
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists mention targets and delivers a targeted group message only to selected members', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    const gamma = await seed.service.create({ name: 'Gamma', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(alpha.bot.sessionId), String(beta.bot.sessionId), String(gamma.bot.sessionId),
+    ])
+    try {
+      const group = await h.service.createGroup({ name: 'Mention room', botIds: [alpha.bot.id, beta.bot.id, gamma.bot.id] })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: '@Beta please review this.',
+        targetBotIds: [beta.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-targeted'),
+      })).resolves.toMatchObject({
+        status: 'accepted',
+        deliveries: [{ botId: beta.bot.id, status: 'accepted' }],
+      })
+      expect(h.followups[0]).toHaveBeenCalledTimes(0)
+      expect(h.followups[1]).toHaveBeenCalledTimes(1)
+      expect(h.followups[2]).toHaveBeenCalledTimes(0)
+
+      await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        messages: [{ text: '@Beta please review this.', targetBotIds: [beta.bot.id] }],
+      })
+      await expect(h.service.sendGroupMessage({
+        groupId: group.group.id,
+        text: '@Beta please review this.',
+        targetBotIds: [alpha.bot.id],
+        messageId: BotGroupMessageId('bot-group-message-targeted'),
+      })).rejects.toThrow('different content')
+    } finally {
+      await close(h.ctx)
     }
   })
 

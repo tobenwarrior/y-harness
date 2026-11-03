@@ -25,6 +25,8 @@ import type {
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
 } from './group-chat.ts'
@@ -102,6 +104,8 @@ export type {
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
   BotGroupMemberView,
   BotGroupMessageRecord,
   BotGroupMessageSender,
@@ -601,6 +605,17 @@ export class BotService extends TypertRemoteService {
     return (await this.getGroupService()).create(request)
   }
 
+  /** Update a durable multi-Bot group from the human workspace. */
+  @Remote('updateGroup')
+  async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return (await this.getGroupService()).update(request)
+  }
+
+  /** Apply a group update for an already-authenticated live Bot runtime. */
+  async updateGroupAsBot(senderBotId: BotId, request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue> {
+    return (await this.getGroupService()).updateAsBot(senderBotId, request)
+  }
+
   /** Read one durable group transcript. */
   @Remote('inspectGroup')
   async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
@@ -1036,6 +1051,7 @@ export class BotService extends TypertRemoteService {
         await memberGroup(request.groupId)
         return service.sendAsBot(record.id, request)
       },
+      update: async request => service.updateAsBot(record.id, request),
     }
   }
 

@@ -241,31 +241,179 @@ function NewGroupDialog({ open, onClose, onCreate, bots, error, t }: {
   )
 }
 
+function EditGroupDialog({ open, onClose, onUpdate, group, bots, error, t }: {
+  open: boolean
+  onClose: () => void
+  onUpdate?: BotWorkspaceProps['onUpdateGroup']
+  group: BotGroupDetailData
+  bots: readonly BotSummary[]
+  error: string | null
+  t: BotWorkspaceViewProps['t']
+}) {
+  const [name, setName] = useState(group.name)
+  const [selected, setSelected] = useState<readonly string[]>(group.bots.map(bot => bot.id))
+  const [submitting, setSubmitting] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    setName(group.name)
+    setSelected(group.bots.map(bot => bot.id))
+    setSubmitting(false)
+  }, [group, open])
+  const toggle = (id: string, checked: boolean): void => {
+    setSelected(current => checked ? [...current, id] : current.filter(value => value !== id))
+  }
+  const submit = async (): Promise<void> => {
+    const trimmed = name.trim()
+    if (onUpdate === undefined || trimmed === '' || selected.length < 2 || selected.length > 6 || submitting) return
+    setSubmitting(true)
+    try {
+      await onUpdate({ groupId: group.id, name: trimmed, botIds: selected })
+      onClose()
+    } catch {
+      // The owner keeps the durable failure beside the transcript so choices remain editable.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('editGroupTitle')}
+      description={t('editGroupDescription')}
+      closeLabel={t('cancel')}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="primary" onClick={() => { void submit() }} disabled={name.trim() === '' || selected.length < 2 || selected.length > 6 || submitting}>
+            {submitting ? t('groupSaving') : t('groupSave')}
+          </Button>
+        </>
+      )}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      <div className={css.dialogField} aria-busy={submitting}>
+        <label className={css.dialogLabel} htmlFor="yharness-bots-edit-group-name">{t('groupName')}</label>
+        <Input
+          id="yharness-bots-edit-group-name"
+          data-modal-autofocus
+          value={name}
+          placeholder={t('groupNamePlaceholder')}
+          onChange={(event) => { setName(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void submit()
+            }
+          }}
+        />
+      </div>
+      <div className={css.dialogField}>
+        <div className={css.dialogLabel}>{t('groupMembers')} · {t('groupMemberCount', { count: selected.length })}</div>
+        <div className={css.groupMemberChoices}>
+          {bots.map((bot) => {
+            const checked = selected.includes(bot.id)
+            const disabled = !checked && selected.length >= 6
+            return (
+              <label className={clsx(css.groupMemberChoice, checked && css.groupMemberChoiceSelected)} key={bot.id}>
+                <input type="checkbox" checked={checked} disabled={disabled || submitting} aria-label={bot.name} onChange={(event) => { toggle(bot.id, event.currentTarget.checked) }} />
+                <BotAvatar
+                  name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+                  botId={bot.id} loadAvatar={undefined}
+                />
+                <span className={css.groupMemberCopy}>
+                  <span className={css.groupMemberName}>{bot.name}</span>
+                  {bot.description !== undefined && <span className={css.groupMemberDescription}>{bot.description}</span>}
+                </span>
+              </label>
+            )
+          })}
+        </div>
+        {selected.length < 2 && <span className={css.groupHelper}>{t('groupMinMembers')}</span>}
+      </div>
+    </Modal>
+  )
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function mentionQueryAt(text: string, cursor: number): string | null {
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, cursor))
+  return match === null ? null : match[1] ?? ''
+}
+
+function mentionTargets(text: string, bots: readonly BotSummary[]): readonly string[] {
+  return bots.flatMap((bot) => {
+    const pattern = new RegExp(`(?:^|\\s)@${escapeRegExp(bot.name)}(?=$|[\\s.,!?;:])`, 'iu')
+    return pattern.test(text) ? [bot.id] : []
+  })
+}
+
 /** Render a persistent shared group transcript without creating a second Bot Session. */
-export function BotGroupDetail({ group, loading, error, onRetry, onSend, loadAvatar, t }: {
+export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
+  bots?: readonly BotSummary[]
   loading: boolean
   error: string | null
   onRetry: () => void
-  onSend: (text: string) => Promise<void>
+  onUpdate?: BotWorkspaceProps['onUpdateGroup']
+  onSend: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
   loadAvatar: BotWorkspaceProps['loadAvatar']
   t: BotWorkspaceViewProps['t']
 }): ReactNode {
+  const availableBots = bots ?? []
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [editOpen, setEditOpen] = useState(false)
   const transcript = useMemo(() => group?.messages ?? [], [group])
   const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const composerRef = useRef<HTMLDivElement | null>(null)
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const mentionOptions = useMemo(() => {
+    if (group === undefined || mentionQuery === null) return []
+    const query = mentionQuery.toLocaleLowerCase()
+    return group.bots.filter(bot => bot.name.toLocaleLowerCase().includes(query))
+  }, [group, mentionQuery])
   useEffect(() => {
     const node = transcriptRef.current
     if (node !== null) node.scrollTop = node.scrollHeight
   }, [transcript.length, transcriptRef])
+  useEffect(() => {
+    setDraft('')
+    setMentionQuery(null)
+    setMentionIndex(0)
+  }, [group?.id])
+  const selectMention = (bot: BotSummary): void => {
+    const input = composerInputRef.current
+    const cursor = input?.selectionStart ?? draft.length
+    const before = draft.slice(0, cursor)
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(before)
+    const start = match === null ? cursor : cursor - (match[1]?.length ?? 0) - 1
+    const next = `${draft.slice(0, start)}@${bot.name} ${draft.slice(cursor)}`
+    const nextCursor = start + bot.name.length + 2
+    setDraft(next)
+    setMentionQuery(null)
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      const nextInput = composerInputRef.current
+      nextInput?.focus()
+      nextInput?.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
   const submit = async (): Promise<void> => {
     const text = draft.trim()
     if (text === '' || sending) return
+    const targets = group === undefined ? [] : mentionTargets(text, group.bots)
     setSending(true)
     try {
-      await onSend(text)
+      if (targets.length === 0) await onSend(text)
+      else await onSend(text, undefined, targets)
       setDraft('')
+      setMentionQuery(null)
     } catch {
       // Keep the draft visible while the owner exposes a retryable failure.
     } finally {
@@ -293,7 +441,14 @@ export function BotGroupDetail({ group, loading, error, onRetry, onSend, loadAva
             <span className={css.detailRole}>{t('groupMemberNames', { count: group.bots.length })}</span>
           </span>
         </span>
-        <span className={css.detailActions}><Tag tone="neutral"><IconUsersOutlineRegular size={13} />{group.bots.length}</Tag></span>
+        <span className={css.detailActions}>
+          <Tag tone="neutral"><IconUsersOutlineRegular size={13} />{group.bots.length}</Tag>
+          {onUpdate !== undefined && (
+            <Tooltip label={t('editGroup')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('editGroup')} icon={<IconEditOutlineRegular size={14} />} onClick={() => { setEditOpen(true) }} />
+            </Tooltip>
+          )}
+        </span>
       </header>
       {error !== '' && error !== null && <div className={css.groupNotice} role="alert"><span>{error}</span><Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button></div>}
       <div className={css.groupThread} ref={(node) => { transcriptRef.current = node }} aria-live="polite">
@@ -312,15 +467,66 @@ export function BotGroupDetail({ group, loading, error, onRetry, onSend, loadAva
             )
           })}
       </div>
-      <div className={css.groupComposerWrap}>
+      <div
+        className={css.groupComposerWrap}
+        ref={composerRef}
+        onBlur={(event) => {
+          if (!composerRef.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null)
+        }}
+      >
+        {mentionQuery !== null && mentionOptions.length > 0 && (
+          <div className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
+            {mentionOptions.map((bot, index) => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={index === mentionIndex}
+                className={clsx(css.mentionOption, index === mentionIndex && css.mentionOptionSelected)}
+                key={bot.id}
+                onMouseDown={(event) => { event.preventDefault() }}
+                onClick={() => { selectMention(bot) }}
+              >
+                <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={undefined} size="small" />
+                <span className={css.mentionOptionCopy}>
+                  <span className={css.mentionOptionName}>{bot.name}</span>
+                  <span className={css.mentionOptionHint}>{t('mentionBotHint')}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           className={css.groupComposer}
+          ref={composerInputRef}
           aria-label={t('groupMessagePlaceholder', { name: group.name })}
           placeholder={t('groupMessagePlaceholder', { name: group.name })}
           value={draft}
           disabled={sending}
-          onChange={(event) => { setDraft(event.currentTarget.value) }}
+          onChange={(event) => {
+            const value = event.currentTarget.value
+            setDraft(value)
+            setMentionQuery(mentionQueryAt(value, event.currentTarget.selectionStart))
+            setMentionIndex(0)
+          }}
           onKeyDown={(event) => {
+            if (mentionQuery !== null && mentionOptions.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+              event.preventDefault()
+              setMentionIndex(current => event.key === 'ArrowDown'
+                ? (current + 1) % mentionOptions.length
+                : (current - 1 + mentionOptions.length) % mentionOptions.length)
+              return
+            }
+            if (mentionQuery !== null && mentionOptions.length > 0 && (event.key === 'Enter' || event.key === 'Tab')) {
+              event.preventDefault()
+              const option = mentionOptions[mentionIndex]
+              if (option !== undefined) selectMention(option)
+              return
+            }
+            if (event.key === 'Escape' && mentionQuery !== null) {
+              event.preventDefault()
+              setMentionQuery(null)
+              return
+            }
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault()
               void submit()
@@ -329,6 +535,15 @@ export function BotGroupDetail({ group, loading, error, onRetry, onSend, loadAva
         />
         <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={draft.trim() === '' || sending} onClick={() => { void submit() }} />
       </div>
+      <EditGroupDialog
+        open={editOpen}
+        onClose={() => { setEditOpen(false) }}
+        onUpdate={onUpdate}
+        group={group}
+        bots={availableBots}
+        error={error}
+        t={t}
+      />
     </section>
   )
 }

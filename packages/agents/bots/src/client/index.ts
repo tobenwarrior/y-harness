@@ -10,6 +10,8 @@ export type {
   BotGroupInspectValue,
   BotGroupListRequest,
   BotGroupListValue,
+  BotGroupUpdateRequest,
+  BotGroupUpdateValue,
   BotGroupMemberView,
   BotGroupMessageId,
   BotGroupMessageSenderView,

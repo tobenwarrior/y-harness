@@ -362,6 +362,58 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
+  it('offers member mentions and sends only to the selected Bot ids', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
+    expect(screen.getByRole('listbox', { name: 'Mention a Bot' })).toBeTruthy()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: '@Research partner please review', selectionStart: 31 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('@Research partner please review', undefined, ['research'])
+    })
+  })
+
+  it('renames a group from its header edit dialog', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onUpdate={onUpdate}
+      onSend={vi.fn()}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch command room' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith({
+        groupId: 'group-release', name: 'Launch command room', botIds: ['research', 'release'],
+      })
+    })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit shared group' })).toBeNull() })
+  })
+
   it('keeps loading and owner-provided failures explicit', () => {
     renderSplitWorkspace({ bots: [], selectedBotId: null, loading: true })
     expect(screen.getByRole('status', { name: 'Loading bots' })).toBeTruthy()
