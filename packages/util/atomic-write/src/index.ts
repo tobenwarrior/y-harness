@@ -4,16 +4,18 @@
  * the caller's permission bits, then renames it over the target, so readers
  * observe either the old or the new complete content and a replaced file ends
  * up with exactly the stated mode. `withFileLock` serializes cross-process
- * writers of one file through a `wx`-created `<file>.lock` sibling, so a
- * read-modify-write cycle can never resurrect a state another writer just
- * replaced; readers stay lock-free because the rename commit is atomic. A lock
- * whose recorded holder process no longer exists is taken over.
+ * writers of one file through an atomically-created `<file>.lock` directory
+ * containing one unique owner record, so a read-modify-write cycle can never
+ * resurrect a state another writer just replaced; readers stay lock-free
+ * because the rename commit is atomic. A lock whose recorded holder process no
+ * longer exists is taken over when the directory protocol can remove it
+ * without a pathname race.
  * @module @yharness/atomic-write
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS: ReadonlySet<string> = new Set(['EACCES', 'EBUSY', 'EPERM'])
 const WINDOWS_RENAME_RETRY_INITIAL_MS = 20
@@ -125,10 +127,28 @@ function holderExited(record: string): boolean {
   }
 }
 
-/** The lock file's content, or undefined when it cannot be read. */
-async function readLockRecord(lockPath: string): Promise<string | undefined> {
+interface LockObservation {
+  readonly record: string
+  readonly recordPath: string
+  readonly directory: boolean
+}
+
+const LOCK_OWNER_NAME = /^owner-[0-9a-f]{32}$/
+
+/** The lock record and its unique child path, or undefined when it cannot be read. */
+async function readLockRecord(lockPath: string): Promise<LockObservation | undefined> {
   try {
-    return await readFile(lockPath, 'utf8')
+    const current = await lstat(lockPath)
+    if (!current.isDirectory()) {
+      if (!current.isFile()) return undefined
+      return { record: await readFile(lockPath, 'utf8'), recordPath: lockPath, directory: false }
+    }
+    const owners = (await readdir(lockPath)).filter(name => LOCK_OWNER_NAME.test(name))
+    if (owners.length !== 1) return undefined
+    const name = owners[0]
+    if (name === undefined) return undefined
+    const recordPath = join(lockPath, name)
+    return { record: await readFile(recordPath, 'utf8'), recordPath, directory: true }
   } catch (error) {
     // A lock that vanished, or that Windows is still deleting, proves nothing about a holder.
     void error
@@ -147,9 +167,11 @@ async function readLockRecord(lockPath: string): Promise<string | undefined> {
  * @returns Whether this call removed the dead holder's lock.
  */
 async function takeOverExitedLock(lockPath: string): Promise<boolean> {
-  const record = await readLockRecord(lockPath)
-  if (record === undefined || !holderExited(record)) return false
-  const claim = `${lockPath}.takeover-${createHash('sha256').update(record).digest('hex').slice(0, 16)}`
+  const observed = await readLockRecord(lockPath)
+  // Legacy regular-file locks are deliberately not removed: no portable
+  // operation can conditionally unlink that pathname after verification.
+  if (observed === undefined || !observed.directory || !holderExited(observed.record)) return false
+  const claim = `${lockPath}.takeover-${createHash('sha256').update(observed.record).digest('hex').slice(0, 16)}`
   try {
     await writeFile(claim, `${process.pid}\n`, { mode: 0o600, flag: 'wx' })
   } catch (error) {
@@ -159,15 +181,27 @@ async function takeOverExitedLock(lockPath: string): Promise<boolean> {
     throw error
   }
   try {
-    if (await readLockRecord(lockPath) !== record || !holderExited(record)) return false
+    const current = await readLockRecord(lockPath)
+    if (current === undefined || !current.directory
+      || current.recordPath !== observed.recordPath
+      || current.record !== observed.record
+      || !holderExited(observed.record)) return false
     try {
-      await rm(lockPath, { force: true })
+      await rm(observed.recordPath, { force: true })
     } catch (error) {
       // Windows can refuse the removal while other software briefly holds the file; the next attempt retries.
       void error
       return false
     }
-    return true
+    try {
+      await rmdir(lockPath)
+      return true
+    } catch (error) {
+      // A successor's owner entry makes its directory non-empty, so rmdir
+      // fails without touching that successor. An absent path is already free.
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      return code === 'ENOENT'
+    }
   } finally {
     await rm(claim, { force: true }).catch((error: unknown) => {
       // A claim left behind names a record that is no longer the lock, so it blocks no later takeover.
@@ -184,12 +218,13 @@ async function takeOverExitedLock(lockPath: string): Promise<boolean> {
 const LOCK_RETRY_INITIAL_MS = 20
 const LOCK_RETRY_MAX_MS = 200
 const LOCK_RELEASE_RETRY_LIMIT = 2
+const LOCK_OWNER_PREFIX = 'owner-'
 
-/** The lock file identity captured by its creator before the operation runs. */
+/** The unique owner entry created inside one lock directory. */
 interface LockOwner {
   readonly record: string
-  readonly dev: number
-  readonly ino: number
+  readonly recordPath: string
+  readonly lockPath: string
 }
 
 /**
@@ -205,71 +240,42 @@ const DEFAULT_LOCK_WAIT_MS = 2_000
 
 /**
  * Release a held lock without leaving its pathname occupied after the
- * operation has settled. Every removal or fallback rename is fenced by the
- * creator's pathname identity and record; if another writer replaced the
- * pathname, release leaves that successor untouched. A transient unlink
- * failure is retried; if the owned path still cannot be unlinked, an atomic
- * rename removes it from the acquisition protocol and the detached diagnostic
- * sibling is cleaned up best-effort.
+ * operation has settled. The owner entry has a unique name, and removing the
+ * empty lock directory is atomic: a successor's owner entry makes `rmdir`
+ * fail without removing the successor. A transient owner-entry unlink failure
+ * is retried; after the bounded attempts release fails closed and leaves the
+ * lock in place.
  */
-async function releaseLock(lockPath: string, owner: LockOwner | undefined): Promise<void> {
-  // The lock may have disappeared before its identity was captured. In that
-  // case the creator has no pathname it can safely release.
-  if (owner === undefined) return
-  let lastError: unknown
+async function releaseLock(owner: LockOwner): Promise<void> {
+  let lastError: Error | undefined
   for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
-    if (!await ownsLock(lockPath, owner)) return
     try {
-      await rm(lockPath, { force: true })
+      await rm(owner.recordPath, { force: true })
+      lastError = undefined
+      break
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+  if (lastError !== undefined) throw lastError
+  await removeEmptyLockDirectory(owner.lockPath)
+}
+
+/** Remove only an empty lock directory; an occupied successor remains intact. */
+async function removeEmptyLockDirectory(lockPath: string): Promise<void> {
+  let lastError: Error | undefined
+  for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
+    try {
+      await rmdir(lockPath)
       return
     } catch (error) {
-      lastError = error
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST' || code === 'ENOTDIR') return
+      lastError = error instanceof Error ? error : new Error(String(error))
     }
   }
-  if (!await ownsLock(lockPath, owner)) return
-  const releasedPath = `${lockPath}.released-${process.pid}-${randomBytes(6).toString('hex')}`
-  try {
-    await rename(lockPath, releasedPath)
-  } catch (error) {
-    // If another actor already removed the path, release has succeeded. A
-    // remaining error means this holder could not clear its acquisition path.
-    if (!await ownsLock(lockPath, owner)) return
-    try {
-      await rm(lockPath, { force: true })
-      return
-    } catch {
-      throw lastError ?? error
-    }
-  }
-  try {
-    await rm(releasedPath, { force: true })
-  } catch {
-    // The released sibling is outside the lock pathname; its cleanup is not
-    // allowed to turn a committed operation into a failed lock release.
-  }
-}
-
-/** Capture the pathname identity immediately after exclusive lock creation. */
-async function captureLockOwner(lockPath: string, record: string): Promise<LockOwner | undefined> {
-  try {
-    const current = await lstat(lockPath)
-    return { record, dev: current.dev, ino: current.ino }
-  } catch {
-    // The lock vanished before the operation began; never release a later
-    // writer's lock at this pathname.
-    return undefined
-  }
-}
-
-/** Confirm that the lock pathname still names the exact file we created. */
-async function ownsLock(lockPath: string, owner: LockOwner): Promise<boolean> {
-  try {
-    const current = await lstat(lockPath)
-    if (current.dev !== owner.dev || current.ino !== owner.ino) return false
-    return await readFile(lockPath, 'utf8') === owner.record
-  } catch {
-    return false
-  }
+  if (lastError !== undefined) throw lastError
+  throw new Error(`atomic-write: failed to remove lock directory ${lockPath}`)
 }
 
 /** Options for one {@link withFileLock} acquisition. */
@@ -287,23 +293,26 @@ export interface FileLockOptions {
 
 /**
  * Hold the cross-process writer lock for `filename` around one operation. The
- * lock is a `wx`-created sibling (`<filename>.lock`); paired with the
- * rename-based commit of {@link writeFileAtomic}, readers stay lock-free and
- * only writers contend. `EEXIST` is contention directly; an `EPERM` is
- * contention only when a fresh `lstat` confirms the lock path exists, covering
- * Windows exclusive-create behavior. Windows retries one unconfirmed EPERM
- * because the holder can release before the probe; a repeated unconfirmed
- * permission error is rethrown. The lock records its holder's PID. A contender
- * removes the lock and retries at once when no process with that PID exists
- * (`ESRCH`); any other lock, including one whose holder exists under another
- * user (`EPERM`) or whose record is incomplete, is waited for. Contention backs
- * off exponentially and times out after the deadline. A holder whose PID a
- * live process reused keeps its lock until an operator removes it. Takeover
- * proves only that the recorded process exited: an operation that starts other
- * writers must stop them with it or leave its successor a way to find them.
- * PIDs are compared on the contender's host, so writers on other hosts or in
- * other PID namespaces sharing the file are unsupported and could both hold
- * the lock. The parent directory must exist.
+ * lock is an atomically-created directory (`<filename>.lock`) with one random
+ * owner entry containing the holder's PID; paired with the rename-based commit
+ * of {@link writeFileAtomic}, readers stay lock-free and only writers contend.
+ * `EEXIST` is contention directly; an `EPERM` is contention only when a fresh
+ * `lstat` confirms the lock path exists, covering Windows exclusive-create
+ * behavior. Windows retries one unconfirmed EPERM because the holder can
+ * release before the probe; a repeated unconfirmed permission error is
+ * rethrown. A contender removes a directory lock and retries at once when no
+ * process with its PID exists (`ESRCH`), but deliberately leaves legacy
+ * regular-file locks for an operator because no portable conditional unlink is
+ * available for that protocol. Any other lock, including one whose holder
+ * exists under another user (`EPERM`), whose record is incomplete, or whose
+ * directory is ambiguous, is waited for. Contention backs off exponentially
+ * and times out after the deadline. A holder whose PID a live process reused
+ * keeps its lock until an operator removes it. Takeover proves only that the
+ * recorded process exited: an operation that starts other writers must stop
+ * them with it or leave its successor a way to find them. PIDs are compared on
+ * the contender's host, so writers on other hosts or in other PID namespaces
+ * sharing the file are unsupported and could both hold the lock. The parent
+ * directory must exist.
  * @param filename - the file whose writers this lock serializes.
  * @param operation - the read-render-commit cycle to run while holding the lock.
  * @param options - acquisition options; omitted waits {@link DEFAULT_LOCK_WAIT_MS}.
@@ -321,13 +330,19 @@ export async function withFileLock<T>(
   let delay = LOCK_RETRY_INITIAL_MS
   let retriedUnconfirmedPermissionError = false
   for (;;) {
+    let created = false
     try {
-      await writeFile(lockPath, record, { mode: 0o600, flag: 'wx' })
-      owner = await captureLockOwner(lockPath, record)
-      if (owner !== undefined) break
-      // Do not run the operation without a releasable ownership identity if
-      // the pathname disappeared during acquisition.
+      await mkdir(lockPath, { mode: 0o700 })
+      created = true
+      const recordPath = join(lockPath, `${LOCK_OWNER_PREFIX}${randomBytes(16).toString('hex')}`)
+      await writeFile(recordPath, record, { mode: 0o600, flag: 'wx' })
+      owner = { record, recordPath, lockPath }
+      break
     } catch (error) {
+      if (created) {
+        await rmdir(lockPath).catch((cleanupError: unknown) => { void cleanupError })
+        throw error
+      }
       if (!await isLockContention(error, lockPath)) {
         // Windows can release the competing lock between exclusive create and lstat.
         if (process.platform !== 'win32'
@@ -345,6 +360,6 @@ export async function withFileLock<T>(
   try {
     return await operation()
   } finally {
-    await releaseLock(lockPath, owner)
+    await releaseLock(owner)
   }
 }

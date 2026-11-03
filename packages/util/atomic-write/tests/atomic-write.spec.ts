@@ -12,19 +12,28 @@ const state = vi.hoisted(() => ({
   claimFailure: undefined as string | undefined,
   claimRemovalFails: false,
   lockRemovalFails: false,
-  successorLockOnReleaseFailure: false,
-  successorLockInstalled: false,
   successorLockRecord: undefined as string | undefined,
   lockPermissionFailures: 0,
   releaseLockBeforeProbe: false,
   renameAttempts: 0,
   renameFailures: [] as string[],
+  successorBeforeOwnerRemoval: false,
+  successorBeforeRmdir: false,
 }))
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    mkdir: (async (...args: Parameters<typeof actual.mkdir>) => {
+      const path = String(args[0])
+      if (state.lockPermissionFailures > 0 && path.endsWith('.lock')) {
+        state.lockPermissionFailures -= 1
+        if (state.releaseLockBeforeProbe) await actual.rm(path, { force: true, recursive: true })
+        throw Object.assign(new Error('EPERM: injected exclusive-create failure'), { code: 'EPERM' })
+      }
+      return actual.mkdir(...args)
+    }) as typeof actual.mkdir,
     rename: (async (...args: Parameters<typeof actual.rename>) => {
       state.renameAttempts += 1
       const code = state.renameFailures.shift()
@@ -34,16 +43,35 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       }
       return actual.rename(...args)
     }),
+    rmdir: (async (...args: Parameters<typeof actual.rmdir>) => {
+      const path = String(args[0])
+      if (state.successorBeforeRmdir && path.endsWith('.lock')) {
+        state.successorBeforeRmdir = false
+        await actual.rm(path, { force: true, recursive: true })
+        await actual.mkdir(path, { mode: 0o700 })
+        await actual.writeFile(join(path, `owner-${'e'.repeat(32)}`), state.successorLockRecord ?? `${String(process.pid)}\n`, {
+          mode: 0o600,
+          flag: 'wx',
+        })
+      }
+      return actual.rmdir(...args)
+    }),
     rm: (async (...args: Parameters<typeof actual.rm>) => {
+      const path = String(args[0])
       if (state.claimRemovalFails && String(args[0]).includes('.lock.takeover-')) {
         throw Object.assign(new Error('EBUSY: injected claim removal failure'), { code: 'EBUSY' })
       }
-      if (state.lockRemovalFails && String(args[0]).endsWith('.lock')) {
-        if (state.successorLockOnReleaseFailure && !state.successorLockInstalled) {
-          state.successorLockInstalled = true
-          await actual.rm(String(args[0]), { force: true })
-          await actual.writeFile(String(args[0]), state.successorLockRecord ?? 'successor\n', { mode: 0o600, flag: 'wx' })
-        }
+      if (state.successorBeforeOwnerRemoval && /[\\/]owner-[0-9a-f]{32}$/.test(path)) {
+        state.successorBeforeOwnerRemoval = false
+        const lockPath = path.replace(/[\\/]owner-[0-9a-f]{32}$/, '')
+        await actual.rm(lockPath, { force: true, recursive: true })
+        await actual.mkdir(lockPath, { mode: 0o700 })
+        await actual.writeFile(join(lockPath, `owner-${'e'.repeat(32)}`), state.successorLockRecord ?? `${String(process.pid)}\n`, {
+          mode: 0o600,
+          flag: 'wx',
+        })
+      }
+      if (state.lockRemovalFails && /[\\/]owner-[0-9a-f]{32}$/.test(path)) {
         throw Object.assign(new Error('EBUSY: injected lock removal failure'), { code: 'EBUSY' })
       }
       return actual.rm(...args)
@@ -56,11 +84,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         await (actual.writeFile as (path: unknown, ...args: never[]) => Promise<void>)(path, ...rest)
         await state.afterClaim?.(String(path))
         return
-      }
-      if (state.lockPermissionFailures > 0 && String(path).endsWith('.lock')) {
-        state.lockPermissionFailures -= 1
-        if (state.releaseLockBeforeProbe) await actual.rm(String(path))
-        throw Object.assign(new Error('EPERM: injected exclusive-create failure'), { code: 'EPERM' })
       }
       return (actual.writeFile as (path: unknown, ...args: never[]) => Promise<void>)(path, ...rest)
     }) as typeof actual.writeFile,
@@ -76,13 +99,13 @@ afterEach(async () => {
   state.claimFailure = undefined
   state.claimRemovalFails = false
   state.lockRemovalFails = false
-  state.successorLockOnReleaseFailure = false
-  state.successorLockInstalled = false
   state.successorLockRecord = undefined
   state.lockPermissionFailures = 0
   state.releaseLockBeforeProbe = false
   state.renameAttempts = 0
   state.renameFailures.length = 0
+  state.successorBeforeOwnerRemoval = false
+  state.successorBeforeRmdir = false
   await Promise.all(scratchDirs.splice(0).map(dir => rm(dir, {
     force: true,
     maxRetries: 10,
@@ -120,7 +143,24 @@ function record(pid: number): string {
   return `${String(pid)}\n`
 }
 
-/** Resolve once the lockfile exists, so contention is measured against a held lock. */
+const FIXTURE_OWNER = `owner-${'f'.repeat(32)}`
+
+/** Create a lock using the directory protocol exposed by `withFileLock`. */
+async function writeLock(target: string, content: string, owner = FIXTURE_OWNER): Promise<void> {
+  const lockPath = `${target}.lock`
+  await mkdir(lockPath, { mode: 0o700 })
+  await writeFile(join(lockPath, owner), content, { mode: 0o600, flag: 'wx' })
+}
+
+/** Read the sole owner record in a fixture lock directory. */
+async function readLock(target: string): Promise<string> {
+  const lockPath = `${target}.lock`
+  const owner = (await readdir(lockPath)).find(entry => /^owner-[0-9a-f]{32}$/.test(entry))
+  if (owner === undefined) throw new Error(`no owner record in ${lockPath}`)
+  return readFile(join(lockPath, owner), 'utf8')
+}
+
+/** Resolve once the lock directory exists, so contention is measured against a held lock. */
 async function waitForLock(lockPath: string): Promise<void> {
   for (;;) {
     try {
@@ -255,7 +295,7 @@ describe('withFileLock', () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, 'holder\n')
+    await writeLock(target, 'holder\n')
     state.lockPermissionFailures = 1
     state.releaseLockBeforeProbe = true
     const operation = vi.fn(async () => 'acquired')
@@ -281,9 +321,9 @@ describe('withFileLock', () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
 
-    await expect(withFileLock(target, async () => await readFile(`${target}.lock`, 'utf8'), { waitMs: 0 }))
+    await expect(withFileLock(target, async () => await readLock(target), { waitMs: 0 }))
       .resolves.toBe(record(process.pid))
     expect(await readdir(dir)).toEqual([])
   })
@@ -294,7 +334,7 @@ describe('withFileLock', () => {
     const target = join(dir, 'document')
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
     await once(child, 'exit')
-    await writeFile(`${target}.lock`, record(child.pid as number))
+    await writeLock(target, record(child.pid as number))
 
     await expect(withFileLock(target, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
   })
@@ -303,7 +343,7 @@ describe('withFileLock', () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     let active = 0
     let overlapped = false
 
@@ -330,18 +370,18 @@ describe('withFileLock', () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     const held = render()
-    await writeFile(`${target}.lock`, held)
+    await writeLock(target, held)
     const operation = vi.fn(async () => {})
 
     await expect(withFileLock(target, operation, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
     expect(operation).not.toHaveBeenCalled()
-    expect(await readFile(`${target}.lock`, 'utf8')).toBe(held)
+    expect(await readLock(target)).toBe(held)
   })
 
   it('waits for a holder whose process exists under another user', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     const kill = process.kill.bind(process)
     vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
       if (target === EXITED_PID) throw Object.assign(new Error('EPERM: injected'), { code: 'EPERM' })
@@ -370,22 +410,22 @@ describe('withFileLock', () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     const held = record(EXITED_PID)
-    await writeFile(`${target}.lock`, held)
+    await writeLock(target, held)
     state.afterClaim = async () => {
       state.afterClaim = undefined
-      await rm(`${target}.lock`)
-      await writeFile(`${target}.lock`, held)
+      await rm(`${target}.lock`, { recursive: true })
+      await writeLock(target, held)
     }
 
     await expect(withFileLock(target, async () => {}, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
-    expect(await readFile(`${target}.lock`, 'utf8')).toBe(held)
+    expect(await readLock(target)).toBe(held)
   })
 
   it('waits when the exited holder\'s lock cannot be removed', async () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     state.lockRemovalFails = true
     const operation = vi.fn(async () => {})
 
@@ -401,32 +441,44 @@ describe('withFileLock', () => {
     await expect(withFileLock(target, async () => {}, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
   })
 
+  it('leaves a legacy regular-file lock for operator recovery', async () => {
+    probeExited()
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const held = record(EXITED_PID)
+    await writeFile(`${target}.lock`, held)
+
+    await expect(withFileLock(target, async () => {}, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
+    expect(await readFile(`${target}.lock`, 'utf8')).toBe(held)
+  })
+
   it('leaves an exited holder\'s lock to the contender that claimed its record', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     probeExited()
     const held = record(EXITED_PID)
-    await writeFile(`${target}.lock`, held)
+    await writeLock(target, held)
     const claim = `${target}.lock.takeover-${createHash('sha256').update(held).digest('hex').slice(0, 16)}`
     await writeFile(claim, '1\n')
 
     await expect(withFileLock(target, async () => {}, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
-    expect(await readFile(`${target}.lock`, 'utf8')).toBe(held)
+    expect(await readLock(target)).toBe(held)
   })
 
   it('keeps a lock that another contender acquired while this one claimed the exited record', async () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     const successor = record(process.pid)
     state.afterClaim = async () => {
       state.afterClaim = undefined
-      await writeFile(`${target}.lock`, successor)
+      await rm(`${target}.lock`, { recursive: true })
+      await writeLock(target, successor)
     }
 
     await expect(withFileLock(target, async () => {}, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
-    expect(await readFile(`${target}.lock`, 'utf8')).toBe(successor)
+    expect(await readLock(target)).toBe(successor)
     expect(await readdir(dir)).toEqual(['document.lock'])
   })
 
@@ -434,7 +486,7 @@ describe('withFileLock', () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     state.claimFailure = 'EPERM'
     setTimeout(() => { state.claimFailure = undefined }, 30)
 
@@ -445,7 +497,7 @@ describe('withFileLock', () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     state.claimFailure = 'EIO'
     const operation = vi.fn(async () => {})
 
@@ -457,13 +509,13 @@ describe('withFileLock', () => {
     probeExited()
     const dir = await scratch()
     const target = join(dir, 'document')
-    await writeFile(`${target}.lock`, record(EXITED_PID))
+    await writeLock(target, record(EXITED_PID))
     state.claimRemovalFails = true
 
     await expect(withFileLock(target, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
   })
 
-  it('recovers the lock path after a committed operation cannot unlink it', async () => {
+  it('fails closed after a committed operation cannot remove its owner entry', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     state.lockRemovalFails = true
@@ -471,24 +523,44 @@ describe('withFileLock', () => {
     await expect(withFileLock(target, async () => {
       await writeFileAtomic(target, 'committed', { mode: 0o600 })
       return 'committed'
-    }, { waitMs: 0 })).resolves.toBe('committed')
+    }, { waitMs: 0 })).rejects.toMatchObject({ code: 'EBUSY' })
 
     expect(await readFile(target, 'utf8')).toBe('committed')
-    await expect(stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' })
-    expect(await readdir(dir)).toEqual(['document'])
+    expect(await readLock(target)).toBe(record(process.pid))
   })
 
-  it('does not rename a successor lock after ownership is lost during release', async () => {
+  it('leaves a successor lock when replacement occurs before release rmdir', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
-    state.lockRemovalFails = true
-    state.successorLockOnReleaseFailure = true
-    // A record-only ownership check is insufficient when a same-PID worker
-    // replaces the pathname; the file identity must also remain ours.
+    state.successorBeforeRmdir = true
     state.successorLockRecord = `${String(process.pid)}\n`
 
     await expect(withFileLock(target, async () => 'committed', { waitMs: 0 })).resolves.toBe('committed')
-    await expect(readFile(`${target}.lock`, 'utf8')).resolves.toBe(state.successorLockRecord)
+    await expect(readLock(target)).resolves.toBe(state.successorLockRecord)
+  })
+
+  it('leaves a successor lock when replacement occurs before owner removal', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    state.successorBeforeOwnerRemoval = true
+    state.successorLockRecord = `${String(process.pid)}\n`
+
+    await expect(withFileLock(target, async () => 'committed', { waitMs: 0 })).resolves.toBe('committed')
+    await expect(readLock(target)).resolves.toBe(state.successorLockRecord)
+  })
+
+  it('does not take over a successor that appears before stale owner removal', async () => {
+    probeExited()
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    await writeLock(target, record(EXITED_PID))
+    state.successorBeforeOwnerRemoval = true
+    state.successorLockRecord = `${String(process.pid)}\n`
+    const operation = vi.fn(async () => 'acquired')
+
+    await expect(withFileLock(target, operation, { waitMs: 50 })).rejects.toThrow(/timed out waiting for the writer lock/)
+    expect(operation).not.toHaveBeenCalled()
+    await expect(readLock(target)).resolves.toBe(state.successorLockRecord)
   })
 
   it('waits for the caller-stated limit rather than the protocol default', async () => {
@@ -502,7 +574,7 @@ describe('withFileLock', () => {
     let release = (): void => {}
     const held = new Promise<void>((resolve) => { release = resolve })
     const holder = withFileLock(target, () => held)
-    // The holder owns the lock once its lockfile exists; contending before
+    // The holder owns the lock once its lock directory exists; contending before
     // that would measure nothing.
     await waitForLock(`${target}.lock`)
 
