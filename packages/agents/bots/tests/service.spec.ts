@@ -1254,6 +1254,144 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('does not let a stale cancellation repair overwrite a retried peer acceptance', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Race sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Race target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    try {
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      if (senderAgent === undefined || targetAgent === undefined) throw new Error('race Bot agents were not created')
+      const messageId = MessageId('peer-race-accepted-then-canceled')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id, text: 'The first receipt is accepted.', messageId,
+      })).resolves.toMatchObject({ status: 'accepted', messageId })
+
+      targetAgent.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      const repairStarted = Promise.withResolvers<undefined>()
+      const releaseRepair = Promise.withResolvers<undefined>()
+      let heldRepairSnapshot = false
+      h.inspect.mockImplementation(async (sessionId) => {
+        const events = h.agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? []
+        if (sessionId === target.bot.sessionId && !heldRepairSnapshot
+          && events.some(event => event.type === 'bot/collaboration' && event.data.messageId === messageId && event.data.status === 'accepted')
+          && events.some(event => event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled')) {
+          heldRepairSnapshot = true
+          repairStarted.resolve()
+          await releaseRepair.promise
+        }
+        return { events: [...events] }
+      })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      await repairStarted.promise
+
+      await expect(collaboration.send({
+        targetBotId: target.bot.id, text: 'The retry must remain accepted.', messageId,
+      })).resolves.toMatchObject({ status: 'accepted', messageId })
+      const inspectionsBeforeRepairRelease = h.inspect.mock.calls.length
+      releaseRepair.resolve()
+
+      await vi.waitFor(() => {
+        expect(h.inspect.mock.calls.length).toBeGreaterThan(inspectionsBeforeRepairRelease)
+        const lifecycle = targetAgent.session.snapshotEvents().filter(event => event.type === 'bot/collaboration')
+        expect(lifecycle.at(-1)).toMatchObject({
+          type: 'bot/collaboration', data: { messageId, status: 'accepted' },
+        })
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries a failed peer cancellation repair in the same process', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Retry sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Retry target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    try {
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      if (senderAgent === undefined || targetAgent === undefined) throw new Error('retry Bot agents were not created')
+      const messageId = MessageId('peer-repair-retry')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id, text: 'Repair this canceled receipt.', messageId,
+      })).resolves.toMatchObject({ status: 'accepted', messageId })
+      targetAgent.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      const flushesBeforeRepair = h.flush.mock.calls.length
+      h.flush.mockRejectedValueOnce(new Error('transient peer repair failure'))
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+
+      await vi.waitFor(() => {
+        const lifecycle = targetAgent.session.snapshotEvents().filter(event => event.type === 'bot/collaboration')
+        expect(lifecycle.at(-1)).toMatchObject({
+          type: 'bot/collaboration', data: { messageId, status: 'canceled' },
+        })
+        expect(h.flush.mock.calls.length).toBeGreaterThanOrEqual(flushesBeforeRepair + 2)
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('repairs an accepted peer delivery canceled while the Bot Session was offline', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Offline sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Offline target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ])
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      if (senderAgent === undefined || targetAgent === undefined) throw new Error('offline Bot agents were not created')
+      const messageId = MessageId('peer-offline-canceled')
+      const collaboration = await h.service.collaborationFor(senderAgent)
+      await expect(collaboration.send({
+        targetBotId: target.bot.id, text: 'Repair this receipt after restart.', messageId,
+      })).resolves.toMatchObject({ status: 'accepted', messageId })
+      targetAgent.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      const seed = new Map([[String(target.bot.sessionId), targetAgent.session.snapshotEvents()]])
+      await close(h.ctx)
+      reopened = await harness(pool, undefined, undefined, [
+        String(sender.bot.sessionId), String(target.bot.sessionId),
+      ], false, [], seed)
+      const reopenedTarget = reopened.agents[1]
+      if (reopenedTarget === undefined) throw new Error('reopened offline Bot Agent was not created')
+      await vi.waitFor(() => {
+        const lifecycle = reopenedTarget.session.snapshotEvents().filter(event => event.type === 'bot/collaboration')
+        expect(lifecycle.at(-1)).toMatchObject({
+          type: 'bot/collaboration', data: { messageId, status: 'canceled' },
+        })
+      })
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else await close(h.ctx)
+    }
+  })
+
   it('durably records native collaboration action observations on the Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

@@ -646,6 +646,7 @@ export class BotService extends TypertRemoteService {
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
+  private readonly collaborationRepairRetryKeys = new Set<string>()
   private readonly collaboration: BotCollaborationService
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
@@ -935,33 +936,42 @@ export class BotService extends TypertRemoteService {
     sessionId: SessionId,
     event: BotCollaborationDeliveryEvent,
   ): Promise<'accepted' | 'canceled'> {
-    return this.serialize(async () => {
-      const inspection = await this.ctx.sessionController.inspect(sessionId)
-      const surface = inspection.events.some(candidate => candidate.type === 'user/message'
-        && candidate.data.id === event.messageId)
-      const inbox = botInboxMessageState(inspection.events, event.messageId)
-      const status: BotCollaborationDeliveryEvent['status'] = event.status === 'accepted'
-        && !surface
-        && inbox?.disposition === 'canceled'
-        ? 'canceled'
-        : event.status
-      const latest = [...inspection.events].reverse().find(candidate => candidate.type === 'bot/collaboration'
-        && candidate.data.messageId === event.messageId)
-      if (latest?.type === 'bot/collaboration' && latest.data.status === status) return status
+    return this.serialize(() => this.persistCollaborationDelivery(sessionId, event))
+  }
 
-      let session = this.ctx.sessions.get(sessionId)
-      if (session === undefined) {
-        const resolved = await this.ctx.sessionController.resolveAgent(sessionId)
-        if (!('agent' in resolved)) throw resolved.error
-        session = this.ctx.sessions.get(resolved.agent.id)
-      }
-      if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
-      session.append('bot/collaboration', { ...event, status })
+  /** Persist one peer receipt while deriving its status from the latest inbox state. */
+  private async persistCollaborationDelivery(
+    sessionId: SessionId,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<'accepted' | 'canceled'> {
+    const inspection = await this.ctx.sessionController.inspect(sessionId)
+    const surface = inspection.events.some(candidate => candidate.type === 'user/message'
+      && candidate.data.id === event.messageId)
+    const inbox = botInboxMessageState(inspection.events, event.messageId)
+    const latest = [...inspection.events].reverse().find(candidate => candidate.type === 'bot/collaboration'
+      && candidate.data.messageId === event.messageId)
+    const status: BotCollaborationDeliveryEvent['status'] = !surface && inbox?.disposition === 'canceled'
+      ? 'canceled'
+      : 'accepted'
+
+    let session = this.ctx.sessions.get(sessionId)
+    if (session === undefined) {
+      const resolved = await this.ctx.sessionController.resolveAgent(sessionId)
+      if (!('agent' in resolved)) throw resolved.error
+      session = this.ctx.sessions.get(resolved.agent.id)
+    }
+    if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
+    if (latest?.type === 'bot/collaboration' && latest.data.status === status) {
       if (!await this.ctx.sessions.flush(session)) {
         throw new Error('Bot Session has no durable persistence listener.')
       }
       return status
-    })
+    }
+    session.append('bot/collaboration', { ...event, status })
+    if (!await this.ctx.sessions.flush(session)) {
+      throw new Error('Bot Session has no durable persistence listener.')
+    }
+    return status
   }
 
   /**
@@ -1658,6 +1668,11 @@ export class BotService extends TypertRemoteService {
 
   /** Persist cancellation for peer receipts accepted before a restart or late inbox splice. */
   private async reconcileCanceledCollaborations(sessionId: SessionId): Promise<void> {
+    await this.reconcileCanceledCollaborationsAttempt(sessionId, false)
+  }
+
+  /** Run one peer-delivery repair attempt and schedule one in-process retry after failure. */
+  private async reconcileCanceledCollaborationsAttempt(sessionId: SessionId, retry: boolean): Promise<void> {
     try {
       const inspection = await this.ctx.sessionController.inspect(sessionId)
       const surfaceIds = new Set(inspection.events.flatMap(event => event.type === 'user/message' ? [String(event.data.id)] : []))
@@ -1666,15 +1681,29 @@ export class BotService extends TypertRemoteService {
         if (event.type === 'bot/collaboration') latest.set(String(event.data.messageId), event.data)
       }
       const canceled = [...latest.values()].filter((event) => {
-        if (event.status !== 'accepted' || surfaceIds.has(String(event.messageId))) return false
+        if (surfaceIds.has(String(event.messageId))) return false
         return botInboxMessageState(inspection.events, event.messageId)?.disposition === 'canceled'
       })
       for (const event of canceled) {
+        // The writer re-inspects under Bot serialization, so this candidate
+        // snapshot cannot overwrite a retry that has already been admitted.
         await this.recordCollaborationDelivery(sessionId, { ...event, status: 'canceled' })
       }
     } catch (error: unknown) {
       this.ctx.logger.warn(`bots: canceled peer delivery repair failed: ${String(error)}`)
+      if (!retry) this.scheduleCanceledCollaborationRetry(sessionId)
     }
+  }
+
+  /** Retry one failed peer-delivery repair without waiting for a process restart. */
+  private scheduleCanceledCollaborationRetry(sessionId: SessionId): void {
+    const key = String(sessionId)
+    if (this.collaborationRepairRetryKeys.has(key)) return
+    this.collaborationRepairRetryKeys.add(key)
+    queueMicrotask(() => {
+      void this.reconcileCanceledCollaborationsAttempt(sessionId, true)
+        .finally(() => { this.collaborationRepairRetryKeys.delete(key) })
+    })
   }
 
   /** Retry one canceled delivery once in-process without creating a retry loop. */
