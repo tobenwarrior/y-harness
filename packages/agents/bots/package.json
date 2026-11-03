@@ -60,6 +60,7 @@
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/scope": "workspace:*",
@@ -70,6 +71,11 @@
     "@yharness/storage-domain": "workspace:*",
     "@yharness/typert-protocol": "workspace:*"
   },
+  "peerDependenciesMeta": {
+    "@yharness/mcp-resources": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@yharness/avatar-generation": "workspace:*",
     "@yharness/cordis": "workspace:~",
@@ -77,6 +83,7 @@
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/scope": "workspace:*",
@@ -86,6 +93,7 @@
     "@yharness/tools": "workspace:*",
     "@yharness/storage": "workspace:*",
     "@yharness/storage-domain": "workspace:*",
+    "@yharness/storage-json": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/cordis-plugin-loader": "workspace:~"
   }

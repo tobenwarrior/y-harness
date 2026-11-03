@@ -38,6 +38,7 @@
   "peerDependencies": {
     "@yharness/cordis": "workspace:~",
     "@yharness/agent": "workspace:*",
+    "@yharness/fs": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/subprocess": "workspace:*",
     "@yharness/tools": "workspace:*"
@@ -47,6 +48,7 @@
     "@yharness/cordis-plugin-include": "workspace:~",
     "@yharness/cordis-plugin-loader": "workspace:~",
     "@yharness/agent": "workspace:*",
+    "@yharness/fs": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/subprocess": "workspace:*",
     "@yharness/subprocess-local": "workspace:*",

@@ -130,6 +130,7 @@ export async function syncTools(
     }
     definitions.set(publicName, createMcpToolDefinition(ctx, {
       name: publicName,
+      serverName: opts.serverName,
       rawName: tool.name,
       description: tool.description ?? '',
       inputSchema: tool.inputSchema,
@@ -196,6 +197,8 @@ function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
 export interface McpToolDefinitionOptions {
   /** ToolRuntime name presented to the model. */
   name: string
+  /** Configured MCP server namespace that owns this definition, when available. */
+  serverName?: string
   /** Upstream name used in result diagnostics. */
   rawName: string
   /** Upstream model-facing description. */
@@ -232,6 +235,7 @@ export function createMcpToolDefinition(
     name,
     description,
     parameters: inputSchema,
+    ...(options.serverName === undefined ? {} : { source: { kind: 'mcp' as const, serverName: options.serverName } }),
     output: createOutput(rawName, supportedOutputSchema(options.outputSchema)),
     execute: createExecutor(ctx, options, projections),
     projectContent(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) {

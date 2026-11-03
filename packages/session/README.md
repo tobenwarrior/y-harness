@@ -31,6 +31,8 @@ The group splits into four families: durable storage (persistence seam, backends
 | [`session-format-v1-to-v2/`](session-format-v1-to-v2/README.md) | Frozen released-v1 decoder and cardinality-changing Assistant-stream migration into released v2 | library — no ctx key |
 | [`session-format-v2-to-v3/`](session-format-v2-to-v3/README.md) | Frozen V2 decoder and system-prompt, envelope, and PTC migration into V3 | library — no ctx key |
 | [`session-format-v3-to-v4/`](session-format-v3-to-v4/README.md) | V3 identity migration and V4 codec with generation-aware delivery validation | library — no ctx key |
+| [`session-format-v4-to-v5/`](session-format-v4-to-v5/README.md) | V4 identity migration and V5 codec for replay-aware Bot group-message sources | library — no ctx key |
+| [`session-format-v5-to-v6/`](session-format-v5-to-v6/README.md) | V5 identity migration and V6 codec for durable Bot event-routine sources | library — no ctx key |
 | [`session-format-catalog/`](session-format-catalog/README.md) | Generated static catalog of shipped adjacent migrations | library — no ctx key |
 | [`session-persistence/`](session-persistence/README.md) | Defines the durable session-storage service and the shared write coordination every backend composes | `ctx.sessionPersistence` |
 | [`session-persistence-jsonl/`](session-persistence-jsonl/README.md) | Shipped backend: immutable canonical generation filenames per Session with exclusive successor publication, optionally Zstandard-compressed | registers on `ctx.sessionPersistence` |

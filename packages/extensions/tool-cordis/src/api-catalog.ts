@@ -587,10 +587,52 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'collaboration operations attributed to that Bot.',
       },
       {
-        signature: '@Remote(\'list\') async list(_request: BotListRequest): Promise<BotListValue>',
+        signature: '@Remote(\'listConnectedApps\') async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue>',
+        description: 'Read the available connected apps and one Bot\'s current grants.',
+        parameters: [{ name: 'request', description: 'Bot id whose connected-app policy should be projected.' }],
+        returns: 'The Bot view and stable connected-app access rows.',
+      },
+      {
+        signature: '@Remote(\'setConnectedAppAccess\') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>',
+        description: 'Persist one Bot\'s grant or revoke for a connected app.',
+        parameters: [{ name: 'request', description: 'Bot id, connected-app id, and desired access state.' }],
+        returns: 'The updated Bot view and connected-app access row.',
+      },
+      {
+        signature: '@Remote(\'list\') async list(request: BotListRequest): Promise<BotListValue>',
         description: 'List the durable Bot roster without activating cold Sessions.',
-        parameters: [{ name: '_request', description: 'Empty list request reserved for future paging.' }],
-        returns: 'one row per Bot, ordered by creation time and id.',
+        parameters: [{ name: 'request', description: 'Optional hidden-row inclusion for the restore surface.' }],
+        returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
+      },
+      {
+        signature: '@Remote(\'listGroups\') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>',
+        description: 'List durable multi-Bot groups and current member projections.',
+        parameters: [{ name: 'request', description: 'Group list request.' }],
+        returns: 'The available groups and their members.',
+      },
+      {
+        signature: '@Remote(\'createGroup\') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>',
+        description: 'Create or idempotently reuse one durable multi-Bot group.',
+        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
+        returns: 'The created or existing group.',
+      },
+      {
+        signature: '@Remote(\'updateGroup\') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>',
+        description: 'Update a durable multi-Bot group from the human workspace.',
+        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
+        returns: 'The updated group.',
+      },
+      {
+        signature: '@Remote(\'inspectGroup\') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>',
+        description: 'Read one durable group transcript.',
+        parameters: [{ name: 'request', description: 'Group identity.' }],
+        returns: 'The group and its transcript.',
+      },
+      {
+        signature: '@Remote(\'sendGroupMessage\') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>',
+        description: 'Persist and fan out one human group message to every member Bot.',
+        parameters: [{ name: 'request', description: 'Group identity, message identity, and text.' }],
+        returns: 'The updated group transcript.',
       },
       {
         signature: '@Remote(\'create\') async create(request: BotCreateRequest): Promise<BotCreateValue>',
@@ -605,6 +647,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the committed row.',
       },
       {
+        signature: '@Remote(\'updateOrganization\') async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue>',
+        description: 'Update a Bot\'s roster placement without changing its Session mapping.',
+        parameters: [{ name: 'request', description: 'Bot id and at least one pin, hidden, or section change.' }],
+        returns: 'the committed row.',
+      },
+      {
         signature: '@Remote(\'updateAppearance\') async updateAppearance(request: BotAppearanceUpdateRequest): Promise<BotAppearanceUpdateValue>',
         description: 'Update a Bot\'s semantic identity and/or accent without creating or changing its one backing Session. Generated avatars remain selected unless the caller explicitly sets `clearAvatar` to true.',
         parameters: [{ name: 'request', description: 'Bot id, optional appearance fields, and optional avatar clear.' }],
@@ -615,6 +663,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Persist or clear a generated avatar while preserving the Bot\'s Session mapping.',
         parameters: [{ name: 'request', description: 'Bot id and generated avatar payload, or null to clear it.' }],
         returns: 'the updated Bot row.',
+      },
+      {
+        signature: '@Remote(\'uploadAvatar\') async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue>',
+        description: 'Admit and assign a user-selected PNG without requiring image generation.',
+        parameters: [{ name: 'request', description: 'Bot identity and canonical base64 PNG bytes.' }],
+        returns: 'The Bot with its newly assigned avatar.',
       },
       {
         signature: '@Remote(\'readAvatar\') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>',
@@ -1326,7 +1380,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'fs',
     summary: 'Abstract filesystem provider.',
-    description: 'Abstract filesystem provider. Targets must preserve identity across aliases; reads expose regular UTF-8 text or typed errors, listings are stable and content-free, and mutations are atomic. Optional guards add stale protection without changing the unguarded provider contract.',
+    description: 'Abstract filesystem provider. Targets must preserve identity across aliases; reads expose regular UTF-8 text or typed errors, listings are stable and content-free, and single-file publication is atomic. Moves can retain their source after publishing the destination. Optional guards add stale protection without changing the unguarded provider contract.',
     methods: [
       {
         signature: 'watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>>',
@@ -1418,6 +1472,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Atomically edit literal text. When supplied, the version guard is checked before matching so stale content reports `FS_STALE_VERSION`; omission edits the current content without a freshness precondition.',
         parameters: [{ name: 'target', description: 'the resolved target to edit.' }, { name: 'edit', description: 'the literal search/replace request.' }, { name: 'expected', description: 'the version guard; omit for an unconditional edit.' }, { name: 'signal', description: 'aborts before atomic publication takes effect.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root this edit runs under; a sandboxing backend fences the edit by it, the bare backend ignores it. Omit to leave the backend its own default.' }],
         returns: 'the outcome, including the version the edit produced.',
+      },
+      {
+        signature: 'abstract patchText( target: FsTarget, hunks: readonly PatchHunk[], expected?: { version: FsVersion }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy, ): Promise<FsEditOutcome>',
+        description: 'Atomically apply parsed hunks to the LF-normalized text and restore the stored line-ending style. A missing or stale target reports `FS_STALE_VERSION`; an unmatched hunk reports `FS_PATCH_MISMATCH`.',
+        parameters: [{ name: 'target', description: 'the resolved regular file to patch.' }, { name: 'hunks', description: 'ordered hunks from `parsePatch`.' }, { name: 'expected', description: 'the version guard; omit for an unconditional patch.' }, { name: 'signal', description: 'aborts before atomic publication takes effect.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root this patch runs under; a sandboxing backend fences the patch by it, the bare backend ignores it. Omit to leave the backend its own default.' }],
+        returns: 'the outcome, including the version the patch produced.',
+      },
+      {
+        signature: 'abstract deleteFile( target: FsTarget, expected?: { version: FsVersion }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy, ): Promise<FsDeleteOutcome>',
+        description: 'Remove a regular file. A missing or stale target reports `FS_STALE_VERSION`; a directory or other non-file reports `FS_NOT_REGULAR_FILE`. Resolution has already followed symlinks, so the target is the real file.',
+        parameters: [{ name: 'target', description: 'the resolved file to remove.' }, { name: 'expected', description: 'the version guard; omit for an unconditional removal.' }, { name: 'signal', description: 'aborts before removal.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root this removal runs under; a sandboxing backend fences it, the bare backend ignores it. Omit to leave the backend its own default.' }],
+        returns: 'the bounded LF-normalized removed text, or null when no basis is available.',
+      },
+      {
+        signature: 'abstract moveFile( source: FsTarget, destination: FsTarget, options: { hunks?: readonly PatchHunk[] expectedSource?: { version: FsVersion } expectedDestination?: FsWriteIntent }, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy, ): Promise<FsMoveOutcome>',
+        description: 'Publish the source text, optionally patched, at the destination, then remove the source. Both targets stay locked in canonical order. Identical targets report `FS_SAME_TARGET`; the source guard follows `patchText` and the destination guard follows `writeText`. The two effects are separate: a published destination with a retained source is a final outcome reported through `sourceDeleted: false`.',
+        parameters: [{ name: 'source', description: 'the resolved regular source; its line-ending style and mode carry over.' }, { name: 'destination', description: 'the resolved destination within the same provider.' }, { name: 'options', description: 'optional hunks and the source/destination guards; an omitted guard is unconditional.' }, { name: 'signal', description: 'checked before destination staging; the commit then completes both effects.' }, { name: 'sandboxPolicy', description: 'the per-call mode and workspace root both paths run under; a sandboxing backend fences them, the bare backend ignores it. Omit to leave the backend its own default.' }],
+        returns: 'the bounded LF source basis, the destination outcome, and the source-removal status.',
       },
     ],
   },
@@ -1763,8 +1835,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'register(server: string, provider: McpResourceProvider): () => void',
         description: 'Register one server and expose resource tools while that scope has providers.',
-        parameters: [{ name: 'server', description: 'configured server name, unique in this scope.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
+        parameters: [{ name: 'server', description: 'exact opaque server id, unique in this scope; empty and long ids are preserved.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
         returns: 'the effect disposer for this exact registration.',
+      },
+      {
+        signature: 'servers(scope?: ScopeKey): readonly string[]',
+        description: 'List resource servers visible from one caller scope.',
+        parameters: [{ name: 'scope', description: 'the viewing Agent scope, or undefined for global access.' }],
+        returns: 'visible configured server names in registration order.',
       },
     ],
   },
@@ -3871,8 +3949,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'guard(guard: ToolGuard): () => void',
-        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
-        parameters: [{ name: 'guard', description: 'synchronous check; a returned string denies the execution.' }],
+        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason or structured failure, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
+        parameters: [{ name: 'guard', description: 'synchronous check; a returned string or failure detail denies the execution.' }],
+        returns: 'the exact disposer that unregisters the guard.',
+      },
+      {
+        signature: 'beforeDispatch(guard: ToolDispatchGuard): () => void',
+        description: 'Register a synchronous last-mile guard immediately before a tool body. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that Agent. This stage runs after every `tools/execute` waterfall has settled, so revoking a capability while an async wrapper is waiting cannot allow the body to start. Returning a denial preserves its structured error metadata in the tool result. The exact disposer is returned for ordered ownership and HMR cleanup.',
+        parameters: [{ name: 'guard', description: 'synchronous allow/deny check for the final dispatch.' }],
         returns: 'the exact disposer that unregisters the guard.',
       },
       {
@@ -4700,6 +4784,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'inspection', description: 'committed canonical prefix, including the feedback as its last event.' }],
   },
   {
+    name: 'fs/delete-intent',
+    mode: 'waterfall',
+    signature: '\'fs/delete-intent\'(target: FsTarget, actor: object | undefined, next: () => { version: FsVersion } | undefined | Promise<{ version: FsVersion } | undefined>): Promise<{ version: FsVersion } | undefined>',
+    summary: 'Single-slot decision for FileSystem.deleteFile; the first returned guard wins.',
+    description: 'Single-slot decision for FileSystem.deleteFile; the first returned guard wins. Calling next() delegates to an unconditional deletion.',
+    parameters: [{ name: 'target', description: 'the resolved source about to be removed.' }, { name: 'actor', description: 'the opaque tool-execution context used to select observed state.' }],
+  },
+  {
     name: 'fs/edit-intent',
     mode: 'waterfall',
     signature: '\'fs/edit-intent\'(target: FsTarget, actor: object | undefined, next: () => { version: FsVersion } | undefined | Promise<{ version: FsVersion } | undefined>): Promise<{ version: FsVersion } | undefined>',
@@ -5400,8 +5492,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotAvatarUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotAvatarUploadRequest',
+    declaration: 'export interface BotAvatarUploadRequest {\n    readonly botId: BotId;\n    readonly data: string;\n    readonly mediaType: \'image/png\';\n}',
+  },
+  {
     name: 'BotCollaborationClient',
-    declaration: 'export interface BotCollaborationClient {\n    readonly sender: BotCollaborationRosterEntry;\n    readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>;\n    readonly inspect: (botId: BotId) => Promise<BotCollaborationInspectionValue>;\n    readonly send: (request: SendBotMessageRequest) => Promise<SendBotMessageResult>;\n}',
+    declaration: 'export interface BotCollaborationClient {\n    readonly sender: BotCollaborationRosterEntry;\n    readonly memory?: BotMemoryClient;\n    readonly list: () => Promise<readonly BotCollaborationRosterEntry[]>;\n    readonly inspect: (botId: BotId) => Promise<BotCollaborationInspectionValue>;\n    readonly send: (request: SendBotMessageRequest) => Promise<SendBotMessageResult>;\n}',
   },
   {
     name: 'BotCollaborationInspectionValue',
@@ -5416,6 +5512,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n}',
   },
   {
+    name: 'BotConnectedAppAccessRequest',
+    declaration: 'export interface BotConnectedAppAccessRequest {\n    readonly botId: BotId;\n    readonly appId: string;\n    readonly allowed: boolean;\n}',
+  },
+  {
+    name: 'BotConnectedAppAccessValue',
+    declaration: 'export interface BotConnectedAppAccessValue {\n    readonly bot: BotView;\n    readonly app: BotConnectedAppAccess;\n}',
+  },
+  {
+    name: 'BotConnectedAppsRequest',
+    declaration: 'export interface BotConnectedAppsRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotConnectedAppsValue',
+    declaration: 'export interface BotConnectedAppsValue {\n    readonly bot: BotView;\n    readonly apps: readonly BotConnectedAppAccess[];\n}',
+  },
+  {
     name: 'BotCreateRequest',
     declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
   },
@@ -5425,7 +5537,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutine',
-    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly results: readonly BotEventRoutineResult[];\n}',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
+  },
+  {
+    name: 'BotEventRoutineAdmissionTombstone',
+    declaration: 'export interface BotEventRoutineAdmissionTombstone {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n}',
   },
   {
     name: 'BotEventRoutineDelivery',
@@ -5444,20 +5560,132 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
   },
   {
+    name: 'BotGroupCreateRequest',
+    declaration: 'export interface BotGroupCreateRequest {\n    readonly id?: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
+  },
+  {
+    name: 'BotGroupCreateValue',
+    declaration: 'export interface BotGroupCreateValue {\n    readonly group: BotGroupView;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryClaim',
+    declaration: 'export interface BotGroupDeliveryClaim {\n    readonly turn: number;\n    readonly step: number;\n    readonly isolated: boolean;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryRecord',
+    declaration: 'export interface BotGroupDeliveryRecord {\n    readonly id: string;\n    readonly groupId: BotGroupId;\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: \'pending\' | \'accepted\' | \'responded\' | \'failed\';\n    readonly responseMessageId?: BotGroupMessageId;\n    readonly error?: string;\n    readonly claim?: BotGroupDeliveryClaim;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryStatusView',
+    declaration: 'export interface BotGroupDeliveryStatusView {\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: BotGroupDeliveryRecord[\'status\'];\n    readonly error?: string;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryView',
+    declaration: 'export interface BotGroupDeliveryView {\n    readonly botId: BotId;\n    readonly status: \'accepted\' | \'duplicate\' | \'failed\';\n    readonly error?: string;\n}',
+  },
+  {
+    name: 'BotGroupId',
+    declaration: 'export type BotGroupId = Branded<\'BotGroupId\'>;',
+  },
+  {
+    name: 'BotGroupInspectRequest',
+    declaration: 'export interface BotGroupInspectRequest {\n    readonly groupId: BotGroupId;\n}',
+  },
+  {
+    name: 'BotGroupInspectValue',
+    declaration: 'export interface BotGroupInspectValue {\n    readonly group: BotGroupView;\n    readonly messages: readonly BotGroupMessageView[];\n    readonly deliveries?: readonly BotGroupDeliveryStatusView[];\n}',
+  },
+  {
+    name: 'BotGroupListRequest',
+    declaration: 'export interface BotGroupListRequest {\n    readonly cursor?: string;\n}',
+  },
+  {
+    name: 'BotGroupListValue',
+    declaration: 'export interface BotGroupListValue {\n    readonly groups: readonly BotGroupView[];\n}',
+  },
+  {
+    name: 'BotGroupMemberView',
+    declaration: 'export type BotGroupMemberView = Pick<BotView, \'id\' | \'name\' | \'description\' | \'identity\' | \'accent\' | \'avatar\' | \'availability\' | \'state\'>;',
+  },
+  {
+    name: 'BotGroupMessageId',
+    declaration: 'export type BotGroupMessageId = Branded<\'BotGroupMessageId\'>;',
+  },
+  {
+    name: 'BotGroupMessageSenderView',
+    declaration: 'export type BotGroupMessageSenderView = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'bot\';\n    readonly botId: BotId;\n    readonly name: string;\n};',
+  },
+  {
+    name: 'BotGroupMessageView',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotGroupRecord',
+    declaration: 'export interface BotGroupRecord {\n    readonly id: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotGroupSendRemoteRequest',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n}',
+  },
+  {
+    name: 'BotGroupSendValue',
+    declaration: 'export interface BotGroupSendValue {\n    readonly messageId: BotGroupMessageId;\n    readonly status: \'accepted\' | \'duplicate\' | \'partial\';\n    readonly deliveries: readonly BotGroupDeliveryView[];\n}',
+  },
+  {
+    name: 'BotGroupUpdateRequest',
+    declaration: 'export interface BotGroupUpdateRequest {\n    readonly groupId: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
+  },
+  {
+    name: 'BotGroupUpdateValue',
+    declaration: 'export interface BotGroupUpdateValue {\n    readonly group: BotGroupView;\n}',
+  },
+  {
+    name: 'BotGroupView',
+    declaration: 'export interface BotGroupView extends Omit<BotGroupRecord, \'botIds\'> {\n    readonly botIds: readonly BotId[];\n    readonly bots: readonly BotGroupMemberView[];\n}',
+  },
+  {
     name: 'BotId',
     declaration: 'export type BotId = Branded<\'BotId\'>;',
   },
   {
     name: 'BotListRequest',
-    declaration: 'export interface BotListRequest {\n    readonly cursor?: string;\n}',
+    declaration: 'export interface BotListRequest {\n    readonly cursor?: string;\n    readonly includeHidden?: boolean;\n}',
   },
   {
     name: 'BotListValue',
     declaration: 'export interface BotListValue {\n    readonly bots: readonly BotView[];\n}',
   },
   {
+    name: 'BotMemoryClient',
+    declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
+  },
+  {
+    name: 'BotMemoryForgetRequest',
+    declaration: 'export interface BotMemoryForgetRequest {\n    readonly memoryId: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'BotMemoryId',
+    declaration: 'export type BotMemoryId = Branded<\'BotMemoryId\'>;',
+  },
+  {
+    name: 'BotMemoryRecord',
+    declaration: 'export interface BotMemoryRecord {\n    readonly id: BotMemoryId;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotMemoryRememberRequest',
+    declaration: 'export interface BotMemoryRememberRequest {\n    readonly text: string;\n    readonly memoryId?: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'BotMessageId',
     declaration: 'export type BotMessageId = MessageId;',
+  },
+  {
+    name: 'BotOrganizationUpdateRequest',
+    declaration: 'export interface BotOrganizationUpdateRequest {\n    readonly botId: BotId;\n    readonly pinned?: boolean;\n    readonly hidden?: boolean;\n    readonly group?: string | null;\n}',
+  },
+  {
+    name: 'BotOrganizationUpdateValue',
+    declaration: 'export interface BotOrganizationUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
     name: 'BotProvisioningState',
@@ -5465,7 +5693,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5477,7 +5705,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = Omit<BotRecord, \'eventRoutines\'> & {\n    readonly availability: BotAvailability;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'eventRoutines\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',
@@ -6081,7 +6309,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DiffResultView',
-    declaration: 'export interface DiffResultView {\n    card: \'diff\';\n    title?: string;\n    diffs: FileDiff[];\n}',
+    declaration: 'export interface DiffResultView {\n    card: \'diff\';\n    title?: string;\n    diffs: FileDiff[];\n    locations?: FileLocation[];\n}',
   },
   {
     name: 'DirectoryEntry',
@@ -6260,6 +6488,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface FrequencyTooHighError {\n    readonly code: \'frequency_too_high\';\n    readonly message: string;\n}',
   },
   {
+    name: 'FsDeleteOutcome',
+    declaration: 'export interface FsDeleteOutcome {\n    before: string | null;\n}',
+  },
+  {
     name: 'FsDirEntry',
     declaration: 'export interface FsDirEntry {\n    name: string;\n    type: \'file\' | \'directory\' | \'other\';\n    target: FsTarget;\n    version?: FsVersion;\n    size?: number;\n}',
   },
@@ -6272,8 +6504,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface FsEditRequest {\n    oldString: string;\n    newString: string;\n    replaceAll: boolean;\n}',
   },
   {
+    name: 'FsErrorCode',
+    declaration: 'export type FsErrorCode = typeof FS_ERROR_CODES[number];',
+  },
+  {
     name: 'FsInfo',
     declaration: 'export interface FsInfo {\n    version: FsVersion;\n    type: \'file\' | \'directory\' | \'other\';\n    size?: number;\n}',
+  },
+  {
+    name: 'FsMoveOutcome',
+    declaration: 'export type FsMoveOutcome = {\n    sourceBefore: string | null;\n    destination: FsWriteOutcome;\n    sourceDeleted: true;\n} | {\n    sourceBefore: string | null;\n    destination: FsWriteOutcome;\n    sourceDeleted: false;\n    sourceFailure: FsMoveSourceFailure;\n};',
+  },
+  {
+    name: 'FsMoveSourceFailure',
+    declaration: 'export interface FsMoveSourceFailure {\n    code: FsErrorCode;\n    message: string;\n}',
   },
   {
     name: 'FsObservation',
@@ -6776,6 +7020,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type McpResourceRequest = {\n    method: \'resources/list\' | \'resources/templates/list\';\n    cursor?: string;\n} | {\n    method: \'resources/read\';\n    uri: string;\n};',
   },
   {
+    name: 'McpResourceToolSource',
+    declaration: 'export interface McpResourceToolSource {\n    readonly kind: \'mcp-resource\';\n}',
+  },
+  {
     name: 'Message',
     declaration: 'export type Message = MessageRoleMap[keyof MessageRoleMap];',
   },
@@ -7038,6 +7286,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PaneOpenResult',
     declaration: 'export interface PaneOpenResult {\n    id: string;\n    isPlaced: boolean;\n    reason?: string;\n}',
+  },
+  {
+    name: 'PatchHunk',
+    declaration: 'export interface PatchHunk {\n    lineNumber: number;\n    context?: string;\n    oldLines: string[];\n    newLines: string[];\n    isEndOfFile: boolean;\n}',
   },
   {
     name: 'PeerAdmission',
@@ -9165,11 +9417,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolDefinition',
-    declaration: 'export interface ToolDefinition extends ToolSchema {\n    readonly output: ToolOutputDefinition;\n    execute(args: unknown, exec: ToolRunContext): Promise<unknown>;\n    projectContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    timeoutMs?: number;\n    isConcurrencySafe?(args: unknown): boolean;\n    presentCall?(args: unknown): ToolCallView | undefined;\n    presentResult?(args: unknown, result: ToolResult): ToolResultView | undefined;\n}',
+    declaration: 'export interface ToolDefinition extends ToolSchema {\n    readonly source?: ToolSource | McpResourceToolSource;\n    readonly output: ToolOutputDefinition;\n    execute(args: unknown, exec: ToolRunContext): Promise<unknown>;\n    projectContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    timeoutMs?: number;\n    isConcurrencySafe?(args: unknown): boolean;\n    presentCall?(args: unknown): ToolCallView | undefined;\n    presentResult?(args: unknown, result: ToolResult): ToolResultView | undefined;\n}',
+  },
+  {
+    name: 'ToolDispatchDecision',
+    declaration: 'export type ToolDispatchDecision = {\n    readonly kind: \'allow\';\n} | {\n    readonly kind: \'deny\';\n    readonly reason: string;\n    readonly info?: ToolErrorInfo;\n};',
   },
   {
     name: 'ToolDispatchExecution',
     declaration: 'export interface ToolDispatchExecution extends Omit<ToolExecution, \'signal\'> {\n    signal: AbortSignal;\n}',
+  },
+  {
+    name: 'ToolDispatchGuard',
+    declaration: 'export type ToolDispatchGuard = (execution: Readonly<ToolDispatchExecution>) => ToolDispatchDecision;',
   },
   {
     name: 'ToolErrorInfo',
@@ -9209,7 +9469,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolGuard',
-    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined;',
+    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | ToolFailure | undefined;',
   },
   {
     name: 'ToolHistory',
@@ -9261,7 +9521,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    beforeDispatch(guard: ToolDispatchGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',
@@ -9270,6 +9530,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ToolSchema',
     declaration: 'export interface ToolSchema {\n    deferLoading?: true;\n    name: string;\n    description: string;\n    parameters: Record<string, unknown>;\n}',
+  },
+  {
+    name: 'ToolSource',
+    declaration: 'export interface ToolSource {\n    readonly kind: \'mcp\';\n    readonly serverName: string;\n}',
   },
   {
     name: 'ToolSpec',

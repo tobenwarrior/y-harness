@@ -27,7 +27,7 @@ Mount this plugin when agents should work from the workspace's own instruction f
 
 ### What the agent gets
 
-The first request includes one durable baseline message with the user-global `$DSH_HOME/AGENTS.md` followed by the project chain — every existing candidate file from the project root down to the session working directory, in broad-to-specific order. Sibling files whose content matches after trimming render once, so a `CLAUDE.md` that duplicates its `AGENTS.md` is not repeated. After a successful `read`, `write`, or `edit` call reaches a deeper directory, the next request includes the newly applicable instruction file; a changed file replaces its content, and a file that disappears or duplicates an earlier candidate produces a removal notice.
+The first request includes one durable baseline message with the user-global `$DSH_HOME/AGENTS.md` followed by the project chain — every existing candidate file from the project root down to the session working directory, in broad-to-specific order. Sibling files whose content matches after trimming render once, so a `CLAUDE.md` that duplicates its `AGENTS.md` is not repeated. After a successful `read`, `write`, or `edit` call reaches a deeper directory, the next request includes the newly applicable instruction file; a successful multi-file `apply_patch` refreshes every touched directory in the same way. A changed file replaces its content, and a file that disappears or duplicates an earlier candidate produces a removal notice.
 
 ### Configuration
 
@@ -96,7 +96,7 @@ The plugin is built on one principle: workspace instructions are durable convers
 
 ### Main flow
 
-At the first eligible `agent/pre-step` of a session, the plugin composes the baseline and folds it into the entering batch right after the claimed messages. Successful first-party `read`, `write`, and `edit` calls contribute touches that bubble up through parent execution tokens; once the enclosing step is durable, a projection reconciles the visible session state against the inbox and queues additions, replacements, or removals. An unchanged path with an unchanged digest is never injected again. Discovery follows structured filesystem activity rather than shell navigation, because each local shell call starts a fresh process and parsing arbitrary shell syntax is not a reliable filesystem seam.
+At the first eligible `agent/pre-step` of a session, the plugin composes the baseline and folds it into the entering batch right after the claimed messages. Successful first-party `read`, `write`, and `edit` calls, plus every source and destination path in a successful `apply_patch`, contribute touches that bubble up through parent execution tokens; once the enclosing step is durable, a projection reconciles the visible session state against the inbox and queues additions, replacements, or removals. An unchanged path with an unchanged digest is never injected again. Discovery follows structured filesystem activity rather than shell navigation, because each local shell call starts a fresh process and parsing arbitrary shell syntax is not a reliable filesystem seam.
 
 ### Invariants
 

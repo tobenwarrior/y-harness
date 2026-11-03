@@ -933,6 +933,16 @@
     },
     {
       "doc": "docs/subsystems/tools.md",
+      "symbol": "ToolSource",
+      "source": "packages/core/tools/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/tools.md",
+      "symbol": "McpResourceToolSource",
+      "source": "packages/core/tools/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/tools.md",
       "symbol": "ToolDefinition",
       "source": "packages/core/tools/src/index.ts"
     },
@@ -979,6 +989,16 @@
     {
       "doc": "docs/subsystems/tools.md",
       "symbol": "ToolDispatchExecution",
+      "source": "packages/core/tools/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/tools.md",
+      "symbol": "ToolDispatchDecision",
+      "source": "packages/core/tools/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/tools.md",
+      "symbol": "ToolDispatchGuard",
       "source": "packages/core/tools/src/index.ts"
     },
     {

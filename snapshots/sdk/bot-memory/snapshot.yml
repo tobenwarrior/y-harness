@@ -1,0 +1,11 @@
+version: 1
+scenario: bot-memory
+profile: sdk
+composition: sdk-bot-memory
+recording: authored
+sessionFormat:
+  version: 4
+  coverage: [adjacent-migration]
+header:
+  class: sdk-bot-memory
+  pin: true

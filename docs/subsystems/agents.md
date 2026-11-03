@@ -62,11 +62,60 @@ Host service that owns the durable roster and its Session mappings.
 collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
- * List the durable Bot roster without activating cold Sessions.
- * @param _request - Empty list request reserved for future paging.
- * @returns one row per Bot, ordered by creation time and id.
+ * Read the available connected apps and one Bot's current grants.
+ * @param request - Bot id whose connected-app policy should be projected.
+ * @returns The Bot view and stable connected-app access rows.
  */
-@Remote('list') async list(_request: BotListRequest): Promise<BotListValue>
+@Remote('listConnectedApps') async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue>
+
+/**
+ * Persist one Bot's grant or revoke for a connected app.
+ * @param request - Bot id, connected-app id, and desired access state.
+ * @returns The updated Bot view and connected-app access row.
+ */
+@Remote('setConnectedAppAccess') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>
+
+/**
+ * List the durable Bot roster without activating cold Sessions.
+ * @param request - Optional hidden-row inclusion for the restore surface.
+ * @returns visible rows by default, with pinned rows first and creation time as the stable tie-breaker.
+ */
+@Remote('list') async list(request: BotListRequest): Promise<BotListValue>
+
+/**
+ * List durable multi-Bot groups and current member projections.
+ * @param request - Group list request.
+ * @returns The available groups and their members.
+ */
+@Remote('listGroups') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>
+
+/**
+ * Create or idempotently reuse one durable multi-Bot group.
+ * @param request - Group identity, name, and members.
+ * @returns The created or existing group.
+ */
+@Remote('createGroup') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>
+
+/**
+ * Update a durable multi-Bot group from the human workspace.
+ * @param request - Group identity, name, and members.
+ * @returns The updated group.
+ */
+@Remote('updateGroup') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>
+
+/**
+ * Read one durable group transcript.
+ * @param request - Group identity.
+ * @returns The group and its transcript.
+ */
+@Remote('inspectGroup') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>
+
+/**
+ * Persist and fan out one human group message to every member Bot.
+ * @param request - Group identity, message identity, and text.
+ * @returns The updated group transcript.
+ */
+@Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 
 /**
  * Create one durable Bot and its exactly-one ordinary Session.
@@ -88,6 +137,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('rename') async rename(request: BotRenameRequest): Promise<BotRenameValue>
 
 /**
+ * Update a Bot's roster placement without changing its Session mapping.
+ * @param request - Bot id and at least one pin, hidden, or section change.
+ * @returns the committed row.
+ */
+@Remote('updateOrganization') async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue>
+
+/**
  * Update a Bot's semantic identity and/or accent without creating or changing
  * its one backing Session. Generated avatars remain selected unless the
  * caller explicitly sets `clearAvatar` to true.
@@ -102,6 +158,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * @returns the updated Bot row.
  */
 @Remote('updateAvatar') async updateAvatar(request: BotAvatarUpdateRequest): Promise<BotAvatarUpdateValue>
+
+/**
+ * Admit and assign a user-selected PNG without requiring image generation.
+ * @param request - Bot identity and canonical base64 PNG bytes.
+ * @returns The Bot with its newly assigned avatar.
+ */
+@Remote('uploadAvatar') async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue>
 
 /**
  * Read the current Bot avatar through the Host attachment store.

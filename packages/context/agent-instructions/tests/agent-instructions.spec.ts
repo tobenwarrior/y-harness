@@ -190,6 +190,9 @@ class RecordingFileSystem extends FileSystem {
   override async editText(_target: FsTarget, _edit: FsEditRequest): Promise<FsEditOutcome> {
     return { version: FsVersion('unused'), before: '', after: '' }
   }
+  override async patchText(): Promise<never> { throw new Error('patch not needed in agent-instructions tests') }
+  override async deleteFile(): Promise<never> { throw new Error('delete not needed in agent-instructions tests') }
+  override async moveFile(): Promise<never> { throw new Error('move not needed in agent-instructions tests') }
 }
 
 class BlockingReadFileSystem extends RecordingFileSystem {
@@ -2797,6 +2800,44 @@ describe('dynamic nested workspace context injection', () => {
       expect(text).toContain('nested package rule')
       expect(text).not.toContain('<agent-instructions')
       expect(text).toContain('baseline root rule')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('attaches instructions from every file touched by a successful apply_patch result', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'pkg/AGENTS.md'), 'nested package rule')
+      await write(join(root, 'other/AGENTS.md'), 'other package rule')
+      const ctx = new Context()
+      await mountFileToolsAndAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+
+      ctx.emit('tools/result', stubToolExecution({
+        signal: testToolSignal,
+        callId: ToolCallId('apply-patch-multi-file'),
+        name: 'apply_patch',
+        arguments: {
+          input: [
+            '*** Begin Patch',
+            '*** Add File: pkg/new.txt',
+            '+one',
+            '*** Add File: other/new.txt',
+            '+two',
+            '*** End Patch',
+          ].join('\n'),
+        },
+        agent,
+      }), { content: [], isError: false, value: null })
+
+      const context = await syncedAgentInstructions(ctx, agent)
+      const rendered = blocksText(context.content)
+      expect(rendered).toContain('nested package rule')
+      expect(rendered).toContain('other package rule')
     } finally {
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })

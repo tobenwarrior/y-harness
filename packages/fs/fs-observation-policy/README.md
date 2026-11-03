@@ -1,5 +1,5 @@
 ---
-description: "The read-before-edit filesystem policy plugin for deployments and maintainers choosing or debugging guarded write and edit behavior."
+description: "The read-before-mutation filesystem policy plugin for deployments and maintainers choosing or debugging guarded write, edit, patch, delete, and move behavior."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-`dsh-fs-observation-policy` makes filesystem tools require an agent to read a file before overwriting or editing it. It also rejects a mutation when the file has changed since that read, and returns a clear instruction to re-read and retry. Reading a missing path authorizes guarded creation, while concurrent creation remains protected. Choose it for deployments that want read-before-write safety; resumed sessions must read targets again because observations are not persisted.
+`dsh-fs-observation-policy` makes filesystem tools require an agent to read a file before overwriting, editing, patching, deleting, or moving it. It also rejects a mutation when the file has changed since that read, and returns a clear instruction to re-read and retry. Reading a missing path authorizes guarded creation, while concurrent creation remains protected. Choose it for deployments that want read-before-mutation safety; resumed sessions must read targets again because observations are not persisted.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## Use this package
 
-Load this plugin alongside a `ctx.fs` backend and the `dsh-tool-fs` tools when a deployment wants the model to read a file before it can overwrite or edit it. The plugin needs no configuration and injects no service; it only listens for the `fs/*` events the tools dispatch.
+Load this plugin alongside a `ctx.fs` backend and the `dsh-tool-fs` tools when a deployment wants the model to read a file before it can mutate it. The plugin needs no configuration and injects no service; it only listens for the `fs/*` events the tools dispatch.
 
 ### Minimal composition
 
@@ -37,11 +37,11 @@ Load a backend, then this plugin, then the tools. The policy listener should be 
 
 ### What changes for the model
 
-With the policy mounted, `write` creates new files but refuses to overwrite an existing file that the session has not read, `edit` requires a prior read of the target, and a file that changed since it was read fails with `FS_STALE_VERSION`. Absence is recorded too: reading a missing file marks it confirmed absent, so a later `write` may recreate it through the guarded-create flow. A session resumes with no observed state, so it must re-read files before guarded mutations succeed again.
+With the policy mounted, `write` creates new files but refuses to overwrite an existing file that the session has not read, while `edit`, `apply_patch`, `delete`, and `move` require a prior read of each source. A file that changed since it was read fails with `FS_STALE_VERSION`. Absence is recorded too: reading a missing file marks it confirmed absent, so a later `write` may recreate it through the guarded-create flow. A session resumes with no observed state, so it must re-read files before guarded mutations succeed again.
 
 ### Failures and recovery
 
-An edit without a prior observation fails with code `FS_NOT_OBSERVED` and policy reason `edit requires reading "<path>" first`; editing a target observed absent fails with `FS_NOT_FOUND`. The tools normalize unread policy and provider failures to `cannot modify "<path>": file has not been read — read the file, then retry` while preserving the code and original cause. Following the remedy on an externally deleted file records absence, so the next guarded write can recreate it without clobbering a concurrent creator.
+An edit, patch, delete, or move without a prior observation fails with code `FS_NOT_OBSERVED` and a matching policy reason; operating on a target observed absent fails with `FS_NOT_FOUND`. The tools normalize unread policy and provider failures to `cannot modify "<path>": file has not been read — read the file, then retry` while preserving the code and original cause. Following the remedy on an externally deleted file records absence, so the next guarded write can recreate it without clobbering a concurrent creator.
 
 -----
 
@@ -58,18 +58,18 @@ This section explains the design decisions behind the policy plugin and points a
 The plugin is built on two ideas:
 
 - **Event gate, not method service.** The plugin influences the world only through the `fs/*` events, so it registers no `ctx.fsPolicy` service and has no public methods. Removing it cannot break `dsh-tool-fs` at a service-injection boundary — the tool falls through to the bare provider.
-- **Observed state is a prior-observation record.** A weak owner-to-target map holds three logical states — unseen, confirmed absent, or present at a version. The plugin performs no filesystem I/O of its own; it converts recorded state into the provider's optional guard, and the provider performs the atomic freshness check.
+- **Observed state is a prior-observation record.** A weak owner-to-target map holds three logical states — unseen, confirmed absent, or present at a version. The plugin performs no filesystem I/O of its own; it converts recorded state into the provider's optional guard for every mutation, and the provider performs the atomic freshness check.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | The three `fs/*` listeners and the observed-state gate |
+| [`src/index.ts`](src/index.ts) | The four `fs/*` listeners and the observed-state gate |
 | [`src/types.ts`](src/types.ts) | The opaque event actor shape from which the owner session is derived |
 
 ### Decision flow
 
-`fs/write-intent` resolves unseen or confirmed absent to `{ kind: 'createIfAbsent' }` and observed present to `{ kind: 'replaceIfVersion', version: vObserved }`. `fs/edit-intent` rejects an unseen target with `FS_NOT_OBSERVED`, a confirmed-absent target with `FS_NOT_FOUND`, and otherwise supplies the observed version as the compare-and-swap basis. `fs/observed` records `{ kind: 'present', version }` or `{ kind: 'absent' }` for the owner and target — a synchronous, side-effect-only `WeakMap.set`, because successful mutations have already committed.
+`fs/write-intent` resolves unseen or confirmed absent to `{ kind: 'createIfAbsent' }` and observed present to `{ kind: 'replaceIfVersion', version: vObserved }`. `fs/edit-intent` and `fs/delete-intent` reject an unseen target with `FS_NOT_OBSERVED`, a confirmed-absent target with `FS_NOT_FOUND`, and otherwise supply the observed version as the compare-and-swap basis. `fs/observed` records `{ kind: 'present', version }` or `{ kind: 'absent' }` for the owner and target — a synchronous, side-effect-only `WeakMap.set`, because successful mutations have already committed.
 
 ### Single-slot, first-wins
 

@@ -11,12 +11,12 @@ const completeV0 = {
   },
 } as const
 
-const adjacent = [1, 2].map(version => ({
+const adjacent = [1, 2, 4].map(version => ({
   key: `sdk/v${version}`,
   selectedVersions: [version],
   retained: { version, coverage: ['adjacent-migration'] as const },
 }))
-const baseline = { key: 'session/v3', selectedVersions: Array<number>(8).fill(3) }
+const baseline = { key: 'session/v3', selectedVersions: Array<number>(9).fill(3) }
 const current = { key: 'session/current', selectedVersions: Array<number>(8).fill(SESSION_FORMAT_VERSION) }
 
 describe('recorded-session corpus policy', () => {
@@ -31,12 +31,12 @@ describe('recorded-session corpus policy', () => {
       { key: 'session/packed', selectedVersions: [0], retained: { version: 0, coverage: ['packed-row'] } },
       { key: 'session/retry', selectedVersions: [0], retained: { version: 0, coverage: ['retry-failure'] } },
       ...adjacent,
-    ])).toEqual({ currentRoles: 0, baselineRoles: 8, retainedRoles: 5 + adjacent.length, retainedScenarios: 3 + adjacent.length })
+    ])).toEqual({ currentRoles: 0, baselineRoles: 9, retainedRoles: 5 + adjacent.length, retainedScenarios: 3 + adjacent.length })
   })
 
   it('accepts current-writer owners alongside retained V3 replay input', () => {
     expect(assertSnapshotCorpusPolicy([baseline, current, completeV0, ...adjacent]))
-      .toEqual({ currentRoles: 8, baselineRoles: 8, retainedRoles: 3, retainedScenarios: 3 })
+      .toEqual({ currentRoles: 8, baselineRoles: 9, retainedRoles: 1 + adjacent.length, retainedScenarios: 1 + adjacent.length })
   })
 
   it('rejects refreshing away every direct V3 migration input', () => {
@@ -114,11 +114,11 @@ describe('recorded-session corpus policy', () => {
     expect(assertSnapshotCorpusPolicy([
       baseline, current,
       { ...completeV0, selectedVersions: Array<number>(9).fill(0) }, ...adjacent,
-    ]).retainedRoles).toBe(11)
+    ]).retainedRoles).toBe(12)
     expect(() => assertSnapshotCorpusPolicy([
       baseline, current,
       { ...completeV0, selectedVersions: Array<number>(10).fill(0) }, ...adjacent,
-    ])).toThrow('Session corpus retains 12 historical roles; maximum is 11')
+    ])).toThrow('Session corpus retains 13 historical roles; maximum is 12')
     expect(() => assertSnapshotCorpusPolicy([
       { ...baseline, selectedVersions: [3] }, completeV0, ...adjacent,
     ])).toThrow(`Session corpus requires a baseline/current majority; baseline=1, current=0, retained=${1 + adjacent.length}`)

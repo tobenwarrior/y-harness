@@ -147,7 +147,7 @@ export function apply(ctx: Context): void {
     const request = ++botRosterRequest
     if (botsRemote === undefined) return
     try {
-      const result = await botsRemote.list({})
+      const result = await botsRemote.list({ includeHidden: true })
       if (request !== botRosterRequest || !result.ok) return
       botSessionIds.set(result.value.bots.map(bot => bot.sessionId))
     } catch (error: unknown) {

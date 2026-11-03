@@ -13,6 +13,7 @@ import {
   SessionFormatUnsupportedMigrationError,
   sessionFormatCatalog,
 } from '@yharness/session-format-catalog'
+import { assertV6RowAdmission } from '@yharness/session-format-v5-to-v6'
 import { readdirSync, type Dirent } from 'node:fs'
 import { open, mkdir, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -33,7 +34,7 @@ import {
 } from '@yharness/session-persistence'
 import { JsonlBackendTracker, JsonlSessionHandle, type StorageHandleState } from './storage.ts'
 import { SessionWriteLease } from './lease.ts'
-import { SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@yharness/session'
+import { KNOWN_SESSION_EVENT_TYPES, SESSION_FORMAT_VERSION, SessionId as makeSessionId, SessionLogOffset } from '@yharness/session'
 import type { SessionEvent, SessionId, SessionHeader, SessionLogOffset as SessionLogOffsetType } from '@yharness/session'
 import {
   assertNoRetiredHeaderFields, encodeSegment, eventLines, generationLogFilename, generationLogPath, logPath, logSuffix,
@@ -281,6 +282,10 @@ class JsonlSessionPersistence extends SessionPersistence {
     this.compression = config.compression ?? DEFAULT_COMPRESSION
     this.generationFormat = {
       currentVersion: sessionFormatCatalog.currentVersion,
+      assertHistoricalRowAdmission: (row, sourceVersion) => {
+        if (sourceVersion !== 4 && sourceVersion !== 5) return
+        assertV6RowAdmission(row, KNOWN_SESSION_EVENT_TYPES)
+      },
       encodeHeader: (header, inheritedEventCount) =>
         sessionFormatCatalog.encodeCurrentHeader(header, inheritedEventCount),
       encodeEvent: event => sessionFormatCatalog.encodeCurrentEvent(event),
@@ -653,7 +658,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         format: {
           ...this.generationFormat,
           createRestore: header => createSessionFormatCatalogWithChildren(related.facts).createRestore(header, {
-            recovery: 'recoverable', validation: 'transformed',
+            recovery: 'recoverable', validation: header.version === SESSION_FORMAT_VERSION ? 'current' : 'transformed',
           }),
         },
         validateRelatedSources,

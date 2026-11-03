@@ -4,8 +4,9 @@ import { mkdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises'
 import { availableParallelism, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { execa } from 'execa'
+import { x as extractTar } from 'tar'
 import type { SessionFormatJsonObject } from '@yharness/session-format'
 import { encodeSegment, generationLogFilename, type JsonlCompression } from '../packages/session/session-persistence-jsonl/src/format.ts'
 import { compressZstdFrame, decompressZstdFrame, scanZstdFrames } from '../packages/session/session-persistence-jsonl/src/zstd.ts'
@@ -13,9 +14,13 @@ import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
 
 const repository = resolve(import.meta.dirname, '..')
-const script = join(repository, 'scripts/migrate-sessions-to-v4.ts')
+/** Committed V4-to-V5 source delta, reversed in the temporary checkout without requiring Git history. */
+const V4_FORMAT_REVERSAL = 'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch'
+const MIGRATION_TEST_TIMEOUT = 60_000
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
+let v4Checkout = ''
+let v4Script = ''
 
 function temporaryRoot(): string {
   const directory = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-test-'))
@@ -23,9 +28,9 @@ function temporaryRoot(): string {
   return directory
 }
 
-async function runAt(entrypoint: string, ...args: string[]) {
+async function runAtInCwd(entrypoint: string, cwd: string, ...args: string[]) {
   const child = execa(process.execPath, ['--import', 'tsx', entrypoint, ...args], {
-    cwd: repository, reject: false,
+    cwd, reject: false,
   })
   stopProcesses.push(async () => { child.kill('SIGKILL'); await child })
   const result = await child
@@ -39,8 +44,29 @@ async function runAt(entrypoint: string, ...args: string[]) {
 }
 
 function run(...args: string[]) {
-  return runAt(script, ...args)
+  return runAtInCwd(v4Script, v4Checkout, ...args)
 }
+
+beforeAll(async () => {
+  v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
+  const archive = join(v4Checkout, 'source.tar')
+  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
+  await extractTar({ file: archive, cwd: v4Checkout })
+  await unlink(archive)
+  const reversal = join(v4Checkout, V4_FORMAT_REVERSAL)
+  await mkdir(dirname(reversal), { recursive: true })
+  await writeFile(reversal, await readFile(join(repository, V4_FORMAT_REVERSAL)))
+  await execa('git', ['apply', '--reverse', '--unidiff-zero', '--whitespace=nowarn', reversal], { cwd: v4Checkout })
+  await unlink(reversal)
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+  await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
+  await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
+  v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
+}, MIGRATION_TEST_TIMEOUT)
+
+afterAll(() => {
+  if (v4Checkout !== '') removeFixtureSafely(v4Checkout)
+}, MIGRATION_TEST_TIMEOUT)
 
 afterEach(async () => {
   await Promise.all(stopProcesses.splice(0).map(stop => stop()))
@@ -84,7 +110,7 @@ async function fixture(
   return { path, bytes, directory }
 }
 
-describe('one-time V4 migration command', () => {
+describe('one-time V4 migration command', { timeout: MIGRATION_TEST_TIMEOUT }, () => {
   it('bounds active jobs and retries changed-source inputs only after the initial pass drains', async () => {
     const entered = Array.from({ length: 4 }, () => Promise.withResolvers<undefined>())
     const release = Array.from({ length: 4 }, () => Promise.withResolvers<undefined>())
@@ -331,8 +357,8 @@ describe('one-time V4 migration command', () => {
       type: 'subagent/descriptor', data: { version: 3, mode: 'continuable', provider: 'spawn', label: 'fixture child' },
     }], { origin: 'subagent', parentSession: 'a-parent', createdAt: 2, delegationDepth: 1 })
     const entrypoint = join(temporaryRoot(), 'retry-once.mjs')
-    const backendUrl = pathToFileURL(join(repository, 'packages/session/session-persistence-jsonl/src/index.ts')).href
-    const generationUrl = pathToFileURL(join(repository, 'packages/session/session-persistence-jsonl/src/generation.ts')).href
+    const backendUrl = pathToFileURL(join(v4Checkout, 'packages/session/session-persistence-jsonl/src/index.ts')).href
+    const generationUrl = pathToFileURL(join(v4Checkout, 'packages/session/session-persistence-jsonl/src/generation.ts')).href
     await writeFile(entrypoint, `
       const { default: Backend } = await import(${JSON.stringify(backendUrl)});
       const { JsonlGenerationSourceChangedError } = await import(${JSON.stringify(generationUrl)});
@@ -345,10 +371,10 @@ describe('one-time V4 migration command', () => {
         }
         return open.call(this, id, access, options);
       };
-      process.argv[1] = ${JSON.stringify(script)};
-      await import(${JSON.stringify(pathToFileURL(script).href)});
+      process.argv[1] = ${JSON.stringify(v4Script)};
+      await import(${JSON.stringify(pathToFileURL(v4Script).href)});
     `)
-    const result = await runAt(entrypoint, '--sessions-dir', root, '--jobs', '2')
+    const result = await runAtInCwd(entrypoint, v4Checkout, '--sessions-dir', root, '--jobs', '2')
     expect(result.status, result.stdout + result.stderr).toBe(0)
     const lines = result.stdout.split('\n')
     const deferred = lines.findIndex(line => line.includes('[1/2]') && line.includes('DEFERRED'))
@@ -421,9 +447,9 @@ describe('one-time V4 migration command', () => {
 
   it('runs the entrypoint through a symbolic link to the checkout', async () => {
     const checkout = join(temporaryRoot(), 'checkout')
-    await symlink(repository, checkout, process.platform === 'win32' ? 'junction' : 'dir')
+    await symlink(v4Checkout, checkout, process.platform === 'win32' ? 'junction' : 'dir')
     try {
-      const result = await runAt(join(checkout, 'scripts/migrate-sessions-to-v4.ts'), '--help')
+      const result = await runAtInCwd(join(checkout, 'scripts/migrate-sessions-to-v4.ts'), checkout, '--help')
       expect(result.status, result.stderr).toBe(0)
       expect(result.stdout).toContain('Usage: pnpm run migrate:sessions-to-v4')
     } finally {

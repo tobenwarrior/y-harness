@@ -40,6 +40,8 @@ function botView(id: string, sessionId: string, name: string, patch: Partial<Bot
     createdAt: CREATED_AT,
     updatedAt: UPDATED_AT,
     availability: 'idle',
+    pinned: false,
+    hidden: false,
     ...patch,
   }
 }
@@ -120,7 +122,8 @@ async function bench(
   new RemoteService(ctx)
   ctx.provide('remote.fileReferences', { list: files })
   ctx.provide('remote.sessionReferenceResolver', { candidates: sessions })
-  ctx.provide('remote.bots', { list: vi.fn(() => Promise.resolve({ ok: true as const, value: { bots } })) })
+  const listBots = vi.fn(() => Promise.resolve({ ok: true as const, value: { bots } }))
+  ctx.provide('remote.bots', { list: listBots })
   ctx.provide('locale', new LocaleRuntime(ctx))
   const sessionStore = new TestSessions(async (action) => { await action() }, ctx)
   onTestFinished(async () => {
@@ -137,7 +140,7 @@ async function bench(
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   if (source === undefined) throw new Error('reference source was not registered')
-  return { ctx, fiber, source, sessions: sessionStore, owner }
+  return { ctx, fiber, source, sessions: sessionStore, owner, listBots }
 }
 
 describe('apply', () => {
@@ -363,6 +366,39 @@ describe('candidates', () => {
         clipboardText: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
       },
     })
+  })
+
+  it('hides Bot Sessions from generic references while keeping hidden rows out of the picker', async () => {
+    const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [
+        {
+          sessionId: sid('bot-session-hidden'),
+          label: 'Hidden bot Session',
+          cwd: `${HOME}/project`,
+          sameWorkspace: true,
+          createdAt: CREATED_AT,
+          mention: '@[Hidden bot Session](dsh-session:ImJvdC1zZXNzaW9uLWhpZGRlbiI)',
+        },
+        {
+          sessionId: sid('ordinary-session'),
+          label: 'Ordinary Session',
+          cwd: `${HOME}/project`,
+          sameWorkspace: true,
+          createdAt: CREATED_AT,
+          mention: '@[Ordinary Session](dsh-session:Im9yZGluYXJ5LXNlc3Npb24i)',
+        },
+      ],
+    }))
+    const b = await bench(files, sessions, {}, {}, [
+      botView('bot-hidden', 'bot-session-hidden', 'Hidden bot', { hidden: true }),
+    ])
+
+    const candidates = await b.source.candidates(session, request(''))
+
+    expect(b.listBots).toHaveBeenCalledWith({ includeHidden: true })
+    expect(candidates.map(candidate => candidate.name)).toEqual(['Ordinary Session'])
   })
 
   it('suppresses sessions for an open quoted path and degrades each failed domain independently', async () => {

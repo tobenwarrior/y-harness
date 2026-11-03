@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { LinkIconMedium, LinkIconRegular, classifyLinkPath, type LinkIconKind } from '@yharness/client-ui-primitives'
+import { LinkIconMedium, LinkIconRegular, classifyLinkPath, connectedAppGlyph, type LinkIconKind } from '@yharness/client-ui-primitives'
 
 afterEach(cleanup)
 
@@ -177,5 +177,20 @@ describe('LinkIcon site marks', () => {
     expect(svg.getAttribute('aria-hidden')).toBe('true')
     expect(container.innerHTML).toContain('currentColor')
     expect(container.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}"/)
+  })
+})
+
+describe('connected-app marks', () => {
+  it.each(['github', 'gitlab', 'google_drive', 'google_calendar', 'linear', 'notion', 'slack', 'microsoft_teams'])('renders the %s brand mark', (appId) => {
+    const { container } = render(<>{connectedAppGlyph({ appId, size: 16 })}</>)
+    const svg = container.querySelector('svg')!
+    expect(svg).not.toBeNull()
+    expect(svg.getAttribute('aria-hidden')).toBe('true')
+    expect(svg.innerHTML).toContain('currentColor')
+    expect(svg.innerHTML).not.toMatch(/#[0-9a-fA-F]{3,8}"/)
+  })
+
+  it('lets surfaces provide a readable fallback for unknown apps', () => {
+    expect(connectedAppGlyph({ appId: 'custom_app', size: 16 })).toBeUndefined()
   })
 })

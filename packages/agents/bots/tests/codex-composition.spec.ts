@@ -284,6 +284,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
     'schedule_pause', 'schedule_resume', 'schedule_history',
   ]))
+  expect(senderPrompt).toContain('Your Bot id is "bot-sender".')
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation((message) => {
     targetAgent.session.append('agent/inbox/spliced', {

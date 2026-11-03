@@ -71,6 +71,11 @@ export const botEventRoutineSchema = z.object({
     createdAt: instant,
     deliveredAt: instant.optional(),
   }).strict()).max(200),
+  admissionWatermark: z.number().int().nonnegative().optional(),
+  admissionTombstones: z.array(z.object({
+    triggerEventSeq: z.number().int().nonnegative(),
+    triggerMessageId: z.string().min(1).transform(MessageId).optional(),
+  }).strict()).max(200).optional(),
   results: z.array(z.object({
     messageId: z.string().min(1).transform(MessageId),
     status: z.enum(['completed', 'error', 'aborted', 'blocked', 'max-tokens', 'interrupted', 'forked', 'other']),
@@ -94,6 +99,19 @@ export const botRecordSchema = z.object({
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
   eventRoutines: z.array(botEventRoutineSchema).max(100).optional(),
+  connectedAppIds: z.array(z.string()).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app ids must be unique' },
+  ).optional(),
+  connectedAppDenyIds: z.array(z.string()).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'Connected-app deny ids must be unique' },
+  ).optional(),
+  pinned: z.boolean().optional(),
+  hidden: z.boolean().optional(),
+  group: z.string().max(80).refine(value => value.trim() === value, {
+    message: 'Bot sections must be trimmed',
+  }).optional(),
   cwd: z.string().min(1).refine(value => value.trim() === value, {
     message: 'Working directories must not have surrounding whitespace',
   }),
@@ -117,11 +135,11 @@ export const botAppearanceMigrationSchema = z.object({
 /** Current one-time appearance migration applied to existing Bot rows. */
 export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 
-/** Authoritative Bot domain; v1 records remain readable for the appearance migration. */
+/** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 2,
-  compatibleVersions: [1],
+  version: 5,
+  compatibleVersions: [1, 2, 3, 4],
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,

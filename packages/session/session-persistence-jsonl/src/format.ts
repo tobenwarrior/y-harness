@@ -24,7 +24,7 @@ import { parseSessionFormatLogFilename, sessionFormatLogFilename, SessionFormatU
 import type { SessionFormatEvent } from '@yharness/session-format'
 import type { SessionFormatRecovery, SessionFormatRestore } from '@yharness/session-format'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
-import { assertV4RowAdmission, assertReleasedV4Relationships } from '@yharness/session-format-v3-to-v4'
+import { assertV6RowAdmission, restoreReleasedV6Artifact } from '@yharness/session-format-v5-to-v6'
 import {
   SessionFormatUnsupportedError,
   sessionFormatVersionRefusal,
@@ -464,13 +464,20 @@ export class SessionLogScanner {
    */
   finish(): SessionLogScan {
     this.finished = true
-    const artifact = this.restore.finish()
-    assertReleasedV4Relationships(artifact, KNOWN_SESSION_EVENT_TYPES)
-    return {
-      meta: this.meta,
-      inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
-      events: artifact.events as unknown as SessionEvent[],
-      committedBytes: this.committedBytes,
+    try {
+      const artifact = this.restore.finish()
+      restoreReleasedV6Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+      return {
+        meta: this.meta,
+        inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
+        events: artifact.events as unknown as SessionEvent[],
+        committedBytes: this.committedBytes,
+      }
+    } catch (error: unknown) {
+      if (error instanceof SessionFormatUnsupportedMigrationError) {
+        throw new SessionFormatUnsupportedError(error.message)
+      }
+      throw error
     }
   }
 
@@ -490,7 +497,7 @@ export class SessionLogScanner {
     // This scanner accepts only current-generation files. Owned structural refusal must
     // precede its recoverable-tail suppression, independently of the strict decoder state.
     try {
-      assertV4RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
+      assertV6RowAdmission(decoded, KNOWN_SESSION_EVENT_TYPES)
     } catch (error: unknown) {
       if (error instanceof SessionFormatUnsupportedMigrationError) throw new SessionFormatUnsupportedError(error.message)
       throw error

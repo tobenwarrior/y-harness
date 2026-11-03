@@ -1477,7 +1477,7 @@ function ToolOutputBlocks({
 }: {
   blocks: readonly TrajectorySourceBlock[]
   error: boolean
-  /** Failure name and code preserved beside image-only error content. */
+  /** Failure name and code shown only when no recorded text block is non-empty. */
   errorDetail?: string | undefined
   preview: boolean
   renderImages: RenderMessageImages
@@ -1490,6 +1490,7 @@ function ToolOutputBlocks({
     ].filter((value): value is string => value !== undefined).join(' ')}
     >
       {error && errorDetail !== undefined && errorDetail !== ''
+        && !blocks.some(block => block.type === 'text' && block.content !== '')
         && <pre className={css.resultBlockText}>{errorDetail}</pre>}
       {blocks.map((block, index) => (
         block.attachment !== undefined
@@ -1711,7 +1712,7 @@ function RecordPayload({
   const payloadClass = preview ? css.jsonPreview : css.jsonPayload
   const payloadClassName = error ? `${payloadClass} ${css.errorPayload}` : payloadClass
 
-  const json = parseJsonContainer(value)
+  const json = error ? undefined : parseJsonContainer(value)
   const singleTextResult = direction === 'output'
     && record.cell.outputBlocks?.length === 1
     && record.cell.outputBlocks[0]?.type === 'text'

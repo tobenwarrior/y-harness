@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { restoreReleasedV3Artifact } from '@yharness/session-format-v2-to-v3'
 import { SessionFormatEventCollector } from '@yharness/session-format'
 import type { SessionFormatEvent, SessionFormatHeader, SessionFormatJsonObject } from '@yharness/session-format'
+import { SESSION_FORMAT_VERSION } from '@yharness/session'
 import { createSessionFormatCatalogWithChildren, historicalSessionFormatCatalog, sessionFormatCatalog } from '@yharness/session-format-catalog'
 import { releasedV3SessionFormatCodec, createSessionFormatV3ToV4, sessionFormatV3ToV4 } from '../src/index.ts'
 
@@ -83,7 +84,7 @@ describe('V3 to V4 source preservation', () => {
     expect(JSON.stringify({ header, rows })).toBe(before)
     expect(stage().headerInheritedEventCount).toBe(0)
     expect(migrate([])).toEqual({ events: [], cut: 0 })
-    expect(restore(rows)).toEqual({ header: { ...header, version: 4 }, inheritedEventCount: 0, events: rows })
+    expect(restore(rows)).toEqual({ header: { ...header, version: SESSION_FORMAT_VERSION }, inheritedEventCount: 0, events: rows })
     expect(restore(rows)).toEqual(restore(rows))
   })
 
@@ -119,12 +120,15 @@ describe('V3 to V4 source preservation', () => {
     expect(() => migrate([fact, { ...seed, data: {} }], { ...header, isSeeded: true })).toThrow('inherited event count')
   })
 
-  it('refuses target-generation delivery while retaining other generations unchanged', () => {
+  it('refuses each migration edge target delivery while retaining other generations unchanged', () => {
     expect(() => migrate([fact, delivery(4)])).toThrow('claims target format v4')
-    expect(() => restore([fact, delivery(4)])).toThrow('claims target format v4')
+    expect(() => restore([fact, delivery(5)])).toThrow('claims target format v5')
     for (const version of [undefined, 0, 1, 2, 3, 5, 99]) {
       const marker = delivery(version)
       expect(migrate([fact, marker]).events[1]).toBe(marker)
+    }
+    for (const version of [undefined, 0, 1, 2, 3, 99]) {
+      const marker = delivery(version)
       expect(restore([fact, marker]).events[1]).toEqual(marker)
     }
   })
@@ -181,7 +185,7 @@ describe('V3 to V4 source preservation', () => {
     const reader = createSessionFormatCatalogWithChildren([]).createRestore(physical, { recovery: 'strict', validation: 'current' })
     for (const row of source) reader.decodeRow(version === 3 ? releasedV3SessionFormatCodec.encodeEvent(row) : row)
     const artifact = reader.finish()
-    expect(artifact.header.version).toBe(4)
+    expect(artifact.header.version).toBe(SESSION_FORMAT_VERSION)
     expect(artifact.inheritedEventCount).toBe(8)
     expect(artifact.events.filter(event => event.type === 'system/message')).toHaveLength(2)
     expect(artifact.events.at(-1)?.seq).toBe(8)
@@ -205,7 +209,7 @@ describe('V3 to V4 source preservation', () => {
 
     const reader = createSessionFormatCatalogWithChildren([]).createRestore(physical, { recovery, validation: 'current' })
     for (const row of rows) reader.decodeRow(row)
-    expect(reader.finish()).toEqual({ ...artifact, header: { ...artifact.header, version: 4 } })
+    expect(reader.finish()).toEqual({ ...artifact, header: { ...artifact.header, version: SESSION_FORMAT_VERSION } })
   })
 
   it.each(['strict', 'recoverable'] as const)('refuses foreign delivery after the final inherited cut during %s restoration', (recovery) => {

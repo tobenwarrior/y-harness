@@ -83,6 +83,9 @@ class FakeFileSystem extends FileSystem {
     this.files.set(target.targetKey, after)
     return { version: FsVersion('v3'), before: content, after }
   }
+  override async patchText(): Promise<never> { throw new Error('patch not needed in service tests') }
+  override async deleteFile(): Promise<never> { throw new Error('delete not needed in service tests') }
+  override async moveFile(): Promise<never> { throw new Error('move not needed in service tests') }
 }
 
 describe('FileSystem provider seam', () => {

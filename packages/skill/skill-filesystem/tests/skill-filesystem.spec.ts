@@ -149,6 +149,9 @@ class TestFileSystem extends FileSystem {
   override async editText(_target: FsTarget, _request: FsEditRequest): Promise<FsEditOutcome> {
     throw new Error('not needed in skill tests')
   }
+  override async patchText(): Promise<never> { throw new Error('patch not needed in skill tests') }
+  override async deleteFile(): Promise<never> { throw new Error('delete not needed in skill tests') }
+  override async moveFile(): Promise<never> { throw new Error('move not needed in skill tests') }
 }
 
 async function setupLocal(home: string, config: Partial<SkillFileSystem.Config> = {}): Promise<Context> {
@@ -736,8 +739,9 @@ describe('FileSystemSkillProvider', () => {
       { kind: 'present', version: FsVersion('observed') },
       { name: 'edit' },
     )
+    emitObserved(path, { name: 'apply_patch' })
 
-    expect(invalidations).toBe(2)
+    expect(invalidations).toBe(3)
     expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(['observed-skill'])
   })
 

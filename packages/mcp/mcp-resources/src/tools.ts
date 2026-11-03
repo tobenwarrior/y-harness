@@ -22,6 +22,8 @@ const output = {
   render: (args: { server: string }, value: JsonValue) => renderResourceResult(args.server, value),
 }
 
+const resourceSource = { kind: 'mcp-resource' } as const
+
 /**
  * Register resource operations in the consumer's tool scope.
  * @param ctx - context owning the tool registrations.
@@ -30,7 +32,7 @@ const output = {
  */
 export function registerResourceTools(ctx: Context, request: RequestResource): () => void {
   const dispose = ctx.effect(function* () {
-    yield ctx.tools.register(defineTool({
+    yield ctx.tools.register({ ...defineTool({
       name: 'list_mcp_resources',
       description: 'List resources available from an MCP server.',
       parameters: listParameters,
@@ -38,8 +40,8 @@ export function registerResourceTools(ctx: Context, request: RequestResource): (
       execute: (args, exec) => request(args.server, {
         method: 'resources/list', ...args.cursor === undefined ? {} : { cursor: args.cursor },
       }, exec),
-    }))
-    yield ctx.tools.register(defineTool({
+    }), source: resourceSource })
+    yield ctx.tools.register({ ...defineTool({
       name: 'list_mcp_resource_templates',
       description: 'List parameterized resource URI templates from an MCP server.',
       parameters: listParameters,
@@ -47,8 +49,8 @@ export function registerResourceTools(ctx: Context, request: RequestResource): (
       execute: (args, exec) => request(args.server, {
         method: 'resources/templates/list', ...args.cursor === undefined ? {} : { cursor: args.cursor },
       }, exec),
-    }))
-    yield ctx.tools.register(defineTool({
+    }), source: resourceSource })
+    yield ctx.tools.register({ ...defineTool({
       name: 'read_mcp_resource',
       description: 'Read an MCP resource by URI from the named server. Use a listed URI or an expanded resource template.',
       parameters: {
@@ -57,7 +59,7 @@ export function registerResourceTools(ctx: Context, request: RequestResource): (
       },
       output,
       execute: (args, exec) => request(args.server, { method: 'resources/read', uri: args.uri }, exec),
-    }))
+    }), source: resourceSource })
   }, 'mcpResources.resourceTools')
   // oxlint-disable-next-line typescript/no-misused-promises -- all collected tool disposers are synchronous
   return dispose

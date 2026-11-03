@@ -1,0 +1,127 @@
+{
+  "formatVersion": 2,
+  "roots": [
+    {
+      "key": "event:bot/memory",
+      "kind": "event",
+      "event": "bot/memory",
+      "surface": false,
+      "digest": "8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 8,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 8,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 9,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "union",
+            "types": [
+              2,
+              5
+            ]
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "botId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "memoryId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "operation",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "text",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": "remember"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "botId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "memoryId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "operation",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": "forget"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "bot/memory"
+          }
+        ]
+      }
+    }
+  ],
+  "types": []
+}

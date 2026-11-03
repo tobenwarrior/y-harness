@@ -370,17 +370,19 @@ const TOOL_PACKAGES: ToolPackage[] = [
     dir: 'tool-fs',
     source: 'packages/fs/tool-fs/src/index.ts',
     requires: ['ctx.tools', 'ctx.fs', 'ctx.systemPrompt', 'ctx.attachments (image-tool registration)', 'ctx.llm + an image-capable route (image-tool execution)'],
-    writes: ['tool/call', 'fs/write-intent or fs/edit-intent for mutations', 'fs/observed after read presence/absence or successful file operation', 'durable attachment (read_image)', 'tool/result'],
+    writes: ['tool/call', 'fs/write-intent, fs/edit-intent, or fs/delete-intent for mutations', 'fs/observed after read presence/absence or successful file operation', 'durable attachment (read_image)', 'tool/result'],
     async mount(ctx) {
       // The tool needs `fs`; the bare provider is sufficient because policy
       // changes behavior, not schema shape. The catalog seam marker opts into
       // the attachments-conditional image schema without attachment I/O.
       await ctx.plugin(LocalFileSystem)
       await ctx.plugin(CatalogAttachmentStore)
-      await ctx.plugin(ToolFs)
+      // Keep the catalog representative of the complete filesystem tool set;
+      // shipped profiles may opt out of apply_patch through their bundle config.
+      await ctx.plugin(ToolFs, { applyPatch: true })
     },
     note:
-      'The read-before-write/edit policy is added by `@yharness/fs-observation-policy` (an `fs/*` event-gate plugin, no schema change); a deployment that loads these tools is expected to also load it. The image tool is not registered without `ctx.attachments`; its schema is route-independent, and execution refuses unless the exact routed model declares image input.',
+      'The read-before-mutation policy is added by `@yharness/fs-observation-policy` (an `fs/*` event-gate plugin, no schema change); a deployment that loads these tools is expected to also load it. It guards `write`, `edit`, and `apply_patch` create/update/delete/move operations without changing their schemas. The image tool is not registered without `ctx.attachments`; its schema is route-independent, and execution refuses unless the exact routed model declares image input.',
   },
   {
     pkg: '@yharness/tool-fs-search',

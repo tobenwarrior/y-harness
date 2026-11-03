@@ -28,6 +28,16 @@ const ARGS = '{"file_path":"notes/demo.txt","old_string":"hello","new_string":"h
 
 const DIFFS = [{ path: 'notes/demo.txt', oldText: 'hello', newText: 'hello fixture' }]
 
+const PATCH = [
+  '*** Begin Patch',
+  '*** Update File: notes/demo.txt',
+  '@@',
+  '-hello',
+  '+hello fixture',
+  '*** Delete File: notes/gone.txt',
+  '*** End Patch',
+].join('\n')
+
 const running = (over?: Partial<StartedToolCall>): StartedToolCall => {
   const argsRaw = over?.argsRaw ?? ARGS
   return {
@@ -47,6 +57,21 @@ const settled = (over?: Partial<ToolResultNode>): ToolResultNode => {
     meta: { diffs: DIFFS }, subCalls: [], ...over,
   }
 }
+
+const patchRunning = (over?: Partial<StartedToolCall>): StartedToolCall => running({
+  name: 'apply_patch',
+  argsRaw: JSON.stringify({ input: PATCH }),
+  ...over,
+})
+
+const patchSettled = (over?: Partial<ToolResultNode>): ToolResultNode => settled({
+  call: { name: 'apply_patch', argsRaw: JSON.stringify({ input: PATCH }) },
+  meta: {
+    diffs: [{ path: 'notes/demo.txt', oldText: 'hello', newText: 'hello fixture' }],
+    locations: [{ path: 'notes/demo.txt' }, { path: 'notes/gone.txt' }],
+  },
+  ...over,
+})
 
 describe('diffCardModel', () => {
   it('derives a running card from raw edit arguments', () => {
@@ -110,6 +135,75 @@ describe('diffCardModel', () => {
     }))).toEqual({
       card: { diffs: [{ path: 'notes/demo.txt', oldText: 'a', newText: 'b' }] },
     })
+  })
+
+  it('derives apply_patch previews and settled diffs with all affected locations', () => {
+    expect(diffCardModel(patchRunning())).toEqual({
+      card: { diffs: [{ path: 'notes/demo.txt', oldText: 'hello', newText: 'hello fixture' }] },
+      locations: [{ path: 'notes/demo.txt' }, { path: 'notes/gone.txt' }],
+    })
+    expect(diffCardModel(patchSettled())).toEqual({
+      card: { diffs: [{ path: 'notes/demo.txt', oldText: 'hello', newText: 'hello fixture' }] },
+      locations: [{ path: 'notes/demo.txt' }, { path: 'notes/gone.txt' }],
+    })
+  })
+
+  it('keeps location-only apply_patch effects visible when no bounded diff exists', () => {
+    expect(diffCardModel(patchSettled({
+      meta: { diffs: [], locations: [{ path: 'notes/new.txt' }, { path: 'notes/gone.txt' }] },
+    }))).toEqual({
+      card: { diffs: [] },
+      locations: [{ path: 'notes/new.txt' }, { path: 'notes/gone.txt' }],
+    })
+  })
+
+  it('previews add, move, and delete operations while rejecting malformed patch text', () => {
+    const input = [
+      '*** Begin Patch',
+      '*** Add File: notes/new.txt',
+      '+new file',
+      '*** Update File: notes/source.txt',
+      '*** Move to: notes/target.txt',
+      '@@',
+      ' context',
+      '-old',
+      '+new',
+      '*** End of File',
+      '*** Delete File: notes/gone.txt',
+      'ignored delete body',
+      '*** End Patch',
+    ].join('\n')
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input }) }))).toEqual({
+      card: { diffs: [
+        { path: 'notes/new.txt', oldText: null, newText: 'new file\n' },
+        { path: 'notes/source.txt', oldText: 'context\nold', newText: 'context\nnew' },
+      ] },
+      locations: [
+        { path: 'notes/new.txt' }, { path: 'notes/source.txt' },
+        { path: 'notes/target.txt' }, { path: 'notes/gone.txt' },
+      ],
+    })
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input: 'invalid' }) }))).toBeNull()
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input: '*** Begin Patch\n*** End Patch' }) }))).toBeNull()
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input: '*** Begin Patch\n*** Update File: a\nbad\n*** End Patch' }) }))).toBeNull()
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input: '*** Begin Patch\n*** Add File: a\nbad\n*** End Patch' }) }))).toBeNull()
+    expect(diffCardModel(patchRunning({ argsRaw: JSON.stringify({ input: '*** Begin Patch\n*** Move to: a\n*** End Patch' }) }))).toBeNull()
+  })
+
+  it('keeps malformed or empty apply_patch result metadata generic', () => {
+    const malformed = [
+      undefined,
+      { diffs: 'nope' },
+      { diffs: [], locations: 'nope' },
+      { diffs: [], locations: [] },
+      { diffs: [{ path: 'a', oldText: null, newText: 1 }], locations: [{ path: 'a' }] },
+      { diffs: [], locations: [{ path: '' }] },
+    ]
+    for (const meta of malformed) expect(diffCardModel(patchSettled({ meta }))).toBeNull()
+    expect(diffCardModel(patchSettled({ meta: { diffs: [...DIFFS, ...DIFFS] } }))).toEqual({
+      card: { diffs: [...DIFFS, ...DIFFS] }, locations: [{ path: 'notes/demo.txt' }],
+    })
+    expect(diffCardModel(patchSettled({ isError: true }))).toBeNull()
   })
 
   it('uses the intended write diff when successful metadata reports no applied hunk', () => {
@@ -188,6 +282,14 @@ describe('chat row diff body', () => {
     expect(view.container.querySelector('[data-diff]')).not.toBeNull()
   })
 
+  it('the GenericToolCard fallback renders apply_patch diffs', () => {
+    const block = patchSettled()
+    const view = render(<GenericToolCard {...ownerProps(block)} toolName="apply_patch" />)
+    fireEvent.click(view.container.querySelector('[data-expandable]')!)
+    expect(view.container.querySelector('[data-diff]')).not.toBeNull()
+    expect(view.getByText('hello fixture')).toBeTruthy()
+  })
+
   it('a non-diff call keeps the args-JSON text body', () => {
     // A non-file tool name so the row is not single-file (no path link), and its
     // args body is the fallback the diff card must not have replaced.
@@ -213,10 +315,10 @@ describe('FileMutationRow diff card', () => {
     projectionsBySession: {},
   })
 
-  const rowProps = (block: StartedToolCall | ToolResultNode, toolName = 'edit'): FileMutationRowProps => ({
+  const rowProps = (block: StartedToolCall | ToolResultNode, toolName = 'edit', over: Partial<FileMutationRowProps> = {}): FileMutationRowProps => ({
     useDisclosure, callId: 'c1', toolName, ...('kind' in block ? { phase: 'result' as const, block: block } : { phase: block.phase, block: block }), openFile: vi.fn(), cwd: '/w/app',
     sessionId: SID, useSessions: bindSnapshotSelector(list()),
-    t,
+    t, ...over,
   } as FileMutationRowProps)
 
   /** The whole summary row is the expand toggle (ToolRow's unified interaction). */
@@ -257,6 +359,20 @@ describe('FileMutationRow diff card', () => {
     expect(view.getAllByText('+1')).toHaveLength(1)
     expect(view.getAllByText('-0')).toHaveLength(1)
     expect(view.getByText('hello fixture')).toBeTruthy()
+  })
+
+  it('renders apply_patch location-only results as openable file rows', () => {
+    const openFile = vi.fn()
+    const view = render(<FileMutationRow {...rowProps(patchSettled({
+      meta: { diffs: [], locations: [{ path: 'notes/new.txt' }, { path: 'notes/gone.txt' }] },
+    }), 'apply_patch', { openFile })} />)
+    expect(view.container.querySelector('[data-diff]')).toBeNull()
+    toggleRow(view)
+    expect(view.container.querySelector('[data-diff-locations]')).not.toBeNull()
+    expect(view.getByText('notes/new.txt')).toBeTruthy()
+    expect(view.getByText('notes/gone.txt')).toBeTruthy()
+    fireEvent.click(view.getByRole('button', { name: 'notes/new.txt' }))
+    expect(openFile).toHaveBeenCalledWith('notes/new.txt')
   })
 
   it('reflects the run state on its leading slot', () => {
@@ -346,9 +462,9 @@ describe('fileMutationToolview registration', () => {
       },
     }
     fileMutationToolview.apply(ctx as never)
-    expect(registered.map(r => r.key).sort()).toEqual(['edit', 'write'])
+    expect(registered.map(r => r.key).sort()).toEqual(['apply_patch', 'edit', 'write'])
     // Both keys claim the conversation locale seat ToolRow's body copy needs.
-    expect(registered.map(r => r.locale)).toEqual(['conversation', 'conversation'])
+    expect(registered.map(r => r.locale)).toEqual(['conversation', 'conversation', 'conversation'])
     expect(fileMutationToolview.inject).toEqual(['slots'])
     // Disposal removes each contribution (packages/AGENTS.md registry contract).
     disposeInjection()

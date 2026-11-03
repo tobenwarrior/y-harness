@@ -95,6 +95,14 @@ export interface BotEventRoutineDelivery {
   readonly deliveredAt?: string | undefined
 }
 
+/** Durable identity retained after an old routine delivery is pruned. */
+export interface BotEventRoutineAdmissionTombstone {
+  /** Session event sequence that was already considered for this routine. */
+  readonly triggerEventSeq: number
+  /** Stable source message identity when the source event provided one. */
+  readonly triggerMessageId?: MessageId | undefined
+}
+
 /** Completed model result associated with one event-trigger delivery. */
 export interface BotEventRoutineResult {
   /** Event-trigger message whose turn produced this result. */
@@ -127,6 +135,10 @@ export interface BotEventRoutine {
   readonly updatedAt: number
   /** Bounded delivery records, oldest first. */
   readonly deliveries: readonly BotEventRoutineDelivery[]
+  /** Highest source event sequence durably considered for this routine. */
+  readonly admissionWatermark?: number | undefined
+  /** Source identities retained when delivery records are pruned. */
+  readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined
   /** Bounded completed model results, oldest first. */
   readonly results: readonly BotEventRoutineResult[]
 }
@@ -159,6 +171,16 @@ export interface BotRecord {
   readonly avatar?: BotAvatar | undefined
   /** Bot-scoped message routines; absent on rows written before event routines existed. */
   readonly eventRoutines?: readonly BotEventRoutine[] | undefined
+  /** Connected MCP app ids this Bot may use; absent means legacy rows retain all available apps. */
+  readonly connectedAppIds?: readonly string[] | undefined
+  /** Connected MCP app ids explicitly denied for a legacy allow-all Bot. */
+  readonly connectedAppDenyIds?: readonly string[] | undefined
+  /** Whether the Bot is kept at the top of its roster view. */
+  readonly pinned?: boolean | undefined
+  /** Whether the Bot is excluded from the default visible roster. */
+  readonly hidden?: boolean | undefined
+  /** Optional user-defined roster section. */
+  readonly group?: string | undefined
   /** Absolute working directory used for the Bot's Session. */
   readonly cwd: string
   /** Optional preset selected when the backing Session is created. */
@@ -175,6 +197,10 @@ export interface BotRecord {
 export type BotView = Omit<BotRecord, 'eventRoutines'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
+  /** Whether the Bot is kept at the top of its roster view. */
+  readonly pinned: boolean
+  /** Whether the Bot is excluded from the default visible roster. */
+  readonly hidden: boolean
 }
 
 /** New Bot metadata and optional stable id for retrying provisioning. */
@@ -203,8 +229,10 @@ export interface BotCreateValue {
 
 /** Bot catalog request; cursor is reserved for a future bounded roster. */
 export interface BotListRequest {
-  /** Reserved cursor; version one always returns the complete roster. */
+  /** Reserved cursor; version one returns the complete visible roster. */
   readonly cursor?: string
+  /** Include hidden Bots for the restore surface; the default omits them. */
+  readonly includeHidden?: boolean
 }
 
 /** Bot catalog response. */
@@ -224,6 +252,24 @@ export interface BotRenameRequest {
 /** Bot rename response. */
 export interface BotRenameValue {
   /** The committed renamed row. */
+  readonly bot: BotView
+}
+
+/** Change one Bot's roster placement without changing its Session mapping. */
+export interface BotOrganizationUpdateRequest {
+  /** Bot whose roster placement should change. */
+  readonly botId: BotId
+  /** Keep the Bot at the top of its roster section when true. */
+  readonly pinned?: boolean
+  /** Exclude the Bot from the default roster when true. */
+  readonly hidden?: boolean
+  /** Roster section name, or null to remove the section. */
+  readonly group?: string | null
+}
+
+/** Organization update response. */
+export interface BotOrganizationUpdateValue {
+  /** The committed row. */
   readonly bot: BotView
 }
 
@@ -259,6 +305,16 @@ export interface BotAvatarUpdateValue {
   readonly bot: BotView
 }
 
+/** Upload and assign one browser-encoded PNG avatar. */
+export interface BotAvatarUploadRequest {
+  /** Bot whose avatar should change. */
+  readonly botId: BotId
+  /** Canonical base64-encoded PNG bytes. */
+  readonly data: string
+  /** Media type of the encoded image. */
+  readonly mediaType: 'image/png'
+}
+
 /** Read one Bot-owned generated avatar from Host attachment storage. */
 export interface BotAvatarReadRequest {
   /** Bot whose current avatar should be read. */
@@ -271,6 +327,50 @@ export interface BotAvatarReadValue {
   readonly avatar: ImageAttachmentRef
   /** Base64-encoded stored image bytes. */
   readonly data: string
+}
+
+/** One connected MCP app visible to a Bot, with its durable access decision. */
+export interface BotConnectedAppAccess {
+  /** Stable MCP server namespace used as the connected-app id. */
+  readonly id: string
+  /** Human-readable connected-app name. */
+  readonly name: string
+  /** Optional app-provided description of the MCP tools. */
+  readonly description?: string | undefined
+  /** Whether the selected Bot may call this app's tools. */
+  readonly allowed: boolean
+}
+
+/** Request the connected MCP apps visible to one Bot. */
+export interface BotConnectedAppsRequest {
+  /** Bot whose access policy should be returned. */
+  readonly botId: BotId
+}
+
+/** Connected MCP app catalog and current per-Bot grants. */
+export interface BotConnectedAppsValue {
+  /** Bot row whose policy was read. */
+  readonly bot: BotView
+  /** Available apps and their current access decisions. */
+  readonly apps: readonly BotConnectedAppAccess[]
+}
+
+/** Change one Bot's access to one connected MCP app. */
+export interface BotConnectedAppAccessRequest {
+  /** Bot whose policy should change. */
+  readonly botId: BotId
+  /** Stable MCP server namespace. */
+  readonly appId: string
+  /** Whether to permit this Bot to call the app. */
+  readonly allowed: boolean
+}
+
+/** Result of a connected MCP app access update. */
+export interface BotConnectedAppAccessValue {
+  /** Bot row whose policy was changed. */
+  readonly bot: BotView
+  /** Connected MCP app whose access changed. */
+  readonly app: BotConnectedAppAccess
 }
 
 declare module '@yharness/typert-protocol' {
@@ -287,6 +387,8 @@ declare module '@yharness/typert-protocol' {
     'bot/avatar-invalid': { readonly botId: BotId; readonly reason: 'invalid-reference' | 'unreadable' }
     /** The Bot has no generated avatar to read. */
     'bot/avatar-missing': { readonly botId: BotId }
+    /** The requested connected MCP app is not currently available. */
+    'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
   }
 }
 

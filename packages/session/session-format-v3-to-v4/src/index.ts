@@ -3,6 +3,6 @@
 export { releasedV3SessionFormatCodec } from '@yharness/session-format-v2-to-v3'
 export * from './codec.ts'
 export * from './migration.ts'
-export { assertReleasedV4Header, assertReleasedV4Relationships, restoreReleasedV4Artifact } from './validation.ts'
+export { assertReleasedV4Header, assertReleasedV4Relationships, restoreReleasedV4Artifact, validateDeliveryAccepted } from './validation.ts'
 export { historicalChildCatalogSource } from './facts.ts'
 export { RELEASED_V3_EVENT_TYPES } from './extension-identities.ts'

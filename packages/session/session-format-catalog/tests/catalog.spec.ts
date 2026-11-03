@@ -91,6 +91,53 @@ describe('first-party Session format catalog', () => {
     }])
   })
 
+  it('strictly validates bot group attribution while migrating an inbox across a restart', () => {
+    const header = {
+      type: 'session', version: 4, id: 'group-inbox-restart', createdAt: 1,
+      isSeeded: false, delegationDepth: 0,
+    }
+    const malformed = {
+      type: 'agent/inbox/spliced', seq: 0, time: 1,
+      data: {
+        target: 'next-turn', start: 0,
+        inserted: [{
+          id: 'group-message', role: 'user',
+          source: { kind: 'bot-group-message', groupId: 'group-1' },
+          content: [{ type: 'text', text: 'Resume the group request.' }],
+        }],
+      },
+    }
+    const restart = { type: 'turn/start', seq: 1, time: 2, data: { turn: 1 } }
+    const restore = createSessionFormatCatalogWithChildren([]).createRestore(header, {
+      recovery: 'strict', validation: 'current',
+    })
+    restore.decodeRow(malformed)
+    restore.decodeRow(restart)
+    expect(() => restore.finish()).toThrow(
+      'format v5 bot-group-message source requires string groupId and messageId',
+    )
+
+    const valid = {
+      ...malformed,
+      data: {
+        ...malformed.data,
+        inserted: [{
+          ...malformed.data.inserted[0],
+          source: { kind: 'bot-group-message', groupId: 'group-1', messageId: 'message-1' },
+        }],
+      },
+    }
+    const reopened = createSessionFormatCatalogWithChildren([]).createRestore(header, {
+      recovery: 'strict', validation: 'current',
+    })
+    reopened.decodeRow(valid)
+    reopened.decodeRow(restart)
+    expect(reopened.finish()).toMatchObject({
+      header: { version: SESSION_FORMAT_VERSION, id: 'group-inbox-restart' },
+      events: [valid, restart],
+    })
+  })
+
   it.each([0, 1])('restores v%i empty and non-empty inherited prefixes through every adjacent edge', (version) => {
     for (const seedLength of [0, 1]) {
       const sourceHeader = {
@@ -270,7 +317,7 @@ describe('first-party Session format catalog', () => {
     stream.decodeRow({ type: 'feedback/record', seq: 0, time: 2, data: { text: 'retained' } })
 
     expect(stream.finish()).toMatchObject({
-      header: { version: 4, id: 'streaming' },
+      header: { version: SESSION_FORMAT_VERSION, id: 'streaming' },
       inheritedEventCount: 0,
       events: [{ type: 'feedback/record', seq: 0 }],
     })

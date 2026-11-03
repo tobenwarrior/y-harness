@@ -59,6 +59,8 @@ export interface JsonlGenerationFormatAdapter {
   readonly currentVersion: number
   /** Create the single-pass codec and migration state for a historical header. */
   createRestore(header: Record<string, unknown>): SessionFormatRestore
+  /** Validate one parsed historical row before recoverable suffix suppression. */
+  assertHistoricalRowAdmission?(row: unknown, sourceVersion: number): void
   /** Encode one current header record without materializing body rows. */
   encodeHeader(header: SessionFormatArtifact['header'], inheritedEventCount: number): SessionFormatJsonValue
   /** Encode one current event record. */
@@ -308,7 +310,10 @@ class MigratingJsonlRows {
   private rowIndex = 0
   private issue: Error | undefined
 
-  constructor(private readonly restore: SessionFormatRestore) {}
+  constructor(
+    private readonly restore: SessionFormatRestore,
+    private readonly assertRowAdmission?: (row: unknown) => void,
+  ) {}
 
   /** Consume plaintext bytes following the independently decoded header. */
   write(chunk: Buffer): void {
@@ -359,6 +364,7 @@ class MigratingJsonlRows {
       this.issue ??= asError(error)
       return
     }
+    this.assertRowAdmission?.(row)
     if (this.issue !== undefined) {
       if (typeof row === 'object' && row !== null
         && (row as { type?: unknown }).type === 'turn/end') throw this.issue
@@ -375,7 +381,7 @@ interface StartedMigrationStream {
 async function startMigrationStream(
   headerRecord: Buffer,
   sourceVersion: number,
-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
   validateHistoricalHeader?: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
 ): Promise<StartedMigrationStream> {
   const value = parseJson(headerRecord.subarray(0, -1).toString('utf8'), 'header line')
@@ -387,7 +393,11 @@ async function startMigrationStream(
   const validation = validateHistoricalHeader?.(header)
   if (validation !== undefined) await validation
   const stream = format.createRestore(header)
-  return { parser: new MigratingJsonlRows(stream) }
+  const sourceAdmission = format.assertHistoricalRowAdmission
+  const assertRowAdmission = sourceAdmission === undefined
+    ? undefined
+    : (row: unknown) => sourceAdmission(row, sourceVersion)
+  return { parser: new MigratingJsonlRows(stream, assertRowAdmission) }
 }
 
 async function consumeMigrationBytes(
@@ -412,7 +422,7 @@ async function decodeStreamingMigration(
   bytes: Buffer,
   compression: JsonlCompression,
   sourceVersion: number,
-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
   validateHistoricalHeader: PrepareJsonlMigrationOptions['validateHistoricalHeader'],
   signal?: AbortSignal,
 ): Promise<SessionFormatArtifact> {
@@ -1044,7 +1054,7 @@ export async function readDecodedJsonlSource(
   path: string,
   version: number,
   compression: JsonlCompression,
-  format: Pick<JsonlGenerationFormatAdapter, 'createRestore'>,
+  format: Pick<JsonlGenerationFormatAdapter, 'createRestore' | 'assertHistoricalRowAdmission'>,
   signal?: AbortSignal,
 ): Promise<{ artifact: SessionFormatArtifact; identity: JsonlPhysicalIdentity }> {
   const source = await readStableJsonlFile(path, signal)

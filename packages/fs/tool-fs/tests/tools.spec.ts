@@ -105,6 +105,9 @@ class FakeFs extends FileSystem {
     this.files.set(target.targetKey, after)
     return { version: FsVersion('v3'), before: content, after }
   }
+  override async patchText(): Promise<never> { throw new Error('patch not needed in tool tests') }
+  override async deleteFile(): Promise<never> { throw new Error('delete not needed in tool tests') }
+  override async moveFile(): Promise<never> { throw new Error('move not needed in tool tests') }
 }
 
 async function setup() {
@@ -162,6 +165,16 @@ describe('registration', () => {
   it('registers read, write, and edit', async () => {
     const { ctx } = await setup()
     expect(ctx.tools.schemas().map(s => s.name).sort()).toEqual(['edit', 'read', 'write'])
+  })
+
+  it('registers apply_patch when enabled', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(FakeFs)
+    await ctx.plugin(FsPolicy)
+    await ctx.plugin(ToolFs, { applyPatch: true })
+    expect(ctx.tools.schemas().map(s => s.name).sort()).toContain('apply_patch')
   })
 
   it.each([

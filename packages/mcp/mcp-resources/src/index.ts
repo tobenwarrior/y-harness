@@ -73,7 +73,7 @@ export class McpResourceRuntime extends Service {
 
   /**
    * Register one server and expose resource tools while that scope has providers.
-   * @param server - configured server name, unique in this scope.
+   * @param server - exact opaque server id, unique in this scope; empty and long ids are preserved.
    * @param provider - connection-owned resource operations.
    * @returns the effect disposer for this exact registration.
    */
@@ -102,6 +102,15 @@ export class McpResourceRuntime extends Service {
     }.bind(this), `mcpResources.register(${server})`)
     // oxlint-disable-next-line typescript/no-misused-promises -- visibility cleanup is synchronous; Cordis retains pending fiber disposal
     return dispose
+  }
+
+  /**
+   * List resource servers visible from one caller scope.
+   * @param scope - the viewing Agent scope, or undefined for global access.
+   * @returns visible configured server names in registration order.
+   */
+  servers(scope?: ScopeKey): readonly string[] {
+    return [...this.layers.merge(scope, layer => layer.servers).keys()]
   }
 
   /** Own one scope's tools independently of its configured server plugins. */

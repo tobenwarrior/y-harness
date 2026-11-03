@@ -5,9 +5,9 @@ import { AttachmentId } from '@yharness/attachment'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
-import { BotDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
+import type { BotGroupDetailData, BotGroupSummary, BotSummary, BotWorkspaceProps } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -37,6 +37,20 @@ const bots: readonly BotSummary[] = [
   },
 ]
 
+const sharedGroup: BotGroupSummary = {
+  id: 'group-release',
+  name: 'Release room',
+  bots: [bots[0]!, bots[1]!],
+}
+
+const groupDetail: BotGroupDetailData = {
+  ...sharedGroup,
+  messages: [
+    { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
+    { id: 'message-2', sender: { kind: 'bot', botId: 'research', name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
+  ],
+}
+
 function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, children: ReactNode = <p>Persistent session surface</p>) {
   const props: BotWorkspaceProps = {
     bots,
@@ -59,6 +73,24 @@ function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, childr
 }
 
 describe('Bot roster and detail', () => {
+  it('renames the selected bot from its conversation header', async () => {
+    const rename = vi.fn(async () => {})
+    render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
+    await waitFor(() => { expect(rename).toHaveBeenCalledWith('research', 'Market scout') })
+  })
+
+  it('keeps the rename dialog open when saving fails', async () => {
+    const rename = vi.fn(async () => { throw new Error('offline') })
+    render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
+    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('The name could not be saved')
+    expect(screen.getByRole('textbox', { name: 'Bot name' })).toHaveProperty('value', 'Market scout')
+  })
   it('renders the roster as a standalone sidebar surface', () => {
     const onSelectBot = vi.fn()
     render(<BotRoster
@@ -163,6 +195,93 @@ describe('Bot roster and detail', () => {
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
   })
 
+  it('keeps pinned bots first and exposes a recoverable hidden section', async () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={[
+        { ...bots[0]!, pinned: true },
+        { ...bots[1]!, hidden: true },
+      ]}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Pinned' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Release captain' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Restore bot' }))
+
+    await waitFor(() => {
+      expect(onOrganizeBot).toHaveBeenCalledWith('release', { hidden: false })
+    })
+  })
+
+  it('does not replace an all-hidden roster with a search empty state', () => {
+    render(<BotRoster
+      bots={bots.map(bot => ({ ...bot, hidden: true }))}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    expect(screen.queryByText('No bots match that search')).toBeNull()
+    expect(screen.getByRole('button', { name: /Research partner, Working/ })).toBeTruthy()
+  })
+
+  it('keeps reserved-looking section names distinct from menu actions and headings', () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    const reservedBots = [
+      { ...bots[0]!, group: 'none' },
+      { ...bots[1]!, group: 'custom' },
+      { ...bots[0]!, id: 'pinned-label', name: 'Pinned label', group: 'Pinned' },
+      { ...bots[1]!, id: 'pinned-row', name: 'Pinned row', group: 'none', pinned: true },
+    ]
+    render(<BotRoster
+      bots={reservedBots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    expect(screen.getAllByRole('heading', { name: 'Pinned' })).toHaveLength(2)
+    expect(screen.getAllByRole('heading', { name: 'none' })).toHaveLength(1)
+    expect(screen.getAllByRole('heading', { name: 'custom' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'none' }))
+
+    expect(onOrganizeBot).toHaveBeenCalledWith('research', { group: 'none' })
+  })
+
+  it('lets the roster menu pin a bot and assign a section', async () => {
+    const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      onOrganizeBot={onOrganizeBot}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pin bot' }))
+    await waitFor(() => { expect(onOrganizeBot).toHaveBeenCalledWith('research', { pinned: true }) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Set section…' }))
+    const dialog = screen.getByRole('dialog', { name: 'Organize bot' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Section name' }), { target: { value: 'Planning' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await waitFor(() => { expect(onOrganizeBot).toHaveBeenCalledWith('research', { group: 'Planning' }) })
+  })
+
   it('filters the roster without changing the selected bot session', () => {
     renderSplitWorkspace()
 
@@ -263,6 +382,169 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('button', { name: `State bot, ${label}` }).textContent).toContain(label)
   })
 
+  it('keeps shared groups in the existing Bots sidebar and selects one without a second rail', () => {
+    const onSelectGroup = vi.fn()
+    render(<BotRoster
+      bots={bots}
+      groups={[sharedGroup]}
+      selectedBotId={null}
+      selectedGroupId={sharedGroup.id}
+      onSelectBot={vi.fn()}
+      onSelectGroup={onSelectGroup}
+      onCreateBot={vi.fn()}
+      onCreateGroup={vi.fn()}
+      t={t}
+    />)
+
+    expect(screen.getByRole('complementary', { name: 'Bot workspace' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Shared groups' })).toBeTruthy()
+    const row = screen.getByRole('button', { name: /Release room/ })
+    expect(row.getAttribute('aria-current')).toBe('page')
+    fireEvent.click(row)
+    expect(onSelectGroup).toHaveBeenCalledWith(sharedGroup.id)
+    expect(screen.queryByRole('complementary', { name: /Group/ })).toBeNull()
+  })
+
+  it('creates a shared group from two existing Bots', async () => {
+    const onCreateGroup = vi.fn().mockResolvedValue(undefined)
+    render(<BotRoster
+      bots={bots}
+      groups={[]}
+      selectedBotId={bots[0]!.id}
+      selectedGroupId={null}
+      onSelectBot={vi.fn()}
+      onSelectGroup={vi.fn()}
+      onCreateBot={vi.fn()}
+      onCreateGroup={onCreateGroup}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'New group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Research partner' }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Release captain' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }))
+
+    await waitFor(() => { expect(onCreateGroup).toHaveBeenCalledWith({ name: 'Launch room', botIds: ['research', 'release'] }) })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull() })
+  })
+
+  it('renders the persistent group transcript, sends with Enter, and keeps a failed draft', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getByRole('region', { name: 'Release room' })).toBeTruthy()
+    expect(screen.getByText('Plan the release together.')).toBeTruthy()
+    expect(screen.getByText('I found three useful sources.')).toBeTruthy()
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' })
+    fireEvent.change(composer, { target: { value: 'What is left?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => { expect(onSend).toHaveBeenCalledWith('What is left?') })
+
+    const failed = vi.fn().mockRejectedValue(new Error('delivery failed'))
+    rerender(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error="Some Bots could not receive this message."
+      onRetry={vi.fn()}
+      onSend={failed}
+      loadAvatar={undefined}
+      t={t}
+    />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Release room' }), { target: { value: 'Retry this' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
+    expect((screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement).value).toBe('Retry this')
+    expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
+  })
+
+  it('shows persisted per-Bot turn failures and retries only the failed user message', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={{
+        ...groupDetail,
+        deliveries: [
+          { messageId: 'message-1', botId: 'research', status: 'responded' },
+          { messageId: 'message-1', botId: 'release', status: 'failed', error: 'Provider credentials are missing.' },
+        ],
+      }}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getByText('Release captain could not reply: Provider credentials are missing.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry: Release captain' }))
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('Plan the release together.', 'message-1', undefined)
+    })
+  })
+
+  it('offers member mentions and sends only to the selected Bot ids', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
+    expect(screen.getByRole('listbox', { name: 'Mention a Bot' })).toBeTruthy()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: '@Research partner please review', selectionStart: 31 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('@Research partner please review', undefined, ['research'])
+    })
+  })
+
+  it('renames a group from its header edit dialog', async () => {
+    const onUpdate = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onUpdate={onUpdate}
+      onSend={vi.fn()}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch command room' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith({
+        groupId: 'group-release', name: 'Launch command room', botIds: ['research', 'release'],
+      })
+    })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit shared group' })).toBeNull() })
+  })
+
   it('keeps loading and owner-provided failures explicit', () => {
     renderSplitWorkspace({ bots: [], selectedBotId: null, loading: true })
     expect(screen.getByRole('status', { name: 'Loading bots' })).toBeTruthy()
@@ -291,9 +573,109 @@ describe('Bot roster and detail', () => {
     const onConnectApps = vi.fn()
     renderSplitWorkspace({ onConnectApps })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect apps' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
 
     expect(onConnectApps).toHaveBeenCalledOnce()
+  })
+
+  it('loads connected apps for the selected Bot and exposes grant/revoke feedback', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+    ])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({ onLoadConnectedApps, onSetConnectedAppAccess })
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
+    expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
+    expect(within(dialog).getByText('Access not allowed')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('research', 'github', true) })
+    expect(within(dialog).getByText('Access allowed')).toBeTruthy()
+  })
+
+  it('keeps nameless connected apps distinct and accessible', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'custom-alpha', name: '', allowed: false },
+      { id: 'custom-beta', name: '-', allowed: false },
+    ])
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
+
+    expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
+    expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
+    expect(within(dialog).getByText('MCP tools from Connected app custom-alpha')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
+    expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')
+    expect(dialog.querySelector('[data-app-id="custom-beta"]')?.textContent).not.toBe('')
+  })
+
+  it('clears the previous Bot catalog when a reload fails', async () => {
+    const onLoadConnectedApps = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+      ])
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull() })
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const reloadedDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledTimes(2) })
+    expect((await within(reloadedDialog).findByRole('alert')).textContent).toContain('catalog unavailable')
+    expect(reloadedDialog.querySelector('[data-app-id="github"]')).toBeNull()
+  })
+
+  it('does not apply a completed toggle from a previous Bot to the current catalog', async () => {
+    const save = Promise.withResolvers<undefined>()
+    const onLoadConnectedApps = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Research tools', allowed: false },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Release tools', allowed: false },
+      ])
+    const onSetConnectedAppAccess = vi.fn().mockReturnValue(save.promise)
+    const props: BotWorkspaceProps = {
+      bots,
+      selectedBotId: 'research',
+      onSelectBot: vi.fn(),
+      onCreateBot: vi.fn(),
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+    }
+    const view = render(<BotRoster {...props} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('research', 'github', true) })
+
+    view.rerender(<BotRoster {...props} selectedBotId="release" t={t} />)
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy() })
+
+    save.resolve(undefined)
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Done' }).hasAttribute('disabled')).toBe(false) })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy() })
   })
 
   it('checks generation, previews the returned image, and commits the selected avatar', async () => {
