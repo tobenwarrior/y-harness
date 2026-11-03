@@ -7,7 +7,7 @@ import {
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
-  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, Modal, StateDot, Tag, Tooltip,
+  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip,
 
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -629,7 +629,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         }}
       >
         {mentionQuery !== null && mentionOptions.length > 0 && (
-          <div className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
+          <MenuSurface className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
             {mentionOptions.map((bot, index) => (
               <button
                 type="button"
@@ -647,7 +647,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                 </span>
               </button>
             ))}
-          </div>
+          </MenuSurface>
         )}
         <textarea
           className={css.groupComposer}

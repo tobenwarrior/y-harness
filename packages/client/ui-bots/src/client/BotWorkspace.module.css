@@ -774,7 +774,6 @@
   padding: 5px;
   border: 0.5px solid var(--yh-alias-border-l1);
   border-radius: var(--yh-radius-lg);
-  background: var(--yh-alias-bg-layer-2);
   box-shadow: var(--yh-elevation-prominent);
 }
 
