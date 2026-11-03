@@ -11,6 +11,7 @@
     { "path": "../../../vendor/cordis" },
     { "path": "../../attachment/attachment" },
     { "path": "../avatar-generation" },
+    { "path": "../../preset/agent-preset-registry" },
     { "path": "../../util/brand" },
     { "path": "../../core/agent" },
     { "path": "../../llm/llm" },

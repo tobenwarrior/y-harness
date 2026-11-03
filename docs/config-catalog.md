@@ -96,7 +96,7 @@ export interface Config {
 
 - `inject`: `agents` · `sessions` · `llm` · `tools` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.md) · [`SessionId`](subsystems/core.md) · `Volatile` (`@yharness/cosmokit`)
-- `source`: [`packages/core/agent-loop/src/index.ts:292`](../packages/core/agent-loop/src/index.ts)
+- `source`: [`packages/core/agent-loop/src/index.ts:295`](../packages/core/agent-loop/src/index.ts)
 
 ```ts config-catalog
 /** Agent-loop plugin configuration. */
@@ -461,13 +461,48 @@ export type Config = LocalConfig
 ```
 <!-- END GENERATED config-catalog:@yharness/bash-sandbox -->
 
+<!-- BEGIN GENERATED config-catalog:@yharness/bots -->
+<a id="yharnessbots"></a>
+
+## `@yharness/bots`
+
+- `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
+- `source`: [`packages/agents/bots/src/index.ts:324`](../packages/agents/bots/src/index.ts)
+
+```ts config-catalog
+/** Bot service configuration. */
+export interface BotServiceConfig {
+  /** Stable owner key selected by the Host composition. */
+  readonly ownerId?: string
+  /** Separate self-hosted collaborator access policy. */
+  readonly shared?: BotSharedConfig
+}
+
+/** Self-hosted shared-Bot access policy. Durations are milliseconds. */
+export interface BotSharedConfig {
+  /** Mount collaborator routes and durable sharing by default when Connection is present. */
+  readonly enabled?: boolean
+  /** Maximum collaborator cookie lifetime. */
+  readonly sessionMaxAgeMs?: number
+  /** Maximum unused invite lifetime. */
+  readonly inviteMaxAgeMs?: number
+  /** Mark collaborator cookies Secure for HTTPS deployments. */
+  readonly secureCookie?: boolean
+  /** Additional exact network authorities accepted by the shared route. */
+  readonly trustedHosts?: string[]
+  /** Maximum interval before a process notices a membership change in storage. */
+  readonly membershipPollIntervalMs?: number
+}
+```
+<!-- END GENERATED config-catalog:@yharness/bots -->
+
 <!-- BEGIN GENERATED config-catalog:@yharness/client-connection -->
 <a id="yharnessclient-connection"></a>
 
 ## `@yharness/client-connection`
 
 - `inject`: `credentials`
-- `source`: [`packages/client/connection/src/index.ts:92`](../packages/client/connection/src/index.ts)
+- `source`: [`packages/client/connection/src/index.ts:120`](../packages/client/connection/src/index.ts)
 
 ```ts config-catalog
 /** Browser authentication, request limits, and connection recovery configuration. */
@@ -4615,7 +4650,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@yharness/api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
 | `@yharness/api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@yharness/authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
-| `@yharness/bots` | `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools` | [`packages/agents/bots/src/index.ts`](../packages/agents/bots/src/index.ts) |
 | `@yharness/browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |
 | `@yharness/client-file-upload` | `agents` · `attachments` · `commands` · `connection` | [`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts) |
 | `@yharness/client-locale` | — | [`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts) |

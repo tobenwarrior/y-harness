@@ -128,6 +128,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'ownerCtx', description: 'caller context that owns load, setup, and the live lifecycle.' }, { name: 'options', description: 'persisted identity, optional live parent, loop options, setup, and cancellation.' }],
         returns: 'the published handle.',
       },
+      {
+        signature: 'async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void>',
+        description: 'Wait for an abandoned cold-resume write handle to finish closing before a fresh resume claims the same persisted Session.',
+        parameters: [{ name: 'sessionId', description: 'persisted Session identity to wait for.' }, { name: 'signal', description: 'optional cancellation for the wait; it never cancels close.' }],
+        returns: 'completion of the outstanding cleanup, when one exists.',
+      },
     ],
   },
   {
@@ -149,7 +155,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async list(): Promise<AgentPreset[]>',
-        description: 'Read every declared preset, including activation failures.',
+        description: 'Read every user-visible preset, including activation failures.',
         parameters: [],
         returns: 'Display metadata and loading diagnostics.',
       },
@@ -271,6 +277,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Load a persisted session and resume an agent on it through the registered factory. Rejects if no factory is registered; the factory rejects if session persistence is not configured or persistence/setup fails.',
         parameters: [{ name: 'options', description: 'persisted identity, optional live parent, configuration, and setup.' }],
         returns: 'the handle after setup, rollback-covered publication, and loop start complete.',
+      },
+      {
+        signature: 'async waitForResumeCleanup(sessionId: SessionId, signal?: AbortSignal): Promise<void>',
+        description: 'Wait for an abandoned cold-resume lease before a caller starts a fresh resume of the same Session identity.',
+        parameters: [{ name: 'sessionId', description: 'persisted Session identity to wait for.' }, { name: 'signal', description: 'optional cancellation for the wait.' }],
+        returns: 'completion of the outstanding lease cleanup, or immediately when the active factory does not expose one.',
       },
       {
         signature: 'register(agent: Agent): ReturnType<Context[\'effect\']>',
@@ -581,6 +593,36 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Host service that owns the durable roster and its Session mappings.',
     methods: [
       {
+        signature: '@Remote(\'createShareInvite\') async createShareInvite(request: BotShareInviteRequest): Promise<BotShareInviteValue>',
+        description: 'Issue one collaborator invite for an operator-owned Bot.',
+        parameters: [{ name: 'request', description: 'Bot id and role to grant on redemption.' }],
+        returns: 'the one-time code and its expiry.',
+      },
+      {
+        signature: '@Remote(\'listShareMembers\') async listShareMembers(request: BotShareMembersRequest): Promise<BotShareMembersValue>',
+        description: 'List the shared members of one operator-owned Bot.',
+        parameters: [{ name: 'request', description: 'Bot id to inspect.' }],
+        returns: 'the safe member summaries without private Session data.',
+      },
+      {
+        signature: '@Remote(\'getShareMemoryPolicy\') async getShareMemoryPolicy(request: BotShareMembersRequest): Promise<BotShareMemoryPolicyValue>',
+        description: 'Read the shared-context policy for one operator-owned Bot.',
+        parameters: [{ name: 'request', description: 'Bot id to inspect.' }],
+        returns: 'the current shared-context policy.',
+      },
+      {
+        signature: '@Remote(\'setShareMemoryPolicy\') async setShareMemoryPolicy(request: BotShareMemoryPolicyRequest): Promise<BotShareMemoryPolicyValue>',
+        description: 'Enable or disable the explicit shared context for one Bot.',
+        parameters: [{ name: 'request', description: 'Bot id and desired policy.' }],
+        returns: 'the committed policy.',
+      },
+      {
+        signature: '@Remote(\'revokeShareMember\') async revokeShareMember(request: BotShareMemberRevokeRequest): Promise<BotShareMemberRevokeValue>',
+        description: 'Revoke one non-owner member from one operator-owned Bot.',
+        parameters: [{ name: 'request', description: 'Bot id and the principal to remove.' }],
+        returns: 'the scoped revocation result.',
+      },
+      {
         signature: 'collaborationFor(agent: Pick<Agent, \'id\'>): Promise<BotCollaborationClient>',
         description: 'Bind peer-Bot operations to the live Agent that owns the current turn.\n\nThe provider bridge must supply this Agent from its runtime context; the returned client never accepts a model-supplied sender Session id. Each operation rechecks that the Session remains owned by a durable Bot.',
         parameters: [{ name: 'agent', description: 'live Agent supplied by the provider bridge or scoped tool.' }],
@@ -605,34 +647,70 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
+        signature: '@Remote(\'listTemplates\') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>',
+        description: 'List published Bot configuration snapshots, including revoked rows.',
+        parameters: [{ name: '_request', description: 'Empty list request reserved for future cursor paging.' }],
+        returns: 'Published template rows in stable creation order.',
+      },
+      {
+        signature: '@Remote(\'publishTemplate\') async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue>',
+        description: 'Publish a safe Bot configuration snapshot without runtime or credential fields.',
+        parameters: [{ name: 'request', description: 'Source Bot and optional display overrides.' }],
+        returns: 'Newly persisted safe template row.',
+      },
+      {
+        signature: '@Remote(\'revokeTemplate\') async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue>',
+        description: 'Revoke one published Bot template while retaining its row for the owner.',
+        parameters: [{ name: 'request', description: 'Template identity to revoke.' }],
+        returns: 'The retained template row with its revocation timestamp.',
+      },
+      {
+        signature: '@Remote(\'previewTemplate\') async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue>',
+        description: 'Preview one active Bot template by exact opaque share code.',
+        parameters: [{ name: 'request', description: 'Opaque share code to resolve.' }],
+        returns: 'Safe template configuration used by import.',
+      },
+      {
+        signature: '@Remote(\'approveTemplate\') async approveTemplate(request: BotTemplateApproveRequest): Promise<BotTemplateApproveValue>',
+        description: 'Approve one exact verified portable artifact before it can provision a Bot.',
+        parameters: [{ name: 'request', description: 'Signed code inspected by the recipient.' }],
+        returns: 'The verified template marked approved on this Host.',
+      },
+      {
+        signature: '@Remote(\'importTemplate\') async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue>',
+        description: 'Import an active template as a new Bot with a newly allocated Session.',
+        parameters: [{ name: 'request', description: 'Opaque share code and optional replacement Bot name.' }],
+        returns: 'Newly provisioned Bot and the source template row.',
+      },
+      {
         signature: '@Remote(\'listGroups\') async listGroups(request: BotGroupListRequest): Promise<BotGroupListValue>',
         description: 'List durable multi-Bot groups and current member projections.',
-        parameters: [{ name: 'request', description: 'Group list request.' }],
-        returns: 'The available groups and their members.',
+        parameters: [{ name: 'request', description: 'Group list filters and paging request.' }],
+        returns: 'Durable group rows with current member projections.',
       },
       {
         signature: '@Remote(\'createGroup\') async createGroup(request: BotGroupCreateRequest): Promise<BotGroupCreateValue>',
         description: 'Create or idempotently reuse one durable multi-Bot group.',
-        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
-        returns: 'The created or existing group.',
+        parameters: [{ name: 'request', description: 'Group name and requested Bot membership.' }],
+        returns: 'The created or reused durable group.',
       },
       {
         signature: '@Remote(\'updateGroup\') async updateGroup(request: BotGroupUpdateRequest): Promise<BotGroupUpdateValue>',
         description: 'Update a durable multi-Bot group from the human workspace.',
-        parameters: [{ name: 'request', description: 'Group identity, name, and members.' }],
-        returns: 'The updated group.',
+        parameters: [{ name: 'request', description: 'Group identity and requested changes.' }],
+        returns: 'The updated durable group.',
       },
       {
         signature: '@Remote(\'inspectGroup\') async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue>',
         description: 'Read one durable group transcript.',
-        parameters: [{ name: 'request', description: 'Group identity.' }],
-        returns: 'The group and its transcript.',
+        parameters: [{ name: 'request', description: 'Group identity and transcript query.' }],
+        returns: 'The group and bounded transcript projection.',
       },
       {
         signature: '@Remote(\'sendGroupMessage\') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>',
         description: 'Persist and fan out one human group message to every member Bot.',
-        parameters: [{ name: 'request', description: 'Group identity, message identity, and text.' }],
-        returns: 'The updated group transcript.',
+        parameters: [{ name: 'request', description: 'Group message and optional caller-provided operation id.' }],
+        returns: 'Per-recipient delivery outcomes.',
       },
       {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
@@ -1073,6 +1151,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
+        signature: 'readonly sharedRpc: HostSharedConnectionRpc',
+        description: 'Isolated collaborator Bot RPC registry; never mounted on `/api`.',
+        parameters: [],
+      },
+      {
         signature: 'readonly fetch: HostConnectionFetch',
         description: 'Exact Fetch routes for streaming or browser-native responses.',
         parameters: [],
@@ -1099,6 +1182,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Admit one request: it passes requestRejection and speaks for the operator, or it is refused with that status.',
         parameters: [{ name: 'request', description: 'request headers from the HTTP or upgrade request.' }],
         returns: 'the operator Peer, or the rejection status.',
+      },
+      {
+        signature: 'admitShared(request: ConnectionTrustRequest, authenticator: SharedAccessAuthenticator): Promise<SharedPeerAdmission>',
+        description: 'Apply the Host/Origin fence and then shared collaborator authentication. The operator browser cookie is deliberately not accepted here.',
+        parameters: [{ name: 'request', description: 'request headers from the HTTP or upgrade request.' }, { name: 'authenticator', description: 'separate collaborator identity authority.' }],
+        returns: 'a collaborator Peer, or 403/401 before dispatch.',
       },
       {
         signature: 'authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean',
@@ -2343,9 +2432,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Host service backing the generated `ctx.remote.session` namespace.',
     methods: [
       {
-        signature: 'resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>',
+        signature: 'resolveAgent(sessionId: SessionId, signal?: AbortSignal): Promise<ApiSessionAgentResult>',
         description: 'Resolve or resume one ordinary Session for another Host API domain.',
-        parameters: [{ name: 'sessionId', description: 'Session identity whose Agent owns the operation.' }],
+        parameters: [{ name: 'sessionId', description: 'Session identity whose Agent owns the operation.' }, { name: 'signal', description: 'optional caller cancellation for cold Agent activation.' }],
         returns: 'the live Agent or the stable Session-domain failure.',
       },
       {
@@ -2367,9 +2456,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'authorized bounded Session search results.',
       },
       {
-        signature: '@Remote(\'create\') create(request: SessionCreateRequest): Promise<SessionCreateValue>',
+        signature: '@Remote(\'create\') create(request: SessionCreateRequest, signal: AbortSignal): Promise<SessionCreateValue>',
         description: 'Create or idempotently adopt one ordinary Session.',
-        parameters: [{ name: 'request', description: 'requested identity, location, and Agent preset.' }],
+        parameters: [{ name: 'request', description: 'requested identity, location, and Agent preset.' }, { name: 'signal', description: 'caller cancellation for Agent activation.' }],
         returns: 'the Session identity and resolved preset when configured.',
       },
       {
@@ -5189,7 +5278,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'AgentFactory',
-    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n}',
+    declaration: 'export interface AgentFactory {\n    createAgent(ownerCtx: Context, options: CreateAgentOptions): Promise<AgentHandle>;\n    resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle>;\n    waitForResumeCleanup?(sessionId: SessionId, signal?: AbortSignal): Promise<void>;\n}',
   },
   {
     name: 'AgentHandle',
@@ -5517,7 +5606,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCreateRequest',
-    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly string[];\n}',
   },
   {
     name: 'BotCreateValue',
@@ -5680,12 +5769,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotOrganizationUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotPrincipalId',
+    declaration: 'export type BotPrincipalId = Branded<\'BotPrincipalId\'>;',
+  },
+  {
     name: 'BotProvisioningState',
     declaration: 'export type BotProvisioningState = \'provisioning\' | \'active\';',
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5696,8 +5789,128 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotShareInviteRequest',
+    declaration: 'export interface BotShareInviteRequest {\n    readonly botId: BotId;\n    readonly role: BotShareRole;\n}',
+  },
+  {
+    name: 'BotShareInviteValue',
+    declaration: 'export interface BotShareInviteValue {\n    readonly code: string;\n    readonly expiresAt: number;\n}',
+  },
+  {
+    name: 'BotShareMember',
+    declaration: 'export interface BotShareMember {\n    readonly botId: BotId;\n    readonly principalId: BotPrincipalId;\n    readonly role: BotShareRole;\n    readonly grantedBy: BotPrincipalId;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotShareMemberRevokeRequest',
+    declaration: 'export interface BotShareMemberRevokeRequest {\n    readonly botId: BotId;\n    readonly principalId: BotPrincipalId;\n}',
+  },
+  {
+    name: 'BotShareMemberRevokeValue',
+    declaration: 'export interface BotShareMemberRevokeValue {\n    readonly botId: BotId;\n    readonly principalId: BotPrincipalId;\n    readonly revoked: true;\n}',
+  },
+  {
+    name: 'BotShareMembersRequest',
+    declaration: 'export interface BotShareMembersRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotShareMembersValue',
+    declaration: 'export interface BotShareMembersValue {\n    readonly botId: BotId;\n    readonly members: readonly BotShareMember[];\n}',
+  },
+  {
+    name: 'BotShareMemoryPolicyRequest',
+    declaration: 'export interface BotShareMemoryPolicyRequest {\n    readonly botId: BotId;\n    readonly enabled: boolean;\n}',
+  },
+  {
+    name: 'BotShareMemoryPolicyValue',
+    declaration: 'export interface BotShareMemoryPolicyValue {\n    readonly botId: BotId;\n    readonly enabled: boolean;\n    readonly updatedAt: number;\n}',
+  },
+  {
+    name: 'BotShareRole',
+    declaration: 'export type BotShareRole = typeof BOT_SHARE_ROLES[number];',
+  },
+  {
+    name: 'BotTemplateApproveRequest',
+    declaration: 'export interface BotTemplateApproveRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly fingerprint: string;\n    readonly expectedPermissions: BotTemplateLocalPermissions;\n    readonly approvalToken: string;\n}',
+  },
+  {
+    name: 'BotTemplateApproveValue',
+    declaration: 'export interface BotTemplateApproveValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n}',
+  },
+  {
+    name: 'BotTemplateAvatar',
+    declaration: 'export interface BotTemplateAvatar {\n    readonly mediaType: \'image/png\' | \'image/jpeg\' | \'image/webp\' | \'image/gif\';\n    readonly data: string;\n    readonly bytes: number;\n    readonly width: number;\n    readonly height: number;\n    readonly name?: string;\n}',
+  },
+  {
+    name: 'BotTemplateCapability',
+    declaration: 'export type BotTemplateCapability = string;',
+  },
+  {
+    name: 'BotTemplateConfiguration',
+    declaration: 'export interface BotTemplateConfiguration {\n    readonly name: string;\n    readonly description?: string;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly agentPreset?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly BotTemplateCapability[];\n    readonly profile?: BotTemplateProfile;\n    readonly avatar?: BotTemplateAvatar;\n}',
+  },
+  {
+    name: 'BotTemplateId',
+    declaration: 'export type BotTemplateId = Branded<\'BotTemplateId\'>;',
+  },
+  {
+    name: 'BotTemplateImportRequest',
+    declaration: 'export interface BotTemplateImportRequest {\n    readonly shareCode: BotTemplateShareCode;\n    readonly name?: string;\n    readonly importId?: string;\n}',
+  },
+  {
+    name: 'BotTemplateImportValue',
+    declaration: 'export interface BotTemplateImportValue {\n    readonly bot: BotView;\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateListRequest',
+    declaration: 'export interface BotTemplateListRequest {\n    readonly cursor?: string;\n}',
+  },
+  {
+    name: 'BotTemplateListValue',
+    declaration: 'export interface BotTemplateListValue {\n    readonly templates: readonly BotTemplateView[];\n}',
+  },
+  {
+    name: 'BotTemplateLocalPermissions',
+    declaration: 'export interface BotTemplateLocalPermissions {\n    readonly status: \'resolved\' | \'unavailable\';\n    readonly preset?: string;\n    readonly tools: readonly string[];\n}',
+  },
+  {
+    name: 'BotTemplatePreviewRequest',
+    declaration: 'export interface BotTemplatePreviewRequest {\n    readonly shareCode: BotTemplateShareCode;\n}',
+  },
+  {
+    name: 'BotTemplatePreviewValue',
+    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n    readonly approvalToken?: string;\n}',
+  },
+  {
+    name: 'BotTemplateProfile',
+    declaration: 'export interface BotTemplateProfile {\n    readonly name: string;\n    readonly description?: string;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n}',
+  },
+  {
+    name: 'BotTemplatePublishRequest',
+    declaration: 'export interface BotTemplatePublishRequest {\n    readonly botId: BotId;\n    readonly name?: string;\n    readonly description?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly BotTemplateCapability[];\n}',
+  },
+  {
+    name: 'BotTemplatePublishValue',
+    declaration: 'export interface BotTemplatePublishValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateRevokeRequest',
+    declaration: 'export interface BotTemplateRevokeRequest {\n    readonly templateId: BotTemplateId;\n}',
+  },
+  {
+    name: 'BotTemplateRevokeValue',
+    declaration: 'export interface BotTemplateRevokeValue {\n    readonly template: BotTemplateView;\n}',
+  },
+  {
+    name: 'BotTemplateShareCode',
+    declaration: 'export type BotTemplateShareCode = Branded<\'BotTemplateShareCode\'>;',
+  },
+  {
+    name: 'BotTemplateView',
+    declaration: 'export interface BotTemplateView extends BotTemplateConfiguration {\n    readonly id: BotTemplateId;\n    readonly shareCode: BotTemplateShareCode;\n    readonly createdAt: number;\n    readonly revokedAt?: number;\n    readonly fingerprint?: string;\n    readonly issuerFingerprint?: string;\n    readonly portableVersion?: number;\n    readonly approved?: boolean;\n}',
+  },
+  {
     name: 'BotView',
-    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',
@@ -6628,6 +6841,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface HostConnectionRpc {\n    handle(channel: string, handler: ConnectionRpcHandler): () => Promise<void>;\n    intercept(channel: \'/api\', matches: ConnectionRpcEndpointMatcher, handler: ConnectionRpcHandler): () => Promise<void>;\n}',
   },
   {
+    name: 'HostSharedConnectionRpc',
+    declaration: 'export interface HostSharedConnectionRpc {\n    enroll(channel: typeof SHARED_BOTS_PATH, handler: SharedConnectionEnrollmentHandler, options?: SharedConnectionLimits): () => Promise<void>;\n    handle(channel: string, authenticator: SharedAccessAuthenticator, handler: ConnectionRpcHandler, options: SharedConnectionRpcOptions): () => Promise<void>;\n    upgrade(channel: typeof SHARED_BOTS_PATH, authenticator: SharedAccessAuthenticator, handler: SharedConnectionUpgradeHandler, options: SharedConnectionUpgradeOptions): () => Promise<void>;\n}',
+  },
+  {
     name: 'ImageAttachmentLimits',
     declaration: 'export interface ImageAttachmentLimits {\n    maxImageBytes: number;\n    maxImagesPerMessage: number;\n    maxMessageImageBytes: number;\n    maxImagePixels: number;\n    maxImageDimension: number;\n    mediaTypes: readonly ImageMediaType[];\n}',
   },
@@ -7397,7 +7614,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PresetDefinition',
-    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
+    declaration: 'export interface PresetDefinition {\n    readonly id: string;\n    readonly internal?: boolean;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly plugins: readonly (Omit<EntryOptions, \'id\' | \'disabled\'> & {\n        id?: string;\n        disabled?: EntryOptions[\'disabled\'] | JsExpr;\n    })[];\n}',
   },
   {
     name: 'PresetOption',
@@ -8438,6 +8655,38 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SettingsSecretView',
     declaration: 'export interface SettingsSecretView {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'SharedAccessAuthenticator',
+    declaration: 'export interface SharedAccessAuthenticator {\n    admit(request: ConnectionTrustRequest): Promise<SharedPeerAdmission>;\n}',
+  },
+  {
+    name: 'SharedConnectionEnrollmentHandler',
+    declaration: 'export type SharedConnectionEnrollmentHandler = (endpoint: string, payload: unknown, signal: AbortSignal, request: ConnectionIndexRequest) => Promise<ConnectionRpcHandlerResult>;',
+  },
+  {
+    name: 'SharedConnectionLimits',
+    declaration: 'export interface SharedConnectionLimits {\n    readonly maxRequestBodyBytes?: number;\n    readonly maxConcurrentRequests?: number;\n    readonly maxConcurrentBodyReads?: number;\n    readonly maxBodyReadMs?: number;\n}',
+  },
+  {
+    name: 'SharedConnectionRpcOptions',
+    declaration: 'export interface SharedConnectionRpcOptions extends SharedConnectionLimits {\n    readonly endpoints: readonly string[];\n}',
+  },
+  {
+    name: 'SharedConnectionSocket',
+    declaration: 'export interface SharedConnectionSocket {\n    readonly destroyed: boolean;\n    end(data?: string): unknown;\n    destroy(): unknown;\n    on(event: \'data\', listener: (chunk: Uint8Array) => void): unknown;\n    once(event: \'close\', listener: () => void): unknown;\n}',
+  },
+  {
+    name: 'SharedConnectionUpgradeHandler',
+    declaration: 'export type SharedConnectionUpgradeHandler = (request: ConnectionIndexRequest, socket: SharedConnectionSocket, head: Uint8Array, peer: PeerScope) => void | Promise<void>;',
+  },
+  {
+    name: 'SharedConnectionUpgradeOptions',
+    declaration: 'export interface SharedConnectionUpgradeOptions {\n    readonly maxInboundBytes: number;\n}',
+  },
+  {
+    name: 'SharedPeerAdmission',
+    declaration: 'export type SharedPeerAdmission = {\n    readonly peer: PeerScope;\n} | {\n    readonly rejection: 401 | 403;\n};',
   },
   {
     name: 'ShellExecRequest',

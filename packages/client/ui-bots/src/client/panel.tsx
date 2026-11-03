@@ -65,7 +65,7 @@ export function BotsConversation({ renderFactorySlot }: BotsConversationProps): 
 /** Render the Bot roster inside the existing sidebar column. */
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
-  create, createGroup, groupsAvailable, organize, retry, loadAvatar, avatarEditor, share, sharedClient, t,
+  create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
   loadConnectedApps,
   setConnectedAppAccess,
 }: BotsRosterProps): ReactNode {
@@ -84,6 +84,8 @@ export function BotsRoster({
 
       onOrganizeBot={organize}
       onCreateGroup={groupsAvailable ? createGroup : undefined}
+      templates={state.templates}
+      templateActions={templateActions}
       groupError={state.groupError}
       onLoadConnectedApps={loadConnectedApps}
       onSetConnectedAppAccess={setConnectedAppAccess}

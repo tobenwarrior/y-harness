@@ -1158,6 +1158,9 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent
+      '@yharness/agent-preset-registry':
+        specifier: workspace:*
+        version: link:../../preset/agent-preset-registry
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller

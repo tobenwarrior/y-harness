@@ -50,6 +50,8 @@ import {
 } from '../src/index.ts'
 import { BotMessageId } from '../src/collaboration.ts'
 import { BotPrincipalId } from '../src/sharing.ts'
+import type { BotTemplateApproveValue } from '../src/template-types.ts'
+import { BotTemplateShareCode } from '../src/template-types.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
@@ -181,6 +183,9 @@ interface HarnessOptions {
   readonly initializeService?: boolean
 }
 
+type TemplateHarnessConfig = { readonly ownerId?: string }
+type TemplateHarnessSaveImage = () => Promise<ImageAttachmentRef>
+
 async function harness(
   pool = new MemoryMediaPool(),
   create = vi.fn(async (request: { sessionId?: string }) => ({ sessionId: request.sessionId })),
@@ -191,11 +196,22 @@ async function harness(
   existingSessionIds: readonly string[] = [],
   existingSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
   recordsOrSeeds: Map<CredentialKey, CredentialRecord> | ReadonlyMap<string, readonly SessionEvent[]> | boolean = new Map(),
-  useCredentialsOrResume: boolean | ReadonlyMap<string, readonly SessionEvent[]> = true,
-  toolModeOrResume: 'native' | 'ptc' | 'both' | boolean = 'native',
+  useCredentialsOrResume: boolean | ReadonlyMap<string, readonly SessionEvent[]> | TemplateHarnessConfig = true,
+  toolModeOrResume: 'native' | 'ptc' | 'both' | boolean | TemplateHarnessSaveImage = 'native',
   resumeColdSessions = false,
   options: HarnessOptions = {},
 ) {
+  const isTemplateConfig = (value: unknown): value is TemplateHarnessConfig =>
+    typeof value === 'object' && value !== null && !(value instanceof Map)
+  const config = isTemplateConfig(useCredentialsOrResume) ? useCredentialsOrResume : {}
+  const credentialsOrResume = isTemplateConfig(useCredentialsOrResume) ? true : useCredentialsOrResume
+  const toolModeOrSaveImage = typeof toolModeOrResume === 'function' ? 'native' : toolModeOrResume
+  const saveImage: TemplateHarnessSaveImage = typeof toolModeOrResume === 'function'
+    ? toolModeOrResume
+    : vi.fn(async (): Promise<ImageAttachmentRef> => ({
+      attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`),
+      mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }))
   const isSessionSeedMap = (value: ReadonlyMap<unknown, unknown>): value is ReadonlyMap<string, readonly SessionEvent[]> => {
     const first = value.values().next().value as unknown
     return first !== undefined && Array.isArray(first)
@@ -205,17 +221,17 @@ async function harness(
     : new Map<CredentialKey, CredentialRecord>()
   const sessionSeeds = recordsOrSeeds instanceof Map && isSessionSeedMap(recordsOrSeeds)
     ? recordsOrSeeds
-    : useCredentialsOrResume instanceof Map && isSessionSeedMap(useCredentialsOrResume)
-      ? useCredentialsOrResume
+    : credentialsOrResume instanceof Map && isSessionSeedMap(credentialsOrResume)
+      ? credentialsOrResume
       : new Map<string, readonly SessionEvent[]>()
   const useCredentials = recordsOrSeeds === true || recordsOrSeeds === false
     ? true
-    : typeof useCredentialsOrResume === 'boolean' ? useCredentialsOrResume : true
+    : typeof credentialsOrResume === 'boolean' ? credentialsOrResume : true
   const shouldResumeColdSessions = recordsOrSeeds === true
-    || typeof useCredentialsOrResume === 'boolean' && recordsOrSeeds instanceof Map && isSessionSeedMap(recordsOrSeeds) && useCredentialsOrResume
-    || typeof toolModeOrResume === 'boolean' && toolModeOrResume
+    || typeof credentialsOrResume === 'boolean' && recordsOrSeeds instanceof Map && isSessionSeedMap(recordsOrSeeds) && credentialsOrResume
+    || typeof toolModeOrSaveImage === 'boolean' && toolModeOrSaveImage
     || resumeColdSessions
-  const toolMode = typeof toolModeOrResume === 'boolean' ? 'native' : toolModeOrResume
+  const toolMode = typeof toolModeOrSaveImage === 'boolean' ? 'native' : toolModeOrSaveImage
   const ctx = new Context()
   await ctx.plugin(Storage)
   if (options.realAgent) {
@@ -295,7 +311,12 @@ async function harness(
   const saveImages = vi.fn(async () => [{
     attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), mediaType: 'image/png' as const, bytes: 3, width: 512, height: 512,
   }])
-  ctx.provide('attachments', { readImage, saveImages } as never)
+  ctx.provide('attachments', {
+    readImage,
+    saveImages,
+    saveImage,
+    validateImage: vi.fn(async () => undefined),
+  } as never)
   const credentials = useCredentials ? new SharedProfileCredentials(ctx, records) : undefined
   const inspect = vi.fn(async (sessionId: SessionId) => ({
     ...(options.inspectSharedSessions
@@ -324,7 +345,7 @@ async function harness(
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
   options.beforeService?.(ctx)
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
-  const service = new BotService(ctx)
+  const service = new BotService(ctx, config)
   try {
     if (options.initializeService !== false) await service[Service.init]()
   } catch (error) {
@@ -332,7 +353,7 @@ async function harness(
     throw error
   }
   return {
-    ctx, service, pool, records, credentials: credentials!, create, readImage, saveImages, adapter,
+    ctx, service, pool, records, credentials: credentials!, create, readImage, saveImages, saveImage, adapter,
     agents, inspect, resolveAgent, flush, followups,
   }
 }
@@ -387,6 +408,19 @@ function refreshBotRecord(service: BotService, agent: Pick<Agent, 'id'>): Promis
   return method.call(service, agent)
 }
 
+async function approveTemplate(service: BotService, shareCode: BotTemplateShareCode): Promise<BotTemplateApproveValue> {
+  const preview = await service.previewTemplate({ shareCode })
+  if (preview.template.fingerprint === undefined || preview.approvalToken === undefined) {
+    throw new Error('template preview did not return an approval token')
+  }
+  return service.approveTemplate({
+    shareCode,
+    fingerprint: preview.template.fingerprint,
+    expectedPermissions: preview.localPermissions,
+    approvalToken: preview.approvalToken,
+  })
+}
+
 function mcpFixtureTool(name: string, serverName: string, execute: () => Promise<string>): ToolDefinition {
   return {
     ...defineTool({
@@ -408,6 +442,13 @@ function plainFixtureTool(name: string, execute: () => Promise<string>): ToolDef
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     execute,
   })
+}
+
+function provideResolvedTemplatePreset(ctx: Context): void {
+  ctx.provide('agentPresets', {
+    defaultId: 'fixture-default',
+    acquireScope: async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }),
+  } as never)
 }
 
 describe('durable Bot roster', () => {
@@ -5252,6 +5293,532 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(h.ctx)
+    }
+  })
+  it('publishes only safe Bot configuration and lists the durable template', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Template source', description: 'Research configuration', identity: 'cloud', accent: 'rose',
+        cwd: '/private/template-source', agentPreset: 'research-preset',
+      })
+      const avatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'de'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 64, height: 64,
+      }
+      await h.service.updateAvatar({ botId: created.bot.id, avatar })
+
+      const published = await h.service.publishTemplate({
+        botId: created.bot.id, name: 'Research configuration', description: 'Reusable research setup',
+      })
+      expect(published.template).toMatchObject({
+        name: 'Research configuration', description: 'Reusable research setup', identity: 'cloud', accent: 'rose',
+        agentPreset: 'research-preset', avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 64, height: 64 },
+      })
+      for (const field of ['sessionId', 'cwd', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(published.template).not.toHaveProperty(field)
+      }
+      const listed = await h.service.listTemplates({})
+      await expect(h.service.listTemplates({})).resolves.toMatchObject({
+        templates: [expect.objectContaining({ id: published.template.id, shareCode: published.template.shareCode })],
+      })
+      const listedTemplate = listed.templates.find(template => template.id === published.template.id)
+      for (const field of ['sessionId', 'cwd', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(listedTemplate).not.toHaveProperty(field)
+      }
+      expect(listedTemplate).toMatchObject({ avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3 } })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('previews an active code without exposing runtime or private Bot fields', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Preview source', identity: 'heart', accent: 'teal', cwd: '/private/preview-source', agentPreset: 'preview-preset',
+      })
+      const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Preview template' })
+      const preview = await h.service.previewTemplate({ shareCode: published.template.shareCode })
+
+      expect(preview.template).toMatchObject({ name: 'Preview template', identity: 'heart', accent: 'teal', agentPreset: 'preview-preset' })
+      for (const field of ['sessionId', 'cwd', 'avatar', 'transcript', 'provider', 'credentials', 'apiKey', 'account']) {
+        expect(preview.template).not.toHaveProperty(field)
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('revokes a template and rejects later preview and import', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({ name: 'Revocation source', cwd: '/private/revocation-source' })
+      const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Revocable template' })
+      await expect(h.service.revokeTemplate({ templateId: published.template.id })).resolves.toMatchObject({
+        template: { id: published.template.id, revokedAt: expect.any(Number) },
+      })
+      await expect(h.service.previewTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
+      await expect(h.service.previewTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
+      await expect(h.service.importTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
+      await expect(h.service.listTemplates({})).resolves.toMatchObject({
+        templates: [expect.objectContaining({ id: published.template.id, revokedAt: expect.any(Number) })],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('imports the same template twice as distinct Bots and Sessions', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({
+        name: 'Import source', description: 'Imported role', identity: 'goal', accent: 'amber',
+        cwd: '/private/import-source', agentPreset: 'import-preset',
+      })
+      const published = await h.service.publishTemplate({ botId: source.bot.id, name: 'Import template' })
+      provideResolvedTemplatePreset(h.ctx)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported one' })
+      const second = await h.service.importTemplate({ shareCode: published.template.shareCode, name: 'Imported two' })
+
+      expect(first.bot).toMatchObject({ name: 'Imported one', description: 'Imported role', identity: 'goal', accent: 'amber', agentPreset: 'import-preset' })
+      expect(second.bot).toMatchObject({ name: 'Imported two', description: 'Imported role', identity: 'goal', accent: 'amber', agentPreset: 'import-preset' })
+      expect(first.bot.id).not.toBe(second.bot.id)
+      expect(first.bot.sessionId).not.toBe(second.bot.sessionId)
+      expect(first.bot.id).not.toBe(source.bot.id)
+      expect(first.bot.sessionId).not.toBe(source.bot.sessionId)
+      expect(first.bot.cwd).not.toBe(source.bot.cwd)
+      expect(first.bot).not.toHaveProperty('avatar')
+      expect(second.bot).not.toHaveProperty('avatar')
+      expect(h.create).toHaveBeenCalledTimes(3)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('imports a signed template on another Host with portable profile data and keyed retry identity', async () => {
+    const sourcePool = new MemoryMediaPool()
+    const source = await harness(sourcePool)
+    const sourceBot = await source.service.create({
+      name: 'Portable source', description: 'A portable role', identity: 'cloud', accent: 'rose',
+      cwd: '/private/never-share', agentPreset: 'portable-preset',
+      persona: 'Prefer concise evidence-backed answers.', capabilities: ['chat', 'collaboration'],
+    } as never)
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'aa'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id, name: 'Portable partner' })
+    expect(published.template.shareCode).toMatch(/^yhbot-template-v2\./)
+    expect(published.template.shareCode).not.toContain(String(sourceBot.bot.id))
+    expect(published.template.shareCode).not.toContain('/private/never-share')
+    expect(published.template.shareCode).not.toContain('attachmentId')
+    expect(published.template).toMatchObject({
+      name: 'Portable partner', identity: 'cloud', accent: 'rose',
+      persona: 'Prefer concise evidence-backed answers.', capabilities: ['chat', 'collaboration'],
+      avatar: { mediaType: 'image/png', bytes: 3, width: 1, height: 1, data: 'AQID' },
+    })
+    await close(source.ctx)
+
+    const target = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), { ownerId: 'recipient-owner' })
+    try {
+      provideResolvedTemplatePreset(target.ctx)
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.template).toMatchObject({
+        name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
+        capabilities: ['chat', 'collaboration'], agentPreset: 'portable-preset', avatar: { data: 'AQID' },
+        fingerprint: published.template.fingerprint,
+        issuerFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      })
+      await approveTemplate(target.service, published.template.shareCode)
+      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      expect(second.bot.id).toBe(first.bot.id)
+      expect(second.bot.sessionId).toBe(first.bot.sessionId)
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'retry-1', name: 'Different retry metadata',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
+      expect(first.bot).toMatchObject({
+        name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
+        capabilities: ['chat', 'collaboration'], avatar: { mediaType: 'image/png' },
+      })
+      expect(target.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(target.ctx)
+    }
+
+    const owner = await harness(sourcePool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'different-owner' })
+    try {
+      await expect(owner.service.listTemplates({})).resolves.toEqual({ templates: [] })
+      await expect(owner.service.revokeTemplate({ templateId: published.template.id })).rejects.toMatchObject({ code: 'bot-template/not-found' })
+    } finally {
+      await close(owner.ctx)
+    }
+
+    const revoked = await harness(sourcePool)
+    try {
+      await revoked.service.revokeTemplate({ templateId: published.template.id })
+    } finally {
+      await close(revoked.ctx)
+    }
+    const importedAfterRevocation = await harness(new MemoryMediaPool())
+    try {
+      provideResolvedTemplatePreset(importedAfterRevocation.ctx)
+      await approveTemplate(importedAfterRevocation.service, published.template.shareCode)
+      await expect(importedAfterRevocation.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'after-revocation',
+      } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
+    } finally {
+      await close(importedAfterRevocation.ctx)
+    }
+  })
+
+  it('does not leave an active Bot when imported avatar admission fails', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Avatar source', cwd: '/private/avatar-source' })
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'bc'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      provideResolvedTemplatePreset(target.ctx)
+      await approveTemplate(target.service, published.template.shareCode)
+      target.readImage.mockRejectedValueOnce(new Error('avatar admission blocked'))
+      await expect(target.service.importTemplate({ shareCode: published.template.shareCode } as never))
+        .rejects.toMatchObject({ code: 'bot-template/avatar-invalid' })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
+      expect(target.create).not.toHaveBeenCalled()
+
+      const targetAvatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+      }
+      target.saveImage.mockResolvedValue(targetAvatar)
+      target.readImage.mockResolvedValue({ ref: targetAvatar, data: Uint8Array.of(1, 2, 3) })
+      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode } as never)
+      expect(target.saveImage).toHaveBeenCalledTimes(2)
+      expect(target.readImage).toHaveBeenCalledTimes(2)
+      expect(imported.bot).toMatchObject({ name: 'Avatar source', avatar: { mediaType: 'image/png' } })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ id: imported.bot.id }] })
+      expect(target.create).toHaveBeenCalledOnce()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('shows the target Host effective preset tools in template approval data', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      target.ctx.tools.register(mcpFixtureTool('local-read', 'local', async () => 'read'))
+      const localSchemas = target.ctx.tools.schemas()
+      const acquireScope = vi.fn(async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }))
+      target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+      vi.spyOn(target.ctx.tools, 'schemas').mockReturnValue(localSchemas)
+
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.localPermissions).toEqual({
+        status: 'resolved', preset: 'research-preset', tools: localSchemas.map(schema => schema.name).sort(),
+      })
+      expect(acquireScope).toHaveBeenCalledWith('research-preset')
+      await approveTemplate(target.service, published.template.shareCode)
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('requires reapproval when the resolved local tool view changes, including retries', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission mutation source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    const readTool = mcpFixtureTool('local-read', 'local', async () => 'read')
+    target.ctx.tools.register(readTool)
+    const initialSchemas = target.ctx.tools.schemas()
+    const changedSchemas = [...initialSchemas, mcpFixtureTool('local-write', 'local', async () => 'write')]
+    let currentSchemas = initialSchemas
+    const schemas = vi.spyOn(target.ctx.tools, 'schemas').mockImplementation(() => currentSchemas)
+    const acquireScope = vi.fn(async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }))
+    target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+    try {
+      await approveTemplate(target.service, published.template.shareCode)
+
+      currentSchemas = changedSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      expect(target.create).not.toHaveBeenCalled()
+
+      currentSchemas = initialSchemas
+      const first = await target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)
+      currentSchemas = changedSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+
+      currentSchemas = initialSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).resolves.toMatchObject({ bot: { id: first.bot.id } })
+      expect(target.create).toHaveBeenCalledOnce()
+      expect(schemas).toHaveBeenCalled()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('does not persist approval when permissions change after preview', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Preview race source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    const readTool = mcpFixtureTool('preview-read', 'local', async () => 'read')
+    target.ctx.tools.register(readTool)
+    const initialSchemas = target.ctx.tools.schemas()
+    const changedSchemas = [...initialSchemas, mcpFixtureTool('preview-write', 'local', async () => 'write')]
+    let currentSchemas = initialSchemas
+    vi.spyOn(target.ctx.tools, 'schemas').mockImplementation(() => currentSchemas)
+    const acquireScope = vi.fn(async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }))
+    target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+    try {
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      if (preview.approvalToken === undefined || preview.template.fingerprint === undefined) {
+        throw new Error('preview did not return an approval token')
+      }
+      currentSchemas = changedSchemas
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode,
+        fingerprint: preview.template.fingerprint,
+        expectedPermissions: preview.localPermissions,
+        approvalToken: preview.approvalToken,
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+
+      currentSchemas = initialSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'preview-race-import',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+
+      await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({
+        template: { fingerprint: published.template.fingerprint, approved: true },
+      })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('fails closed when approval cannot resolve a local preset and tool view', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Unavailable approval source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      expect(target.create).not.toHaveBeenCalled()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('rejects an approved import when the target preset becomes unavailable', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission retry source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    let available = true
+    const acquireScope = vi.fn(async () => {
+      if (!available) throw new Error('preset removed')
+      return { key: {}, [Symbol.asyncDispose]: async () => {} }
+    })
+    target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+    try {
+      await approveTemplate(target.service, published.template.shareCode)
+      available = false
+
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      expect(target.create).not.toHaveBeenCalled()
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('recovers a failed portable import from its durable provisioning row', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Recoverable source' })
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'cd'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const create = vi.fn(async (request: { sessionId?: string }) => ({ sessionId: request.sessionId }))
+    create.mockRejectedValueOnce(new Error('session unavailable'))
+    const target = await harness(new MemoryMediaPool(), create)
+    try {
+      provideResolvedTemplatePreset(target.ctx)
+      await approveTemplate(target.service, published.template.shareCode)
+      const request = { shareCode: published.template.shareCode, importId: 'recoverable-import' } as never
+      await expect(target.service.importTemplate(request)).rejects.toMatchObject({ code: 'bot/provisioning-failed' })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ state: 'provisioning', avatar: { mediaType: 'image/png' } }] })
+
+      const recovered = await target.service.importTemplate(request)
+      expect(recovered.bot).toMatchObject({ name: 'Recoverable source', state: 'active', avatar: { mediaType: 'image/png' } })
+      expect(target.create).toHaveBeenCalledTimes(2)
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ id: recovered.bot.id, state: 'active' }] })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('requires explicit recipient approval before importing a copied signed code', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({
+      name: 'Untrusted source', cwd: '/private/untrusted-source', agentPreset: 'dangerous-preset',
+    })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      provideResolvedTemplatePreset(target.ctx)
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'untrusted-import',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.approvalToken).toBeDefined()
+      if (preview.approvalToken === undefined) throw new Error('Expected an approval token')
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: '0'.repeat(64),
+        expectedPermissions: preview.localPermissions, approvalToken: preview.approvalToken,
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+
+      await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({
+        template: { fingerprint: published.template.fingerprint, approved: true },
+      })
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode,
+        importId: 'untrusted-import',
+      } as never)).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('publishes only Bots owned by the configured template owner', async () => {
+    const pool = new MemoryMediaPool()
+    const owner = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'source-owner' })
+    const source = await owner.service.create({ name: 'Owned Bot', cwd: '/tmp' })
+    await close(owner.ctx)
+
+    const otherOwner = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'other-owner' })
+    try {
+      await expect(otherOwner.service.publishTemplate({ botId: source.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+    } finally {
+      await close(otherOwner.ctx)
+    }
+  })
+
+  it('returns the same imported Bot after a caller edits its profile', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({ name: 'Retry source', cwd: '/tmp' })
+      const published = await h.service.publishTemplate({ botId: source.bot.id })
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)
+      await h.service.rename({ botId: first.bot.id, name: 'Edited imported Bot' })
+
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)).resolves.toMatchObject({
+        bot: { id: first.bot.id, sessionId: first.bot.sessionId, name: 'Edited imported Bot' },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('returns the same imported Bot after its source template is revoked', async () => {
+    const h = await harness()
+    try {
+      const source = await h.service.create({ name: 'Revoked retry source', cwd: '/tmp' })
+      const published = await h.service.publishTemplate({ botId: source.bot.id })
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)
+      await h.service.revokeTemplate({ templateId: published.template.id })
+
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)).resolves.toMatchObject({
+        bot: { id: first.bot.id, sessionId: first.bot.sessionId },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not publish duplicate codes when two publications share a timestamp', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1234))
+    try {
+      const h = await harness()
+      try {
+        const source = await h.service.create({ name: 'Duplicate source', cwd: '/tmp' })
+        const first = await h.service.publishTemplate({ botId: source.bot.id })
+        const second = await h.service.publishTemplate({ botId: source.bot.id })
+        expect(second.template.shareCode).not.toBe(first.template.shareCode)
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses signed fields when a durable local row is stale', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    const source = await h.service.create({ name: 'Signed name', cwd: '/tmp', agentPreset: 'signed-preset' })
+    const published = await h.service.publishTemplate({ botId: source.bot.id })
+    await close(h.ctx)
+
+    const medium = pool.media.get('agent_bot_templates')
+    const rows = medium?.tables.get('templates')
+    const stored = rows?.get(String(published.template.id))
+    if (stored === undefined || typeof stored !== 'object' || stored === null) throw new Error('template row was not persisted')
+    const mutable = stored as { name?: string; agentPreset?: string }
+    mutable.name = 'Unsigned name'
+    mutable.agentPreset = 'attacker-preset'
+
+    const reopened = await harness(pool)
+    try {
+      provideResolvedTemplatePreset(reopened.ctx)
+      await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
+        templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
+      })
+      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode } as never)).resolves.toMatchObject({
+        bot: { name: 'Signed name', agentPreset: 'signed-preset' },
+      })
+    } finally {
+      await close(reopened.ctx)
     }
   })
 })

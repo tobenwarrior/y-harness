@@ -8,4 +8,8 @@ export type {
   SharedBotMemoryWriteValue,
   SharedBotsClient,
 } from './shared-client.ts'
-export type { BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotMemoryManagerActions, BotMemorySummary, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps } from './types.ts'
+export type {
+  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotOrganizationPatch, BotStatus, BotSummary,
+  BotMemoryManagerActions, BotMemorySummary, BotTemplateActions,
+  BotTemplateState, BotTemplateSummary, BotWorkspaceProps,
+} from './types.ts'

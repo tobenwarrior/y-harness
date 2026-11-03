@@ -28,6 +28,23 @@ import type {
   BotListRequest,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotTemplateImportRequest,
+  BotTemplateImportValue,
+  BotTemplateApproveRequest,
+  BotTemplateApproveValue,
+  BotTemplateAvatar,
+  BotTemplateLocalPermissions,
+  BotTemplateListRequest,
+  BotTemplateListValue,
+  BotTemplatePreviewRequest,
+  BotTemplatePreviewValue,
+  BotTemplatePublishRequest,
+  BotTemplatePublishValue,
+  BotTemplateRevokeRequest,
+  BotTemplateRevokeValue,
+  BotTemplateId,
+  BotTemplateShareCode,
+  BotTemplateView,
   BotMemoryForgetRemoteRequest,
   BotMemoryForgetValue,
   BotMemoryListRequest,
@@ -59,7 +76,7 @@ import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData, BotGroupUpdate,
-  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch,
+  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -70,6 +87,12 @@ export interface BotWorkspaceRemote {
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
+  listTemplates?: (request: BotTemplateListRequest) => Promise<RemoteResult<BotTemplateListValue>>
+  publishTemplate?: (request: BotTemplatePublishRequest) => Promise<RemoteResult<BotTemplatePublishValue>>
+  approveTemplate?: (request: BotTemplateApproveRequest) => Promise<RemoteResult<BotTemplateApproveValue>>
+  revokeTemplate?: (request: BotTemplateRevokeRequest) => Promise<RemoteResult<BotTemplateRevokeValue>>
+  previewTemplate?: (request: BotTemplatePreviewRequest) => Promise<RemoteResult<BotTemplatePreviewValue>>
+  importTemplate?: (request: BotTemplateImportRequest) => Promise<RemoteResult<BotTemplateImportValue>>
   listGroups?: (request: BotGroupListRequest) => Promise<RemoteResult<BotGroupListValue>>
   createGroup?: (request: BotGroupCreateRequest) => Promise<RemoteResult<BotGroupCreateValue>>
   updateGroup?: (request: BotGroupUpdateRequest) => Promise<RemoteResult<BotGroupUpdateValue>>
@@ -123,6 +146,7 @@ export interface BotWorkspaceState {
   readonly selectedGroup: BotGroupDetailData | null
   readonly groupPhase: 'idle' | 'loading' | 'ready' | 'error'
   readonly groupError: string | null
+  readonly templates: BotTemplateState
   readonly error: string | null
 }
 
@@ -163,6 +187,7 @@ export interface BotWorkspaceFace {
   readonly createGroup: (creation: BotGroupCreation) => Promise<void>
   readonly updateGroup: (update: BotGroupUpdate) => Promise<void>
   readonly sendGroupMessage: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  readonly templateActions?: BotTemplateActions
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
@@ -192,6 +217,14 @@ const INITIAL_STATE: BotWorkspaceState = {
   selectedGroup: null,
   groupPhase: 'idle',
   groupError: null,
+  templates: {
+    phase: 'idle',
+    templates: [],
+    code: '',
+    preview: null,
+    error: null,
+    busy: false,
+  },
   error: null,
 }
 
@@ -275,6 +308,15 @@ type GroupRetryStorageMessage =
   | 'groupCreateRetryUnavailable' | 'groupCreateRetryCleanupFailed'
   | 'groupSendRetryUnavailable' | 'groupSendRetryCleanupFailed'
 
+type TemplateActionKind = 'preview' | 'mutation'
+
+interface TemplateCatalogRead {
+  readonly requestGeneration: number
+  readonly stateGeneration: number
+  readonly phase: BotTemplateState['phase']
+  readonly templates: readonly BotTemplateSummary[]
+  readonly error: string | null
+}
 /** Owns the remote roster query and the selected Bot's single Session reference. */
 export class BotWorkspaceController {
   /** Observable roster state consumed by the Bot panel. */
@@ -284,6 +326,12 @@ export class BotWorkspaceController {
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
+  private readonly templateImportIds = new Map<string, string>()
+  private templatePreviewGeneration = 0
+  private templateActionGeneration = 0
+  private templateActionKind: TemplateActionKind | undefined
+  private templateStateGeneration = 0
+  private templateCatalogGeneration = 0
   private readonly pendingGroupMessages = new Map<string, {
     readonly text: string
     readonly messageId: BotGroupMessageIdType
@@ -327,6 +375,11 @@ export class BotWorkspaceController {
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.avatarLoads.clear()
+    this.templateImportIds.clear()
+    this.templatePreviewGeneration++
+    this.templateActionGeneration++
+    this.templateActionKind = undefined
+    this.templateCatalogGeneration++
   }
 
   private persistPendingGroupOperations(): boolean {
@@ -416,6 +469,15 @@ export class BotWorkspaceController {
       createGroup: creation => this.createGroup(creation),
       updateGroup: update => this.updateGroup(update),
       sendGroupMessage: (text, messageId, targetBotIds) => this.sendGroupMessage(text, messageId, targetBotIds),
+      ...(
+        this.remote.listTemplates !== undefined
+        || this.remote.publishTemplate !== undefined
+        || this.remote.revokeTemplate !== undefined
+        || this.remote.previewTemplate !== undefined
+        || this.remote.importTemplate !== undefined
+          ? { templateActions: this.templateActions() }
+          : {}
+      ),
       retryGroup: () => {
         const selectionGeneration = this.selectionGeneration
         void this.retryGroup().catch((error: unknown) => {
@@ -466,7 +528,14 @@ export class BotWorkspaceController {
       return this.pending
     }
     const before = this.source.getSnapshot()
-    this.source.set({ ...before, phase: 'loading', error: null })
+    this.source.set({
+      ...before,
+      phase: 'loading',
+      error: null,
+      templates: this.remote.listTemplates === undefined
+        ? before.templates
+        : { ...before.templates, phase: 'loading', error: null },
+    })
     const pending = this.read()
     this.pending = pending
     try {
@@ -501,6 +570,7 @@ export class BotWorkspaceController {
       return
     }
     const groupsResult = await this.readGroups()
+    const templateCatalog = await this.readTemplates()
     if (this.disposed) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
@@ -526,6 +596,7 @@ export class BotWorkspaceController {
         selectedGroup: current.selectedGroupId === selectedGroupId ? current.selectedGroup : null,
         groupPhase: current.selectedGroupId === selectedGroupId && current.selectedGroup !== null ? 'ready' : 'loading',
         groupError: groupsResult.error,
+        templates: this.mergeTemplateCatalog(templateCatalog, current.templates),
         error: null,
       })
       if (this.remote.inspectGroup !== undefined) await this.refreshGroup(selectedGroupId, selectionGeneration)
@@ -591,6 +662,7 @@ export class BotWorkspaceController {
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: groupsResult.error,
+      templates: this.mergeTemplateCatalog(templateCatalog, current.templates),
       error: referenceError ?? null,
     })
   }
@@ -606,6 +678,290 @@ export class BotWorkspaceController {
     } catch (error: unknown) {
       return { groups: current.groups, error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  private async readTemplates(previous = this.source.getSnapshot().templates): Promise<TemplateCatalogRead | undefined> {
+    const listTemplates = this.remote.listTemplates
+    const stateGeneration = this.templateStateGeneration
+    if (listTemplates === undefined) return {
+      requestGeneration: this.templateCatalogGeneration,
+      stateGeneration,
+      phase: previous.phase,
+      templates: previous.templates,
+      error: previous.error,
+    }
+    const requestGeneration = ++this.templateCatalogGeneration
+    try {
+      const result = await listTemplates({})
+      if (requestGeneration !== this.templateCatalogGeneration) return undefined
+      if (!result.ok) return {
+        requestGeneration, stateGeneration, phase: 'error', templates: previous.templates, error: result.error.message,
+      }
+      return {
+        requestGeneration,
+        stateGeneration,
+        phase: 'ready',
+        templates: result.value.templates.map(templateSummary),
+        error: null,
+      }
+    } catch (error: unknown) {
+      if (requestGeneration !== this.templateCatalogGeneration) return undefined
+      return {
+        requestGeneration,
+        stateGeneration,
+        phase: 'error',
+        templates: previous.templates,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  private mergeTemplateCatalog(read: TemplateCatalogRead | undefined, previous: BotTemplateState): BotTemplateState {
+    if (read === undefined || read.requestGeneration !== this.templateCatalogGeneration) return this.source.getSnapshot().templates
+    const current = this.source.getSnapshot().templates
+    const stateChanged = this.templateStateGeneration !== read.stateGeneration
+    const base = stateChanged ? current : previous
+    return {
+      ...base,
+      phase: read.phase,
+      templates: read.templates,
+      error: stateChanged ? current.error : read.error,
+    }
+  }
+
+  private templateActions(): BotTemplateActions {
+    return {
+      setTemplateCode: (code) => {
+        if (this.disposed) return
+        const current = this.source.getSnapshot()
+        const codeChanged = code !== current.templates.code
+        const previewChanged = code.trim() !== current.templates.code.trim()
+        if (codeChanged) this.templateStateGeneration++
+        if (previewChanged) {
+          this.templatePreviewGeneration++
+          if (this.templateActionKind === 'preview') {
+            this.templateActionGeneration++
+            this.templateActionKind = undefined
+          }
+        }
+        this.source.set({
+          ...current,
+          templates: {
+            ...current.templates,
+            code,
+            preview: previewChanged ? null : current.templates.preview,
+            error: null,
+            ...(previewChanged && current.templates.busy ? { busy: false } : {}),
+          },
+        })
+      },
+      publishTemplate: request => this.publishTemplate(request),
+      revokeTemplate: templateId => this.revokeTemplate(templateId),
+      previewTemplate: code => this.previewTemplate(code),
+      importTemplate: name => this.importTemplate(name),
+    }
+  }
+
+  private async runTemplateAction(action: (actionGeneration: number) => Promise<void>, kind: TemplateActionKind = 'mutation'): Promise<void> {
+    if (this.disposed) return
+    const actionGeneration = ++this.templateActionGeneration
+    this.templateActionKind = kind
+    this.templateStateGeneration++
+    const current = this.source.getSnapshot()
+    this.source.set({ ...current, templates: { ...current.templates, busy: true, error: null } })
+    try {
+      await action(actionGeneration)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (this.disposed || actionGeneration !== this.templateActionGeneration) return
+      const latest = this.source.getSnapshot()
+      this.source.set({ ...latest, templates: { ...latest.templates, busy: false, error: message } })
+      throw new Error(message)
+    } finally {
+      if (!this.disposed && actionGeneration === this.templateActionGeneration) {
+        this.templateActionKind = undefined
+        const latest = this.source.getSnapshot()
+        if (latest.templates.busy) {
+          this.source.set({ ...latest, templates: { ...latest.templates, busy: false } })
+        }
+      }
+    }
+  }
+
+  private async refreshTemplates(actionGeneration?: number): Promise<void> {
+    if (this.disposed || (actionGeneration !== undefined && actionGeneration !== this.templateActionGeneration)) return
+    const current = this.source.getSnapshot()
+    if (this.remote.listTemplates === undefined) return
+    const templateCatalog = await this.readTemplates(current.templates)
+    if (this.disposed || templateCatalog === undefined
+      || (actionGeneration !== undefined && actionGeneration !== this.templateActionGeneration)) return
+    const latest = this.source.getSnapshot()
+    this.source.set({ ...latest, templates: this.mergeTemplateCatalog(templateCatalog, latest.templates) })
+  }
+
+  private async publishTemplate(request: {
+    readonly botId: string
+    readonly name?: string
+    readonly description?: string
+  }): Promise<void> {
+    await this.runTemplateAction(async (actionGeneration) => {
+      const publishTemplate = this.remote.publishTemplate
+      if (publishTemplate === undefined) throw new Error(this.unexpectedResponse())
+      const normalizedName = request.name?.trim()
+      const normalizedDescription = request.description?.trim()
+      const payload: BotTemplatePublishRequest = {
+        botId: brandString<BotIdType>(request.botId.trim()),
+        ...(normalizedName === undefined || normalizedName === '' ? {} : { name: normalizedName }),
+        ...(normalizedDescription === undefined || normalizedDescription === '' ? {} : { description: normalizedDescription }),
+      }
+      let result: RemoteResult<BotTemplatePublishValue>
+      try {
+        result = await publishTemplate(payload)
+      } catch (error: unknown) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+      if (!result.ok) throw new Error(result.error.message)
+      await this.refreshTemplates(actionGeneration)
+    })
+  }
+
+  private async revokeTemplate(templateId: string): Promise<void> {
+    await this.runTemplateAction(async (actionGeneration) => {
+      const revokeTemplate = this.remote.revokeTemplate
+      if (revokeTemplate === undefined) throw new Error(this.unexpectedResponse())
+      const id = templateId.trim()
+      let result: RemoteResult<BotTemplateRevokeValue>
+      try {
+        result = await revokeTemplate({ templateId: brandString<BotTemplateId>(id) })
+      } catch (error: unknown) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+      if (!result.ok) throw new Error(result.error.message)
+      if (this.disposed || actionGeneration !== this.templateActionGeneration) return
+      const current = this.source.getSnapshot()
+      const preview = current.templates.preview?.id === id ? null : current.templates.preview
+      this.source.set({ ...current, templates: { ...current.templates, preview } })
+      await this.refreshTemplates(actionGeneration)
+    })
+  }
+
+  private async previewTemplate(code?: string): Promise<void> {
+    const requestedCode = (code ?? this.source.getSnapshot().templates.code).trim()
+    const previewGeneration = ++this.templatePreviewGeneration
+    const current = this.source.getSnapshot()
+    this.source.set({ ...current, templates: { ...current.templates, code: requestedCode, error: null } })
+    await this.runTemplateAction(async (actionGeneration) => {
+      const previewTemplate = this.remote.previewTemplate
+      if (previewTemplate === undefined) throw new Error(this.unexpectedResponse())
+      if (requestedCode === '') throw new Error(this.unexpectedResponse())
+      let result: RemoteResult<BotTemplatePreviewValue>
+      try {
+        result = await previewTemplate({ shareCode: brandString<BotTemplateShareCode>(requestedCode) })
+      } catch (error: unknown) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+      if (!result.ok) throw new Error(result.error.message)
+      if (!validLocalPermissions(result.value.localPermissions)) throw new Error(this.unexpectedResponse())
+      const preview = templateSummary(result.value.template)
+      if (preview.shareCode !== requestedCode || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
+        || !validTemplateAvatar(preview.avatar)
+        || (result.value.localPermissions.status === 'resolved' && !validApprovalToken(result.value.approvalToken))) {
+        throw new Error(this.unexpectedResponse())
+      }
+      const latest = this.source.getSnapshot()
+      if (this.disposed || actionGeneration !== this.templateActionGeneration
+        || previewGeneration !== this.templatePreviewGeneration || latest.templates.code.trim() !== requestedCode) return
+      this.source.set({
+        ...latest,
+        templates: {
+          ...latest.templates,
+          preview: {
+            ...preview,
+            localPermissions: result.value.localPermissions,
+            ...(result.value.approvalToken === undefined ? {} : { approvalToken: result.value.approvalToken }),
+          },
+          error: null,
+        },
+      })
+    }, 'preview')
+  }
+
+  private async importTemplate(name?: string): Promise<void> {
+    await this.runTemplateAction(async (actionGeneration) => {
+      const importTemplate = this.remote.importTemplate
+      const current = this.source.getSnapshot()
+      const requestedCode = current.templates.code.trim()
+      const editGeneration = this.templateStateGeneration
+      if (importTemplate === undefined) throw new Error(this.unexpectedResponse())
+      if (requestedCode === '') throw new Error(this.unexpectedResponse())
+      const preview = current.templates.preview
+      if (preview === null || preview.shareCode !== requestedCode
+        || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
+        || preview.localPermissions === undefined || !validLocalPermissions(preview.localPermissions)
+        || preview.localPermissions.status !== 'resolved' || !validApprovalToken(preview.approvalToken)) {
+        throw new Error(this.unexpectedResponse())
+      }
+      const approvalToken = preview.approvalToken
+      const previewGeneration = this.templatePreviewGeneration
+      const normalizedName = name?.trim()
+      const importKey = `${requestedCode}\n${normalizedName ?? ''}`
+      const importId = this.templateImportIds.get(importKey) ?? `ui-${randomUUID()}`
+      this.templateImportIds.set(importKey, importId)
+      const request: BotTemplateImportRequest = {
+        shareCode: brandString<BotTemplateShareCode>(requestedCode),
+        ...(normalizedName === undefined || normalizedName === '' ? {} : { name: normalizedName }),
+        importId,
+      }
+      const approveTemplate = this.remote.approveTemplate
+      if (approveTemplate === undefined) throw new Error(this.unexpectedResponse())
+      let approval: RemoteResult<BotTemplateApproveValue>
+      try {
+        approval = await approveTemplate({
+          shareCode: request.shareCode,
+          fingerprint: preview.fingerprint,
+          expectedPermissions: preview.localPermissions,
+          approvalToken,
+        })
+      } catch (error: unknown) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+      if (!approval.ok) throw new Error(approval.error.message)
+      if (!validLocalPermissions(approval.value.localPermissions)) throw new Error(this.unexpectedResponse())
+      const approved = templateSummary(approval.value.template)
+      if (approved.shareCode !== requestedCode
+        || approved.fingerprint !== preview.fingerprint
+        || approved.issuerFingerprint !== preview.issuerFingerprint
+        || approved.approved !== true
+        || !validTemplateAvatar(approved.avatar)
+        || !sameTemplateAvatar(approved.avatar, preview.avatar)
+        || !sameLocalPermissions(approval.value.localPermissions, preview.localPermissions)) {
+        throw new Error(this.unexpectedResponse())
+      }
+      const latestBeforeImport = this.source.getSnapshot().templates
+      if (this.disposed || actionGeneration !== this.templateActionGeneration
+        || previewGeneration !== this.templatePreviewGeneration
+        || latestBeforeImport.code.trim() !== requestedCode
+        || latestBeforeImport.preview?.shareCode !== requestedCode
+        || latestBeforeImport.preview.fingerprint !== preview.fingerprint
+        || latestBeforeImport.preview.issuerFingerprint !== preview.issuerFingerprint
+        || latestBeforeImport.preview.localPermissions === undefined
+        || latestBeforeImport.preview.approvalToken !== approvalToken
+        || !sameLocalPermissions(latestBeforeImport.preview.localPermissions, preview.localPermissions)) {
+        throw new Error(this.unexpectedResponse())
+      }
+      let result: RemoteResult<BotTemplateImportValue>
+      try {
+        result = await importTemplate(request)
+      } catch (error: unknown) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+      if (!result.ok) throw new Error(result.error.message)
+      if (this.disposed || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
+      this.templateImportIds.delete(importKey)
+      const latest = this.source.getSnapshot()
+      this.source.set({ ...latest, templates: { ...latest.templates, code: '', preview: null, error: null } })
+      await this.load()
+    })
   }
 
   private fail(message: string): void {
@@ -1297,6 +1653,7 @@ export class BotWorkspaceController {
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: null,
+      templates: current.templates,
       error: referenceError ?? null,
     })
   }
@@ -1318,6 +1675,8 @@ function requestFromBot(bot: BotView): BotCreateRequest {
     identity: bot.identity,
     accent: bot.accent,
     cwd: bot.cwd,
+    ...(bot.persona === undefined ? {} : { persona: bot.persona }),
+    ...(bot.capabilities === undefined ? {} : { capabilities: bot.capabilities }),
     ...(bot.agentPreset === undefined ? {} : { agentPreset: bot.agentPreset }),
   }
 }
@@ -1338,6 +1697,70 @@ function groupSummary(group: BotGroupView): BotGroupSummary {
         : member.availability === 'running' ? 'working' : member.availability,
     })),
   }
+}
+
+function templateSummary(template: BotTemplateView): BotTemplateSummary {
+  return {
+    id: String(template.id),
+    shareCode: String(template.shareCode),
+    name: template.name,
+    ...(template.description === undefined ? {} : { description: template.description }),
+    identity: template.identity,
+    accent: template.accent,
+    ...(template.agentPreset === undefined ? {} : { agentPreset: template.agentPreset }),
+    ...(template.persona === undefined ? {} : { persona: template.persona }),
+    ...(template.capabilities === undefined ? {} : { capabilities: template.capabilities }),
+    ...(template.profile === undefined ? {} : { profile: template.profile }),
+    ...(template.avatar === undefined ? {} : { avatar: template.avatar }),
+    ...(template.issuerFingerprint === undefined ? {} : { issuerFingerprint: template.issuerFingerprint }),
+    ...(template.fingerprint === undefined ? {} : { fingerprint: template.fingerprint }),
+    ...(template.portableVersion === undefined ? {} : { portableVersion: template.portableVersion }),
+    ...(template.approved === undefined ? {} : { approved: template.approved }),
+    createdAt: template.createdAt,
+    ...(template.revokedAt === undefined ? {} : { revokedAt: template.revokedAt }),
+  }
+}
+
+function validLocalPermissions(value: unknown): value is BotTemplateLocalPermissions {
+  if (!isRecord(value) || (value.status !== 'resolved' && value.status !== 'unavailable')) return false
+  if (value.preset !== undefined && (typeof value.preset !== 'string' || value.preset.trim() !== value.preset || value.preset.length === 0)) return false
+  if (!Array.isArray(value.tools) || value.tools.some(tool => typeof tool !== 'string' || tool.trim() !== tool || tool.length === 0)) return false
+  return new Set(value.tools).size === value.tools.length
+}
+
+function validApprovalToken(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9-]+$/u.test(value)
+}
+
+function validTemplateAvatar(value: unknown): value is BotTemplateAvatar {
+  if (value === undefined) return true
+  if (!isRecord(value)) return false
+  const { mediaType, data, bytes, width, height, name } = value
+  if ((mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/webp' && mediaType !== 'image/gif')
+    || typeof data !== 'string'
+    || typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes <= 0
+    || typeof width !== 'number' || !Number.isInteger(width) || width <= 0
+    || typeof height !== 'number' || !Number.isInteger(height) || height <= 0
+    || (name !== undefined && (typeof name !== 'string' || name.length === 0))) return false
+  return data.length > 0
+    && Math.floor(data.length * 3 / 4) === bytes
+    && /^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$/u.test(data)
+}
+
+function sameTemplateAvatar(left: BotTemplateAvatar | undefined, right: BotTemplateAvatar | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.mediaType === right.mediaType
+    && left.data === right.data
+    && left.bytes === right.bytes
+    && left.width === right.width
+    && left.height === right.height
+    && left.name === right.name
+}
+
+function sameLocalPermissions(left: BotTemplateLocalPermissions, right: BotTemplateLocalPermissions): boolean {
+  if (left.status !== right.status || left.preset !== right.preset || left.tools.length !== right.tools.length) return false
+  const rightTools = new Set(right.tools)
+  return left.tools.every(tool => rightTools.has(tool))
 }
 
 function sameStringIdSet(left: readonly string[], right: readonly string[]): boolean {

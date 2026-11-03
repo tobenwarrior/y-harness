@@ -1,6 +1,7 @@
 /** Browser-safe Bot vocabulary. @module @yharness/bots/client */
 
 export type * from '../types.ts'
+export type * from '../template-types.ts'
 export type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
