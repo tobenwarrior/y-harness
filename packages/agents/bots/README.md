@@ -57,7 +57,7 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project stored rows without waking a cold Session. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions. Scoped group tools derive retry identities from the authenticated Bot and request contents rather than an ephemeral tool call id, while the Client persists pending operation ids and reconciles the catalog or transcript before allocating a new id.
+The service owns the Bot roster and a separate additive group domain. It serializes writes that can allocate or update a Bot or group. Domain opening validates stored keys and Session mappings before the service becomes ready. The service keeps provisioning rows durable across activation failures, while list and read operations project stored rows without waking a cold Session. Group messages have durable per-recipient delivery records, so retries resume failed recipients instead of sending a second copy to already accepted Sessions. Scoped group tools derive retry identities from the authenticated Bot and request contents rather than an ephemeral tool call id, while the Client persists pending operation ids and reconciles only the exact pending id before a retry.
 
 | File | Role |
 |---|---|

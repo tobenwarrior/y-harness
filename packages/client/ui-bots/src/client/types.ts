@@ -81,6 +81,8 @@ export interface BotGroupCreation {
   readonly name: string
   /** Two through six existing Bot ids. */
   readonly botIds: readonly string[]
+  /** Optional explicit retry/new-operation identity. */
+  readonly groupId?: string
 }
 
 /** User choice passed to the owner when creating a bot. */

@@ -128,12 +128,27 @@ describe('scoped Bot collaboration tools', () => {
       const createdRetry = await execute(h.ctx, h.agent, 'create_bot_group', { name: 'Room', botIds: ['bot-beta'] }, 'create-after-lost-response')
       expect(createdRetry.isError).toBe(false)
       expect(vi.mocked(h.groupTools.create).mock.calls[1]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[0]?.[0].id)
+      await execute(h.ctx, h.agent, 'create_bot_group', {
+        name: 'Canonical room', botIds: [' bot-zeta ', 'bot-beta'],
+      }, 'create-canonical-first')
+      await execute(h.ctx, h.agent, 'create_bot_group', {
+        name: 'Canonical room', botIds: ['bot-beta', ' bot-zeta '],
+      }, 'create-canonical-second')
+      expect(vi.mocked(h.groupTools.create).mock.calls[3]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[2]?.[0].id)
       const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-first')
       expect(sent.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-tool-/)
       const sentRetry = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-after-lost-response')
       expect(sentRetry.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[1]?.[0].messageId).toBe(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId)
+      await execute(h.ctx, h.agent, 'create_bot_group', {
+        name: 'Explicit room', botIds: ['bot-beta'], groupId: 'bot-group-explicit',
+      }, 'create-explicit')
+      await execute(h.ctx, h.agent, 'send_bot_group_message', {
+        groupId: ' bot-group-room ', text: ' hello ', messageId: 'bot-group-message-explicit',
+      }, 'send-explicit')
+      expect(vi.mocked(h.groupTools.create).mock.calls[4]?.[0].id).toBe('bot-group-explicit')
+      expect(vi.mocked(h.groupTools.send).mock.calls[2]?.[0].messageId).toBe('bot-group-message-explicit')
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

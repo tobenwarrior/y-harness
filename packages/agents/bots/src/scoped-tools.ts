@@ -110,6 +110,10 @@ function scopedGroupMessageId(operationKey: string): BotGroupMessageId {
   return BotGroupMessageId(`bot-group-message-tool-${digest}`)
 }
 
+function canonicalBotIds(botIds: readonly string[]): string[] {
+  return botIds.map(botId => botId.trim()).sort()
+}
+
 /** Host-owned group operations bound to the live Bot that owns the scope. */
 export interface BotGroupToolHost {
   readonly list: () => Promise<BotGroupListValue>
@@ -216,10 +220,11 @@ export function installBotCollaborationTools(
         output: jsonOutput(GROUP_CREATE_RESULT_SCHEMA),
         async execute(args) {
           const client = await bind()
+          const botIds = canonicalBotIds(args.botIds)
           const groupId = args.groupId === undefined
-            ? scopedGroupId([String(client.sender.id), args.name.trim(), ...args.botIds].join('\u0000'))
-            : BotGroupId(args.groupId)
-          const value = await (await groups()).create({ id: groupId, name: args.name, botIds: args.botIds.map(BotId) })
+            ? scopedGroupId([String(client.sender.id), args.name.trim(), ...botIds].join('\u0000'))
+            : BotGroupId(args.groupId.trim())
+          const value = await (await groups()).create({ id: groupId, name: args.name.trim(), botIds: botIds.map(BotId) })
           return {
             group: {
               id: String(value.group.id), name: value.group.name,
@@ -241,11 +246,13 @@ export function installBotCollaborationTools(
         output: jsonOutput(GROUP_SEND_RESULT_SCHEMA),
         async execute(args, exec) {
           const client = await bind()
+          const groupId = args.groupId.trim()
+          const text = args.text.trim()
           const messageId = args.messageId === undefined
-            ? scopedGroupMessageId([String(client.sender.id), args.groupId, args.text.trim()].join('\u0000'))
-            : BotGroupMessageId(args.messageId)
+            ? scopedGroupMessageId([String(client.sender.id), groupId, text].join('\u0000'))
+            : BotGroupMessageId(args.messageId.trim())
           const value = await (await groups()).send({
-            groupId: BotGroupId(args.groupId), text: args.text,
+            groupId: BotGroupId(groupId), text,
             ...(messageId === undefined ? {} : { messageId }), signal: exec.signal,
           })
           return {
