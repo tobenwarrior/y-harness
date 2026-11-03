@@ -130,6 +130,48 @@ describe('Bot collaboration seam', () => {
     expect(followup).toHaveBeenCalledTimes(1)
   })
 
+  it('recognizes a claimed inbox receipt before the target surface event', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-claimed')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const claimed = followup.mock.calls[0]?.[0]
+    if (claimed === undefined) throw new Error('expected a claimed message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [claimed] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId,
+    })).resolves.toMatchObject({ status: 'duplicate', messageId })
+    expect(followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a canceled inbox delivery with the same message id', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-canceled')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const canceled = followup.mock.calls[0]?.[0]
+    if (canceled === undefined) throw new Error('expected a canceled message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [canceled] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId,
+    })).resolves.toMatchObject({ status: 'accepted', messageId })
+    expect(followup).toHaveBeenCalledTimes(2)
+  })
+
   it('rejects unbounded message identities before touching the target Session', async () => {
     const h = harness()
     const client = await h.client

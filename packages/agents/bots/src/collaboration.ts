@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto'
 import type { Agent } from '@yharness/agent'
 import type { AgentMessageSource } from '@yharness/subagent'
 import { freezeMessage, MessageId } from '@yharness/llm'
-import type { ContentBlock, MessageSourceMap, UserMessage } from '@yharness/llm'
+import type { ContentBlock } from '@yharness/llm'
 import type { SessionEvent, SessionId } from '@yharness/session'
+import { botInboxMessageState } from './inbox.ts'
 import type { BotId, BotView } from './types.ts'
 
 /** Stable identity for one durable Bot-to-Bot delivery. */
@@ -23,6 +24,21 @@ export function BotMessageId(value: string): BotMessageId {
 /** Durable source attached to every peer message in the target Session log. */
 export type BotMessageSource = AgentMessageSource
 
+/** Durable context used to stop event-routine relays from forming an unbounded Bot loop. */
+export interface BotEventRelayContext {
+  /** Stable identity for one chain of routine-triggered peer messages. */
+  readonly chainId: string
+  /** Number of peer-Bot relay hops already made in this chain. */
+  readonly depth: number
+}
+
+declare module '@yharness/subagent' {
+  interface AgentMessageSource {
+    /** Bot-owned relay metadata used by event-routine loop protection. */
+    readonly botEventRoutine?: BotEventRelayContext
+  }
+}
+
 // Bot-to-Bot messages reuse the released `agent-message` relay vocabulary.
 // The stable Bot identity is the sender Session id; the Bot roster resolves it
 // to the current Bot row and the message id is the UserMessage id.
@@ -36,6 +52,8 @@ declare module '@yharness/llm' {
       summary: string
       routineId: string
       triggerEventSeq: number
+      chainId?: string
+      depth?: number
     }
   }
 }
@@ -58,6 +76,8 @@ export interface BotCollaborationHost {
   readonly resolveAgent: (sessionId: SessionId) => Promise<{ readonly agent: BotCollaborationAgent } | { readonly error: Error }>
   /** Flush a target Session after inbox admission; the call must resolve only after durable storage accepts it. */
   readonly flushSession: (sessionId: SessionId) => Promise<void>
+  /** Return the active event-routine relay context for one Bot turn, when any. */
+  readonly eventRoutineContext?: (sessionId: SessionId) => BotEventRelayContext | undefined
 }
 
 /** Result payload retained for one native Bot action lifecycle record. */
@@ -209,24 +229,13 @@ function frameTranscript(entry: BotCollaborationTranscriptEntry): BotCollaborati
   }
 }
 
-function pendingInboxMessages(events: readonly SessionEvent[]): UserMessage[] {
-  const pending: { 'next-turn': UserMessage[]; 'next-step': UserMessage[] } = {
-    'next-turn': [],
-    'next-step': [],
-  }
-  for (const event of events) {
-    if (event.type !== 'agent/inbox/spliced') continue
-    const queue = pending[event.data.target]
-    queue.splice(event.data.start, event.data.removedCount ?? 0, ...event.data.inserted)
-  }
-  return [...pending['next-turn'], ...pending['next-step']]
-}
-
 function hasMessage(events: readonly SessionEvent[], messageId: BotMessageId): boolean {
-  return events.some(event => event.type === 'user/message'
+  if (events.some(event => event.type === 'user/message'
     && event.data.id === messageId
-    && event.data.source.kind === 'agent-message')
-    || pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === 'agent-message')
+    && event.data.source.kind === 'agent-message')) return true
+  const inbox = botInboxMessageState(events, messageId)
+  return (inbox?.disposition === 'pending' || inbox?.disposition === 'claimed')
+    && inbox.message.source.kind === 'agent-message'
 }
 
 function messageText(sender: BotCollaborationRosterEntry, text: string): string {
@@ -340,8 +349,10 @@ export class BotCollaborationService {
       if (!('agent' in resolved)) {
         throw new BotCollaborationError('target-unavailable', `Bot "${target.name}" could not be resumed`)
       }
-      const source: MessageSourceMap['agent-message'] = {
-        kind: 'agent-message', form: 'relay', senderSessionId: sender.sessionId,
+      const relayContext = this.host.eventRoutineContext?.(senderSessionId)
+      const source = {
+        kind: 'agent-message' as const, form: 'relay' as const, senderSessionId: sender.sessionId,
+        ...(relayContext === undefined ? {} : { botEventRoutine: relayContext }),
       }
       throwIfCancelled(request.signal)
       resolved.agent.followup(freezeMessage({

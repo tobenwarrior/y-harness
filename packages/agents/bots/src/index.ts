@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
 import { MessageId } from '@yharness/llm/brand'
 import { freezeMessage } from '@yharness/llm'
+import type { UserMessage } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
@@ -30,11 +31,13 @@ import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharne
 import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
+import type { BotEventRelayContext } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
+import { botInboxMessageState } from './inbox.ts'
 import type { ToolExecution } from '@yharness/tools'
 import type {
   BotAvailability,
@@ -42,6 +45,7 @@ import type {
   BotEventRoutine,
   BotEventRoutineDelivery,
   BotEventRoutineResult,
+  BotEventRoutineView,
   BotEventSource,
   BotEventTrigger,
   BotAppearanceUpdateRequest,
@@ -78,6 +82,17 @@ function isEventRoutineRequest(request: BotRoutineCreateRequest): request is Bot
   return 'event' in request
 }
 
+/** Fixed safety ceiling for one event-routine peer-message chain. */
+const MAX_EVENT_ROUTINE_HOPS = 4
+
+interface EventRoutineTriggerInput {
+  readonly message: UserMessage
+  readonly eventSeq: number
+  readonly eventTime: number
+  readonly source: BotEventSource
+  readonly relayContext?: BotEventRelayContext | undefined
+}
+
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
@@ -91,6 +106,7 @@ export type {
   BotCollaborationClient,
   BotCollaborationAgent,
   BotCollaborationErrorCode,
+  BotEventRelayContext,
   BotCollaborationHost,
   BotCollaborationInspection,
   BotCollaborationInspectionValue,
@@ -394,13 +410,91 @@ function eventRoutineId(
 }
 
 /** Project one durable event routine into the common native routine view. */
-function eventRoutineView(routine: BotEventRoutine): Record<string, unknown> {
-  return { ...routine, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
+  const { deliveries, results, ...view } = routine
+  void deliveries
+  void results
+  return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+}
+
+/** Clear an uncertain follow-up marker for an explicit or cancellation-driven retry. */
+function clearDispatchMarker(delivery: BotEventRoutineDelivery): BotEventRoutineDelivery {
+  const { dispatchStartedAt, ...withoutDispatchMarker } = delivery
+  void dispatchStartedAt
+  return withoutDispatchMarker
 }
 
 /** Extract plain visible text from model content without exposing tool or reasoning blocks. */
 function visibleText(content: readonly { readonly type: string; readonly text?: string }[]): string {
   return content.flatMap(block => block.type === 'text' && block.text !== undefined ? [block.text] : []).join('')
+}
+
+/** Validate durable relay metadata and supply a stable chain for legacy routine notices. */
+function relayContextOf(
+  value: { readonly chainId?: string | undefined; readonly depth?: number | undefined } | undefined,
+  fallbackChainId: string,
+): BotEventRelayContext | undefined {
+  if (value === undefined) return undefined
+  const chainId = typeof value.chainId === 'string' && value.chainId.trim() !== '' ? value.chainId : fallbackChainId
+  const depth = value.depth === undefined ? 0 : value.depth
+  if (!Number.isSafeInteger(depth) || depth < 0) return { chainId, depth: MAX_EVENT_ROUTINE_HOPS }
+  return { chainId, depth: Math.min(depth, MAX_EVENT_ROUTINE_HOPS) }
+}
+
+/** Return the currently open turn recorded in a Session log, if any. */
+function openTurnFromEvents(events: readonly SessionEvent[]): number {
+  let openTurn = -1
+  for (const event of events) {
+    if (event.type === 'turn/start') openTurn = event.data.turn
+    else if (event.type === 'turn/end' && event.data.turn === openTurn) openTurn = -1
+  }
+  return openTurn
+}
+
+/** Reconstruct every routine-triggered turn from one persisted Session scan. */
+function routineTurnsFromEvents(events: readonly SessionEvent[]): Map<number, EventRoutineTurn> {
+  const turns = new Map<number, EventRoutineTurn>()
+  let openTurn: EventRoutineTurn | undefined
+  for (const event of events) {
+    if (event.type === 'turn/start') {
+      openTurn = { turn: event.data.turn, runs: new Map(), output: [] }
+      turns.set(event.data.turn, openTurn)
+      continue
+    }
+    if (event.type === 'turn/end') {
+      if (openTurn?.turn === event.data.turn) openTurn = undefined
+      continue
+    }
+    if (openTurn === undefined) continue
+    if (event.type === 'user/message' && event.data.source.kind === 'bot-event-routine') {
+      openTurn.runs.set(String(event.data.id), event.data.source.routineId)
+      openTurn.relayContext ??= relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`)
+    } else if (event.type === 'assistant/message') {
+      openTurn.output.push(visibleText(event.data.message.content))
+    }
+  }
+  return turns
+}
+
+/** Reconstruct one routine-triggered turn, retaining live facts when a surface read races it. */
+function routineTurnFromEvents(
+  events: readonly SessionEvent[],
+  turnNumber: number,
+  fallback: EventRoutineTurn | undefined,
+): EventRoutineTurn {
+  const persisted = routineTurnsFromEvents(events).get(turnNumber)
+  const runs = new Map(persisted?.runs ?? [])
+  const output = [...persisted?.output ?? []]
+  if (runs.size === 0 && fallback !== undefined) {
+    for (const [messageId, routineId] of fallback.runs) runs.set(messageId, routineId)
+  }
+  if (output.length === 0 && fallback !== undefined) output.push(...fallback.output)
+  return {
+    turn: turnNumber,
+    runs,
+    output,
+    relayContext: persisted?.relayContext ?? fallback?.relayContext,
+  }
 }
 
 /** Map a live Session turn reason into the bounded event-routine result vocabulary. */
@@ -413,7 +507,7 @@ function routineResultStatus(kind: string): BotEventRoutineResult['status'] {
     case 'max-tokens': return 'max-tokens'
     case 'interrupted': return 'interrupted'
     case 'forked': return 'forked'
-    default: return 'error'
+    default: return 'other'
   }
 }
 
@@ -492,6 +586,7 @@ interface EventRoutineTurn {
   readonly turn: number
   readonly runs: Map<string, string>
   readonly output: string[]
+  relayContext?: BotEventRelayContext | undefined
 }
 
 const MAX_ROUTINE_RESULT_OUTPUT = 8_000
@@ -576,6 +671,7 @@ export class BotService extends TypertRemoteService {
         if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
+      eventRoutineContext: sessionId => this.eventRoutineContext(sessionId),
     })
     ctx.on('session/event', (session, event) => {
       void this.ready.then(() => {
@@ -783,6 +879,7 @@ export class BotService extends TypertRemoteService {
     await this.initialized
     await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
     await this.recoverPendingEventRoutines()
+    await this.recoverEventRoutineResults()
   }
 
   /**
@@ -1075,7 +1172,11 @@ export class BotService extends TypertRemoteService {
 
   /** Resume one paused event routine. */
   private async resumeEventRoutine(sessionId: SessionId, id: string, signal?: AbortSignal): Promise<unknown> {
-    return this.setEventRoutineStatus(sessionId, id, 'active', signal)
+    const resumed = await this.setEventRoutineStatus(sessionId, id, 'active', signal)
+    if (typeof resumed !== 'object' || resumed === null || !('resumed' in resumed) || resumed.resumed !== true) return resumed
+    await this.retryPendingEventRoutines(sessionId, id, true)
+    const latest = await this.findEventRoutine(sessionId, id)
+    return latest === undefined ? resumed : { ...eventRoutineView(latest), resumed: true }
   }
 
   private async setEventRoutineStatus(
@@ -1128,19 +1229,11 @@ export class BotService extends TypertRemoteService {
       this.eventRoutineTurns.set(turnKey, { turn: event.data.turn, runs: new Map(), output: [] })
       return
     }
+    // Inbox splices are pending admission and may be canceled. A routine only
+    // fires, and a routine result only becomes attributable, after the input
+    // is claimed into the model-visible user/message surface below.
     if (event.type === 'user/message') {
-      const source = event.data.source
-      if (source.kind === 'bot-event-routine') {
-        const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
-        if (turn !== undefined) turn.runs.set(String(event.data.id), source.routineId)
-        return
-      }
-      const trigger = source.kind === 'agent-message' ? 'bot' : source.kind === 'user' ? 'user' : undefined
-      if (trigger !== undefined) {
-        queueMicrotask(() => {
-          void this.triggerEventRoutines(sessionId, event, trigger)
-        })
-      }
+      this.observeEventRoutineMessage(sessionId, event.data, Number(event.seq), event.time)
       return
     }
     if (event.type === 'assistant/message') {
@@ -1150,11 +1243,48 @@ export class BotService extends TypertRemoteService {
     if (event.type !== 'turn/end') return
     const turn = this.eventRoutineTurns.get(turnKey)
     this.eventRoutineTurns.delete(turnKey)
-    if (turn !== undefined && turn.runs.size > 0) {
+    queueMicrotask(() => {
+      void this.recordEventRoutineResults(sessionId, turn, event)
+    })
+  }
+
+  /** Handle one queued or surface message, deduplicating its two durable views. */
+  private observeEventRoutineMessage(
+    sessionId: SessionId,
+    message: UserMessage,
+    eventSeq: number,
+    eventTime: number,
+  ): void {
+    const source = message.source
+    if (source.kind === 'bot-event-routine') {
+      const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
+      if (turn !== undefined) {
+        turn.runs.set(String(message.id), source.routineId)
+        const relayContext = relayContextOf(source, `${String(sessionId)}:${String(message.id)}`)
+        if (relayContext !== undefined) turn.relayContext = relayContext
+      }
       queueMicrotask(() => {
-        void this.recordEventRoutineResults(sessionId, turn, event)
+        void this.markEventRoutineDeliveryClaimed(sessionId, source.routineId, MessageId(message.id), eventTime)
       })
+      return
     }
+    const trigger = source.kind === 'user'
+      ? { source: 'user' as const, relayContext: undefined }
+      : source.kind === 'agent-message'
+        && source.senderSessionId !== sessionId
+        && this.recordsBySession.get(String(source.senderSessionId))?.state === 'active'
+        ? { source: 'bot' as const, relayContext: source.botEventRoutine }
+        : undefined
+    if (trigger === undefined) return
+    const relayContext = trigger.relayContext === undefined
+      ? undefined
+      : relayContextOf(trigger.relayContext, `${String(sessionId)}:${String(message.id)}`)
+    if (relayContext !== undefined && relayContext.depth >= MAX_EVENT_ROUTINE_HOPS) return
+    queueMicrotask(() => {
+      void this.triggerEventRoutines(sessionId, {
+        message, eventSeq, eventTime, source: trigger.source, relayContext,
+      })
+    })
   }
 
   /** Return the most recently opened turn for one Session. */
@@ -1169,11 +1299,67 @@ export class BotService extends TypertRemoteService {
     return latest
   }
 
+  /** Return relay metadata for the currently executing event-routine turn. */
+  private eventRoutineContext(sessionId: SessionId): BotEventRelayContext | undefined {
+    let openTurn = this.openTurnNumber(sessionId)
+    let turn = this.eventRoutineTurns.get(`${String(sessionId)}:${openTurn}`)
+    if (turn === undefined) {
+      const session = this.ctx.sessions.get(sessionId)
+      if (session !== undefined) {
+        const events = session.snapshotEvents()
+        openTurn = openTurn >= 0 ? openTurn : openTurnFromEvents(events)
+        if (openTurn >= 0) turn = routineTurnFromEvents(events, openTurn, undefined)
+      }
+    }
+    if (turn?.relayContext === undefined) return undefined
+    return { ...turn.relayContext, depth: Math.min(turn.relayContext.depth + 1, MAX_EVENT_ROUTINE_HOPS) }
+  }
+
+  /** Retire a pending delivery once its routine message reaches the model-visible surface. */
+  private async markEventRoutineDeliveryClaimed(
+    sessionId: SessionId,
+    routineId: string,
+    messageId: MessageId,
+    claimedAt: number,
+  ): Promise<void> {
+    try {
+      const session = this.ctx.sessions.get(sessionId)
+      if (session === undefined || !await this.ctx.sessions.flush(session)) {
+        throw new Error('Bot Session persistence did not acknowledge the claimed routine message')
+      }
+      await this.serialize(async () => {
+        const domain = await this.getDomain()
+        const bots = domain.table('bots')
+        const current = this.currentBotRecord(domain, sessionId)
+        if (current === undefined) return
+        const deliveredAt = new Date(claimedAt).toISOString()
+        const routine = current.eventRoutines?.find(candidate => candidate.id === routineId)
+        if (routine === undefined) return
+        const pending = routine.deliveries.find(delivery => delivery.messageId === messageId && delivery.status === 'pending')
+        if (pending === undefined) return
+        const eventRoutines = (current.eventRoutines ?? []).map(candidate => candidate.id === routineId
+          ? {
+            ...candidate,
+            deliveries: candidate.deliveries.map(delivery => delivery === pending
+              ? { ...delivery, status: 'delivered' as const, deliveredAt }
+              : delivery),
+            updatedAt: Math.max(Date.now(), candidate.updatedAt),
+          }
+          : candidate)
+        const next: BotRecord = { ...current, eventRoutines, updatedAt: Math.max(Date.now(), current.updatedAt) }
+        await bots.put(next.id, next)
+        this.recordsBySession.set(String(next.sessionId), next)
+        this.emitChanged()
+      })
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`bots: event routine delivery claim persistence failed: ${String(error)}`)
+    }
+  }
+
   /** Admit matching event routines and durably reserve their follow-up message ids. */
   private async triggerEventRoutines(
     sessionId: SessionId,
-    event: SessionEvent<'user/message'>,
-    source: BotEventSource,
+    input: EventRoutineTriggerInput,
   ): Promise<void> {
     try {
       await this.serialize(async () => {
@@ -1183,11 +1369,16 @@ export class BotService extends TypertRemoteService {
         if (current === undefined || current.sessionId !== sessionId) return
         let next = current
         for (const routine of current.eventRoutines ?? []) {
-          if (routine.status !== 'active' || routine.trigger.source !== source) continue
-          const existing = routine.deliveries.find(delivery => delivery.triggerEventSeq === Number(event.seq))
+          if (routine.status !== 'active' || routine.trigger.source !== input.source) continue
+          const existing = routine.deliveries.find(delivery => delivery.triggerMessageId === input.message.id
+            || (delivery.triggerMessageId === undefined && delivery.triggerEventSeq === input.eventSeq))
+          const chainId = input.relayContext?.chainId
+            ?? createHash('sha256').update('bot-event-routine-chain\0').update(String(sessionId)).update('\0').update(String(input.message.id)).digest('hex')
+          const depth = input.relayContext?.depth ?? 0
           const delivery = existing ?? {
-            triggerEventSeq: Number(event.seq), messageId: MessageId(randomUUID()), status: 'pending' as const,
-            createdAt: new Date(event.time).toISOString(),
+            triggerEventSeq: input.eventSeq, triggerMessageId: MessageId(input.message.id), messageId: MessageId(randomUUID()),
+            chainId, depth, status: 'pending' as const,
+            createdAt: new Date(input.eventTime).toISOString(),
           }
           if (existing === undefined) {
             const updatedRoutine: BotEventRoutine = {
@@ -1204,7 +1395,8 @@ export class BotService extends TypertRemoteService {
           }
           const latest = next.eventRoutines?.find(candidate => candidate.id === routine.id)
           if (latest === undefined) continue
-          const admitted = latest.deliveries.find(candidate => candidate.triggerEventSeq === Number(event.seq))
+          const admitted = latest.deliveries.find(candidate => candidate.triggerMessageId === input.message.id
+            || (candidate.triggerMessageId === undefined && candidate.triggerEventSeq === input.eventSeq))
           if (admitted === undefined || admitted.status === 'delivered') continue
           try {
             next = await this.deliverEventRoutine(next, latest, admitted, bots)
@@ -1226,35 +1418,64 @@ export class BotService extends TypertRemoteService {
     bots: KvTable<BotRecord['id'], BotRecord>,
   ): Promise<BotRecord> {
     const inspection = await this.ctx.sessionController.inspect(record.sessionId)
+    const inboxState = botInboxMessageState(inspection.events, delivery.messageId)
+    const canceled = inboxState?.disposition === 'canceled'
     const alreadyQueued = inspection.events.some(event => event.type === 'user/message' && event.data.id === delivery.messageId)
+      || inboxState?.disposition === 'pending'
+      || inboxState?.disposition === 'claimed'
+    const attempt = canceled ? clearDispatchMarker(delivery) : delivery
+    if (!alreadyQueued && !canceled && attempt.dispatchStartedAt !== undefined) {
+      // The prior Host durably recorded Agent.followup before its Session receipt
+      // became visible. Re-invoking it could run the same routine twice.
+      return record
+    }
+    const resolved = await this.ctx.sessionController.resolveAgent(record.sessionId)
+    if (!('agent' in resolved)) throw resolved.error
+    let currentRecord = record
+    let currentRoutine = routine
+    let currentDelivery = attempt
     if (!alreadyQueued) {
-      const resolved = await this.ctx.sessionController.resolveAgent(record.sessionId)
-      if (!('agent' in resolved)) throw resolved.error
+      currentDelivery = { ...attempt, dispatchStartedAt: new Date(Date.now()).toISOString() }
+      currentRoutine = {
+        ...routine,
+        deliveries: routine.deliveries.map(candidate => candidate.messageId === attempt.messageId ? currentDelivery : candidate),
+        updatedAt: Math.max(Date.now(), routine.updatedAt),
+      }
+      currentRecord = {
+        ...record,
+        eventRoutines: (record.eventRoutines ?? []).map(candidate => candidate.id === routine.id ? currentRoutine : candidate),
+        updatedAt: Math.max(Date.now(), record.updatedAt),
+      }
+      await bots.put(currentRecord.id, currentRecord)
+      this.recordsBySession.set(String(currentRecord.sessionId), currentRecord)
       resolved.agent.followup(freezeMessage({
-        id: delivery.messageId,
+        id: currentDelivery.messageId,
         role: 'user',
-        content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${routine.prompt}` }],
+        content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],
         source: {
-          kind: 'bot-event-routine', form: 'notice', summary: `Routine "${routine.title}" triggered`,
-          routineId: routine.id, triggerEventSeq: delivery.triggerEventSeq,
+          kind: 'bot-event-routine', form: 'notice', summary: `Routine "${currentRoutine.title}" triggered`,
+          routineId: currentRoutine.id, triggerEventSeq: currentDelivery.triggerEventSeq,
+          ...(relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`) ?? {}),
         },
       }))
-      if (!await this.ctx.sessions.flush(resolved.agent.session)) {
-        throw new Error('Bot Session persistence did not acknowledge the event routine')
-      }
+    }
+    // Even an already-admitted inbox message needs a fresh durability barrier:
+    // the previous attempt may have observed the splice but lost its reply.
+    if (!await this.ctx.sessions.flush(resolved.agent.session)) {
+      throw new Error('Bot Session persistence did not acknowledge the event routine')
     }
     const deliveredAt = new Date(Date.now()).toISOString()
     const updatedRoutine: BotEventRoutine = {
-      ...routine,
-      deliveries: routine.deliveries.map(candidate => candidate.messageId === delivery.messageId
+      ...currentRoutine,
+      deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === currentDelivery.messageId
         ? { ...candidate, status: 'delivered' as const, deliveredAt }
         : candidate),
-      updatedAt: Math.max(Date.now(), routine.updatedAt),
+      updatedAt: Math.max(Date.now(), currentRoutine.updatedAt),
     }
     const next: BotRecord = {
-      ...record,
-      eventRoutines: (record.eventRoutines ?? []).map(candidate => candidate.id === routine.id ? updatedRoutine : candidate),
-      updatedAt: Math.max(Date.now(), record.updatedAt),
+      ...currentRecord,
+      eventRoutines: (currentRecord.eventRoutines ?? []).map(candidate => candidate.id === currentRoutine.id ? updatedRoutine : candidate),
+      updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
     }
     await bots.put(next.id, next)
     this.recordsBySession.set(String(next.sessionId), next)
@@ -1265,21 +1486,27 @@ export class BotService extends TypertRemoteService {
   /** Persist one completed model result without changing delivery semantics. */
   private async recordEventRoutineResults(
     sessionId: SessionId,
-    turn: EventRoutineTurn,
+    turn: EventRoutineTurn | undefined,
     event: SessionEvent<'turn/end'>,
+    persistedTurn?: EventRoutineTurn,
   ): Promise<void> {
     try {
+      const attributedTurn = persistedTurn ?? routineTurnFromEvents(
+        (await this.ctx.sessionController.inspect(sessionId)).events,
+        event.data.turn,
+        turn,
+      )
       await this.serialize(async () => {
         const domain = await this.getDomain()
         const bots = domain.table('bots')
         const current = this.currentBotRecord(domain, sessionId)
         if (current === undefined) return
-        const output = turn.output.join('').slice(0, MAX_ROUTINE_RESULT_OUTPUT)
+        const output = attributedTurn.output.join('').slice(0, MAX_ROUTINE_RESULT_OUTPUT)
         const status = routineResultStatus(event.data.reason.kind)
         const error = event.data.reason.kind === 'error' ? event.data.reason.error.message.slice(0, 4_000) : undefined
         let changedCount = 0
         const eventRoutines = (current.eventRoutines ?? []).map((routine) => {
-          const messages = [...turn.runs.entries()].filter(([, routineId]) => routineId === routine.id)
+          const messages = [...attributedTurn.runs.entries()].filter(([, routineId]) => routineId === routine.id)
           if (messages.length === 0) return routine
           const results = [...routine.results]
           let routineChanged = false
@@ -1316,11 +1543,14 @@ export class BotService extends TypertRemoteService {
       for (const [, record] of bots.entries()) {
         let current = record
         for (const routine of record.eventRoutines ?? []) {
+          if (routine.status !== 'active') continue
           for (const delivery of routine.deliveries.filter(candidate => candidate.status === 'pending')) {
             try {
               const latest = current.eventRoutines?.find(candidate => candidate.id === routine.id)
               if (latest === undefined) continue
-              current = await this.deliverEventRoutine(current, latest, delivery, bots)
+              const retry = latest.deliveries.find(candidate => candidate.messageId === delivery.messageId)
+              if (retry === undefined || retry.status !== 'pending') continue
+              current = await this.deliverEventRoutine(current, latest, retry, bots)
             } catch (error: unknown) {
               this.ctx.logger.warn(`bots: pending event routine ${routine.id} recovery failed: ${String(error)}`)
             }
@@ -1328,6 +1558,65 @@ export class BotService extends TypertRemoteService {
         }
       }
     })
+  }
+
+  /** Retry pending deliveries after an explicit resume starts a new attempt. */
+  private async retryPendingEventRoutines(sessionId: SessionId, routineId: string, explicitRetry: boolean): Promise<void> {
+    await this.serialize(async () => {
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const record = this.currentBotRecord(domain, sessionId)
+      const routine = record?.eventRoutines?.find(candidate => candidate.id === routineId)
+      if (record === undefined || routine === undefined || routine.status !== 'active') return
+      let current = record
+      if (explicitRetry) {
+        const resetDeliveries = routine.deliveries.map((delivery) => {
+          if (delivery.status !== 'pending' || delivery.dispatchStartedAt === undefined) return delivery
+          return clearDispatchMarker(delivery)
+        })
+        if (resetDeliveries.some((delivery, index) => delivery !== routine.deliveries[index])) {
+          const resetRoutine = { ...routine, deliveries: resetDeliveries, updatedAt: Math.max(Date.now(), routine.updatedAt) }
+          current = {
+            ...record,
+            eventRoutines: (record.eventRoutines ?? []).map(candidate => candidate.id === routineId ? resetRoutine : candidate),
+            updatedAt: Math.max(Date.now(), record.updatedAt),
+          }
+          await bots.put(current.id, current)
+          this.recordsBySession.set(String(current.sessionId), current)
+        }
+      }
+      for (const delivery of routine.deliveries.filter(candidate => candidate.status === 'pending')) {
+        try {
+          const latest = current.eventRoutines?.find(candidate => candidate.id === routineId)
+          if (latest === undefined || latest.status !== 'active') continue
+          const retry = latest.deliveries.find(candidate => candidate.messageId === delivery.messageId)
+          if (retry === undefined || retry.status !== 'pending') continue
+          current = await this.deliverEventRoutine(current, latest, retry, bots)
+        } catch (error: unknown) {
+          this.ctx.logger.warn(`bots: pending event routine ${routineId} retry failed: ${String(error)}`)
+        }
+      }
+    })
+  }
+
+  /** Recover completed routine turns whose result write was interrupted by a restart. */
+  private async recoverEventRoutineResults(): Promise<void> {
+    const domain = await this.getDomain()
+    for (const [, record] of domain.table('bots').entries()) {
+      if ((record.eventRoutines ?? []).length === 0) continue
+      try {
+        const inspection = await this.ctx.sessionController.inspect(record.sessionId)
+        const turns = routineTurnsFromEvents(inspection.events)
+        for (const event of inspection.events) {
+          if (event.type !== 'turn/end') continue
+          const turn = turns.get(event.data.turn)
+          if (turn === undefined || turn.runs.size === 0) continue
+          await this.recordEventRoutineResults(record.sessionId, turn, event, turn)
+        }
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`bots: event routine result recovery failed for ${record.id}: ${String(error)}`)
+      }
+    }
   }
 
   private updateBotDescription(botId: BotId, description: string, signal?: AbortSignal): Promise<void> {
@@ -1703,7 +1992,9 @@ export class BotService extends TypertRemoteService {
     const availability: BotAvailability = agent === undefined
       ? 'offline'
       : agent.status === 'running' ? 'running' : 'idle'
-    return { ...record, availability }
+    const { eventRoutines, ...roster } = record
+    void eventRoutines
+    return { ...roster, availability }
   }
 
   private async getDomain(): Promise<Domain<typeof botDomain>> {

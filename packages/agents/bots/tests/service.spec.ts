@@ -3,6 +3,7 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import type { Agent } from '@yharness/agent'
 import { createScope } from '@yharness/scope'
 import { Session, SessionId } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session'
 import { createAssistantMessage, createUserMessage, ToolCallId, type UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
@@ -19,6 +20,12 @@ import type { BotDynamicToolEvent } from '../src/collaboration.ts'
 import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 
+declare module '@yharness/session' {
+  interface TurnEndReasonMap {
+    'test/custom': { kind: 'test/custom' }
+  }
+}
+
 async function harness(
   pool = new MemoryMediaPool(),
   create = vi.fn(async (request: { sessionId?: string }) => ({ sessionId: request.sessionId })),
@@ -29,6 +36,7 @@ async function harness(
   existingSessionIds: readonly string[] = [],
   withSchedule = false,
   seedEvents: readonly BotDynamicToolEvent[] = [],
+  seedSessionEvents: ReadonlyMap<string, readonly SessionEvent[]> = new Map(),
 ) {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -54,7 +62,7 @@ async function harness(
     const agent: Agent = {
       id,
       options: {},
-      session: Session.create(id),
+      session: Session.create(id, seedSessionEvents.get(sessionId)),
       inbox: {
         nextTurn: [], nextStep: [], clear() {}, append() {}, prepend() {},
         replace() { return false }, remove() { return false }, splice() { return [] },
@@ -324,9 +332,10 @@ describe('durable Bot roster', () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Event routine owner', cwd: '/tmp' })
+    const peer = await first.service.create({ name: 'Event routine peer', cwd: '/tmp' })
     await close(first.ctx)
 
-    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId), String(peer.bot.sessionId)], true)
     try {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       if (provider === undefined) throw new Error('native Bot provider was not mounted')
@@ -352,10 +361,17 @@ describe('durable Bot roster', () => {
       expect(result.success).toBe(true)
       const routine = JSON.parse(result.contentItems[0]!.text) as { id: string; kind: string }
       expect(routine.kind).toBe('event')
+      expect(routine).not.toHaveProperty('deliveries')
+      expect(routine).not.toHaveProperty('results')
+      expect((await h.service.list({})).bots.find(bot => bot.id === created.bot.id)).not.toHaveProperty('eventRoutines')
       expect(await update.execute({ id: routine.id, title: 'Review peer messages' }, { ...context, callId: 'event-update' })).toMatchObject({ success: true })
       expect(await pause.execute({ id: routine.id }, { ...context, callId: 'event-pause' })).toMatchObject({ success: true })
       expect(await resume.execute({ id: routine.id }, { ...context, callId: 'event-resume' })).toMatchObject({ success: true })
-      expect(await list.execute({}, { ...context, callId: 'event-list' })).toMatchObject({ success: true })
+      const listed = await list.execute({}, { ...context, callId: 'event-list' })
+      expect(listed).toMatchObject({ success: true })
+      const listedValue = JSON.parse(listed.contentItems[0]!.text) as readonly Record<string, unknown>[]
+      expect(listedValue[0]).not.toHaveProperty('deliveries')
+      expect(listedValue[0]).not.toHaveProperty('results')
 
       const owner = h.agents[0]
       if (owner === undefined) throw new Error('event routine owner Agent was not created')
@@ -383,7 +399,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       owner.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'A peer bot sent this.' }],
-        source: { kind: 'agent-message', form: 'relay', senderSessionId: SessionId('bot-session-peer') },
+        source: { kind: 'agent-message', form: 'relay', senderSessionId: peer.bot.sessionId },
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       owner.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
@@ -413,6 +429,98 @@ describe('durable Bot roster', () => {
         expect(value.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
       })
       expect(await remove.execute({ id: routine.id }, { ...context, callId: 'event-delete' })).toMatchObject({ success: true })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('attributes event-routine results only after the follow-up is claimed', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Active-turn routine owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'active-turn-create', threadId: 'active-turn-thread', turnId: 'active-turn-create-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Active turn monitor', prompt: 'Review the next message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      const canceled = createUserMessage({ content: [{ type: 'text', text: 'Canceled before claim.' }], source: { kind: 'user' } })
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [canceled],
+      })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await Promise.resolve()
+      expect(followup).not.toHaveBeenCalled()
+
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Start the routine.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => {
+        expect(followup).toHaveBeenCalledOnce()
+      })
+      const triggered = followup.mock.calls[0]?.[0]
+      if (triggered === undefined) throw new Error('event routine follow-up was not captured')
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [triggered],
+      })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('assistant/message', {
+        turn: 1, step: 0,
+        message: createAssistantMessage({ content: [{ type: 'text', text: 'Previous turn output.' }], source: { provider: 'test', model: 'test-model' } }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(async () => {
+        const beforeClaim = await history.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'active-turn-before-claim' })
+        const value = JSON.parse(beforeClaim.contentItems[0]!.text) as { results: readonly unknown[] }
+        expect(value.results).toEqual([])
+      })
+
+      owner.session.append('turn/start', { turn: 2 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', triggered, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('assistant/message', {
+        turn: 2, step: 0,
+        message: createAssistantMessage({ content: [{ type: 'text', text: 'Claimed follow-up output.' }], source: { provider: 'test', model: 'test-model' } }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(async () => {
+        const afterClaim = await history.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'active-turn-after-claim' })
+        const value = JSON.parse(afterClaim.contentItems[0]!.text) as { results: readonly { output?: string }[] }
+        expect(value.results).toEqual(expect.arrayContaining([expect.objectContaining({ output: 'Claimed follow-up output.' })]))
+      })
     } finally {
       await close(h.ctx)
     }
@@ -458,18 +566,393 @@ describe('durable Bot roster', () => {
       await vi.waitFor(() => {
         expect(followup).toHaveBeenCalledOnce()
       })
+      const pendingMessage = followup.mock.calls[0]?.[0]
+      if (pendingMessage === undefined) throw new Error('pending event message was not captured')
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [pendingMessage],
+      })
       const pending = await history.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'pending-event-history' })
       expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
       await close(h.ctx)
       initialClosed = true
 
-      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
-      expect(reopened.followups[0]).toHaveBeenCalledOnce()
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), owner.session.snapshotEvents()],
+      ]))
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
+      expect(reopened.flush).toHaveBeenCalled()
       const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
       const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
       if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
       const recovered = await reopenedHistory.execute({ id: routine.id, limit: 10 }, { ...context, callId: 'recovered-event-history' })
+      expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else if (!initialClosed) await close(h.ctx)
+    }
+  })
+
+  it('does not redispatch after an uncertain follow-up without a Session receipt', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Uncertain delivery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'uncertain-create', threadId: 'uncertain-thread', turnId: 'uncertain-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Uncertain monitor', prompt: 'Review the next user message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      h.flush.mockResolvedValueOnce(false)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before the Host loses its receipt.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+      const pendingMessage = followup.mock.calls[0]?.[0]
+      if (pendingMessage === undefined) throw new Error('uncertain event follow-up was not captured')
+      const seed = owner.session.snapshotEvents()
+      await close(h.ctx)
+      initialClosed = true
+
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), seed],
+      ]))
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
+      expect(reopened.flush).not.toHaveBeenCalled()
+      const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
+      const reopenedTools = await reopenedProvider.resolve({ sessionId: created.bot.sessionId })
+      const reopenedHistory = reopenedTools.find(tool => tool.name === 'schedule_history')
+      if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
+      const stillPending = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'uncertain-pending' })
+      expect(JSON.parse(stillPending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
+
+      reopened.agents[0]!.session.append('user/message', pendingMessage, { surfaceOp: 'append' })
+      reopened.ctx.emit('session/event', reopened.agents[0]!.session, reopened.agents[0]!.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(async () => {
+        const claimed = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'uncertain-claimed' })
+        expect(JSON.parse(claimed.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+      })
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else if (!initialClosed) await close(h.ctx)
+    }
+  })
+
+  it('retries an event routine after its inbox message was canceled', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Canceled delivery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'canceled-create', threadId: 'canceled-thread', turnId: 'canceled-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Canceled monitor', prompt: 'Review the next user message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      h.flush.mockResolvedValueOnce(false)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger the canceled delivery.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+      const pendingMessage = followup.mock.calls[0]?.[0]
+      if (pendingMessage === undefined) throw new Error('canceled event follow-up was not captured')
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, inserted: [pendingMessage],
+      })
+      owner.session.append('agent/inbox/spliced', {
+        target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
+      })
+      const seed = owner.session.snapshotEvents()
+      const pending = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
+      expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
+      await close(h.ctx)
+      initialClosed = true
+
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), seed],
+      ]))
+      expect(reopened.followups[0]).toHaveBeenCalledOnce()
+      expect(reopened.flush).toHaveBeenCalled()
+      const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
+      const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
+      if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
+      const recovered = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-after-restart' })
+      expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else if (!initialClosed) await close(h.ctx)
+    }
+  })
+
+  it('reconstructs event-routine result attribution from persisted turns after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Result recovery owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'result-recovery-create', threadId: 'result-recovery-thread', turnId: 'result-recovery-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Persist results', prompt: 'Summarize the event.', event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      const owner = h.agents[0]
+      if (owner === undefined) throw new Error('event routine owner was not created')
+      owner.session.append('turn/start', { turn: 7 })
+      const routineMessage = createUserMessage({
+        content: [{ type: 'text', text: '[BOT EVENT ROUTINE]\nPersist this.' }],
+        source: {
+          kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered', routineId: routine.id,
+          triggerEventSeq: 3, chainId: 'result-recovery-chain', depth: 0,
+        },
+      })
+      owner.session.append('user/message', routineMessage, { surfaceOp: 'append' })
+      owner.session.append('assistant/message', {
+        turn: 7, step: 1,
+        message: createAssistantMessage({
+          content: [{ type: 'text', text: 'Recovered result.' }],
+          source: { provider: 'test', model: 'test-model' },
+        }),
+        stream: [],
+      }, { surfaceOp: 'append' })
+      owner.session.append('turn/end', { turn: 7, reason: { kind: 'test/custom' } })
+      const seed = owner.session.snapshotEvents()
+      await close(h.ctx)
+      initialClosed = true
+
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
+        [String(created.bot.sessionId), seed],
+      ]))
+      const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
+      const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
+      if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
+      await vi.waitFor(async () => {
+        const recovered = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'result-recovery-history' })
+        expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({
+          results: [{ status: 'other', output: 'Recovered result.' }],
+        })
+      })
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      else if (!initialClosed) await close(h.ctx)
+    }
+  })
+
+  it('limits cross-Bot event-routine relays and ignores non-Bot agent messages', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const sender = await first.service.create({ name: 'Relay sender', cwd: '/tmp' })
+    const target = await first.service.create({ name: 'Relay target', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [
+      String(sender.bot.sessionId), String(target.bot.sessionId),
+    ], true)
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const senderTools = await provider.resolve({ sessionId: sender.bot.sessionId })
+      const targetTools = await provider.resolve({ sessionId: target.bot.sessionId })
+      const senderCreate = senderTools.find(tool => tool.name === 'schedule_create')
+      const targetCreate = targetTools.find(tool => tool.name === 'schedule_create')
+      if (senderCreate === undefined || targetCreate === undefined) throw new Error('event routine tools missing')
+      const context = (sessionId: SessionId, prefix: string) => ({
+        callId: `${prefix}-create`, threadId: `${prefix}-thread`, turnId: `${prefix}-turn`, sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      })
+      const senderRoutineResult = await senderCreate.execute({
+        title: 'Relay sender routine', prompt: 'Handle peer messages.', event: { type: 'message', source: 'bot' },
+      }, context(sender.bot.sessionId, 'sender'))
+      const targetRoutineResult = await targetCreate.execute({
+        title: 'Relay target routine', prompt: 'Handle peer messages.', event: { type: 'message', source: 'bot' },
+      }, context(target.bot.sessionId, 'target'))
+      expect(senderRoutineResult.success).toBe(true)
+      expect(targetRoutineResult.success).toBe(true)
+      const senderRoutine = JSON.parse(senderRoutineResult.contentItems[0]!.text) as { id: string }
+      const targetRoutine = JSON.parse(targetRoutineResult.contentItems[0]!.text) as { id: string }
+      const senderAgent = h.agents[0]
+      const targetAgent = h.agents[1]
+      const senderFollowup = h.followups[0]
+      const targetFollowup = h.followups[1]
+      if (senderAgent === undefined || targetAgent === undefined || senderFollowup === undefined || targetFollowup === undefined) {
+        throw new Error('relay Bot agents were not created')
+      }
+
+      senderAgent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Start the relay.' }],
+        source: { kind: 'agent-message', form: 'relay', senderSessionId: target.bot.sessionId },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(senderFollowup).toHaveBeenCalledOnce() })
+      const senderRoutineMessage = senderFollowup.mock.calls[0]?.[0]
+      if (senderRoutineMessage === undefined) throw new Error('sender routine message was not captured')
+
+      senderAgent.session.append('turn/start', { turn: 2 })
+      h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      senderAgent.session.append('user/message', senderRoutineMessage, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
+      const senderClient = await h.service.collaborationFor(senderAgent)
+      await senderClient.send({ targetBotId: target.bot.id, text: 'Please process this relay.' })
+      const targetRelayMessage = targetFollowup.mock.calls[0]?.[0]
+      if (targetRelayMessage === undefined) throw new Error('target relay message was not captured')
+      expect(targetRelayMessage.source).toMatchObject({
+        kind: 'agent-message', botEventRoutine: { depth: 1 },
+      })
+
+      targetAgent.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      targetAgent.session.append('user/message', targetRelayMessage, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(targetFollowup).toHaveBeenCalledOnce() })
+      const targetRoutineMessage = targetFollowup.mock.calls[0]?.[0]
+      if (targetRoutineMessage === undefined) throw new Error('target routine message was not captured')
+
+      targetAgent.session.append('turn/start', { turn: 2 })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      targetAgent.session.append('user/message', targetRoutineMessage, { surfaceOp: 'append' })
+      h.ctx.emit('session/event', targetAgent.session, targetAgent.session.snapshotEvents().at(-1)!)
+      const targetClient = await h.service.collaborationFor(targetAgent)
+      await targetClient.send({ targetBotId: sender.bot.id, text: 'The relay continued.' })
+      await vi.waitFor(() => { expect(senderFollowup).toHaveBeenCalledTimes(2) })
+
+      senderAgent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Ignore this subagent.' }],
+        source: { kind: 'agent-message', form: 'relay', senderSessionId: SessionId('subagent-session') },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
+      senderAgent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Stop the relay.' }],
+        source: {
+          kind: 'agent-message', form: 'relay', senderSessionId: target.bot.sessionId,
+          botEventRoutine: { chainId: 'relay-loop', depth: 4 },
+        },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', senderAgent.session, senderAgent.session.snapshotEvents().at(-1)!)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(senderFollowup).toHaveBeenCalledTimes(2)
+      void senderRoutine
+      void targetRoutine
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not recover paused deliveries and retries them when resumed', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Paused event owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof harness>> | undefined
+    let initialClosed = false
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const pause = tools.find(tool => tool.name === 'schedule_pause')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || pause === undefined || history === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'paused-event-create', threadId: 'paused-event-thread', turnId: 'paused-event-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const result = await create.execute({
+        title: 'Paused monitor', prompt: 'Review the latest user message.',
+        event: { type: 'message', source: 'user' },
+      }, context)
+      expect(result.success).toBe(true)
+      const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
+      h.flush.mockResolvedValueOnce(false)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Pause before retry.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+      expect(await pause.execute({ id: routine.id }, { ...context, callId: 'paused-event-pause' })).toMatchObject({ success: true })
+      const pending = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'paused-event-history' })
+      expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
+      await close(h.ctx)
+      initialClosed = true
+
+      reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
+      const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
+      const reopenedTools = await reopenedProvider.resolve({ sessionId: created.bot.sessionId })
+      const resume = reopenedTools.find(tool => tool.name === 'schedule_resume')
+      const reopenedHistory = reopenedTools.find(tool => tool.name === 'schedule_history')
+      if (resume === undefined || reopenedHistory === undefined) throw new Error('reopened event routine tools missing')
+      expect(await resume.execute({ id: routine.id }, { ...context, callId: 'paused-event-resume' })).toMatchObject({ success: true })
+      await vi.waitFor(() => { expect(reopened.followups[0]).toHaveBeenCalledOnce() })
+      expect(reopened.flush).toHaveBeenCalled()
+      const recovered = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'paused-event-recovered' })
       expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)

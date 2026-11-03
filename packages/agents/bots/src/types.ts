@@ -77,10 +77,18 @@ export interface BotEventTrigger {
 export interface BotEventRoutineDelivery {
   /** Session event sequence that caused this delivery. */
   readonly triggerEventSeq: number
+  /** Stable source message identity used to deduplicate inbox and surface events. */
+  readonly triggerMessageId?: MessageId | undefined
   /** Stable message id used for retrying delivery after a restart. */
   readonly messageId: MessageId
+  /** Cross-Bot routine chain identity, when this delivery came from a peer Bot. */
+  readonly chainId?: string | undefined
+  /** Number of Bot-to-Bot hops already traversed by this delivery. */
+  readonly depth?: number | undefined
   /** Whether the follow-up was persisted in the Bot Session. */
   readonly status: 'pending' | 'delivered'
+  /** Time the Host durably recorded an invocation of Agent.followup. */
+  readonly dispatchStartedAt?: string | undefined
   /** Time the event was admitted to this routine. */
   readonly createdAt: string
   /** Time Session persistence acknowledged the follow-up. */
@@ -92,7 +100,7 @@ export interface BotEventRoutineResult {
   /** Event-trigger message whose turn produced this result. */
   readonly messageId: MessageId
   /** Turn-ending reason, excluding private model reasoning. */
-  readonly status: 'completed' | 'error' | 'aborted' | 'blocked' | 'max-tokens' | 'interrupted' | 'forked'
+  readonly status: 'completed' | 'error' | 'aborted' | 'blocked' | 'max-tokens' | 'interrupted' | 'forked' | 'other'
   /** Durable event time of the turn boundary. */
   readonly completedAt: string
   /** Visible assistant text produced by the turn, when any. */
@@ -124,7 +132,7 @@ export interface BotEventRoutine {
 }
 
 /** Browser/native view of one Bot event routine. */
-export type BotEventRoutineView = BotEventRoutine & {
+export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results'> & {
   /** Common routine discriminator used alongside timed Schedule records. */
   readonly kind: 'event'
   /** Event routines wait for a matching message instead of a wall-clock target. */
@@ -163,8 +171,8 @@ export interface BotRecord {
   readonly updatedAt: number
 }
 
-/** Browser-facing Bot row enriched with live availability. */
-export type BotView = BotRecord & {
+/** Browser-facing roster row enriched with live availability, without Bot-owned routine internals. */
+export type BotView = Omit<BotRecord, 'eventRoutines'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
 }

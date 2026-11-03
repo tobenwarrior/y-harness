@@ -5429,11 +5429,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineDelivery',
-    declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly messageId: MessageId;\n    readonly status: \'pending\' | \'delivered\';\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
+    declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly messageId: MessageId;\n    readonly chainId?: string | undefined;\n    readonly depth?: number | undefined;\n    readonly status: \'pending\' | \'delivered\';\n    readonly dispatchStartedAt?: string | undefined;\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
   },
   {
     name: 'BotEventRoutineResult',
-    declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
+    declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\' | \'other\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
   },
   {
     name: 'BotEventSource',
@@ -5477,7 +5477,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = BotRecord & {\n    readonly availability: BotAvailability;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'eventRoutines\'> & {\n    readonly availability: BotAvailability;\n};',
   },
   {
     name: 'BoxProps',
