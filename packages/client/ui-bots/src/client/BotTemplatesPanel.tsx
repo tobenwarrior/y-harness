@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Button, IconCheckOutlineRegular, IconCopyOutlineRegular, IconDownloadOutlineRegular, IconLinkOutlineRegular, IconShareOutlineRegular,
@@ -32,11 +32,13 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
   readonly onClose: () => void
 }): ReactNode {
   const [importName, setImportName] = useState('')
+  const importNameGeneration = useRef(0)
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
   const [publishingBotId, setPublishingBotId] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) return
+    importNameGeneration.current++
     setImportName('')
     setCopiedCode(null)
     setPublishingBotId(null)
@@ -67,9 +69,11 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
   }
 
   const importBot = async (): Promise<void> => {
+    const requestedName = importName
+    const editGeneration = importNameGeneration.current
     try {
-      await actions.importTemplate(importName)
-      setImportName('')
+      await actions.importTemplate(requestedName)
+      if (importNameGeneration.current === editGeneration) setImportName('')
     } catch {
       // Keep the code and preview visible so the user can retry safely.
     }
@@ -179,7 +183,10 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
                 value={importName}
                 placeholder={t('templatesImportNamePlaceholder')}
                 aria-label={t('templatesImportNameLabel')}
-                onChange={(event) => { setImportName(event.currentTarget.value) }}
+                onChange={(event) => {
+                  importNameGeneration.current++
+                  setImportName(event.currentTarget.value)
+                }}
               />
               <Button
                 variant="primary"

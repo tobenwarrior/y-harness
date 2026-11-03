@@ -156,7 +156,7 @@ export interface BotTemplateLocalPermissions {
   readonly status: 'resolved' | 'unavailable'
   /** Preset selected by the target Host, including its configured default. */
   readonly preset?: string
-  /** Effective model-facing tool names for that local preset. */
+  /** Sorted unique effective model-facing tool names for that local preset. */
   readonly tools: readonly string[]
 }
 
@@ -198,7 +198,7 @@ export interface BotTemplateImportValue {
 export interface BotTemplateApproveValue {
   /** The verified template with its Host-local approval state. */
   readonly template: BotTemplateView
-  /** Current target-Host preset and tool view shown during approval. */
+  /** Current target-Host preset and tool view shown during approval and bound to the Host-local approval. */
   readonly localPermissions: BotTemplateLocalPermissions
 }
 
@@ -229,7 +229,7 @@ declare module '@yharness/typert-protocol' {
     /** The approval did not match the currently inspected signed artifact. */
     'bot-template/approval-mismatch': { readonly fingerprint: string }
     /** The target Host cannot resolve the preset required by the signed artifact. */
-    'bot-template/permissions-unavailable': { readonly preset: string }
+    'bot-template/permissions-unavailable': { readonly preset?: string }
     /** The local template row belongs to another configured owner. */
     'bot-template/forbidden': { readonly templateId: BotTemplateId }
     /** A portable avatar could not be admitted on the target Host. */

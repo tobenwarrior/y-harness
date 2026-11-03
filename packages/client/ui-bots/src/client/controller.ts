@@ -818,6 +818,7 @@ export class BotWorkspaceController {
       const importTemplate = this.remote.importTemplate
       const current = this.source.getSnapshot()
       const requestedCode = current.templates.code.trim()
+      const editGeneration = this.templateStateGeneration
       if (importTemplate === undefined) throw new Error(this.unexpectedResponse())
       if (requestedCode === '') throw new Error(this.unexpectedResponse())
       const preview = current.templates.preview
@@ -875,7 +876,7 @@ export class BotWorkspaceController {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
       if (!result.ok) throw new Error(result.error.message)
-      if (this.disposed || actionGeneration !== this.templateActionGeneration) return
+      if (this.disposed || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
       this.templateImportIds.delete(importKey)
       const latest = this.source.getSnapshot()
       this.source.set({ ...latest, templates: { ...latest.templates, code: '', preview: null, error: null } })

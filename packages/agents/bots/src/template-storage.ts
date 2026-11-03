@@ -39,6 +39,8 @@ const importDigestSchema = z.string().regex(/^[0-9a-f]{64}$/)
 export const BOT_TEMPLATE_IMPORT_BINDING_LIMIT = 4096
 /** Maximum explicit portable-artifact approvals retained by one Host. */
 export const BOT_TEMPLATE_APPROVAL_LIMIT = 4096
+/** Maximum effective tool names retained in one Host-local approval. */
+export const BOT_TEMPLATE_APPROVAL_TOOL_LIMIT = 1024
 const boundedText = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value, {
   message: 'Template text must not have surrounding whitespace',
 })
@@ -46,6 +48,19 @@ const personaSchema = z.string().min(1).max(4000).refine(value => value.trim() =
   message: 'Template personas must not have surrounding whitespace',
 })
 const capabilitySchema = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)
+const approvalPermissionsSchema = z.object({
+  preset: boundedText(160),
+  tools: z.array(boundedText(160)).max(BOT_TEMPLATE_APPROVAL_TOOL_LIMIT)
+    .refine(values => new Set(values).size === values.length)
+    .transform(values => [...values].sort()),
+}).strict()
+const approvalSchema = z.union([
+  z.number().safe().int().nonnegative().transform((approvedAt): BotTemplateApproval => ({ approvedAt })),
+  z.object({
+    approvedAt: z.number().safe().int().nonnegative(),
+    permissions: approvalPermissionsSchema.optional(),
+  }).strict(),
+])
 
 /** Durable template row with its Host-local publication owner. */
 export interface BotTemplateStoredRecord extends BotTemplateView {
@@ -60,7 +75,23 @@ export interface BotTemplateGlobalState {
   /** Local idempotency bindings keyed by a one-way import-operation digest. */
   readonly imports?: Readonly<Record<string, { readonly fingerprint: string; readonly botId: string; readonly name?: string }>>
   /** Exact signed-artifact fingerprints explicitly approved by the Host owner. */
-  readonly approvals?: Readonly<Record<string, number>>
+  readonly approvals?: Readonly<Record<string, BotTemplateApproval>>
+}
+
+/** Effective target-Host preset and tools bound to one approval. */
+export interface BotTemplateApprovalPermissions {
+  /** Preset resolved while the artifact was approved. */
+  readonly preset: string
+  /** Sorted unique tool names exposed by that preset. */
+  readonly tools: readonly string[]
+}
+
+/** Host-local approval record for one signed artifact fingerprint. */
+export interface BotTemplateApproval {
+  /** Approval time in Unix milliseconds. */
+  readonly approvedAt: number
+  /** Exact resolved target-Host view captured at approval time. */
+  readonly permissions?: BotTemplateApprovalPermissions | undefined
 }
 
 /** Stored reusable Bot template record. */
@@ -119,7 +150,7 @@ export const botTemplateDomain = defineDomain({
       }).strict()).refine(value => Object.keys(value).length <= BOT_TEMPLATE_IMPORT_BINDING_LIMIT, {
         message: 'Template import retry bindings exceed the Host limit',
       }).optional(),
-      approvals: z.record(fingerprintSchema, z.number().safe().int().nonnegative()).refine(
+      approvals: z.record(fingerprintSchema, approvalSchema).refine(
         value => Object.keys(value).length <= BOT_TEMPLATE_APPROVAL_LIMIT,
         {
           message: 'Template approvals exceed the Host limit',

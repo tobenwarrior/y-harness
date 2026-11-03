@@ -3194,6 +3194,7 @@ describe('durable Bot roster', () => {
 
     const target = await harness()
     try {
+      provideResolvedTemplatePreset(target.ctx)
       await target.service.approveTemplate({
         shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
       })
@@ -3244,6 +3245,67 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('requires reapproval when the resolved local tool view changes, including retries', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission mutation source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    const readTool = mcpFixtureTool('local-read', 'local', async () => 'read')
+    target.ctx.tools.register(readTool)
+    const initialSchemas = target.ctx.tools.schemas()
+    const changedSchemas = [...initialSchemas, mcpFixtureTool('local-write', 'local', async () => 'write')]
+    let currentSchemas = initialSchemas
+    const schemas = vi.spyOn(target.ctx.tools, 'schemas').mockImplementation(() => currentSchemas)
+    const acquireScope = vi.fn(async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }))
+    target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+    try {
+      await target.service.approveTemplate({ shareCode: published.template.shareCode, fingerprint: published.template.fingerprint! })
+
+      currentSchemas = changedSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      expect(target.create).not.toHaveBeenCalled()
+
+      currentSchemas = initialSchemas
+      const first = await target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)
+      currentSchemas = changedSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+
+      currentSchemas = initialSchemas
+      await expect(target.service.importTemplate({
+        shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
+      } as never)).resolves.toMatchObject({ bot: { id: first.bot.id } })
+      expect(target.create).toHaveBeenCalledOnce()
+      expect(schemas).toHaveBeenCalled()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('fails closed when approval cannot resolve a local preset and tool view', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Unavailable approval source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      await expect(target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      })).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      expect(target.create).not.toHaveBeenCalled()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
   it('rejects an approved import when the target preset becomes unavailable', async () => {
     const source = await harness()
     const sourceBot = await source.service.create({ name: 'Permission retry source', agentPreset: 'research-preset' })
@@ -3285,6 +3347,7 @@ describe('durable Bot roster', () => {
     create.mockRejectedValueOnce(new Error('session unavailable'))
     const target = await harness(new MemoryMediaPool(), create)
     try {
+      provideResolvedTemplatePreset(target.ctx)
       await target.service.approveTemplate({ shareCode: published.template.shareCode, fingerprint: published.template.fingerprint! })
       const request = { shareCode: published.template.shareCode, importId: 'recoverable-import' } as never
       await expect(target.service.importTemplate(request)).rejects.toMatchObject({ code: 'bot/provisioning-failed' })

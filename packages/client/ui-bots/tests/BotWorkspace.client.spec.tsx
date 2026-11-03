@@ -6,6 +6,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
@@ -243,6 +244,39 @@ describe('Bot roster and detail', () => {
     const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
     expect(importButton).toHaveProperty('disabled', true)
     expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
+  })
+
+  it('keeps a newer replacement-name draft when an older import resolves', async () => {
+    const importResult = Promise.withResolvers<undefined>()
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => { await importResult.promise }),
+    }
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-name-race',
+      fingerprint: 'artifact-fingerprint-name-race',
+      localPermissions: { status: 'resolved' as const, preset: 'research-preset', tools: ['read_file'] },
+    }
+    render(<BotTemplatesPanel
+      bots={bots}
+      state={{ ...templateState, preview }}
+      actions={actions}
+      t={t}
+      open
+      onClose={vi.fn()}
+    />)
+
+    const name = screen.getByRole('textbox', { name: 'Imported Bot name' })
+    fireEvent.change(name, { target: { value: 'Older draft name' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and create Bot' }))
+    fireEvent.change(name, { target: { value: 'Newer draft name' } })
+    importResult.resolve(undefined)
+
+    await waitFor(() => { expect(name).toHaveProperty('value', 'Newer draft name') })
   })
 
   it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {

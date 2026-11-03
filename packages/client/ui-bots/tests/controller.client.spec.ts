@@ -500,6 +500,34 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
   })
 
+  it('does not clear a newer template draft when an older import resolves', async () => {
+    const source = bot('bot-template-stale-import', 'session-template-stale-import')
+    const template = templateView('bot-template-stale-import-row', 'bot-template-code-stale-import')
+    const importResult = Promise.withResolvers<RemoteResult<{ readonly bot: BotView; readonly template: BotTemplateView }>>()
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions } }))
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn(async () => importResult.promise)
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    actions?.setTemplateCode('bot-template-code-stale-import')
+    await actions?.previewTemplate()
+    const importing = actions?.importTemplate('Older draft name')
+    await vi.waitFor(() => { expect(remote.importTemplate).toHaveBeenCalledOnce() })
+
+    actions?.setTemplateCode('newer-template-code')
+    importResult.resolve({ ok: true, value: { bot: source, template } })
+    await importing
+
+    expect(controller.source.getSnapshot().templates.code).toBe('newer-template-code')
+    expect(controller.source.getSnapshot().templates.preview).toBeNull()
+    controller.dispose()
+  })
+
   it('does not import when approval returns a different artifact fingerprint', async () => {
     const source = bot('bot-template-approval-response', 'session-template-approval-response')
     const template = templateView('bot-template-approval-row', 'bot-template-code-approval')

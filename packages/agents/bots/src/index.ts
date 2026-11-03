@@ -128,7 +128,11 @@ import {
   normalizeBotTemplateShareCode,
 } from './template-storage.ts'
 import type { BotTemplateArtifactPayload } from './template-codec.ts'
-import type { BotTemplateStoredRecord } from './template-storage.ts'
+import type {
+  BotTemplateApproval,
+  BotTemplateApprovalPermissions,
+  BotTemplateStoredRecord,
+} from './template-storage.ts'
 
 export type * from './types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
@@ -253,6 +257,21 @@ interface ActiveBotTemplate {
   readonly payload: BotTemplateArtifactPayload
   readonly fingerprint: string
   readonly approved: boolean
+  readonly localTemplate: boolean
+  readonly approval?: BotTemplateApproval
+}
+
+function approvalPermissionsOf(localPermissions: BotTemplateLocalPermissions): BotTemplateApprovalPermissions | undefined {
+  if (localPermissions.status !== 'resolved' || localPermissions.preset === undefined) return undefined
+  return { preset: localPermissions.preset, tools: [...localPermissions.tools].sort() }
+}
+
+function sameApprovalPermissions(
+  left: BotTemplateApprovalPermissions | undefined,
+  right: BotTemplateApprovalPermissions | undefined,
+): boolean {
+  if (left === undefined || right === undefined || left.preset !== right.preset || left.tools.length !== right.tools.length) return false
+  return left.tools.every((tool, index) => tool === right.tools[index])
 }
 
 function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDeliveryClaimInput[] {
@@ -1463,19 +1482,26 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
-      const localPermissions = await this.requireTemplatePermissions(active.payload.agentPreset)
+      const localPermissions = await this.requireTemplatePermissions(active.payload.agentPreset, { requireResolution: true })
+      const approvalPermissions = approvalPermissionsOf(localPermissions)
+      if (approvalPermissions === undefined) throw new RemoteError(
+        'bot-template/permissions-unavailable',
+        'The target Host could not resolve an effective preset and tool view for this Bot template.',
+        {},
+      )
       const templateDomain = await this.templateDomain
       const current = templateDomain.global.get()
       const approvals = current.approvals ?? {}
       if (approvals[active.fingerprint] === undefined && Object.keys(approvals).length >= BOT_TEMPLATE_APPROVAL_LIMIT) {
         throw new RemoteError('gateway/bad-request', 'This Host has reached its template approval limit.', {})
       }
-      if (approvals[active.fingerprint] === undefined) {
-        await templateDomain.global.set({
-          ...current,
-          approvals: { ...approvals, [active.fingerprint]: Date.now() },
-        })
-      }
+      await templateDomain.global.set({
+        ...current,
+        approvals: {
+          ...approvals,
+          [active.fingerprint]: { approvedAt: Date.now(), permissions: approvalPermissions },
+        },
+      })
       return {
         template: { ...active.template, approved: true },
         localPermissions,
@@ -1515,13 +1541,6 @@ export class BotService extends TypertRemoteService {
           { importId },
         )
       }
-      const id = importId === undefined
-        ? BotId(`bot-${randomUUID()}`)
-        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
-      if (previousBinding !== undefined && importId !== undefined) {
-        const existing = (await this.getDomain()).table('bots').get(BotId(previousBinding.botId))
-        if (existing?.ownerId === this.ownerId && existing.state === 'active') return { bot: this.view(existing), template }
-      }
       if (!active.approved) {
         throw new RemoteError(
           'bot-template/untrusted',
@@ -1529,7 +1548,26 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
-      await this.requireTemplatePermissions(payload.agentPreset)
+      const localPermissions = await this.requireTemplatePermissions(payload.agentPreset, {
+        requireResolution: !active.localTemplate,
+      })
+      if (!active.localTemplate && !sameApprovalPermissions(
+        active.approval?.permissions,
+        approvalPermissionsOf(localPermissions),
+      )) {
+        throw new RemoteError(
+          'bot-template/approval-mismatch',
+          'Approve this signed Bot template again because the target Host preset or tool permissions changed.',
+          { fingerprint: active.fingerprint },
+        )
+      }
+      const id = importId === undefined
+        ? BotId(`bot-${randomUUID()}`)
+        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
+      if (previousBinding !== undefined && importId !== undefined) {
+        const existing = (await this.getDomain()).table('bots').get(BotId(previousBinding.botId))
+        if (existing?.ownerId === this.ownerId && existing.state === 'active') return { bot: this.view(existing), template }
+      }
       if (importDigest !== undefined && previousBinding === undefined
         && Object.keys(bindings ?? {}).length >= BOT_TEMPLATE_IMPORT_BINDING_LIMIT) {
         throw new RemoteError('gateway/bad-request', 'This Host has reached its template import retry limit.', {})
@@ -2300,9 +2338,10 @@ export class BotService extends TypertRemoteService {
     if (localTemplate?.fingerprint !== undefined && localTemplate.fingerprint !== decoded.fingerprint) {
       throw new RemoteError('bot-template/invalid', 'The Bot template share code does not match its local record.', { reason: 'invalid-payload' })
     }
-    const approved = localTemplate !== undefined
-      ? true
-      : templateDomain.global.get().approvals?.[decoded.fingerprint] !== undefined
+    const approval = localTemplate === undefined
+      ? templateDomain.global.get().approvals?.[decoded.fingerprint]
+      : undefined
+    const approved = localTemplate !== undefined || approval?.permissions !== undefined
     const template = signedTemplateView(
       decoded.payload,
       shareCode,
@@ -2313,7 +2352,14 @@ export class BotService extends TypertRemoteService {
       localTemplate?.revokedAt,
       approved,
     )
-    return { template, payload: decoded.payload, fingerprint: decoded.fingerprint, approved }
+    return {
+      template,
+      payload: decoded.payload,
+      fingerprint: decoded.fingerprint,
+      approved,
+      localTemplate: localTemplate !== undefined,
+      ...(approval === undefined ? {} : { approval }),
+    }
   }
 
   /** Resolve the target Host's effective tool view for one imported preset. */
@@ -2331,7 +2377,7 @@ export class BotService extends TypertRemoteService {
         return {
           status: 'resolved',
           preset,
-          tools: this.ctx.tools.schemas(lease.key).map(tool => tool.name).sort(),
+          tools: [...new Set(this.ctx.tools.schemas(lease.key).map(tool => tool.name))].sort(),
         }
       } finally {
         await lease[Symbol.asyncDispose]()
@@ -2343,14 +2389,20 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Require the signed or target-default preset to resolve before approval or import. */
-  private async requireTemplatePermissions(agentPreset: string | undefined): Promise<BotTemplateLocalPermissions> {
+  private async requireTemplatePermissions(
+    agentPreset: string | undefined,
+    options: { readonly requireResolution?: boolean } = {},
+  ): Promise<BotTemplateLocalPermissions> {
     const permissions = await this.localTemplatePermissions(agentPreset)
     const requiredPreset = agentPreset ?? this.ctx.get('agentPresets')?.defaultId
-    if (requiredPreset !== undefined && permissions.status !== 'resolved') {
+    if ((options.requireResolution === true || requiredPreset !== undefined) && permissions.status !== 'resolved') {
+      const details = requiredPreset === undefined ? {} : { preset: requiredPreset }
       throw new RemoteError(
         'bot-template/permissions-unavailable',
-        `The target Host could not resolve the Bot template preset "${requiredPreset}".`,
-        { preset: requiredPreset },
+        requiredPreset === undefined
+          ? 'The target Host has no resolvable default Bot template preset.'
+          : `The target Host could not resolve the Bot template preset "${requiredPreset}".`,
+        details,
       )
     }
     return permissions
