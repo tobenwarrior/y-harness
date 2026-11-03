@@ -721,23 +721,26 @@ describe('durable Bot roster', () => {
         owner.session.append('agent/inbox/spliced', {
           target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
         })
+        return true
       })
       owner.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'Trigger the canceled delivery.' }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
-      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledTimes(2) })
       const seed = owner.session.snapshotEvents()
-      const pending = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
-      expect(JSON.parse(pending.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'pending' }] })
+      await vi.waitFor(async () => {
+        const recovered = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
+        expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
+      })
       await close(h.ctx)
       initialClosed = true
 
       reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map([
         [String(created.bot.sessionId), seed],
       ]))
-      expect(reopened.followups[0]).toHaveBeenCalledOnce()
-      expect(reopened.flush).toHaveBeenCalled()
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
+      expect(reopened.flush).not.toHaveBeenCalled()
       const reopenedProvider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
       const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
@@ -960,6 +963,13 @@ describe('durable Bot roster', () => {
       const ownerAgent = h.agents[0]
       if (ownerAgent === undefined) throw new Error('persisted relay owner Agent was not created')
       ownerAgent.session.append('turn/start', { turn: 9 })
+      ownerAgent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'A lower-depth peer relay.' }],
+        source: {
+          kind: 'agent-message', form: 'relay', senderSessionId: peer.bot.sessionId,
+          botEventRoutine: { chainId: 'persisted-relay-chain', depth: 1 },
+        },
+      }), { surfaceOp: 'append' })
       ownerAgent.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'A capped peer relay.' }],
         source: {

@@ -441,6 +441,16 @@ function relayContextOf(
   return { chainId, depth: Math.min(depth, MAX_EVENT_ROUTINE_HOPS) }
 }
 
+/** Keep the most conservative relay depth observed in one Bot turn. */
+function maxRelayContext(
+  current: BotEventRelayContext | undefined,
+  candidate: BotEventRelayContext | undefined,
+): BotEventRelayContext | undefined {
+  if (current === undefined) return candidate
+  if (candidate === undefined || candidate.depth <= current.depth) return current
+  return candidate
+}
+
 /** Return the currently open turn recorded in a Session log, if any. */
 function openTurnFromEvents(events: readonly SessionEvent[]): number {
   let openTurn = -1
@@ -469,11 +479,17 @@ function routineTurnsFromEvents(events: readonly SessionEvent[]): Map<number, Ev
     if (event.type === 'user/message') {
       if (event.data.source.kind === 'bot-event-routine') {
         openTurn.runs.set(String(event.data.id), event.data.source.routineId)
-        openTurn.relayContext ??= relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`)
+        openTurn.relayContext = maxRelayContext(
+          openTurn.relayContext,
+          relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`),
+        )
       } else if (event.data.source.kind === 'agent-message' && event.data.source.botEventRoutine !== undefined) {
-        openTurn.relayContext ??= relayContextOf(
-          event.data.source.botEventRoutine,
-          `${String(event.data.id)}:${String(openTurn.turn)}`,
+        openTurn.relayContext = maxRelayContext(
+          openTurn.relayContext,
+          relayContextOf(
+            event.data.source.botEventRoutine,
+            `${String(event.data.id)}:${String(openTurn.turn)}`,
+          ),
         )
       }
     } else if (event.type === 'assistant/message') {
@@ -500,7 +516,7 @@ function routineTurnFromEvents(
     turn: turnNumber,
     runs,
     output,
-    relayContext: persisted?.relayContext ?? fallback?.relayContext,
+    relayContext: maxRelayContext(persisted?.relayContext, fallback?.relayContext),
   }
 }
 
@@ -620,6 +636,7 @@ export class BotService extends TypertRemoteService {
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
+  private readonly eventRoutineRetryKeys = new Set<string>()
   private readonly collaboration: BotCollaborationService
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
@@ -1268,7 +1285,7 @@ export class BotService extends TypertRemoteService {
       if (turn !== undefined) {
         turn.runs.set(String(message.id), source.routineId)
         const relayContext = relayContextOf(source, `${String(sessionId)}:${String(message.id)}`)
-        if (relayContext !== undefined) turn.relayContext = relayContext
+        if (relayContext !== undefined) turn.relayContext = maxRelayContext(turn.relayContext, relayContext)
       }
       queueMicrotask(() => {
         void this.markEventRoutineDeliveryClaimed(sessionId, source.routineId, MessageId(message.id), eventTime)
@@ -1288,7 +1305,7 @@ export class BotService extends TypertRemoteService {
       : relayContextOf(trigger.relayContext, `${String(sessionId)}:${String(message.id)}`)
     if (relayContext !== undefined) {
       const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
-      if (turn !== undefined) turn.relayContext = relayContext
+      if (turn !== undefined) turn.relayContext = maxRelayContext(turn.relayContext, relayContext)
     }
     if (relayContext !== undefined && relayContext.depth >= MAX_EVENT_ROUTINE_HOPS) return
     queueMicrotask(() => {
@@ -1496,6 +1513,8 @@ export class BotService extends TypertRemoteService {
       }
       await bots.put(resetRecord.id, resetRecord)
       this.recordsBySession.set(String(resetRecord.sessionId), resetRecord)
+      this.emitChanged()
+      this.scheduleCanceledEventRoutineRetry(resetRecord.sessionId, resetRoutine.id, resetDelivery.messageId)
       return resetRecord
     }
     if (!afterSurface && afterInbox?.disposition !== 'pending' && afterInbox?.disposition !== 'claimed') {
@@ -1520,6 +1539,22 @@ export class BotService extends TypertRemoteService {
     this.recordsBySession.set(String(next.sessionId), next)
     this.emitChanged()
     return next
+  }
+
+  /** Retry one canceled delivery once in-process without creating a retry loop. */
+  private scheduleCanceledEventRoutineRetry(sessionId: SessionId, routineId: string, messageId: MessageId): void {
+    const key = `${String(sessionId)}:${routineId}:${String(messageId)}`
+    if (this.eventRoutineRetryKeys.has(key)) return
+    this.eventRoutineRetryKeys.add(key)
+    queueMicrotask(() => {
+      void this.retryPendingEventRoutines(sessionId, routineId, false)
+        .catch((error: unknown) => {
+          this.ctx.logger.warn(`bots: canceled event routine retry failed: ${String(error)}`)
+        })
+        .finally(() => {
+          this.eventRoutineRetryKeys.delete(key)
+        })
+    })
   }
 
   /** Persist one completed model result without changing delivery semantics. */
