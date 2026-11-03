@@ -1,7 +1,7 @@
 /** Developer field classification matches native admission and metadata preservation. */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { Session, SessionId, SessionLogOffset } from '@yharness/session'
+import { Session, SessionId, SessionLogOffset, SESSION_FORMAT_VERSION } from '@yharness/session'
 import type { SessionEvent, SessionHeader } from '@yharness/session'
 import type { SessionFormatEvent } from '@yharness/session-format'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
@@ -48,7 +48,7 @@ describe('developer field compatibility', () => {
     nodes[blockIndex] = { ...block, properties: [...block.properties, { name: 'traceId', type: stringIndex, optional: true }] }
     const schema = canonicalizeSchema(nodes, 0)
     expect(classifyPersistenceChange(before, { ...before, schema, digest: schemaDigest(schema) })).toMatchObject([{ kind: 'optional-property-added', requiresVersionBump: false }])
-    const header = { version: 5, id: 'optional-developer-field', createdAt: 1, isSeeded: false, delegationDepth: 0 }
+    const header = { version: SESSION_FORMAT_VERSION, id: 'optional-developer-field', createdAt: 1, isSeeded: false, delegationDepth: 0 }
     const message = { id: 'developer', role: 'developer', source: { kind: 'tool-registry', extra: true },
       content: [{ type: 'tool-addition', toolName: 'search', traceId: 'retained' }], extra: true }
     const events: SessionFormatEvent[] = [

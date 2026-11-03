@@ -1545,7 +1545,9 @@ export class BotService extends TypertRemoteService {
     }))
     ctx.on('agent/created', async ({ agent }) => {
       await this.installPrompt(agent)
-      await this.reconcileGroupSession(agent)
+      void this.reconcileGroupSession(agent).catch((error: unknown) => {
+        this.ctx.logger.warn(`bots: group Session reconciliation failed for ${agent.id}: ${String(error)}`)
+      })
     })
     ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
     this.initialized = ctx.effect(async () => {

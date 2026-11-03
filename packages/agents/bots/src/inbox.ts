@@ -13,7 +13,12 @@ export interface BotInboxMessageState {
   readonly disposition: BotInboxMessageDisposition
 }
 
-/** Reconstruct one inbox message's durable state from normalized splice events. */
+/**
+ * Reconstruct one inbox message's durable state from normalized splice events.
+ * @param events - Session events in durable order.
+ * @param messageId - Message whose inbox state is requested.
+ * @returns The latest state, or undefined when the message was not recorded.
+ */
 export function botInboxMessageState(
   events: readonly SessionEvent[],
   messageId: MessageId,

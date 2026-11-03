@@ -2258,6 +2258,7 @@ describe('durable Bot roster', () => {
         .mockRejectedValueOnce(new Error('third consecutive group inspection failure'))
         .mockRejectedValueOnce(new Error('fourth consecutive group inspection failure'))
       await h.ctx.serial('agent/created', { agent: targetAgent, source: 'resume' })
+      await vi.advanceTimersByTimeAsync(0)
       expect(h.inspect.mock.calls.length).toBe(before + 2)
       await vi.advanceTimersByTimeAsync(25)
       expect(h.inspect.mock.calls.length).toBeGreaterThanOrEqual(before + 4)
