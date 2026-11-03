@@ -105,6 +105,7 @@ interface Fixture {
   readonly authority: SharedAccessAuthority
   readonly service: SharedBotService
   readonly host: SharedBotHostFixture
+  readonly clock: { value: number }
   readonly close: () => Promise<void>
 }
 
@@ -311,7 +312,12 @@ class SharedBotHostFixture implements SharedBotHost {
   }
 }
 
-async function fixture(membershipPollIntervalMs = 10, includeSecondBot = false, includeThirdBot = false): Promise<Fixture> {
+async function fixture(
+  membershipPollIntervalMs = 10,
+  includeSecondBot = false,
+  includeThirdBot = false,
+  clock: { value: number } = { value: 1_000 },
+): Promise<Fixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
   const pool = new MemoryMediaPool()
@@ -328,15 +334,15 @@ async function fixture(membershipPollIntervalMs = 10, includeSecondBot = false, 
   const authority = await SharedAccessAuthority.create(ctx, credentials, {
     sessionMaxAgeMs: 60_000,
     inviteMaxAgeMs: 60_000,
-    now: () => 1_000,
+    now: () => clock.value,
   })
   const host = new SharedBotHostFixture(includeSecondBot, includeThirdBot)
   const service = await SharedBotService.create(ctx, facility, authority, host, {
-    now: () => 1_000,
+    now: () => clock.value,
     membershipPollIntervalMs,
   })
   return {
-    ctx, facility, pool, records, credentials, authority, service, host,
+    ctx, facility, pool, records, credentials, authority, service, host, clock,
     close: async () => { await service.dispose(); await authority.dispose(); await ctx.fiber.dispose() },
   }
 }
@@ -364,11 +370,11 @@ async function secondaryFixture(value: Fixture, includeSecondBot = false, includ
   const authority = await SharedAccessAuthority.create(ctx, credentials, {
     sessionMaxAgeMs: 60_000,
     inviteMaxAgeMs: 60_000,
-    now: () => 1_000,
+    now: () => value.clock.value,
   })
   const host = new SharedBotHostFixture(includeSecondBot, includeThirdBot)
   const service = await SharedBotService.create(ctx, facility, authority, host, {
-    now: () => 1_000,
+    now: () => value.clock.value,
     membershipPollIntervalMs: 10,
   })
   return {
@@ -473,7 +479,7 @@ describe('shared Bot snapshot validation', () => {
         createdAt: 1,
       }],
       deliveries: [{
-        id: 'delivery-reference-validation',
+        id: 'delivery-02925ba9144d5f4f18db58870af2de23877e6103186ad2471cd4b999518d099c',
         groupId: 'bot-group-reference-validation',
         messageId: 'bot-group-message-reference-validation',
         botId: 'bot-chief',
@@ -482,9 +488,15 @@ describe('shared Bot snapshot validation', () => {
         senderPrincipalId: 'principal-owner',
         updatedAt: 1,
       }],
-      sessions: [],
+      sessions: [{
+        groupId: 'bot-group-reference-validation',
+        botId: 'bot-chief',
+        sessionId: 'shared-session-group-reference-validation',
+        createdAt: 1,
+        updatedAt: 1,
+      }],
       invites: [],
-      responseReservations: ['delivery-reference-validation'],
+      responseReservations: ['delivery-02925ba9144d5f4f18db58870af2de23877e6103186ad2471cd4b999518d099c'],
     }
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
@@ -500,6 +512,10 @@ describe('shared Bot snapshot validation', () => {
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
+      deliveries: [{ ...valid.deliveries[0], id: 'delivery-noncanonical' }],
+    })).toThrow()
+    expect(() => sharedGroupSnapshotSchema.parse({
+      ...valid,
       deliveries: [{
         ...valid.deliveries[0],
         status: 'responded' as const,
@@ -509,6 +525,25 @@ describe('shared Bot snapshot validation', () => {
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
       responseReservations: ['delivery-missing'],
+    })).toThrow()
+    expect(() => sharedGroupSnapshotSchema.parse({
+      ...valid,
+      sessions: [],
+    })).toThrow()
+    expect(() => sharedGroupSnapshotSchema.parse({
+      ...valid,
+      sessions: [...valid.sessions, {
+        groupId: valid.groups[0].id,
+        botId: 'bot-not-in-group',
+        sessionId: 'shared-session-group-dangling',
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    })).toThrow()
+    expect(() => sharedGroupSnapshotSchema.parse({
+      ...valid,
+      deliveries: [{ ...valid.deliveries[0], status: 'failed' as const }],
+      responseReservations: [valid.deliveries[0].id],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
@@ -922,6 +957,219 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('does not recover a delivery after its source loses active Bot membership', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const chiefOwner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(chiefOwner)),
+      )
+      const chiefCollaborator = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const secondCollaborator = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(chiefCollaborator)),
+      )
+      const owner = await principal(value, chiefOwner)
+      const groupCreated = await value.service.handle('bots/share/create-group', {
+        name: 'Recovery authorization room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(groupCreated)
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const groupEnrollment = await value.service.enroll(
+        groupInviteCodeFromResult(groupInvite),
+        request(cookie(secondCollaborator)),
+      )
+      const collaborator = await principal(value, groupEnrollment)
+      const messageId = BotGroupMessageId('bot-group-message-recovery-membership-revoked')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'This must not recover after membership revocation.',
+        messageId,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const delivery = groups.deliveries.find(candidate => candidate.messageId === messageId)
+        if (delivery === undefined) throw new Error('missing recovery authorization delivery')
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...groups,
+              deliveries: groups.deliveries.map(candidate => candidate.id === delivery.id
+                ? {
+                  ...candidate,
+                  status: 'pending' as const,
+                  dispatchToken: 'recovery-membership-stale',
+                  dispatchLeaseUntil: 0,
+                }
+                : candidate),
+              responseReservations: groups.responseReservations.includes(delivery.id)
+                ? groups.responseReservations
+                : [...groups.responseReservations, delivery.id],
+            },
+          },
+        }
+      })
+      await expect(value.service.handle('bots/share/manage-members', {
+        botId: 'bot-chief', action: 'revoke', principalId: collaborator.principalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      secondary = await secondaryFixture(value, true)
+      const admitted = await secondary.authority.admit(request(cookie(groupEnrollment)))
+      if (!('peer' in admitted)) throw new Error('secondary Host rejected the still-active shared principal')
+      await secondary.service.recoverSharedGroupDeliveries()
+      expect(secondary.host.deliverSharedGroup).not.toHaveBeenCalled()
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { deliveries: [{ botId: 'bot-chief', status: 'failed', error: 'Shared Bot group authorization changed before delivery' }] },
+      })
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
+  it('does not dispatch a second recipient while the first lease is renewed', async () => {
+    vi.useFakeTimers()
+    const clock = { value: 1_000 }
+    const value = await fixture(10, true, false, clock)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const chiefOwner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(chiefOwner)),
+      )
+      const owner = await principal(value, chiefOwner)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Lease renewal room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      secondary = await secondaryFixture(value, true)
+      const admitted = await secondary.authority.admit(request(cookie(chiefOwner)))
+      if (!('peer' in admitted)) throw new Error('secondary Host rejected an active shared principal')
+      const entered = Promise.withResolvers<boolean>()
+      const release = Promise.withResolvers<boolean>()
+      value.host.deliverSharedGroup.mockImplementation(async () => {
+        entered.resolve(true)
+        await release.promise
+        return 'accepted'
+      })
+      const payload = {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Keep this recipient fence alive.',
+        messageId: BotGroupMessageId('bot-group-message-lease-renewal'),
+      }
+      const first = value.service.handle('bots/share/send-group-message', payload, new AbortController().signal, owner.peer)
+      await entered.promise
+      clock.value += 10_001
+      await vi.advanceTimersByTimeAsync(10_001)
+      clock.value += 10_001
+      await vi.advanceTimersByTimeAsync(10_001)
+      clock.value += 10_001
+      const second = await secondary.service.handle('bots/share/send-group-message', payload, new AbortController().signal, admitted.peer)
+      expect(second).toMatchObject({ ok: true })
+      expect(secondary.host.deliverSharedGroup).not.toHaveBeenCalled()
+      release.resolve(true)
+      await expect(first).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+    } finally {
+      await secondary?.close()
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers pending deliveries with bounded concurrency', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Bounded recovery room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageIds = Array.from({ length: 5 }, (_, index) => BotGroupMessageId(`bot-group-message-bounded-recovery-${String(index)}`))
+      for (const messageId of messageIds) {
+        await expect(value.service.handle('bots/share/send-group-message', {
+          groupId,
+          targetBotIds: [BotId('bot-chief')],
+          text: `Bounded recovery ${String(messageId)}.`,
+          messageId,
+        }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      }
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const messageSet = new Set(messageIds.map(String))
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...groups,
+              deliveries: groups.deliveries.map(candidate => messageSet.has(String(candidate.messageId))
+                ? {
+                  ...candidate,
+                  status: 'pending' as const,
+                  dispatchToken: `bounded-recovery-${String(candidate.messageId)}`,
+                  dispatchLeaseUntil: 0,
+                }
+                : candidate),
+            },
+          },
+        }
+      })
+      secondary = await secondaryFixture(value, true)
+      let active = 0
+      let maxActive = 0
+      secondary.host.deliverSharedGroup.mockImplementation(async () => {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await new Promise(resolve => setTimeout(resolve, 5))
+        active -= 1
+        return 'accepted'
+      })
+      await secondary.service.recoverSharedGroupDeliveries()
+      expect(maxActive).toBeGreaterThan(1)
+      expect(maxActive).toBeLessThanOrEqual(4)
+      expect(secondary.host.deliverSharedGroup).toHaveBeenCalledTimes(5)
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
   it('keeps a partial shared-group delivery retryable by message id', async () => {
     const value = await fixture(10, true)
     try {
@@ -958,6 +1206,8 @@ describe('shared Bot service', () => {
         ok: true,
         value: { status: 'partial', deliveries: [{ status: 'accepted' }, { status: 'failed' }] },
       })
+      await value.service.recoverSharedGroupDeliveries()
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
       await expect(value.service.handle('bots/share/send-group-message', {
         groupId,
         text: 'Retry this message.',

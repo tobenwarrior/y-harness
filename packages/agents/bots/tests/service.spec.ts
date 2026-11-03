@@ -3559,6 +3559,63 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fences shared-group recipient admission across Bot service instances', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient fence', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-fence'
+    const left = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const right = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-fence'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const leftHost = productionSharedHost(left.service)
+      const rightHost = productionSharedHost(right.service)
+      leftHost.registerSharedGroupSessions?.([binding])
+      rightHost.registerSharedGroupSessions?.([binding])
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      left.flush.mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return true
+      })
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Recipient fence',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Admit this once.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-fence'),
+      }
+      const first = leftHost.deliverSharedGroup?.(request)
+      await entered.promise
+      const second = rightHost.deliverSharedGroup?.(request)
+      release.resolve(undefined)
+      await expect(first).resolves.toBe('accepted')
+      await expect(second).resolves.toBe('duplicate')
+      expect(left.followups[0]).toHaveBeenCalledTimes(1)
+      expect(right.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(right.ctx)
+      await close(left.ctx)
+    }
+  })
+
   it('durably records native collaboration action observations on the Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

@@ -66,6 +66,9 @@ const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
 const SHARED_GROUP_DELIVERY_LEASE_MS = 30_000
+const MAX_SHARED_GROUP_RECOVERY_BATCH = 64
+const SHARED_GROUP_RECOVERY_CONCURRENCY = 4
+const SHARED_GROUP_RECOVERY_TIMEOUT_MS = 15_000
 
 const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId)
 const groupIdSchema = z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId)
@@ -182,6 +185,9 @@ export const sharedGroupSnapshotSchema = z.object({
   for (const delivery of snapshot.deliveries) {
     if (deliveryIds.has(delivery.id)) context.addIssue({ code: 'custom', message: 'shared group delivery ids must be unique', path: ['deliveries'] })
     deliveryIds.add(delivery.id)
+    if (delivery.id !== deliveryKey(delivery.messageId, delivery.botId)) {
+      context.addIssue({ code: 'custom', message: 'shared group delivery id must be canonical', path: ['deliveries'] })
+    }
     if ((delivery.dispatchToken === undefined) !== (delivery.dispatchLeaseUntil === undefined)) {
       context.addIssue({ code: 'custom', message: 'shared group delivery dispatch lease must include its token and expiry', path: ['deliveries'] })
     }
@@ -193,6 +199,10 @@ export const sharedGroupSnapshotSchema = z.object({
     }
     if (delivery.status !== 'responded' && delivery.responseMessageId !== undefined) {
       context.addIssue({ code: 'custom', message: 'non-responded shared group delivery cannot link a response message', path: ['deliveries'] })
+    }
+    if ((delivery.status === 'pending' || delivery.status === 'accepted')
+      && !snapshot.responseReservations.includes(delivery.id)) {
+      context.addIssue({ code: 'custom', message: 'active shared group delivery must have a response reservation', path: ['deliveries'] })
     }
   }
   const groupsById = new Map(snapshot.groups.map(group => [String(group.id), group]))
@@ -242,6 +252,11 @@ export const sharedGroupSnapshotSchema = z.object({
     const knownBots = sessionBotsByGroup.get(String(group.id)) ?? new Set(group.botIds.map(String))
     if (!knownBots.has(String(delivery.botId)) || !targetIds.has(String(delivery.botId))) {
       context.addIssue({ code: 'custom', message: 'shared group delivery Bot must be a message target', path: ['deliveries'] })
+    }
+    if ((delivery.status === 'pending' || delivery.status === 'accepted')
+      && !snapshot.sessions.some(session => session.groupId === delivery.groupId
+        && session.botId === delivery.botId && session.revokedAt === undefined)) {
+      context.addIssue({ code: 'custom', message: 'active shared group delivery must have an active Session binding', path: ['deliveries'] })
     }
     if (message.sender.kind !== 'user' || String(message.sender.principalId ?? '') !== String(delivery.senderPrincipalId)) {
       context.addIssue({ code: 'custom', message: 'shared group delivery sender must match its user message', path: ['deliveries'] })
@@ -359,6 +374,7 @@ export class SharedBotGroupService {
   private readonly recoveryController = new AbortController()
   private readonly recoveryTimers = new Set<ReturnType<typeof setTimeout>>()
   private readonly recoveryTasks = new Set<Promise<void>>()
+  private recoverySweepTimer: ReturnType<typeof setTimeout> | undefined
   private stopped = false
 
   /** @param authority - Shared identity authority providing the durable lock.
@@ -379,6 +395,8 @@ export class SharedBotGroupService {
     this.recoveryController.abort()
     for (const timer of this.recoveryTimers) clearTimeout(timer)
     this.recoveryTimers.clear()
+    if (this.recoverySweepTimer !== undefined) clearTimeout(this.recoverySweepTimer)
+    this.recoverySweepTimer = undefined
     await Promise.allSettled([...this.recoveryTasks])
     this.recoveryTasks.clear()
   }
@@ -397,10 +415,20 @@ export class SharedBotGroupService {
     const extension = await this.authority.readExtension('agent-bots/shared-memberships')
     const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
     this.host.registerSharedGroupSessions?.(snapshot.sessions.filter(session => session.revokedAt === undefined))
-    for (const delivery of snapshot.deliveries.filter(candidate => candidate.status === 'pending')) {
-      signal?.throwIfAborted()
-      await this.recoverPendingDelivery(delivery.id, signal)
+    const pending = snapshot.deliveries.filter(candidate => candidate.status === 'pending')
+    const batch = pending.slice(0, MAX_SHARED_GROUP_RECOVERY_BATCH)
+    let nextIndex = 0
+    const worker = async (): Promise<void> => {
+      while (true) {
+        signal?.throwIfAborted()
+        const index = nextIndex++
+        const delivery = batch[index]
+        if (delivery === undefined) return
+        await this.recoverPendingDelivery(delivery.id, signal)
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(SHARED_GROUP_RECOVERY_CONCURRENCY, batch.length) }, () => worker()))
+    if (pending.length > batch.length) this.scheduleRecoverySweep()
   }
 
   /** Return whether an enrollment code is currently a group invite. */
@@ -1113,6 +1141,7 @@ export class SharedBotGroupService {
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', error)
       return { kind: 'failed', error }
     }
+    const stopLeaseRenewal = this.startDeliveryLeaseRenewal(attempt.deliveryId, claim.token)
     try {
       const deliverSharedGroup = this.host.deliverSharedGroup
       if (deliverSharedGroup === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
@@ -1132,6 +1161,8 @@ export class SharedBotGroupService {
       const safeError = detail.trim().slice(0, 400) || 'Bot delivery failed'
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', safeError)
       return { kind: 'failed', error: safeError }
+    } finally {
+      await stopLeaseRenewal()
     }
   }
 
@@ -1191,7 +1222,7 @@ export class SharedBotGroupService {
   ): Promise<SharedGroupDeliveryClaimResult> {
     return this.authority.mutateExtension<SharedGroupDeliveryClaimResult>(
       'agent-bots/shared-memberships',
-      (current) => {
+      (current, authorityState) => {
         const membershipSnapshot = parseMembershipExtension(current)
         const groups = parseGroups(membershipSnapshot.sharedGroups)
         const group = groups.groups.find(candidate => candidate.id === plan.groupId)
@@ -1200,8 +1231,12 @@ export class SharedBotGroupService {
         if (delivery.status === 'accepted' || delivery.status === 'responded') {
           return { value: { kind: 'duplicate' }, next: current }
         }
+        if (delivery.status !== 'pending' || !groups.responseReservations.includes(delivery.id)) {
+          return { value: { kind: 'denied' }, next: current }
+        }
         const authorized = group.memberPrincipalIds.some(member => String(member) === String(plan.senderPrincipalId))
           && delivery.senderPrincipalId === plan.senderPrincipalId
+          && hasActiveSharedPrincipal(authorityState, membershipSnapshot.memberships, group, plan.senderPrincipalId)
           && group.botIds.includes(attempt.botId)
           && groups.sessions.some(session => session.groupId === group.id
             && session.botId === attempt.botId && session.sessionId === attempt.sessionId && session.revokedAt === undefined)
@@ -1249,6 +1284,46 @@ export class SharedBotGroupService {
     )
   }
 
+  private startDeliveryLeaseRenewal(deliveryId: string, dispatchToken: string): () => Promise<void> {
+    let inFlight: Promise<void> | undefined
+    const timer = setInterval(() => {
+      if (inFlight !== undefined) return
+      inFlight = this.renewDeliveryClaim(deliveryId, dispatchToken)
+        .then(() => undefined, () => undefined)
+        .finally(() => { inFlight = undefined })
+    }, Math.max(1, Math.floor(SHARED_GROUP_DELIVERY_LEASE_MS / 3)))
+    timer.unref?.()
+    return async () => {
+      clearInterval(timer)
+      await inFlight
+    }
+  }
+
+  private async renewDeliveryClaim(deliveryId: string, dispatchToken: string): Promise<void> {
+    await this.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+      const membershipSnapshot = parseMembershipExtension(current)
+      const groups = parseGroups(membershipSnapshot.sharedGroups)
+      const delivery = groups.deliveries.find(candidate => candidate.id === deliveryId)
+      if (delivery === undefined || delivery.status !== 'pending' || delivery.dispatchToken !== dispatchToken) {
+        return { value: undefined, next: current }
+      }
+      const now = this.now()
+      const nextGroups = {
+        ...groups,
+        revision: groups.revision + 1,
+        deliveries: putDelivery(groups.deliveries, {
+          ...delivery,
+          dispatchLeaseUntil: now + SHARED_GROUP_DELIVERY_LEASE_MS,
+          updatedAt: Math.max(now, delivery.updatedAt),
+        }),
+      }
+      return {
+        value: undefined,
+        next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(nextGroups) },
+      }
+    })
+  }
+
   private schedulePendingRecovery(deliveryId: string, delayMs: number): void {
     if (this.stopped) return
     const timer = setTimeout(() => {
@@ -1262,6 +1337,21 @@ export class SharedBotGroupService {
     }, Math.max(1, delayMs))
     timer.unref?.()
     this.recoveryTimers.add(timer)
+  }
+
+  private scheduleRecoverySweep(): void {
+    if (this.stopped || this.recoverySweepTimer !== undefined) return
+    const timer = setTimeout(() => {
+      this.recoverySweepTimer = undefined
+      const task = this.recoverPendingDeliveries(this.recoveryController.signal)
+      this.recoveryTasks.add(task)
+      void task.then(
+        () => { this.recoveryTasks.delete(task) },
+        () => { this.recoveryTasks.delete(task) },
+      )
+    }, 1)
+    timer.unref?.()
+    this.recoverySweepTimer = timer
   }
 
   private async recoverPendingDelivery(deliveryId: string, signal = this.recoveryController.signal): Promise<void> {
@@ -1290,7 +1380,9 @@ export class SharedBotGroupService {
     }
     const attempt = plan.attempts[0]
     if (attempt === undefined) return
-    const result = await this.dispatchDelivery(plan, attempt, binding, signal)
+    const timeout = AbortSignal.timeout(SHARED_GROUP_RECOVERY_TIMEOUT_MS)
+    const dispatchSignal = AbortSignal.any([signal, this.recoveryController.signal, timeout])
+    const result = await this.dispatchDelivery(plan, attempt, binding, dispatchSignal)
     if (result.kind === 'busy') this.schedulePendingRecovery(delivery.id, result.leaseUntil - this.now())
   }
 
@@ -1425,6 +1517,23 @@ function findGroup(snapshot: SharedGroupSnapshot, groupId: ReturnType<typeof Bot
 function requireActivePrincipal(state: SharedAccessStateSnapshot, principalId: ReturnType<typeof BotPrincipalId>): void {
   const principal = state.principals.find(candidate => String(candidate.id) === String(principalId))
   if (principal === undefined || principal.revokedAt !== undefined) throw new SharedGroupError('gateway/forbidden', 'shared Bot identity is no longer active')
+}
+
+function hasActiveSharedPrincipal(
+  state: SharedAccessStateSnapshot,
+  memberships: readonly SharedMembershipRecord[],
+  group: SharedGroupRecord,
+  principalId: ReturnType<typeof BotPrincipalId>,
+): boolean {
+  const principal = state.principals.find(candidate => String(candidate.id) === String(principalId))
+  if (principal === undefined || principal.revokedAt !== undefined) return false
+  try {
+    requireBotAccess(memberships, group.botIds, principalId, 'read-group')
+    return true
+  } catch (error: unknown) {
+    if (error instanceof SharedGroupError && error.code === 'gateway/forbidden') return false
+    throw error
+  }
 }
 
 function requireBotAccess(

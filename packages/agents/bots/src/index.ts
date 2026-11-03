@@ -502,8 +502,11 @@ const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
 const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions')
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
+const SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'shared-group-message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
+const SHARED_GROUP_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
 const MAX_BOT_MESSAGE_DELIVERIES = 4_096
+const SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS = 30_000
 /**
  * Version-one write-ahead Bot rows for hosts that do not mount credentials.
  * A pending row is replayed before reads after a restart and before any later
@@ -562,6 +565,32 @@ const botMessageDeliveryRecordSchema = zod.object({
     messageId: zod.string().min(1).max(256),
   }).strict()).max(MAX_BOT_MESSAGE_DELIVERIES),
 }).strict()
+const sharedGroupMessageDeliveryEntrySchema = zod.object({
+  targetSessionId: zod.string().min(1).max(256),
+  messageId: zod.string().min(1).max(256),
+  status: zod.enum(['pending', 'accepted']),
+  claimToken: zod.string().min(1).max(256).optional(),
+  claimLeaseUntil: zod.number().int().nonnegative().optional(),
+}).strict().superRefine((entry, context) => {
+  if (entry.status === 'pending'
+    && (entry.claimToken === undefined || entry.claimLeaseUntil === undefined)) {
+    context.addIssue({ code: 'custom', message: 'pending shared-group delivery must include its claim lease' })
+  }
+  if (entry.status === 'accepted' && (entry.claimToken !== undefined || entry.claimLeaseUntil !== undefined)) {
+    context.addIssue({ code: 'custom', message: 'accepted shared-group delivery cannot retain its claim lease' })
+  }
+})
+const sharedGroupMessageDeliveryRecordSchema = zod.object({
+  version: zod.literal(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_VERSION),
+  messages: zod.array(sharedGroupMessageDeliveryEntrySchema).max(MAX_BOT_MESSAGE_DELIVERIES),
+}).strict().superRefine((record, context) => {
+  const keys = new Set<string>()
+  for (const entry of record.messages) {
+    const key = `${entry.targetSessionId}\u0000${entry.messageId}`
+    if (keys.has(key)) context.addIssue({ code: 'custom', message: 'shared-group delivery receipts must be unique' })
+    keys.add(key)
+  }
+})
 
 interface BotProfileRevisionState {
   readonly version: 1
@@ -574,6 +603,19 @@ interface BotMessageDeliveryState {
   readonly version: typeof BOT_MESSAGE_DELIVERY_RECORD_VERSION
   readonly messages: readonly { readonly targetSessionId: string; readonly messageId: string }[]
 }
+
+interface SharedGroupMessageDeliveryState {
+  readonly version: typeof SHARED_GROUP_MESSAGE_DELIVERY_RECORD_VERSION
+  readonly messages: readonly zod.infer<typeof sharedGroupMessageDeliveryEntrySchema>[]
+}
+
+type SharedGroupDeliveryPreparation =
+  | { readonly kind: 'duplicate' }
+  | {
+    readonly kind: 'enqueue'
+    readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
+    readonly hasPendingEvent: boolean
+  }
 
 class BotProfileRowWriteError extends Error {
   constructor(readonly writeError: unknown) {
@@ -956,6 +998,18 @@ function botMessageDeliveryRecordOf(state: BotMessageDeliveryState): CredentialR
   return { kind: 'grant', payload: { version: state.version, messages: state.messages } }
 }
 
+function sharedGroupMessageDeliveryStateOf(record: CredentialRecord | undefined): SharedGroupMessageDeliveryState {
+  if (record === undefined) return { version: SHARED_GROUP_MESSAGE_DELIVERY_RECORD_VERSION, messages: [] }
+  if (record.kind !== 'grant') throw new Error('Shared Bot group delivery record has an unexpected credential kind')
+  const parsed = sharedGroupMessageDeliveryRecordSchema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Shared Bot group delivery record is invalid')
+  return parsed.data
+}
+
+function sharedGroupMessageDeliveryRecordOf(state: SharedGroupMessageDeliveryState): CredentialRecord {
+  return { kind: 'grant', payload: { version: state.version, messages: state.messages } }
+}
+
 function sessionRequest(record: BotRecord): SessionCreateRequest {
   return {
     sessionId: record.sessionId,
@@ -1126,6 +1180,7 @@ export class BotService extends TypertRemoteService {
     readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
   }>()
   private readonly sharedGroupDeliveryTails = new Map<string, Promise<void>>()
+  private readonly sharedGroupDeliveryClaims = new Map<string, string>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
@@ -4076,6 +4131,7 @@ export class BotService extends TypertRemoteService {
         this.activeSharedGroupSessionKeys.clear()
         this.sharedGroupPendingMessages.clear()
         this.sharedGroupDeliveryTails.clear()
+        this.sharedGroupDeliveryClaims.clear()
       }
     } catch (error) {
       await removeShared?.()
@@ -4352,89 +4408,243 @@ export class BotService extends TypertRemoteService {
     const key = String(request.sessionId)
     const prior = this.sharedGroupDeliveryTails.get(key) ?? Promise.resolve()
     const run = prior.then(async () => {
-      request.signal?.throwIfAborted()
-      if (!this.activeSharedGroupSessionKeys.has(key)) {
-        throw new Error('shared Bot group Session is no longer active')
-      }
-      this.ensureSharedGroupSessionBinding(request.sessionId, request.groupId, request.targetBotId)
-      let inspection: { readonly events: readonly SessionEvent[] }
+      const prepared = await this.prepareSharedGroupDelivery(request)
+      const claim = await this.claimSharedGroupDelivery(request, prepared.kind === 'duplicate')
+      if (claim.kind === 'duplicate') return 'duplicate'
+      const stopLeaseRenewal = this.startSharedGroupDeliveryLeaseRenewal(request, claim.token)
       try {
-        inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
-      } catch (error: unknown) {
-        if (!isMissingSessionForSharedGroup(error)) throw error
-        const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === request.targetBotId)
-        if (bot === undefined) throw new Error('shared Bot no longer exists')
-        await this.createSharedGroupSession(bot, request.sessionId, request.groupId, request.signal)
-        inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
+        const result = await this.enqueuePreparedSharedGroupDelivery(request, prepared)
+        await this.finishSharedGroupDelivery(request, claim.token)
+        return result
+      } finally {
+        await stopLeaseRenewal()
       }
-      const messageId = BotMessageId(String(request.messageId))
-      if (botMessageWasDelivered(inspection.events, messageId)) {
-        const matchingSource = inspection.events.some(event => event.type === 'user/message'
-          && event.surfaceOp === 'append'
-          && event.data.id === messageId
-          && event.data.source.kind === 'bot-group-message'
-          && String(event.data.source.groupId) === String(request.groupId)
-          && String(event.data.source.messageId) === String(request.messageId))
-        if (matchingSource) {
-          this.sharedGroupPendingMessages.delete(key)
-          return 'duplicate' as const
-        }
-        const matchingPending = inspection.events.some(event => event.type === 'agent/inbox/spliced'
-          && event.data.inserted.some(message => message.id === messageId
-            && message.source.kind === 'bot-group-message'
-            && String(message.source.groupId) === String(request.groupId)
-            && String(message.source.messageId) === String(request.messageId)))
-        if (!matchingPending) throw new Error('shared Bot group message id is already used by another source')
-        const pendingResolved = await this.resolveSharedGroupAgent(
-          request.sessionId,
-          request.groupId,
-          request.targetBotId,
-          request.signal ?? new AbortController().signal,
-        )
-        if (!('agent' in pendingResolved)) throw pendingResolved.error
-        const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
-        if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
-        this.sharedGroupPendingMessages.delete(key)
-        return 'accepted' as const
-      }
-      const resolved = await this.resolveSharedGroupAgent(
-        request.sessionId,
-        request.groupId,
-        request.targetBotId,
-        request.signal ?? new AbortController().signal,
-      )
-      if (!('agent' in resolved)) throw resolved.error
-      const pending = this.sharedGroupPendingMessages.get(key)
-      if (pending !== undefined && pending.messageId === request.messageId && pending.agent === resolved.agent) {
-        const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
-        if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
-        this.sharedGroupPendingMessages.delete(key)
-        return 'accepted' as const
-      }
-      if (pending !== undefined) this.sharedGroupPendingMessages.delete(key)
-      const message = freezeMessage({
-        id: messageId,
-        role: 'user',
-        content: [{ type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` }],
-        source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
-      })
-      try {
-        resolved.agent.followup(message)
-      } catch (error) {
-        this.sharedGroupPendingMessages.delete(key)
-        throw error
-      }
-      this.sharedGroupPendingMessages.set(key, { messageId: request.messageId, agent: resolved.agent })
-      const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
-      if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
-      this.sharedGroupPendingMessages.delete(key)
-      return 'accepted' as const
     })
     const tail = run.then(() => undefined, () => undefined)
     this.sharedGroupDeliveryTails.set(key, tail)
     try { return await run } finally {
       if (this.sharedGroupDeliveryTails.get(key) === tail) this.sharedGroupDeliveryTails.delete(key)
     }
+  }
+
+  private async prepareSharedGroupDelivery(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+  ): Promise<SharedGroupDeliveryPreparation> {
+    const key = String(request.sessionId)
+    request.signal?.throwIfAborted()
+    if (!this.activeSharedGroupSessionKeys.has(key)) {
+      throw new Error('shared Bot group Session is no longer active')
+    }
+    this.ensureSharedGroupSessionBinding(request.sessionId, request.groupId, request.targetBotId)
+    let inspection: { readonly events: readonly SessionEvent[] }
+    try {
+      inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
+    } catch (error: unknown) {
+      if (!isMissingSessionForSharedGroup(error)) throw error
+      const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === request.targetBotId)
+      if (bot === undefined) throw new Error('shared Bot no longer exists')
+      await this.createSharedGroupSession(bot, request.sessionId, request.groupId, request.signal)
+      inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
+    }
+    const messageId = BotMessageId(String(request.messageId))
+    if (botMessageWasDelivered(inspection.events, messageId)) {
+      const matchingSource = inspection.events.some(event => event.type === 'user/message'
+        && event.surfaceOp === 'append'
+        && event.data.id === messageId
+        && event.data.source.kind === 'bot-group-message'
+        && String(event.data.source.groupId) === String(request.groupId)
+        && String(event.data.source.messageId) === String(request.messageId))
+      if (matchingSource) {
+        this.sharedGroupPendingMessages.delete(key)
+        return { kind: 'duplicate' }
+      }
+      const matchingPending = inspection.events.some(event => event.type === 'agent/inbox/spliced'
+        && event.data.inserted.some(message => message.id === messageId
+          && message.source.kind === 'bot-group-message'
+          && String(message.source.groupId) === String(request.groupId)
+          && String(message.source.messageId) === String(request.messageId)))
+      if (!matchingPending) throw new Error('shared Bot group message id is already used by another source')
+      const pendingResolved = await this.resolveSharedGroupAgent(
+        request.sessionId,
+        request.groupId,
+        request.targetBotId,
+        request.signal ?? new AbortController().signal,
+      )
+      if (!('agent' in pendingResolved)) throw pendingResolved.error
+      return { kind: 'enqueue', agent: pendingResolved.agent, hasPendingEvent: true }
+    }
+    const resolved = await this.resolveSharedGroupAgent(
+      request.sessionId,
+      request.groupId,
+      request.targetBotId,
+      request.signal ?? new AbortController().signal,
+    )
+    if (!('agent' in resolved)) throw resolved.error
+    return { kind: 'enqueue', agent: resolved.agent, hasPendingEvent: false }
+  }
+
+  private async enqueuePreparedSharedGroupDelivery(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    prepared: SharedGroupDeliveryPreparation,
+  ): Promise<'accepted' | 'duplicate'> {
+    if (prepared.kind === 'duplicate') return 'duplicate'
+    const key = String(request.sessionId)
+    const messageId = BotMessageId(String(request.messageId))
+    const pending = this.sharedGroupPendingMessages.get(key)
+    const pendingMatches = pending !== undefined
+      && pending.messageId === request.messageId
+      && pending.agent === prepared.agent
+    if (prepared.hasPendingEvent || pendingMatches) {
+      const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
+      if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
+      this.sharedGroupPendingMessages.delete(key)
+      return 'accepted' as const
+    }
+    if (pending !== undefined) this.sharedGroupPendingMessages.delete(key)
+    const message = freezeMessage({
+      id: messageId,
+      role: 'user',
+      content: [{ type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` }],
+      source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
+    })
+    try {
+      prepared.agent.followup(message)
+    } catch (error) {
+      this.sharedGroupPendingMessages.delete(key)
+      throw error
+    }
+    this.sharedGroupPendingMessages.set(key, { messageId: request.messageId, agent: prepared.agent })
+    const durable = await this.flushSharedGroupSession(request.sessionId, request.signal)
+    if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
+    this.sharedGroupPendingMessages.delete(key)
+    return 'accepted' as const
+  }
+
+  private async claimSharedGroupDelivery(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    alreadyDelivered: boolean,
+  ): Promise<{ readonly kind: 'authorized'; readonly token: string } | { readonly kind: 'duplicate' }> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) throw new Error('Shared Bot group delivery requires durable credentials')
+    const receiptKey = `${String(request.sessionId)}\u0000${String(request.messageId)}`
+    const localToken = this.sharedGroupDeliveryClaims.get(receiptKey)
+    const now = Date.now()
+    let result: { readonly kind: 'authorized'; readonly token: string } | { readonly kind: 'duplicate' } | undefined
+    await credentials.modifyRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
+      const state = sharedGroupMessageDeliveryStateOf(stored)
+      const current = state.messages.find(entry => entry.targetSessionId === String(request.sessionId)
+        && entry.messageId === String(request.messageId))
+      if (current?.status === 'accepted') {
+        result = { kind: 'duplicate' }
+        return undefined
+      }
+      if (alreadyDelivered) {
+        if (current?.status === 'pending' && current.claimLeaseUntil !== undefined && current.claimLeaseUntil > now
+          && current.claimToken !== localToken) {
+          result = { kind: 'duplicate' }
+          return undefined
+        }
+        const accepted = { targetSessionId: String(request.sessionId), messageId: String(request.messageId), status: 'accepted' as const }
+        const messages = current === undefined
+          ? [...state.messages, accepted]
+          : state.messages.map(entry => entry === current ? accepted : entry)
+        result = { kind: 'duplicate' }
+        return sharedGroupMessageDeliveryRecordOf({ version: state.version, messages })
+      }
+      if (current?.status === 'pending' && current.claimLeaseUntil !== undefined && current.claimLeaseUntil > now) {
+        const claimToken = current.claimToken
+        if (claimToken !== undefined && claimToken === localToken) {
+          result = { kind: 'authorized', token: claimToken }
+        } else {
+          result = { kind: 'duplicate' }
+        }
+        return undefined
+      }
+      if (current === undefined && state.messages.length >= MAX_BOT_MESSAGE_DELIVERIES) {
+        throw new Error('Shared Bot group delivery ledger is full')
+      }
+      const token = `shared-group-recipient-${randomUUID()}`
+      const pending = {
+        targetSessionId: String(request.sessionId),
+        messageId: String(request.messageId),
+        status: 'pending' as const,
+        claimToken: token,
+        claimLeaseUntil: now + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS,
+      }
+      const messages = current === undefined
+        ? [...state.messages, pending]
+        : state.messages.map(entry => entry === current ? pending : entry)
+      result = { kind: 'authorized', token }
+      return sharedGroupMessageDeliveryRecordOf({ version: state.version, messages })
+    })
+    if (result === undefined) throw new Error('Shared Bot group delivery claim did not return a status')
+    if (result.kind === 'authorized') this.sharedGroupDeliveryClaims.set(receiptKey, result.token)
+    return result
+  }
+
+  private startSharedGroupDeliveryLeaseRenewal(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    token: string,
+  ): () => Promise<void> {
+    let inFlight: Promise<void> | undefined
+    const timer = setInterval(() => {
+      if (inFlight !== undefined) return
+      inFlight = this.renewSharedGroupDeliveryClaim(request, token)
+        .then(() => undefined, () => undefined)
+        .finally(() => { inFlight = undefined })
+    }, Math.max(1, Math.floor(SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS / 3)))
+    timer.unref?.()
+    return async () => {
+      clearInterval(timer)
+      await inFlight
+    }
+  }
+
+  private async renewSharedGroupDeliveryClaim(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    token: string,
+  ): Promise<void> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) return
+    await credentials.modifyRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
+      const state = sharedGroupMessageDeliveryStateOf(stored)
+      const current = state.messages.find(entry => entry.targetSessionId === String(request.sessionId)
+        && entry.messageId === String(request.messageId))
+      if (current?.status !== 'pending' || current.claimToken !== token) return undefined
+      const renewed = { ...current, claimLeaseUntil: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS }
+      return sharedGroupMessageDeliveryRecordOf({
+        version: state.version,
+        messages: state.messages.map(entry => entry === current ? renewed : entry),
+      })
+    })
+  }
+
+  private async finishSharedGroupDelivery(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    token: string,
+  ): Promise<void> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) throw new Error('Shared Bot group delivery requires durable credentials')
+    const receiptKey = `${String(request.sessionId)}\u0000${String(request.messageId)}`
+    let finished = false
+    await credentials.modifyRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
+      const state = sharedGroupMessageDeliveryStateOf(stored)
+      const current = state.messages.find(entry => entry.targetSessionId === String(request.sessionId)
+        && entry.messageId === String(request.messageId))
+      if (current?.status === 'accepted') {
+        finished = true
+        return undefined
+      }
+      if (current?.status !== 'pending' || current.claimToken !== token) return undefined
+      finished = true
+      const accepted = { targetSessionId: String(request.sessionId), messageId: String(request.messageId), status: 'accepted' as const }
+      return sharedGroupMessageDeliveryRecordOf({
+        version: state.version,
+        messages: state.messages.map(entry => entry === current ? accepted : entry),
+      })
+    })
+    if (!finished) throw new Error('Shared Bot group delivery claim was lost before completion')
+    this.sharedGroupDeliveryClaims.delete(receiptKey)
   }
 
   private refreshSharedRecords(bot: BotRecord): void {
