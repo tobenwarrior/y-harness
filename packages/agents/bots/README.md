@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization and untrusted memory, collaborate in durable groups, and use per-Bot grants to control access to connected apps. Retried creation reuses the requested Bot identity and Session. Signed portable templates share profile, persona, declared capabilities, avatar bytes, and preset without Sessions, paths, transcripts, or credentials; target Hosts admit the avatar before activating a local Bot, then create local Sessions and attachments.
+Provide a named-Bot workspace with one durable Session per Bot, stable visual identity, and optional generated avatars. Bots reopen after Host restarts, retain roster organization and untrusted memory, collaborate in durable groups, and use per-Bot grants to control access to connected apps and host-local skills. Retried creation reuses the requested Bot identity and Session. Signed portable templates share profile, persona, declared capabilities, avatar bytes, and preset without Sessions, paths, transcripts, or credentials; target Hosts admit the avatar before activating a local Bot, then create local Sessions and attachments.
 
 ## Table of Contents
 
@@ -27,6 +27,8 @@ Mount this Host plugin when a composition needs user-owned Bots that map one-to-
 
 The Bot Remote also exposes `listConnectedApps` and `setConnectedAppAccess`. The Client uses these methods for the selected Bot's Connected apps dialog. The catalog is derived from MCP tool definitions' Host-only source metadata and visible MCP resource servers; public names are not parsed because server and tool names may contain `__`. A grant is checked in the Bot Agent scope before approval, rechecked after approval, and checked again at the last-mile tool-body boundary after async wrappers settle, so hiding a control or revoking during a wait cannot bypass the policy.
 
+The Bot Remote exposes `listSkills` and `updateSkills`; when the Host mounts `@yharness/skill`, `listSkills` returns its metadata-only catalog, and otherwise it returns an empty catalog. The Client uses these methods for the selected Bot's host-local Skills dialog. Skill bodies, filesystem paths, provider locators, credentials, and local ids stay on the Host. A Bot's scoped skill provider shadows denied names before body loading, so both model and user invocation paths receive only the current Bot policy; changing the policy invalidates the live catalog. Legacy rows default to `mode: "all"`, while selected mode is a canonical, deduplicated allow list with an explicit deny list. Skill catalog and invocation inputs continue using the existing `skill-catalog` and `skill-invocation` Session sources, so the policy itself adds no unlogged model-visible input.
+
 ### When to choose it
 
 Choose this package when a Web surface needs named agents with durable visual identity, retryable provisioning, and one retained Session per row. Use the ordinary Session list instead when users should browse arbitrary conversations rather than a curated Bot roster.
@@ -42,6 +44,8 @@ The plugin accepts an optional deployment-local template owner key. Mount it wit
 | Field | Default | Meaning |
 |---|---|---|
 | `ownerId` | `local-owner` | Scope for publishing, listing, and revoking locally owned template rows; it is never embedded in a portable code. |
+
+Bot skill assignments are Host-local and are not included in portable templates. A copied template receives the target Host's default skill policy and must be configured separately by its owner.
 
 The Bot Remote also exposes `listTemplates`, `publishTemplate`, `revokeTemplate`, `previewTemplate`, `approveTemplate`, and `importTemplate`. Publication signs the Bot name, description, character, accent, persona, declared capabilities, portable avatar bytes, and optional Agent preset without including local runtime identities, and is allowed only for a Bot owned by the configured `ownerId`. A target Host verifies the signature and requires explicit approval of the exact preview fingerprint plus the resolved local preset and sorted tool view before a copied code can create a Bot; the preview exposes the self-asserted signing-key fingerprint, profile, persona, declared capabilities, portable avatar, and target-local effective preset/tool view so the user can make that trust decision. A resolved preview also returns an ephemeral Host-local approval token; `approveTemplate` must receive that token and the exact permission view from the same preview, so a preset or tool-permission change is rejected before any durable approval is written. Approval fails closed when that local view is unavailable, and the Host re-resolves and compares the stored view for every import, including idempotent retries and direct callers, so preset or tool-permission changes require approval again. The target then resolves its own Session, working directory, preset, and attachment reference. Supplying `importId` makes import idempotent for a caller operation: the durable binding is reserved before avatar admission and provisioning, so retries return the original Bot after a transient failure, rename, or source revocation, while different code or name metadata is rejected. Revocation is owner-scoped and Host-local: it blocks new preview/import requests that reach that Host, but it cannot revoke a copied artifact or an already imported Bot on another Host.
 
@@ -78,6 +82,7 @@ The service owns the Bot roster and a separate additive group domain. It seriali
 | [`src/template-storage.ts`](src/template-storage.ts) | Owner-scoped durable template rows and Host-local signing-key storage. |
 | [`src/native-tools.ts`](src/native-tools.ts) | Native-provider action adapter and bounded durable action observations. |
 | [`src/memory.ts`](src/memory.ts) | Bot memory event vocabulary, validation, projection, and provider-facing operations. |
+| [`src/skills.ts`](src/skills.ts) | Canonical per-Bot skill policy and scoped provider that prevents denied body loads. |
 | [`src/storage.ts`](src/storage.ts) | Durable Bot domain, record schema, and image-reference validation. |
 | [`src/types.ts`](src/types.ts) | Browser-safe Bot ids, identities, accents, views, requests, and Remote error details. |
 
@@ -140,6 +145,20 @@ The list tool and an access-denial message consume tokens only when the Bot call
 
 Changing a Bot grant does not rewrite Session history. The scoped tool set remains stable; only the result of a later app call changes.
 
+### Host-local skill assignment
+
+#### What the model sees
+
+The Host discovers skill metadata through the existing skill registry, then installs a scoped provider for each Bot. In `all` mode the Bot can discover and load every current local skill except names in `disabled`; in `selected` mode it can discover and load only names in `enabled` that are not disabled. Denied candidates remain non-invocable and their bodies are never loaded, including when a user or model requests a denied name directly. The policy is read again for each discovery and load, and an update invalidates the catalog before the next operation. Skill catalog and explicit invocation messages retain the existing durable source records, so a policy edit does not create an unlogged model-visible message.
+
+#### Token effect
+
+Skill metadata and bodies consume tokens only when the Bot's existing skill discovery or invocation path uses them. A denied skill contributes no body to a model request; the policy itself adds no prompt section.
+
+#### KV Cache effect
+
+Changing a Bot skill policy may change its scoped skill catalog and therefore the later request prefix, while preserving the Session log and unrelated Bot identity sections.
+
 ### Bot collaboration
 
 #### What the model sees
@@ -201,6 +220,7 @@ These limits define the current Bot roster. They are package constraints, not a 
 - **Portable template approval and revocation are Host-local** — a copied signed code needs explicit approval on each recipient Host, and a copied code or already imported Bot remains usable after the publishing Host revokes its local row; target Hosts make their own permission and preset decisions.
 - **Portable avatar admission has no ownership-safe rollback** — the attachment service exposes save/read but no safe delete for an unowned reference, so a failed import after avatar bytes are saved may retain content-addressed orphan bytes; the failed operation never publishes a Bot or exposes the attachment reference.
 - **Declared capabilities are not permissions** — capability labels travel in the signed profile for presentation and application policy, but importing a template does not grant target-Host tools or credentials.
+- **Skill assignments are Host-local** — the policy controls the Bot's current skill registry view and is persisted with the Bot, but it is not portable, does not revoke bodies already loaded into a prior model request, and does not change another Host's copy or the source of a template.
 - **Group response attribution is causally bounded** — a response is projected only for the one accepted group delivery whose durable turn matches the assistant event and whose claim precedes that event; mixed private/group inputs, synthetic context, and concurrent group deliveries are left unprojected rather than guessed. Tool-call intermediate messages stay open until the final assistant response. Claims are rebuilt from raw durable inbox splices after restart, so surface replacements or later synthetic notices cannot make the Host attribute the next unrelated response to an old group message. Legacy logs without inbox splices retain their append-only compatibility fallback.
 - **Shared multi-user permissions are not included** — groups are durable in the local Host roster; cross-account sharing and access control still require the application identity layer.
 - **MCP source metadata identifies connected apps** — this feature covers ordinary app tools and shared resource operations registered by the MCP bridge. The scoped model runtime and connected-app dialog can inspect and change this policy; native provider actions, browser integrations, and other non-MCP tools are not included, and native actions do not expose a misleading `list_connected_apps` action. The public `mcp__...` name is only a model-facing identifier and is never used to recover ownership. Registered server identifiers remain exact opaque strings, including empty, long, brace-bearing, and punctuation-prefixed values; each durable allow or deny list is capped at 128 ids.

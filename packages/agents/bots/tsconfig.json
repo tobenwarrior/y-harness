@@ -19,6 +19,7 @@
     { "path": "../../core/session" },
     { "path": "../../core/system-prompt" },
     { "path": "../../core/tools" },
+    { "path": "../../skill/skill" },
     { "path": "../../subagent/subagent" },
     { "path": "../../api/session-controller/tsconfig.host.json" },
     { "path": "../../storage/storage-domain" },

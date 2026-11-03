@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a Bot workspace to the Web client with a roster, persistent conversations, organization, status, and animated avatars. Host callbacks provide Sessions, connected apps, generated images, and optional templates. Signed templates preview their self-asserted issuer, avatar, configuration, and local permissions before approval and import. Missing permissions disable approval; missing callbacks hide their controls. Request guards preserve newer drafts and prevent duplicate submissions.
+Add a Bot workspace to the Web client with a roster, persistent conversations, organization, status, animated avatars, and optional host-local skill assignment. Host callbacks provide Sessions, connected apps, generated images, skills, and optional templates. Signed templates preview their self-asserted issuer, avatar, configuration, and local permissions before approval and import. Missing permissions disable approval; missing callbacks hide their controls. Request guards preserve newer drafts and prevent duplicate submissions.
 
 ## Table of Contents
 
@@ -41,7 +41,7 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 ### Owner callbacks
 
-`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. Template state and actions are optional; when mounted, the existing Bot sidebar opens the share/import surface without adding another navigation column. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
+`BotRoster` accepts the roster, selected id, selection callback, and asynchronous creation callback. Optional callbacks connect apps, organize a Bot (pin, hide/restore, or assign a section), open avatar settings, retry an owner error, load persisted avatar bytes, and generate a non-durable preview that can be committed and assigned after the user chooses it. Template state and actions are optional; when mounted, the existing Bot sidebar opens the share/import surface without adding another navigation column. `BotDetail` renders the selected Bot and receives the owner's persistent conversation as a child. An optional `skillManager` callback opens the selected Bot's host-local skill policy dialog; it lists metadata only, supports all-versus-selected access and explicit save, and is absent when the owner does not supply both skill Remote methods. A Bot Host without a mounted skill registry reports an empty catalog. Hidden Bots stay in a dedicated recoverable section, and pinned Bots receive a distinct leading section.
 
 ### Visual identity
 
@@ -63,6 +63,7 @@ The Client registration creates one controller for the Bot Remote, Session store
 | [`src/client/controller.ts`](src/client/controller.ts) | Bot roster loading, selection, Session binding, avatar loading, and owner-facing callbacks. |
 | [`src/client/BotWorkspace.tsx`](src/client/BotWorkspace.tsx) | `BotRoster` sidebar and `BotDetail` main-panel surfaces with loading, error, empty, and creation states. |
 | [`src/client/BotTemplatesPanel.tsx`](src/client/BotTemplatesPanel.tsx) | Safe template publishing, share-code preview/import, copy, and revocation controls. |
+| [`src/client/BotSkillsManager.tsx`](src/client/BotSkillsManager.tsx) | Host-local skill catalog and per-Bot allow/deny policy editor. |
 | [`src/client/BotAvatarEditor.tsx`](src/client/BotAvatarEditor.tsx) | Provider availability, description, preview, commit, and assignment flow. |
 
 </details>
@@ -106,6 +107,7 @@ These limits define the current Bot workspace. They are package constraints, not
 - **Owner-supplied data and callbacks** — the component does not fetch Bots, create Sessions, or persist selection without the supplied owner functions.
 - **Generated avatars require a mounted capability** — when the avatar-generation Remote or generated-avatar update route is absent, the editor keeps its Character mode and omits Generate; generation also stays unavailable when the Host reports missing provider configuration.
 - **Selected conversation is composed by the owner** — the panel provides a slot and scope but does not implement transcript loading or Session lifecycle policy.
+- **Skills are Host-local** — the manager edits only the selected Bot's policy on the current Host; it does not publish skills, copy policies through templates, or revoke a body already included in a completed model request.
 - **Template operation ids are controller-local** — a full browser reload before a failed import is reconciled loses the in-memory retry key; callers that need recovery across reloads can submit their own stable `importId` through the Host Remote.
 
 <a id="dev-note"></a>

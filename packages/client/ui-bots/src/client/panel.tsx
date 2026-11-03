@@ -103,7 +103,7 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, loadAvatar, rename, memoryManager,
+  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, loadAvatar, rename, memoryManager, skillManager,
   SessionProvider, renderSlot, t,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
@@ -140,6 +140,7 @@ export function BotsPanel({
       loadAvatar={loadAvatar}
       onRename={rename}
       memoryManager={memoryManager}
+      skillManager={skillManager}
       loading={state.phase === 'loading' && bots.length === 0}
     />
   )

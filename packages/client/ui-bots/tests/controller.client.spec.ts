@@ -14,6 +14,7 @@ import {
   type BotTemplatePreviewValue,
   type BotTemplateShareCode,
   type BotTemplateView,
+  type BotSkillPolicy,
   type BotView,
 } from '@yharness/bots/client'
 import { brandString } from '@yharness/brand'
@@ -195,6 +196,49 @@ describe('BotWorkspaceController', () => {
     expect(listConnectedApps).toHaveBeenCalledWith({ botId: original.id })
     expect(setConnectedAppAccess).toHaveBeenCalledWith({ botId: original.id, appId: 'github', allowed: true })
     expect(controller.face().reference()?.sessionId).toBe(original.sessionId)
+    controller.dispose()
+  })
+  it('exposes Bot-scoped skill metadata and persists policy updates', async () => {
+    const original = bot('bot-one', 'session-one')
+    const remote = remoteFixture([original])
+    const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+    const listSkills = vi.fn(async () => ({
+      ok: true as const,
+      value: { bot: original, policy, skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }] },
+    }))
+    const updateSkills = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        bot: { ...original, skillPolicy: { mode: 'selected', enabled: ['code-review'], disabled: [] }, updatedAt: 2 },
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+        skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
+      },
+    }))
+    remote.listSkills = listSkills
+    remote.updateSkills = updateSkills
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+
+    const manager = controller.face().skillManager
+    expect(manager).toBeDefined()
+    await expect(manager?.list(original.id)).resolves.toMatchObject({ policy })
+    await manager?.update(original.id, { mode: 'selected', enabled: ['code-review'], disabled: [] })
+    expect(listSkills).toHaveBeenCalledWith({ botId: original.id })
+    expect(updateSkills).toHaveBeenCalledWith({
+      botId: original.id, mode: 'selected', enabled: ['code-review'], disabled: [],
+    })
+    expect(controller.source.getSnapshot().bots[0]?.skillPolicy).toEqual({
+      mode: 'selected', enabled: ['code-review'], disabled: [],
+    })
+    controller.dispose()
+  })
+  it('hides the skill manager when the Host mounts only one skill Remote method', async () => {
+    const remote = remoteFixture([bot('bot-without-skill-update', 'session-without-skill-update')])
+    remote.listSkills = vi.fn()
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+
+    expect(controller.face().skillManager).toBeUndefined()
     controller.dispose()
   })
   it('switches retained Sessions before publishing the new selection and keeps it across refresh', async () => {

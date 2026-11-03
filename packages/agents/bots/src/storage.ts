@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import type { BotRecord } from './types.ts'
 import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
+import { BOT_SKILL_NAME_LIMIT, BOT_SKILL_NAME_MAX_LENGTH } from './skills.ts'
 
 /** Durable marker for a memory edit that was interrupted before its log write completed. */
 export type BotStoredRecord = BotRecord & {
@@ -60,6 +61,16 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
 })
 
 const capability = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)
+const botSkillName = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(BOT_SKILL_NAME_MAX_LENGTH)
+const botSkillPolicySchema = z.object({
+  mode: z.enum(['all', 'selected']),
+  enabled: z.array(botSkillName).max(BOT_SKILL_NAME_LIMIT),
+  disabled: z.array(botSkillName).max(BOT_SKILL_NAME_LIMIT),
+}).strict().refine(value => new Set(value.enabled).size === value.enabled.length, {
+  message: 'Bot skill enabled names must be unique',
+}).refine(value => new Set(value.disabled).size === value.disabled.length, {
+  message: 'Bot skill disabled names must be unique',
+})
 const pendingMemoryUpdateSchema = z.object({
   memoryId: z.string().regex(/^memory-[A-Za-z0-9][A-Za-z0-9-]*$/).max(256),
   text: boundedText(BOT_MEMORY_TEXT_LIMIT),
@@ -100,6 +111,7 @@ export const botRecordSchema = z.object({
   agentPreset: z.string().min(1).refine(value => value.trim() === value, {
     message: 'Agent presets must not have surrounding whitespace',
   }).optional(),
+  skillPolicy: botSkillPolicySchema.optional(),
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
@@ -124,8 +136,8 @@ export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 /** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
-  version: 5,
-  compatibleVersions: [1, 2, 3, 4],
+  version: 6,
+  compatibleVersions: [1, 2, 3, 4, 5],
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,

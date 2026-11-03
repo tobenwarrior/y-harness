@@ -692,6 +692,143 @@
   margin: 0;
 }
 
+.skillsModal {
+  width: min(620px, 100%);
+  max-height: 100%;
+  min-height: 0;
+}
+
+.skillsModalContent {
+  min-width: 0;
+  min-height: 0;
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.skillsManagerHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.skillsManagerHeading > span,
+.skillRowCopy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skillsManagerHeading strong,
+.skillRowCopy strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillsManagerHeading span span,
+.skillRowCopy span,
+.skillRowCopy small {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.skillsNotice {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--yh-alias-state-error-primary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.skillsLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 80px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.skillsEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 80px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+  text-align: center;
+}
+
+.skillsEmpty strong {
+  color: var(--yh-alias-label-primary);
+  font-weight: 500;
+}
+
+.skillsModes,
+.skillsList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.skillsModeOption,
+.skillRow {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+  cursor: pointer;
+}
+
+.skillsModeOption input,
+.skillRow input {
+  flex: none;
+  margin: 2px 0 0;
+  accent-color: var(--yh-alias-state-business-primary);
+}
+
+.skillRow {
+  align-items: center;
+}
+
+.skillRow > svg {
+  flex: none;
+  margin-left: auto;
+  color: var(--yh-alias-state-business-primary);
+}
+
+.skillRowCopy {
+  overflow: hidden;
+}
+
 .memoryList {
   display: flex;
   min-width: 0;

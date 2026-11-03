@@ -10,7 +10,7 @@ import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary,
-  BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
 } from '../src/client/types.ts'
 
 afterEach(cleanup)
@@ -379,6 +379,46 @@ describe('Bot roster and detail', () => {
     resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
     await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
     expect(screen.queryByText('Updated research note')).toBeNull()
+  })
+
+  it('edits the selected Bot skill policy from its detail header', async () => {
+    const initialPolicy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+    const actions: BotSkillManagerActions = {
+      list: vi.fn(async () => ({
+        policy: initialPolicy,
+        skills: [
+          { name: 'code-review', description: 'Review code', enabled: true, available: true },
+          { name: 'release-notes', description: 'Write release notes', enabled: true, available: true },
+        ],
+      })),
+      update: vi.fn(async (_botId: string, policy: BotSkillPolicy) => ({
+        policy,
+        skills: [
+          { name: 'code-review', description: 'Review code', enabled: policy.enabled.includes('code-review'), available: true },
+          { name: 'release-notes', description: 'Write release notes', enabled: false, available: true },
+        ],
+      })),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    expect(actions.list).toHaveBeenCalledWith('research')
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Allow code-review' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
+    await waitFor(() => {
+      expect(actions.update).toHaveBeenCalledWith('research', { mode: 'selected', enabled: ['code-review'], disabled: [] })
+    })
+    expect(screen.queryByRole('dialog', { name: 'Bot skills' })).toBeNull()
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {

@@ -22,6 +22,7 @@ import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
+import { scopeOf, scopeParentOf } from '@yharness/scope'
 import type { Domain, KvTable } from '@yharness/storage-domain'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
@@ -61,6 +62,12 @@ import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
+import {
+  createBotSkillPolicyProvider,
+  normalizeBotSkillPolicy,
+  projectBotSkillSummary,
+} from './skills.ts'
+import type { BotSkillPolicy } from './types.ts'
 import type {
   BotAvailability,
   BotAccent,
@@ -91,6 +98,10 @@ import type {
   BotMemoryUpdateValue,
   BotMemoryView,
   BotRecord,
+  BotSkillListRequest,
+  BotSkillListValue,
+  BotSkillUpdateRequest,
+  BotSkillUpdateValue,
   BotRenameRequest,
   BotRenameValue,
   BotView,
@@ -223,6 +234,14 @@ export type {
   BotGroupView,
 } from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
+export {
+  BOT_SKILL_NAME_LIMIT,
+  BOT_SKILL_NAME_MAX_LENGTH,
+  DEFAULT_BOT_SKILL_POLICY,
+  botSkillPolicyAllows,
+  createBotSkillPolicyProvider,
+  normalizeBotSkillPolicy,
+} from './skills.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
 export {
   BotTemplateId,
@@ -257,6 +276,7 @@ interface NormalizedCreate {
   readonly accent: BotAccent
   readonly cwd: string
   readonly agentPreset?: string
+  readonly skillPolicy?: BotSkillPolicy
   readonly persona?: string
   readonly capabilities?: readonly string[]
 }
@@ -564,6 +584,14 @@ function normalizeCapabilities(value: BotCreateRequest['capabilities']): readonl
   return capabilities
 }
 
+function normalizeRequestedBotSkillPolicy(value: unknown): BotSkillPolicy {
+  try {
+    return normalizeBotSkillPolicy(value)
+  } catch (error: unknown) {
+    return badRequest(error instanceof Error ? error.message : 'Bot skill policy is invalid')
+  }
+}
+
 function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
   if (value === undefined) return undefined
   if (!BOT_IDENTITIES.includes(value)) return badRequest(`Unknown Bot identity '${String(value)}'`)
@@ -589,6 +617,7 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
   const description = normalizeOptionalText('Bot description', request.description, 240)
   const cwdInput = normalizeOptionalText('Bot working directory', request.cwd, 4096)
   const agentPreset = normalizeOptionalText('Bot agent preset', request.agentPreset, 160)
+  const skillPolicy = request.skillPolicy === undefined ? undefined : normalizeRequestedBotSkillPolicy(request.skillPolicy)
   const persona = normalizeOptionalText('Bot persona', request.persona, 4000)
   const capabilities = normalizeCapabilities(request.capabilities)
   return {
@@ -599,6 +628,7 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
     accent: normalizeAccent(request.accent),
     cwd: resolve(cwdInput ?? process.cwd()),
     ...(agentPreset === undefined ? {} : { agentPreset }),
+    ...(skillPolicy === undefined ? {} : { skillPolicy }),
     ...(persona === undefined ? {} : { persona }),
     ...(capabilities === undefined ? {} : { capabilities }),
   }
@@ -611,6 +641,7 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.accent === request.accent
     && record.cwd === request.cwd
     && record.agentPreset === request.agentPreset
+    && JSON.stringify(record.skillPolicy ?? undefined) === JSON.stringify(request.skillPolicy ?? undefined)
     && record.persona === request.persona
     && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
@@ -719,6 +750,8 @@ export class BotService extends TypertRemoteService {
   private readonly memoryLoads = new Map<string, Promise<void>>()
   private readonly pendingMemoryFlushes = new Map<string, Map<string, BotMemoryEvent['operation']>>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
+  private readonly skillPolicyFibers = new Map<Agent, ReturnType<Context['inject']>>()
+  private readonly skillPolicyInvalidators = new Map<string, () => void>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly collaboration: BotCollaborationService
   private chain: Promise<unknown> = Promise.resolve()
@@ -971,9 +1004,12 @@ export class BotService extends TypertRemoteService {
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
+          const skillPolicyFibers = [...this.skillPolicyFibers.values()]
+          this.skillPolicyFibers.clear()
           await this.groupService.then(service => service.whenIdle())
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
+            ...skillPolicyFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
             openedDomain.close(),
             openedGroupDomain.close(),
@@ -1444,6 +1480,84 @@ export class BotService extends TypertRemoteService {
       if (committed === undefined) throw new Error('Connected-app policy disappeared during commit')
       this.emitChanged()
       return { bot: this.view(next), app: committed }
+    })
+  }
+
+  /**
+   * Read host-local skill metadata and one Bot's current discovery policy.
+   * Bodies, paths, provider handles, and credentials never cross this Remote.
+   * @param request - Bot id whose skill view should be projected.
+   * @returns the Bot view, canonical policy, and metadata-only skill rows.
+   */
+  @Remote('listSkills')
+  async listSkills(request: BotSkillListRequest): Promise<BotSkillListValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = bots.get(id)
+    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const policy = normalizeBotSkillPolicy(record.skillPolicy)
+    const agent = this.ctx.agents.get(record.sessionId)
+    const registry = agent === undefined
+      ? this.ctx.get('skills')
+      : this.ctx.get('agentPresets')?.serviceFor(agent, 'skills') ?? agent.ctx.get('skills') ?? this.ctx.get('skills')
+    if (registry === undefined) return { bot: this.view(record), policy, skills: [] }
+    const agentScope = agent === undefined ? undefined : scopeOf(agent.ctx)
+    let scope = agentScope === undefined ? undefined : scopeParentOf(agentScope)
+    let releasePreset: (() => Promise<void>) | undefined
+    if (agent === undefined) {
+      const presets = this.ctx.get('agentPresets')
+      const presetId = record.agentPreset ?? presets?.defaultId
+      if (presets !== undefined && presetId !== undefined) {
+        try {
+          const lease = await presets.acquireScope(presetId)
+          scope = lease.key
+          releasePreset = async () => { await lease[Symbol.asyncDispose]() }
+        } catch (error: unknown) {
+          this.ctx.logger.debug(`bots: skill catalog could not retain preset "${presetId}": ${String(error)}`)
+        }
+      }
+    }
+    try {
+      const summaries = await registry.list({ cwd: record.cwd, scope })
+      return {
+        bot: this.view(record),
+        policy,
+        skills: summaries.map(skill => projectBotSkillSummary(skill, policy)),
+      }
+    } finally {
+      await releasePreset?.()
+    }
+  }
+
+  /**
+   * Persist a canonical host-local skill policy for one Bot.
+   * @param request - Bot id and complete replacement policy.
+   * @returns the committed Bot view and canonical policy.
+   */
+  @Remote('updateSkills')
+  async updateSkills(request: BotSkillUpdateRequest): Promise<BotSkillUpdateValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      const current = bots.get(id)
+      if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const policy = normalizeRequestedBotSkillPolicy({
+        mode: request.mode,
+        enabled: request.enabled,
+        disabled: request.disabled,
+      })
+      const updated: BotRecord = {
+        ...current,
+        skillPolicy: policy,
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
+      await bots.put(id, updated)
+      this.recordsBySession.set(String(updated.sessionId), updated)
+      this.skillPolicyInvalidators.get(String(updated.sessionId))?.()
+      this.emitChanged()
+      return { bot: this.view(updated), policy }
     })
   }
 
@@ -2036,6 +2150,7 @@ export class BotService extends TypertRemoteService {
       ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
       ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
       ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
+      ...(normalized.skillPolicy === undefined ? {} : { skillPolicy: normalized.skillPolicy }),
       state: 'provisioning',
       createdAt: now,
       updatedAt: now,
@@ -2388,6 +2503,29 @@ export class BotService extends TypertRemoteService {
       )
     })
     this.promptFibers.set(agent, fiber)
+    if (agent.ctx.get('skills') !== undefined) {
+      const skillFiber = agent.ctx.inject(['skills'], (skillScope) => {
+        const key = scopeOf(agent.ctx)
+        const parentScope = key === undefined ? undefined : scopeParentOf(key)
+        skillScope.skills.registerProvider((control) => {
+          const sessionKey = String(agent.id)
+          const invalidator = control.invalidate
+          this.skillPolicyInvalidators.set(sessionKey, invalidator)
+          return createBotSkillPolicyProvider(
+            skillScope.skills,
+            parentScope,
+            () => normalizeBotSkillPolicy(this.recordsBySession.get(sessionKey)?.skillPolicy),
+          )
+        })
+        skillScope.effect(() => () => {
+          const sessionKey = String(agent.id)
+          if (this.skillPolicyInvalidators.get(sessionKey) === undefined) return
+          this.skillPolicyInvalidators.delete(sessionKey)
+        }, 'bot skill policy cleanup')
+      })
+      this.skillPolicyFibers.set(agent, skillFiber)
+      await skillFiber
+    }
     await fiber
   }
 
@@ -2552,6 +2690,16 @@ export class BotService extends TypertRemoteService {
     const fiber = this.promptFibers.get(agent)
     if (fiber === undefined) return
     this.promptFibers.delete(agent)
+    const skillFiber = this.skillPolicyFibers.get(agent)
+    this.skillPolicyFibers.delete(agent)
+    this.skillPolicyInvalidators.delete(String(agent.id))
+    if (skillFiber !== undefined) {
+      const skillTask = skillFiber.dispose().catch((error: unknown) => {
+        this.ctx.logger.warn(`bots: skill policy cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+      this.promptDisposals.add(skillTask)
+      void skillTask.finally(() => { this.promptDisposals.delete(skillTask) })
+    }
     const task = fiber.dispose().catch((error: unknown) => {
       this.ctx.logger.warn(`bots: prompt cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
     })

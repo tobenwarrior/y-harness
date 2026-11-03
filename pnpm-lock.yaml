@@ -1188,6 +1188,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/skill':
+        specifier: workspace:*
+        version: link:../../skill/skill
       '@yharness/storage':
         specifier: workspace:*
         version: link:../../storage/storage

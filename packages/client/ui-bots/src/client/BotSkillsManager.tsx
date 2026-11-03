@@ -1,0 +1,199 @@
+import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import {
+  Button, IconCheckOutlineRegular, Modal, StateDot,
+} from '@yharness/client-ui-primitives'
+import type { PropsLocale } from '@yharness/client-ui-slots'
+import { BotAvatar } from './BotAvatar.tsx'
+import css from './BotWorkspace.module.css'
+import type {
+  BotSkillManagerActions,
+  BotSkillPolicy,
+  BotSkillSummary,
+  BotSummary,
+  BotWorkspaceProps,
+} from './types.ts'
+
+type Translate = PropsLocale<'bots'>['t']
+
+/** Props for the selected Bot's host-local skill manager. */
+export interface BotSkillsManagerProps {
+  /** Selected Bot whose host-local skill policy is shown. */
+  readonly bot: BotSummary
+  /** Host-backed skill catalog and policy actions. */
+  readonly actions: BotSkillManagerActions
+  /** Optional Bot-owned image loader for the manager identity chip. */
+  readonly loadAvatar?: BotWorkspaceProps['loadAvatar']
+  /** Whether the manager modal is visible. */
+  readonly open: boolean
+  /** Close the manager without changing the selected Bot. */
+  readonly onClose: () => void
+  /** Locale-owned Bot workspace translator. */
+  readonly t: Translate
+}
+
+function sortedNames(names: readonly string[]): string[] {
+  return [...new Set(names)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+}
+
+function hasSkill(policy: BotSkillPolicy, name: string): boolean {
+  return policy.mode === 'all' ? !policy.disabled.includes(name) : policy.enabled.includes(name)
+}
+
+function toggleSkill(policy: BotSkillPolicy, name: string): BotSkillPolicy {
+  if (policy.mode === 'all') {
+    const disabled = policy.disabled.includes(name)
+      ? policy.disabled.filter(candidate => candidate !== name)
+      : [...policy.disabled, name]
+    return { ...policy, disabled: sortedNames(disabled) }
+  }
+  const enabled = policy.enabled.includes(name)
+    ? policy.enabled.filter(candidate => candidate !== name)
+    : [...policy.enabled, name]
+  return { ...policy, enabled: sortedNames(enabled) }
+}
+
+function skillLabel(skill: BotSkillSummary, t: Translate): string {
+  return skill.name.trim() === '' ? t('skillFallbackName') : skill.name
+}
+
+/** Render a Bot-scoped host-local skill policy editor. */
+export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }: BotSkillsManagerProps): ReactNode {
+  const [skills, setSkills] = useState<readonly BotSkillSummary[]>([])
+  const [policy, setPolicy] = useState<BotSkillPolicy>({ mode: 'all', enabled: [], disabled: [] })
+  const [loading, setLoading] = useState(false)
+  const [working, setWorking] = useState(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [error, setError] = useState<'load' | 'save' | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    setLoading(true)
+    setError(null)
+    void actions.list(bot.id).then((value) => {
+      if (!live) return
+      setSkills(value.skills)
+      setPolicy(value.policy)
+    }).catch(() => {
+      if (live) setError('load')
+    }).finally(() => {
+      if (live) setLoading(false)
+    })
+    return () => { live = false }
+  }, [actions, bot.id, loadAttempt, open])
+
+  const save = async (): Promise<void> => {
+    if (working || loading) return
+    setWorking(true)
+    setError(null)
+    try {
+      const value = await actions.update(bot.id, policy)
+      setPolicy(value.policy)
+      onClose()
+    } catch {
+      setError('save')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const errorText = error === 'load'
+    ? t('skillsLoadFailed')
+    : error === 'save'
+      ? t('skillsSaveFailed')
+      : undefined
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => { if (!working) onClose() }}
+      title={t('skillsManagerTitle')}
+      description={t('skillsManagerDescription')}
+      closeLabel={t('close')}
+      className={css.skillsModal as string}
+      contentClassName={css.skillsModalContent as string}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={working}>{t('close')}</Button>
+          <Button variant="primary" onClick={() => { void save() }} disabled={working || loading || error === 'load'}>
+            {working ? t('skillsSaving') : t('skillsSave')}
+          </Button>
+        </>
+      )}
+    >
+      <div className={css.skillsManagerHeading}>
+        <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" />
+        <span>
+          <strong>{bot.name}</strong>
+          <span>{t('skillsHostLocalHint')}</span>
+        </span>
+      </div>
+      {errorText !== undefined && <div className={css.skillsNotice} role="alert">{errorText}</div>}
+      {loading && <div className={css.skillsLoading} role="status"><StateDot state="ongoing" size={13} />{t('skillsLoading')}</div>}
+      {!loading && error === 'load' && (
+        <div className={css.skillsEmpty}>
+          <p>{t('skillsLoadFailed')}</p>
+          <Button variant="outline" size="sm" onClick={() => { setLoadAttempt(value => value + 1) }}>{t('retry')}</Button>
+        </div>
+      )}
+      {!loading && error !== 'load' && (
+        <>
+          <fieldset className={css.skillsModes} disabled={working}>
+            <legend className={css.dialogLabel}>{t('skillsModeLabel')}</legend>
+            <label className={css.skillsModeOption}>
+              <input
+                type="radio"
+                name={`yharness-skills-mode-${bot.id}`}
+                checked={policy.mode === 'all'}
+                onChange={() => { setPolicy(current => ({ ...current, mode: 'all' })) }}
+              />
+              <span>{t('skillsModeAll')}</span>
+            </label>
+            <label className={css.skillsModeOption}>
+              <input
+                type="radio"
+                name={`yharness-skills-mode-${bot.id}`}
+                checked={policy.mode === 'selected'}
+                onChange={() => { setPolicy(current => ({ ...current, mode: 'selected' })) }}
+              />
+              <span>{t('skillsModeSelected')}</span>
+            </label>
+          </fieldset>
+          {skills.length === 0
+            ? (
+              <div className={css.skillsEmpty} role="status">
+                <strong>{t('skillsEmptyTitle')}</strong>
+                <span>{t('skillsEmptyDescription')}</span>
+              </div>
+            )
+            : (
+              <fieldset className={css.skillsList} disabled={working}>
+                <legend className={css.dialogLabel}>{t('skillsListLabel')}</legend>
+                {skills.map((skill) => {
+                  const label = skillLabel(skill, t)
+                  const enabled = hasSkill(policy, skill.name)
+                  return (
+                    <label key={skill.name} className={css.skillRow}>
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        aria-label={enabled ? t('revokeSkill', { name: label }) : t('grantSkill', { name: label })}
+                        onChange={() => { setPolicy(current => toggleSkill(current, skill.name)) }}
+                      />
+                      <span className={css.skillRowCopy}>
+                        <strong>{label}</strong>
+                        <span>{skill.description}</span>
+                        {skill.whenToUse !== undefined && skill.whenToUse !== '' && <small>{skill.whenToUse}</small>}
+                      </span>
+                      {enabled && <IconCheckOutlineRegular size={14} />}
+                    </label>
+                  )
+                })}
+              </fieldset>
+            )}
+        </>
+      )}
+    </Modal>
+  )
+}

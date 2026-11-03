@@ -6,6 +6,7 @@ import {
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
+  IconSidebarSkillsOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -14,10 +15,11 @@ import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
 import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
+import { BotSkillsManager } from './BotSkillsManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
-  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotStatus, BotSummary, BotWorkspaceProps,
+  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotSkillManagerActions, BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & { children?: ReactNode }
@@ -783,7 +785,7 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, memoryManager, loading }: {
+export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, memoryManager, skillManager, loading }: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
@@ -791,6 +793,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
   memoryManager?: BotMemoryManagerActions | undefined
+  skillManager?: BotSkillManagerActions | undefined
   loading: boolean
 }) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
@@ -798,6 +801,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   const [saving, setSaving] = useState(false)
   const [renameError, setRenameError] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const [skillsOpen, setSkillsOpen] = useState(false)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -836,6 +840,11 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
           {memoryManager !== undefined && (
             <Tooltip label={t('manageMemories')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('manageMemories')} icon={<IconContextInjectionOutlineRegular size={14} />} onClick={() => { setMemoryOpen(true) }} />
+            </Tooltip>
+          )}
+          {skillManager !== undefined && (
+            <Tooltip label={t('manageSkills')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('manageSkills')} icon={<IconSidebarSkillsOutlineRegular size={14} />} onClick={() => { setSkillsOpen(true) }} />
             </Tooltip>
           )}
           {onEditAvatar !== undefined && (
@@ -883,6 +892,17 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
           loadAvatar={loadAvatar}
           open={memoryOpen}
           onClose={() => { setMemoryOpen(false) }}
+          t={t}
+        />
+      )}
+      {skillManager !== undefined && (
+        <BotSkillsManager
+          key={bot.id}
+          bot={bot}
+          actions={skillManager}
+          loadAvatar={loadAvatar}
+          open={skillsOpen}
+          onClose={() => { setSkillsOpen(false) }}
           t={t}
         />
       )}

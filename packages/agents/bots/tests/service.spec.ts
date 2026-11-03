@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import { agentEvents, type Agent } from '@yharness/agent'
-import { createScope } from '@yharness/scope'
+import { createScope, scopeOf } from '@yharness/scope'
 import { Session, SessionId, SessionSeq } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import { freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
@@ -19,6 +19,7 @@ import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { defineTool } from '@yharness/tools'
 import type { ToolDefinition } from '@yharness/tools'
+import SkillRegistry, { type SkillCandidate, type SkillDefinition } from '@yharness/skill'
 import McpResources from '@yharness/mcp-resources'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
@@ -62,6 +63,7 @@ async function harness(
   await ctx.plugin(Storage)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(SkillRegistry)
   await ctx.plugin(McpResources)
   const backend: StorageBackend = new MemoryStorageBackend(pool)
   ctx.effect(() => ctx.storage.backend.register('fixture', backend))
@@ -3797,6 +3799,110 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('persists a Bot skill policy and blocks denied skill bodies in its scoped registry', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Skill owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const bodies = vi.fn()
+    const candidates: SkillCandidate[] = [
+      {
+        name: 'code-review', description: 'Review code',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'fixture', source: 'bundled', rank: 600, locator: 'code-review',
+      },
+      {
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'fixture', source: 'bundled', rank: 600, locator: 'release-notes',
+      },
+    ]
+    h.ctx.skills.registerProvider(() => ({
+      name: 'fixture',
+      list: () => Promise.resolve(candidates),
+      get: async (candidate): Promise<SkillDefinition> => {
+        bodies(candidate.name)
+        return { ...candidate, content: `${candidate.name} body.` }
+      },
+    }))
+    const agent = h.agents[0]
+    if (agent === undefined) throw new Error('skill policy test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('skill policy test Agent has no scope')
+    try {
+      await expect(h.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        policy: { mode: 'all', enabled: [], disabled: [] },
+        skills: [{ name: 'code-review', enabled: true }, { name: 'release-notes', enabled: true }],
+      })
+      await expect(h.service.updateSkills({
+        botId: created.bot.id, mode: 'selected', enabled: ['not valid'], disabled: [],
+      })).rejects.toThrow('Bot skill name')
+      await h.service.updateSkills({
+        botId: created.bot.id, mode: 'selected', enabled: ['code-review', 'code-review'], disabled: [],
+      })
+      const scoped = await h.ctx.skills.list({ scope })
+      expect(scoped.map(skill => [skill.name, skill.invocation.modelInvocable])).toEqual([
+        ['code-review', true], ['release-notes', false],
+      ])
+      await expect(h.ctx.skills.get('release-notes', { scope })).resolves.toMatchObject({
+        name: 'release-notes', content: '', invocation: { modelInvocable: false },
+      })
+      expect(bodies).not.toHaveBeenCalledWith('release-notes')
+      expect(bodies).not.toHaveBeenCalledWith('code-review')
+      await expect(h.ctx.skills.get('code-review', { scope })).resolves.toMatchObject({ content: 'code-review body.' })
+      expect(bodies).toHaveBeenCalledWith('code-review')
+    } finally {
+      await close(h.ctx)
+    }
+    const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      await expect(reopened.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('reads cold Bot skill metadata through its selected preset scope', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Cold skill owner', cwd: '/tmp', agentPreset: 'review' })
+    await close(first.ctx)
+    const h = await harness(pool)
+    const preset = createScope(h.ctx, {})
+    const key = scopeOf(preset.ctx)
+    if (key === undefined) throw new Error('cold skill test preset has no scope')
+    const presetSkills = preset.ctx.get('skills')
+    if (presetSkills === undefined) throw new Error('cold skill test has no skill registry')
+    presetSkills.registerProvider(() => ({
+      name: 'preset-fixture',
+      list: () => Promise.resolve([{
+        name: 'preset-review', description: 'Review with the selected preset',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'preset-fixture', source: 'bundled', rank: 600, locator: 'preset-review',
+      }]),
+      get: async (candidate): Promise<SkillDefinition> => ({ ...candidate, content: 'Preset review body.' }),
+    }))
+    const release = vi.fn(async () => {})
+    const acquireScope = vi.fn(async (id: string) => {
+      expect(id).toBe('review')
+      return { key, [Symbol.asyncDispose]: release }
+    })
+    h.ctx.provide('agentPresets', { defaultId: 'default', acquireScope } as never)
+    try {
+      await expect(h.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        skills: [{ name: 'preset-review', enabled: true }],
+      })
+      expect(acquireScope).toHaveBeenCalledWith('review')
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      await preset.dispose()
+      await close(h.ctx)
     }
   })
 })
