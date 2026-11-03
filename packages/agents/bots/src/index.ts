@@ -25,6 +25,7 @@ import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
+import { freezeMessage } from '@yharness/llm'
 import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
@@ -66,6 +67,7 @@ import type {
   BotGroupUpdateValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
+  BotGroupId,
 } from './group-chat.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
@@ -121,6 +123,7 @@ import {
   type SharedBotHost,
   type SharedBotProfileUpdate,
 } from './shared-service.ts'
+import type { SharedGroupSessionBinding } from './shared-group.ts'
 import { BotPrincipalId } from './sharing.ts'
 import {
   BotTemplateId,
@@ -201,8 +204,16 @@ export {
   SHARED_BOT_ENDPOINTS,
   SharedBotService,
 } from './shared-service.ts'
+export {
+  SHARED_GROUPS_FIELD,
+  SHARED_GROUPS_VERSION,
+  SharedBotGroupService,
+  SharedGroupError,
+  sharedGroupSnapshotSchema,
+} from './shared-group.ts'
 export type {
   SharedBotEnrollment,
+  SharedGroupEnrollment,
   SharedBotHost,
   SharedBotHostOperationResult,
   SharedBotProfileUpdate,
@@ -210,6 +221,11 @@ export type {
   SharedBotRosterEntry,
   SharedPrivateSessionValue,
 } from './shared-service.ts'
+export type {
+  SharedGroupHost,
+  SharedGroupSessionBinding,
+  SharedGroupSnapshot,
+} from './shared-group.ts'
 export {
   BotCollaborationError,
   BotCollaborationService,
@@ -466,6 +482,19 @@ function groupDeliveryClaims(messages: readonly UserMessage[]): BotGroupDelivery
 function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonly BotGroupDeliveryClaimInput[]): boolean {
   const only = messages[0]
   return messages.length === 1 && claims.length === 1 && only?.source.kind === 'bot-group-message'
+}
+
+interface GroupSessionProjection {
+  readonly acceptsClaim: (claim: BotGroupDeliveryClaimInput) => boolean
+  readonly recordClaims: (
+    claims: readonly BotGroupDeliveryClaimInput[],
+    turn: number,
+    step: number,
+    isolated: boolean,
+    competingInput: boolean,
+  ) => Promise<void>
+  readonly recordFailure: (turn: number, error: string) => Promise<void>
+  readonly recordResponse: (turn: number, step: number, text: string, sourceMessageId: string) => Promise<void>
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
@@ -1089,6 +1118,8 @@ export class BotService extends TypertRemoteService {
   private readonly pendingNoCredentialIntents = new Map<string, BotMutationIntent>()
   private readonly sharedRecordsBySession = new Map<string, BotRecord>()
   private readonly sharedSessionIds = new Set<string>()
+  private readonly sharedGroupSessionsBySession = new Map<string, { readonly groupId: BotGroupId; readonly botId: BotId }>()
+  private readonly sharedGroupDeliveryTails = new Map<string, Promise<void>>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
@@ -1217,11 +1248,19 @@ export class BotService extends TypertRemoteService {
     })
     ctx.on('session/event', (session, event) => {
       const record = this.recordsBySession.get(String(session.id))
-      if (record === undefined) return
+      const sharedGroup = this.sharedGroupSessionsBySession.get(String(session.id))
+      if (record === undefined && sharedGroup === undefined) return
       if (event.type === 'turn/end') {
         const failure = groupTurnFailure(event.data.reason)
         if (failure === undefined) return
-        void this.groupService.then(service => service.recordBotTurnFailure(record.id, event.data.turn, failure))
+        const projection = sharedGroup === undefined
+          ? record === undefined
+            ? Promise.resolve()
+            : this.groupService.then(service => service.recordBotTurnFailure(record.id, event.data.turn, failure))
+          : this.sharedService === undefined
+            ? Promise.resolve()
+            : this.sharedService.recordSharedGroupTurnFailure(sharedGroup.groupId, sharedGroup.botId, event.data.turn, failure)
+        void projection
           .catch((error: unknown) => {
             ctx.logger.warn(`bots: group failure projection failed: ${error instanceof Error ? error.message : String(error)}`)
           })
@@ -1235,13 +1274,27 @@ export class BotService extends TypertRemoteService {
       // Tool-call assistant messages are intermediate model steps. Keep the
       // delivery open until the first assistant message without a tool call.
       if (text === '' || event.data.message.content.some(block => block.type === 'tool-call')) return
-      void this.groupService.then(service => service.recordBotResponse(
-        record.id,
-        event.data.turn,
-        event.data.step,
-        text,
-        String(event.data.message.id),
-      ))
+      const projection = sharedGroup === undefined
+        ? record === undefined
+          ? Promise.resolve()
+          : this.groupService.then(service => service.recordBotResponse(
+            record.id,
+            event.data.turn,
+            event.data.step,
+            text,
+            String(event.data.message.id),
+          ))
+        : this.sharedService === undefined
+          ? Promise.resolve()
+          : this.sharedService.recordSharedGroupResponse(
+            sharedGroup.groupId,
+            sharedGroup.botId,
+            event.data.turn,
+            event.data.step,
+            text,
+            String(event.data.message.id),
+          )
+      void projection
         .catch((error: unknown) => {
           ctx.logger.warn(`bots: group response projection failed: ${error instanceof Error ? error.message : String(error)}`)
         })
@@ -1261,6 +1314,21 @@ export class BotService extends TypertRemoteService {
           isolatedGroupDelivery(admittedMessages, claims),
           admittedMessages.length > 0 && !isolatedGroupDelivery(admittedMessages, claims),
         ))
+      } else {
+        const sharedGroup = this.sharedGroupSessionsBySession.get(String(agent.id))
+        const sharedService = this.sharedService
+        if (sharedGroup !== undefined && sharedService !== undefined) {
+          const scopedClaims = claims.filter(claim => claim.groupId === sharedGroup.groupId)
+          await sharedService.recordSharedGroupMessageClaims(
+            sharedGroup.groupId,
+            sharedGroup.botId,
+            scopedClaims,
+            turn,
+            step,
+            isolatedGroupDelivery(admittedMessages, scopedClaims),
+            admittedMessages.length > 0 && !isolatedGroupDelivery(admittedMessages, scopedClaims),
+          )
+        }
       }
       return decision
     })
@@ -3438,8 +3506,72 @@ export class BotService extends TypertRemoteService {
 
   /** Rebuild group delivery claims and response projections from one durable Session log. */
   private async reconcileGroupSessionId(sessionId: SessionId): Promise<void> {
+    const sharedGroup = this.sharedGroupSessionsBySession.get(String(sessionId))
+    if (sharedGroup !== undefined) {
+      try {
+        await this.inspectSharedGroupSession(sessionId, new AbortController().signal)
+      } catch (error: unknown) {
+        if (isMissingSessionForSharedGroup(error)) return
+        throw error
+      }
+      const service = this.sharedService
+      if (service === undefined) return
+      await this.reconcileGroupSessionProjection(sessionId, {
+        acceptsClaim: claim => claim.groupId === sharedGroup.groupId,
+        recordClaims: (claims, turn, step, isolated, competingInput) => service.recordSharedGroupMessageClaims(
+          sharedGroup.groupId,
+          sharedGroup.botId,
+          claims,
+          turn,
+          step,
+          isolated,
+          competingInput,
+        ),
+        recordFailure: (turn, error) => service.recordSharedGroupTurnFailure(
+          sharedGroup.groupId,
+          sharedGroup.botId,
+          turn,
+          error,
+        ),
+        recordResponse: (turn, step, text, sourceMessageId) => service.recordSharedGroupResponse(
+          sharedGroup.groupId,
+          sharedGroup.botId,
+          turn,
+          step,
+          text,
+          sourceMessageId,
+        ),
+      })
+      return
+    }
     const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) return
+    const service = await this.groupService
+    await this.reconcileGroupSessionProjection(sessionId, {
+      acceptsClaim: () => true,
+      recordClaims: (claims, turn, step, isolated, competingInput) => service.recordBotMessageClaims(
+        record.id,
+        claims,
+        turn,
+        step,
+        isolated,
+        competingInput,
+      ),
+      recordFailure: (turn, error) => service.recordBotTurnFailure(record.id, turn, error),
+      recordResponse: (turn, step, text, sourceMessageId) => service.recordBotResponse(
+        record.id,
+        turn,
+        step,
+        text,
+        sourceMessageId,
+      ),
+    })
+  }
+
+  private async reconcileGroupSessionProjection(
+    sessionId: SessionId,
+    projection: GroupSessionProjection,
+  ): Promise<void> {
     const inputs = new Map<string, {
       readonly turn: number
       readonly step: number
@@ -3514,47 +3646,43 @@ export class BotService extends TypertRemoteService {
         if (claimedForStep.length > 0) {
           turnInputs.push({ turn: event.data.turn, step: 0, rawMessages: claimedForStep, messages: [] })
         }
-        await this.groupService.then(async (service) => {
-          for (const input of turnInputs) {
-            const messages = admittedMessages(input)
-            if (messages.length === 0) continue
-            const claims = groupDeliveryClaims(messages)
-            await service.recordBotMessageClaims(
-              record.id,
-              claims,
-              input.turn,
-              input.step,
-              isolatedGroupDelivery(messages, claims),
-              messages.length > 0 && !isolatedGroupDelivery(messages, claims),
-            )
-          }
-          await service.recordBotTurnFailure(record.id, event.data.turn, failure)
-        })
+        for (const input of turnInputs) {
+          const messages = admittedMessages(input)
+          if (messages.length === 0) continue
+          const claims = groupDeliveryClaims(messages).filter(projection.acceptsClaim)
+          const isolated = isolatedGroupDelivery(messages, claims)
+          await projection.recordClaims(
+            claims,
+            input.turn,
+            input.step,
+            isolated,
+            messages.length > 0 && !isolated,
+          )
+        }
+        await projection.recordFailure(event.data.turn, failure)
         continue
       }
       if (event.type !== 'assistant/message') continue
       const current = inputs.get(`${String(event.data.turn)}:${String(event.data.step)}`)
       if (current === undefined) continue
       const messages = admittedMessages(current)
-      const claims = groupDeliveryClaims(messages)
-      await this.groupService.then(async (service) => {
-        await service.recordBotMessageClaims(
-          record.id,
-          claims,
-          event.data.turn,
-          event.data.step,
-          isolatedGroupDelivery(messages, claims),
-          messages.length > 0 && !isolatedGroupDelivery(messages, claims),
-        )
-        if (claims.length === 0) return
-        const text = event.data.message.content
-          .flatMap(block => block.type === 'text' ? [block.text] : [])
-          .join('\n')
-          .trim()
-        if (text !== '' && !event.data.message.content.some(block => block.type === 'tool-call')) {
-          await service.recordBotResponse(record.id, event.data.turn, event.data.step, text, String(event.data.message.id))
-        }
-      })
+      const claims = groupDeliveryClaims(messages).filter(projection.acceptsClaim)
+      const isolated = isolatedGroupDelivery(messages, claims)
+      await projection.recordClaims(
+        claims,
+        event.data.turn,
+        event.data.step,
+        isolated,
+        messages.length > 0 && !isolated,
+      )
+      if (claims.length === 0) continue
+      const text = event.data.message.content
+        .flatMap(block => block.type === 'text' ? [block.text] : [])
+        .join('\n')
+        .trim()
+      if (text !== '' && !event.data.message.content.some(block => block.type === 'tool-call')) {
+        await projection.recordResponse(event.data.turn, event.data.step, text, String(event.data.message.id))
+      }
     }
   }
 
@@ -3864,6 +3992,7 @@ export class BotService extends TypertRemoteService {
       // The shared mount runs from the initialized effect. Reading through
       // list() here would await that same effect and deadlock startup.
       const bindings = shared.privateSessionBindings()
+      const groupBindings = await shared.sharedGroupSessionBindings()
       const existingAgents: Agent[] = []
       for (const binding of bindings) {
         this.sharedSessionIds.add(String(binding.sessionId))
@@ -3879,6 +4008,23 @@ export class BotService extends TypertRemoteService {
         const bot = botsById.get(String(binding.botId))
         if (bot !== undefined) {
           this.sharedRecordsBySession.set(String(binding.sessionId), { ...bot, ownerId: this.ownerId, sessionId: binding.sessionId })
+        }
+      }
+      for (const binding of groupBindings) {
+        const bot = botsById.get(String(binding.botId))
+        if (bot === undefined || binding.revokedAt !== undefined) continue
+        if (!await this.sharedGroupSessionMetadataIsValid(binding.sessionId)) continue
+        const sessionKey = String(binding.sessionId)
+        try {
+          this.ensureSharedGroupSessionBinding(binding.sessionId, binding.groupId, binding.botId)
+        } catch {
+          continue
+        }
+        this.sharedRecordsBySession.set(sessionKey, { ...bot, ownerId: this.ownerId, sessionId: binding.sessionId })
+        const agent = this.ctx.agents.get(binding.sessionId)
+        if (agent !== undefined && !this.sharedScopeAgents.has(agent)) {
+          this.ensureSharedScopeFence(agent)
+          existingAgents.push(agent)
         }
       }
       await Promise.all(existingAgents.map(agent => this.installSharedAgentScope(agent)))
@@ -3897,6 +4043,12 @@ export class BotService extends TypertRemoteService {
         endpoints: SHARED_BOT_ENDPOINTS,
       })
       this.sharedService = service
+      // Existing isolated group Sessions may contain a completed turn from
+      // before this Host restarted. Rebuild only their shared-group receipts;
+      // private Bot Sessions never enter this projection.
+      await Promise.all(groupBindings
+        .filter(binding => binding.revokedAt === undefined)
+        .map(binding => this.reconcileGroupSessionId(binding.sessionId)))
       return async () => {
         await removeShared?.()
         await removeEnrollment?.()
@@ -3905,6 +4057,8 @@ export class BotService extends TypertRemoteService {
         this.sharedService = undefined
         this.sharedRecordsBySession.clear()
         this.sharedSessionIds.clear()
+        this.sharedGroupSessionsBySession.clear()
+        this.sharedGroupDeliveryTails.clear()
       }
     } catch (error) {
       await removeShared?.()
@@ -4031,6 +4185,200 @@ export class BotService extends TypertRemoteService {
         await this.ctx.sessions.flush(session)
         signal?.throwIfAborted()
       },
+      createSharedGroupSession: (bot, sessionId, groupId, signal) => this.createSharedGroupSession(bot, sessionId, groupId, signal),
+      resolveSharedGroupAgent: (sessionId, groupId, botId, signal) => this.resolveSharedGroupAgent(sessionId, groupId, botId, signal),
+      inspectSharedGroupSession: (sessionId, signal) => this.inspectSharedGroupSession(sessionId, signal),
+      flushSharedGroupSession: (sessionId, signal) => this.flushSharedGroupSession(sessionId, signal),
+      registerSharedGroupSessions: (bindings) => {
+        this.registerSharedGroupSessions(bindings)
+      },
+      deliverSharedGroup: request => this.deliverSharedGroup(request),
+    }
+  }
+
+  private registerSharedGroupSessions(bindings: readonly SharedGroupSessionBinding[]): void {
+    const activeKeys = new Set(bindings.map(binding => String(binding.sessionId)))
+    for (const binding of bindings) {
+      const key = String(binding.sessionId)
+      this.ensureSharedGroupSessionBinding(binding.sessionId, binding.groupId, binding.botId)
+      const bot = this.recordsBySession.size === 0
+        ? undefined
+        : [...this.recordsBySession.values()].find(record => record.id === binding.botId)
+      if (bot !== undefined) this.sharedRecordsBySession.set(key, { ...bot, sessionId: binding.sessionId })
+    }
+    for (const [key] of this.sharedGroupSessionsBySession) {
+      if (activeKeys.has(key)) continue
+      this.sharedGroupSessionsBySession.delete(key)
+      this.sharedRecordsBySession.delete(key)
+      this.sharedSessionIds.delete(key)
+    }
+  }
+
+  private ensureSharedGroupSessionBinding(sessionId: SessionId, groupId: BotGroupId, botId: BotId): void {
+    const key = String(sessionId)
+    if (this.recordsBySession.has(key)) {
+      throw new Error('shared group Session id collides with an owner Bot Session')
+    }
+    const existing = this.sharedGroupSessionsBySession.get(key)
+    if (existing !== undefined && (existing.groupId !== groupId || existing.botId !== botId)) {
+      throw new Error('shared group Session binding changed')
+    }
+    this.sharedGroupSessionsBySession.set(key, { groupId, botId })
+    this.sharedSessionIds.add(key)
+  }
+
+  private async createSharedGroupSession(
+    bot: BotView,
+    sessionId: SessionId,
+    groupId: BotGroupId,
+    signal?: AbortSignal,
+  ): Promise<Pick<Agent, 'id' | 'cancel' | 'whenIdle'> | void> {
+    const key = String(sessionId)
+    this.ensureSharedGroupSessionBinding(sessionId, groupId, bot.id)
+    this.sharedRecordsBySession.set(key, { ...bot, ownerId: this.ownerId, sessionId })
+    const request = sharedBotSessionRequest(sessionId)
+    try {
+      if (request.cwd === undefined) throw new Error('shared Bot Session request did not include an isolated directory')
+      await mkdir(request.cwd, { recursive: true, mode: 0o700 })
+      signal?.throwIfAborted()
+      await this.ctx.sessionController.create(request, signal ?? new AbortController().signal)
+      const created = this.ctx.agents.get(sessionId)
+      if (created === undefined) throw new Error(`Shared Bot Session "${String(sessionId)}" was not published.`)
+      await this.installSharedAgentScope(created)
+      return created
+    } catch (error) {
+      // The Session controller may have committed before reporting a late
+      // publication error. Keep the durable group binding and shared fence so
+      // the next delivery can inspect and resume the same isolated Session.
+      this.sharedRecordsBySession.delete(key)
+      throw error
+    }
+  }
+
+  private async resolveSharedGroupAgent(
+    sessionId: SessionId,
+    groupId: BotGroupId,
+    botId: BotId,
+    signal: AbortSignal,
+  ): Promise<{ readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'> } | { readonly error: Error }> {
+    const key = String(sessionId)
+    try {
+      this.ensureSharedGroupSessionBinding(sessionId, groupId, botId)
+    } catch (error: unknown) {
+      return { error: error instanceof Error ? error : new Error(String(error)) }
+    }
+    signal.throwIfAborted()
+    const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === botId)
+    if (bot === undefined) return { error: new Error('shared Bot no longer exists') }
+    this.sharedSessionIds.add(key)
+    this.sharedRecordsBySession.set(key, { ...bot, ownerId: this.ownerId, sessionId })
+    const expected = sharedBotSessionRequest(sessionId)
+    const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+    signal.throwIfAborted()
+    if (inspection.meta.cwd !== expected.cwd || inspection.meta.agentPreset !== expected.agentPreset) {
+      this.sharedGroupSessionsBySession.delete(key)
+      this.sharedSessionIds.delete(key)
+      this.sharedRecordsBySession.delete(key)
+      return { error: new Error('shared Bot group Session does not use its isolated preset and directory') }
+    }
+    this.fenceExistingSharedAgent(sessionId)
+    const resolved = await this.ctx.sessionController.resolveAgent(sessionId, signal)
+    signal.throwIfAborted()
+    if (!('agent' in resolved)) return { error: resolved.error }
+    try {
+      await this.installSharedAgentScope(resolved.agent)
+    } catch (error: unknown) {
+      signal.throwIfAborted()
+      return { error: error instanceof Error ? error : new Error(String(error)) }
+    }
+    return { agent: resolved.agent }
+  }
+
+  private async inspectSharedGroupSession(
+    sessionId: SessionId,
+    signal: AbortSignal,
+  ): Promise<{ readonly events: readonly SessionEvent[] }> {
+    const binding = this.sharedGroupSessionsBySession.get(String(sessionId))
+    if (binding === undefined) throw new Error('shared Bot group Session has no durable binding')
+    const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+    const expected = sharedBotSessionRequest(sessionId)
+    if (inspection.meta.cwd !== expected.cwd || inspection.meta.agentPreset !== expected.agentPreset) {
+      throw new Error('shared Bot group Session does not use its isolated preset and directory')
+    }
+    return inspection
+  }
+
+  private async sharedGroupSessionMetadataIsValid(sessionId: SessionId): Promise<boolean> {
+    try {
+      const inspection = await this.ctx.sessionController.inspect(sessionId)
+      const expected = sharedBotSessionRequest(sessionId)
+      return inspection.meta.cwd === expected.cwd && inspection.meta.agentPreset === expected.agentPreset
+    } catch (error: unknown) {
+      if (isMissingSessionForSharedGroup(error)) return false
+      throw error
+    }
+  }
+
+  private async flushSharedGroupSession(sessionId: SessionId, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    let session = this.ctx.sessions.get(sessionId)
+    if (session === undefined) {
+      const binding = this.sharedGroupSessionsBySession.get(String(sessionId))
+      if (binding === undefined) throw new Error('shared Bot group Session has no durable binding')
+      const resolved = await this.resolveSharedGroupAgent(sessionId, binding.groupId, binding.botId, signal ?? new AbortController().signal)
+      if (!('agent' in resolved)) throw resolved.error
+      session = this.ctx.sessions.get(resolved.agent.id)
+    }
+    if (session === undefined) throw new Error(`Shared Bot group Session "${String(sessionId)}" is not live.`)
+    signal?.throwIfAborted()
+    await this.ctx.sessions.flush(session)
+    signal?.throwIfAborted()
+  }
+
+  private async deliverSharedGroup(request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0]): Promise<'accepted' | 'duplicate'> {
+    const key = String(request.sessionId)
+    const prior = this.sharedGroupDeliveryTails.get(key) ?? Promise.resolve()
+    const run = prior.then(async () => {
+      request.signal?.throwIfAborted()
+      this.ensureSharedGroupSessionBinding(request.sessionId, request.groupId, request.targetBotId)
+      let inspection: { readonly events: readonly SessionEvent[] }
+      try {
+        inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
+      } catch (error: unknown) {
+        if (!isMissingSessionForSharedGroup(error)) throw error
+        const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === request.targetBotId)
+        if (bot === undefined) throw new Error('shared Bot no longer exists')
+        await this.createSharedGroupSession(bot, request.sessionId, request.groupId, request.signal)
+        inspection = await this.inspectSharedGroupSession(request.sessionId, request.signal ?? new AbortController().signal)
+      }
+      if (inspection.events.some(event => event.type === 'user/message'
+        && event.surfaceOp === 'append'
+        && event.data.source.kind === 'bot-group-message'
+        && String(event.data.source.groupId) === String(request.groupId)
+        && String(event.data.source.messageId) === String(request.messageId))) {
+        await this.flushSharedGroupSession(request.sessionId, request.signal)
+        return 'duplicate' as const
+      }
+      const resolved = await this.resolveSharedGroupAgent(
+        request.sessionId,
+        request.groupId,
+        request.targetBotId,
+        request.signal ?? new AbortController().signal,
+      )
+      if (!('agent' in resolved)) throw resolved.error
+      resolved.agent.followup(freezeMessage({
+        id: BotMessageId(String(request.messageId)),
+        role: 'user',
+        content: [{ type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` }],
+        source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
+      }))
+      await this.flushSharedGroupSession(request.sessionId, request.signal)
+      return 'accepted' as const
+    })
+    const tail = run.then(() => undefined, () => undefined)
+    this.sharedGroupDeliveryTails.set(key, tail)
+    try { return await run } finally {
+      if (this.sharedGroupDeliveryTails.get(key) === tail) this.sharedGroupDeliveryTails.delete(key)
     }
   }
 
@@ -4065,3 +4413,8 @@ export class BotService extends TypertRemoteService {
 }
 
 export default BotService
+
+function isMissingSessionForSharedGroup(value: unknown): boolean {
+  return remoteErrorOf(value)?.code === 'session/not-found'
+    || value instanceof Error && value.name === 'ApiSessionNotFound'
+}

@@ -143,6 +143,7 @@ const sharedPrincipalIdSchema = z.string()
   .transform(BotPrincipalId)
 const sharedSessionIdSchema = z.string()
   .regex(/^shared-session-[A-Za-z0-9-]+$/, 'Shared Session ids must begin with shared-session-')
+  .refine(value => !value.startsWith('shared-session-group-'), 'Private shared Session ids cannot use the group namespace')
   .transform(SessionId)
 const sharedTimestamp = z.number().int().nonnegative()
 
@@ -261,6 +262,8 @@ export const sharedMembershipSnapshotSchema = z.object({
   version: z.literal(1),
   memberships: z.array(sharedMembershipSchema),
   sharedMemory: sharedMemorySnapshotSchema.optional(),
+  /** Shared group state is parsed by the group service before use. */
+  sharedGroups: z.unknown().optional(),
 }).strict()
 
 /** Parsed shared membership snapshot. */

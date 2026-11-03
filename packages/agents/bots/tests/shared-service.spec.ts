@@ -2,7 +2,7 @@ import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
 import { BotPrincipalId } from '../src/sharing.ts'
-import { SharedAccessAuthority, sharedInviteDigest, sharedPrincipalOf, type SharedAccessEnrollment } from '@yharness/client-connection'
+import { SharedAccessAuthority, SharedInviteCode, sharedInviteDigest, sharedPrincipalOf, type SharedAccessEnrollment } from '@yharness/client-connection'
 import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import Storage from '@yharness/storage'
@@ -26,18 +26,9 @@ import { BotId, type BotView } from '../src/types.ts'
 import {
   BotGroupId,
   BotGroupMessageId,
-  type BotGroupCreateRequest,
-  type BotGroupCreateValue,
-  type BotGroupInspectRequest,
-  type BotGroupInspectValue,
-  type BotGroupListValue,
-  type BotGroupSendRemoteRequest,
-  type BotGroupSendValue,
-  type BotGroupUpdateRequest,
-  type BotGroupUpdateValue,
-  type BotGroupView,
 } from '../src/group-chat.ts'
 import { SharedBotService, SHARED_BOT_ENDPOINTS, type SharedBotHost } from '../src/shared-service.ts'
+import type { SharedGroupSessionBinding } from '../src/shared-group.ts'
 import {
   sharedInviteSchema,
   sharedMemorySnapshotSchema,
@@ -119,6 +110,8 @@ interface Fixture {
 
 class SharedBotHostFixture implements SharedBotHost {
   readonly sessions = new Map<string, { readonly botId: string; readonly principalId: string }>()
+  readonly sharedGroupMessages = new Set<string>()
+  readonly sharedGroupBindings: SharedGroupSessionBinding[][] = []
   readonly messages = new Map<string, UserMessage[]>()
   readonly followups = vi.fn<(sessionId: SessionId, message: UserMessage) => void>((sessionId, message) => {
     const messages = this.messages.get(String(sessionId)) ?? []
@@ -193,6 +186,28 @@ class SharedBotHostFixture implements SharedBotHost {
     }
   }
 
+  createSharedGroupSession = async (_bot: BotView, sessionId: SessionId, _groupId: BotGroupId): Promise<Pick<Agent, 'id' | 'cancel' | 'whenIdle'>> => ({
+    id: sessionId,
+    cancel: () => { this.cancellations(sessionId) },
+    whenIdle: async () => {},
+  })
+
+  resolveSharedGroupAgent = async (sessionId: SessionId, _groupId: BotGroupId, _botId: BotId, _signal: AbortSignal): Promise<{ readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'> }> => ({
+    agent: {
+      id: sessionId,
+      followup: (message) => { this.followups(sessionId, message) },
+      cancel: () => { this.cancellations(sessionId) },
+      whenIdle: async () => {},
+    },
+  })
+
+  inspectSharedGroupSession = async (
+    _sessionId: SessionId,
+    _signal: AbortSignal,
+  ): Promise<{ readonly events: readonly never[] }> => ({ events: [] })
+
+  flushSharedGroupSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
+
   resolvePrivateAgent = async (sessionId: SessionId, signal: AbortSignal): Promise<{ agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'> } | { error: Error }> => {
     signal.throwIfAborted()
     return {
@@ -210,6 +225,25 @@ class SharedBotHostFixture implements SharedBotHost {
   })
 
   flushPrivateSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
+
+  registerSharedGroupSessions = (bindings: readonly SharedGroupSessionBinding[]): void => {
+    this.sharedGroupBindings.push([...bindings])
+  }
+
+  deliverSharedGroup = vi.fn(async (request: {
+    readonly messageId: BotGroupMessageId
+    readonly targetBotId: BotId
+    readonly sessionId: SessionId
+  }): Promise<'accepted' | 'duplicate'> => {
+    const registered = this.sharedGroupBindings.at(-1)?.some(
+      binding => binding.sessionId === request.sessionId && binding.botId === request.targetBotId,
+    )
+    if (!registered) throw new Error('shared group Session binding was not registered')
+    const key = `${String(request.messageId)}:${String(request.targetBotId)}`
+    if (this.sharedGroupMessages.has(key)) return 'duplicate'
+    this.sharedGroupMessages.add(key)
+    return 'accepted'
+  })
 
   renameBot = async (botId: BotId, name: string): Promise<BotView> => {
     const index = this.bots.findIndex(bot => bot.id === botId)
@@ -301,7 +335,7 @@ interface SecondaryFixture {
   readonly close: () => Promise<void>
 }
 
-async function secondaryFixture(value: Fixture): Promise<SecondaryFixture> {
+async function secondaryFixture(value: Fixture, includeSecondBot = false): Promise<SecondaryFixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
   const backend = new MemoryStorageBackend(value.pool)
@@ -318,7 +352,7 @@ async function secondaryFixture(value: Fixture): Promise<SecondaryFixture> {
     inviteMaxAgeMs: 60_000,
     now: () => 1_000,
   })
-  const host = new SharedBotHostFixture()
+  const host = new SharedBotHostFixture(includeSecondBot)
   const service = await SharedBotService.create(ctx, facility, authority, host, {
     now: () => 1_000,
     membershipPollIntervalMs: 10,
@@ -345,30 +379,6 @@ function pendingInviteCount(record: CredentialRecord | undefined): number {
   if (record?.kind !== 'grant' || typeof record.payload !== 'object' || record.payload === null
     || !('invites' in record.payload) || !Array.isArray(record.payload.invites)) return 0
   return record.payload.invites.length
-}
-
-interface SharedGroupHost extends SharedBotHost {
-  listGroups: (signal?: AbortSignal) => Promise<BotGroupListValue>
-  createGroup: (request: BotGroupCreateRequest, signal?: AbortSignal) => Promise<BotGroupCreateValue>
-  updateGroup: (request: BotGroupUpdateRequest, signal?: AbortSignal) => Promise<BotGroupUpdateValue>
-  inspectGroup: (request: BotGroupInspectRequest, signal?: AbortSignal) => Promise<BotGroupInspectValue>
-  sendGroupMessage: (
-    principalId: ReturnType<typeof BotPrincipalId>,
-    request: BotGroupSendRemoteRequest,
-    signal?: AbortSignal,
-  ) => Promise<BotGroupSendValue>
-}
-
-async function groupView(value: Fixture, id: string, name: string, botIds: readonly BotId[]): Promise<BotGroupView> {
-  const bots = (await value.host.listBots()).filter(bot => botIds.includes(bot.id))
-  return {
-    id: BotGroupId(id),
-    name,
-    botIds,
-    bots,
-    createdAt: 1_000,
-    updatedAt: 1_000,
-  }
 }
 
 const privateSessionSnapshotSchema = z.object({
@@ -403,11 +413,33 @@ async function principal(fixtureValue: Fixture, enrollment: SharedAccessEnrollme
   return { peer: admitted.peer, principalId, botPrincipalId: BotPrincipalId(String(principalId)) }
 }
 
+function groupIdFromResult(result: Awaited<ReturnType<SharedBotService['handle']>>): BotGroupId {
+  if (!result.ok) throw new Error('shared group operation failed')
+  const value = result.value
+  if (value === null || typeof value !== 'object' || !('group' in value)) {
+    throw new Error('shared group operation did not return a group')
+  }
+  const group = value.group
+  if (group === null || typeof group !== 'object' || !('id' in group) || typeof group.id !== 'string') {
+    throw new Error('shared group operation returned an invalid group')
+  }
+  return BotGroupId(group.id)
+}
+
+function groupInviteCodeFromResult(result: Awaited<ReturnType<SharedBotService['handle']>>): SharedInviteCode {
+  if (!result.ok) throw new Error('shared group invite operation failed')
+  const value = result.value
+  if (value === null || typeof value !== 'object' || !('code' in value) || typeof value.code !== 'string') {
+    throw new Error('shared group invite operation did not return a code')
+  }
+  return SharedInviteCode(value.code)
+}
+
 describe('shared Bot service', () => {
-  it('fails closed instead of exposing a pre-existing owner-local group transcript', async () => {
+  it('uses explicit shared-group state instead of a pre-existing owner-local group transcript', async () => {
     const value = await fixture(10, true)
     try {
-      expect(SHARED_BOT_ENDPOINTS).not.toEqual(expect.arrayContaining([
+      expect(SHARED_BOT_ENDPOINTS).toEqual(expect.arrayContaining([
         'bots/share/list-groups',
         'bots/share/create-group',
         'bots/share/update-group',
@@ -433,24 +465,221 @@ describe('shared Bot service', () => {
       const collaborator = await principal(value, collaboratorEnrollment)
       expect((await principal(value, secondEnrollment)).botPrincipalId).toBe(collaborator.botPrincipalId)
 
-      const localGroup = await groupView(value, 'bot-group-owner-local', 'Owner-only room', [
-        BotId('bot-chief'), BotId('bot-second'),
-      ])
-      const host = value.host as SharedGroupHost
-      host.listGroups = vi.fn(async () => ({ groups: [localGroup] }))
-      host.createGroup = vi.fn(async () => ({ group: localGroup }))
-      host.updateGroup = vi.fn(async () => ({ group: localGroup }))
-      host.inspectGroup = vi.fn(async _request => ({ group: localGroup, messages: [], deliveries: [] }))
-      host.sendGroupMessage = vi.fn(async (_principalId, request) => ({
-        messageId: request.messageId ?? BotGroupMessageId('bot-group-message-local'),
-        status: 'accepted' as const,
-        deliveries: [],
-      }))
-
-      await expect(value.service.handle(
+      const localList = vi.fn(async () => ({ groups: [{ name: 'Owner-only room' }] }))
+      Object.assign(value.host, { listGroups: localList })
+      const created = await value.service.handle(
+        'bots/share/create-group',
+        { name: 'Shared room', botIds: ['bot-chief', 'bot-second'] },
+        new AbortController().signal,
+        collaborator.peer,
+      )
+      expect(created).toMatchObject({ ok: true, value: { group: { name: 'Shared room' } } })
+      const listed = await value.service.handle(
         'bots/share/list-groups', {}, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({ ok: false, error: { code: 'gateway/forbidden' } })
-      expect(host.listGroups).not.toHaveBeenCalled()
+      )
+      expect(listed).toMatchObject({ ok: true, value: { groups: [{ name: 'Shared room' }] } })
+      expect(JSON.stringify(listed)).not.toContain('Owner-only room')
+      expect(localList).not.toHaveBeenCalled()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('delivers shared-group messages through stable isolated bindings and retries idempotently', async () => {
+    const value = await fixture(10, true)
+    try {
+      const chiefOwner = await value.service.enroll((await value.service.createInvite(BotId('bot-chief'), 'owner')).code, enrollmentRequest())
+      const secondOwner = await value.service.enroll((await value.service.createInvite(BotId('bot-second'), 'owner')).code, request(cookie(chiefOwner)))
+      const collaborator = await principal(value, chiefOwner)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Durable room',
+        botIds: ['bot-chief', 'bot-second'],
+      }, new AbortController().signal, collaborator.peer)
+      expect(created).toMatchObject({ ok: true, value: { group: { name: 'Durable room' } } })
+      if (!created.ok) throw new Error('group creation failed')
+      const groupId = groupIdFromResult(created)
+      const requestValue = {
+        groupId,
+        text: 'Shared request.',
+        messageId: BotGroupMessageId('bot-group-message-shared-retry'),
+      }
+      await expect(value.service.handle('bots/share/send-group-message', requestValue, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messageId: requestValue.messageId, status: 'accepted', deliveries: [{ status: 'accepted' }, { status: 'accepted' }] },
+      })
+      await expect(value.service.handle('bots/share/send-group-message', requestValue, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messageId: requestValue.messageId, status: 'duplicate', deliveries: [{ status: 'duplicate' }, { status: 'duplicate' }] },
+      })
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messages: [{ id: requestValue.messageId, text: 'Shared request.' }] },
+      })
+      void secondOwner
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('persists shared-group ACLs across Hosts and revokes an explicit group member', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const chiefOwner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(chiefOwner)),
+      )
+      const owner = await principal(value, chiefOwner)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-cross-host'),
+        name: 'Cross-host room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      expect(created).toMatchObject({ ok: true, value: { group: { id: 'bot-group-cross-host' } } })
+      const bindings = value.host.sharedGroupBindings.at(-1) ?? []
+      expect(bindings).toHaveLength(2)
+      expect(bindings.map(binding => String(binding.groupId))).toEqual([
+        'bot-group-cross-host',
+        'bot-group-cross-host',
+      ])
+      expect(bindings.map(binding => String(binding.botId)).sort()).toEqual(['bot-chief', 'bot-second'])
+      expect(bindings.every(binding => /^shared-session-group-/.test(String(binding.sessionId)))).toBe(true)
+
+      const chiefMemberInvite = await value.service.createInvite(BotId('bot-chief'), 'collaborator')
+      const chiefMember = await value.service.enroll(chiefMemberInvite.code, enrollmentRequest())
+      const secondMemberInvite = await value.service.createInvite(BotId('bot-second'), 'collaborator')
+      const secondMember = await value.service.enroll(secondMemberInvite.code, request(cookie(chiefMember)))
+      const member = await principal(value, secondMember)
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId: BotGroupId('bot-group-cross-host'),
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const groupInviteCode = groupInviteCodeFromResult(groupInvite)
+      await expect(value.service.enroll(
+        groupInviteCode,
+        enrollmentRequest(),
+      )).rejects.toThrow('active shared Bot membership')
+      const groupEnrollment = await value.service.enroll(
+        groupInviteCode,
+        request(cookie(secondMember)),
+      )
+      const groupMember = await principal(value, groupEnrollment)
+      await expect(value.service.handle('bots/share/list-groups', {}, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { groups: [{ id: 'bot-group-cross-host' }] },
+      })
+
+      secondary = await secondaryFixture(value, true)
+      const admitted = await secondary.authority.admit(request(cookie(chiefOwner)))
+      if (!('peer' in admitted)) throw new Error('secondary Host rejected an active shared principal')
+      await expect(secondary.service.handle('bots/share/list-groups', {}, new AbortController().signal, admitted.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { groups: [{ id: 'bot-group-cross-host' }] },
+      })
+      await expect(secondary.service.sharedGroupSessionBindings()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ groupId: BotGroupId('bot-group-cross-host'), botId: BotId('bot-chief') }),
+        expect.objectContaining({ groupId: BotGroupId('bot-group-cross-host'), botId: BotId('bot-second') }),
+      ]))
+      const concurrent = await Promise.all([
+        value.service.handle('bots/share/create-group', {
+          id: BotGroupId('bot-group-concurrent'),
+          name: 'First metadata',
+          botIds: [BotId('bot-chief'), BotId('bot-second')],
+        }, new AbortController().signal, owner.peer),
+        secondary.service.handle('bots/share/create-group', {
+          id: BotGroupId('bot-group-concurrent'),
+          name: 'Conflicting metadata',
+          botIds: [BotId('bot-chief'), BotId('bot-second')],
+        }, new AbortController().signal, admitted.peer),
+      ])
+      expect(concurrent.filter(result => result.ok)).toHaveLength(1)
+      expect(concurrent.filter(result => !result.ok)).toMatchObject([
+        { ok: false, error: { code: 'gateway/conflict' } },
+      ])
+      await expect(secondary.service.handle('bots/share/send-group-message', {
+        groupId: BotGroupId('bot-group-cross-host'),
+        text: 'Delivered by the second Host.',
+        messageId: BotGroupMessageId('bot-group-message-second-host'),
+      }, new AbortController().signal, admitted.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted', deliveries: [{ status: 'accepted' }, { status: 'accepted' }] },
+      })
+
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId: BotGroupId('bot-group-cross-host'),
+        action: 'revoke',
+        principalId: member.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      await expect(value.service.handle('bots/share/inspect-group', {
+        groupId: BotGroupId('bot-group-cross-host'),
+      }, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+      const revokedAdmission = await secondary.authority.admit(request(cookie(secondMember)))
+      if (!('peer' in revokedAdmission)) throw new Error('secondary Host rejected the revoked member cookie unexpectedly')
+      await expect(secondary.service.handle('bots/share/inspect-group', {
+        groupId: BotGroupId('bot-group-cross-host'),
+      }, new AbortController().signal, revokedAdmission.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
+  it('keeps a partial shared-group delivery retryable by message id', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Retry room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      if (!created.ok) throw new Error('shared group creation failed')
+      const groupId = groupIdFromResult(created)
+      const original = value.host.deliverSharedGroup.getMockImplementation()
+      let failSecond = true
+      value.host.deliverSharedGroup.mockImplementation(async (request) => {
+        if (request.targetBotId === BotId('bot-second') && failSecond) {
+          failSecond = false
+          throw new Error('injected isolated Session failure')
+        }
+        return original === undefined ? 'accepted' : await original(request)
+      })
+      const messageId = BotGroupMessageId('bot-group-message-partial-retry')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        text: 'Retry this message.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'partial', deliveries: [{ status: 'accepted' }, { status: 'failed' }] },
+      })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        text: 'Retry this message.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted', deliveries: [{ status: 'duplicate' }, { status: 'accepted' }] },
+      })
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(3)
     } finally {
       await value.close()
     }

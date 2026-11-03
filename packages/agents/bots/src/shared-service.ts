@@ -40,6 +40,8 @@ import {
   type BotIdentity,
   type BotView,
 } from './types.ts'
+import { BotGroupId, BotGroupMessageId } from './group-chat.ts'
+import type { BotGroupCreateRequest, BotGroupSendRemoteRequest } from './group-chat.ts'
 import {
   sharedBotDomain,
   SHARED_MEMORY_MAX_ENTRIES,
@@ -56,6 +58,12 @@ import {
   sharedMembershipSnapshotSchema,
 } from './storage.ts'
 import { projectBotTranscript, type BotCollaborationInspection } from './collaboration.ts'
+import {
+  SharedBotGroupService,
+  SharedGroupError,
+  type SharedGroupHost,
+  type SharedGroupSessionBinding,
+} from './shared-group.ts'
 
 /** Exact endpoint allowlist mounted on the collaborator-only route. */
 export const SHARED_BOT_ENDPOINTS = [
@@ -67,6 +75,12 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/read-memory',
   'bots/share/write-memory',
   'bots/share/manage-memory',
+  'bots/share/list-groups',
+  'bots/share/create-group',
+  'bots/share/update-group',
+  'bots/share/inspect-group',
+  'bots/share/send-group-message',
+  'bots/share/manage-group-members',
 ] as const
 
 /** Safe profile projection returned to a collaborator. */
@@ -94,7 +108,7 @@ export interface SharedBotProfileUpdate {
 }
 
 /** Capabilities the runtime supplies to the shared-Bot service. */
-export interface SharedBotHost {
+export interface SharedBotHost extends SharedGroupHost {
   /** List the operator-owned Bots without exposing private Session data. */
   readonly listBots: (signal?: AbortSignal) => Promise<readonly BotView[]>
   /** Find one operator-owned Bot by stable id. */
@@ -151,6 +165,11 @@ export interface SharedBotEnrollment extends SharedAccessEnrollment {
   readonly role: BotShareRole
 }
 
+/** Enrollment result after a principal redeems a group-only ACL invitation. */
+export interface SharedGroupEnrollment extends SharedAccessEnrollment {
+  readonly groupId: BotGroupId
+}
+
 /** Result of a private-session lookup. */
 export interface SharedPrivateSessionValue extends BotPrivateConversationBinding {
   readonly createdAt: number
@@ -201,11 +220,44 @@ const writeMemoryPayload = botIdPayload.extend({
 const manageMemoryPayload = botIdPayload.extend({
   enabled: z.boolean(),
 }).strict()
+const groupIdPayload = z.object({
+  groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId),
+}).strict()
+const groupBotIds = z.array(botIdPayload.shape.botId).min(2).max(6).refine(
+  botIds => new Set(botIds.map(String)).size === botIds.length,
+  'group Bot members must be unique',
+)
+const groupCreatePayload = z.object({
+  id: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId).optional(),
+  name: z.string().min(1).max(80).refine(value => value.trim() === value),
+  botIds: groupBotIds,
+}).strict()
+const groupUpdatePayload = groupIdPayload.extend({
+  name: z.string().min(1).max(80).refine(value => value.trim() === value),
+  botIds: groupBotIds,
+}).strict()
+const groupSendPayload = groupIdPayload.extend({
+  text: z.string().min(1).max(16_000).refine(value => value.trim() === value),
+  messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
+  targetBotIds: z.array(botIdPayload.shape.botId).min(1).max(6).refine(
+    botIds => new Set(botIds.map(String)).size === botIds.length,
+    'group Bot targets must be unique',
+  ).optional(),
+}).strict()
+const manageGroupMembersPayload = groupIdPayload.extend({
+  action: z.enum(['create-invite', 'revoke']),
+  principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId).optional(),
+}).strict()
 type BotIdPayload = z.infer<typeof botIdPayload>
 type ChatPayload = z.infer<typeof chatPayload>
 type ManageMembersPayload = z.infer<typeof manageMembersPayload>
 type WriteMemoryPayload = z.infer<typeof writeMemoryPayload>
 type ManageMemoryPayload = z.infer<typeof manageMemoryPayload>
+type GroupIdPayload = z.infer<typeof groupIdPayload>
+type GroupCreatePayload = z.infer<typeof groupCreatePayload>
+type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
+type GroupSendPayload = z.infer<typeof groupSendPayload>
+type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
 
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
@@ -289,6 +341,7 @@ export class SharedBotService {
   private readonly revokedBindings = new Map<string, SharedPrivateSessionRecord>()
   private readonly membershipPollTimer: ReturnType<typeof setInterval>
   private readonly stoppingController = new AbortController()
+  private readonly groups: SharedBotGroupService
   private membershipRefresh: Promise<void> | undefined
   private chain: Promise<unknown> = Promise.resolve()
   private stopping = false
@@ -306,6 +359,7 @@ export class SharedBotService {
     this.memberships = domain.table('memberships')
     this.invites = domain.table('invites')
     this.privateSessions = domain.table('private_sessions')
+    this.groups = new SharedBotGroupService(authority, host, options.now ?? Date.now)
     this.membershipSnapshot = membershipSnapshot
     for (const binding of privateSessionSnapshot.bindings) {
       if (binding.revokedAt === undefined) {
@@ -452,8 +506,11 @@ export class SharedBotService {
    * @param request - trusted request receiving the authority cookie.
    * @returns authority cookie plus the Bot membership granted by the invite.
    */
-  async enroll(code: SharedInviteCode, request: ConnectionTrustRequest): Promise<SharedBotEnrollment> {
+  async enroll(code: SharedInviteCode, request: ConnectionTrustRequest): Promise<SharedBotEnrollment | SharedGroupEnrollment> {
     return this.serialize(async () => {
+      if (await this.groups.hasInvite(code)) {
+        return await this.groups.redeemInvite(code, request)
+      }
       const digest = sharedInviteDigest(code)
       const pending = this.invites.get(digest)
       if (pending === undefined || this.now() >= pending.expiresAt) {
@@ -567,6 +624,41 @@ export class SharedBotService {
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     }))
+  }
+
+  /** Return durable isolated shared-group Session bindings for Host recovery. */
+  async sharedGroupSessionBindings(): Promise<readonly SharedGroupSessionBinding[]> {
+    return this.groups.sessionBindings()
+  }
+
+  /** Record one shared-group Session's exact model claim. */
+  async recordSharedGroupMessageClaims(
+    groupId: ReturnType<typeof BotGroupId>,
+    botId: BotId,
+    claims: readonly import('./group-chat.ts').BotGroupDeliveryClaimInput[],
+    turn: number,
+    step: number,
+    isolated: boolean,
+    competingInput: boolean,
+  ): Promise<void> {
+    await this.groups.recordBotMessageClaims(groupId, botId, claims, turn, step, isolated, competingInput)
+  }
+
+  /** Record one visible shared-group Bot response. */
+  async recordSharedGroupResponse(
+    groupId: ReturnType<typeof BotGroupId>,
+    botId: BotId,
+    turn: number,
+    step: number,
+    text: string,
+    sourceMessageId: string,
+  ): Promise<void> {
+    await this.groups.recordBotResponse(groupId, botId, turn, step, text, sourceMessageId)
+  }
+
+  /** Record one safe shared-group Bot turn failure. */
+  async recordSharedGroupTurnFailure(groupId: ReturnType<typeof BotGroupId>, botId: BotId, turn: number, error: string): Promise<void> {
+    await this.groups.recordBotTurnFailure(groupId, botId, turn, error)
   }
 
   private async readPrivateSessionSnapshot(signal?: AbortSignal): Promise<SharedPrivateSessionSnapshot> {
@@ -778,6 +870,18 @@ export class SharedBotService {
         return this.writeMemory(parsePayload(writeMemoryPayload, payload), signal, principalId)
       case 'bots/share/manage-memory':
         return this.manageMemory(parsePayload(manageMemoryPayload, payload), signal, principalId)
+      case 'bots/share/list-groups':
+        return this.listGroups(signal, principalId)
+      case 'bots/share/create-group':
+        return this.createGroup(parsePayload(groupCreatePayload, payload), signal, principalId)
+      case 'bots/share/update-group':
+        return this.updateGroup(parsePayload(groupUpdatePayload, payload), signal, principalId)
+      case 'bots/share/inspect-group':
+        return this.inspectGroup(parsePayload(groupIdPayload, payload), signal, principalId)
+      case 'bots/share/send-group-message':
+        return this.sendGroupMessage(parsePayload(groupSendPayload, payload), signal, principalId)
+      case 'bots/share/manage-group-members':
+        return this.manageGroupMembers(parsePayload(manageGroupMembersPayload, payload), signal, principalId)
       default:
         return failure('gateway/forbidden', 'shared Bot endpoint is not allowed')
     }
@@ -975,6 +1079,74 @@ export class SharedBotService {
     )
     await this.requireBot(payload.botId, signal)
     return { ok: true, value }
+  }
+
+  private async listGroups(
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    return { ok: true, value: await this.groups.list(principalId, signal) }
+  }
+
+  private async createGroup(
+    payload: GroupCreatePayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const request: BotGroupCreateRequest = {
+      name: payload.name,
+      botIds: payload.botIds,
+      ...(payload.id === undefined ? {} : { id: payload.id }),
+    }
+    const result = await this.groups.create(request, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async updateGroup(
+    payload: GroupUpdatePayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const result = await this.groups.update(payload, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async inspectGroup(
+    payload: GroupIdPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const result = await this.groups.inspect(payload.groupId, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async sendGroupMessage(
+    payload: GroupSendPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const request: BotGroupSendRemoteRequest = {
+      groupId: payload.groupId,
+      text: payload.text,
+      ...(payload.messageId === undefined ? {} : { messageId: payload.messageId }),
+      ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
+    }
+    const result = await this.groups.send(request, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async manageGroupMembers(
+    payload: ManageGroupMembersPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    if (payload.action === 'create-invite') {
+      const invite = await this.groups.createInvite(payload.groupId, principalId)
+      return { ok: true, value: { code: invite.code, expiresAt: invite.expiresAt } }
+    }
+    if (payload.principalId === undefined) throw new SharedServiceFault('gateway/bad-request', 'principalId is required')
+    const result = await this.groups.revokeMember(payload.groupId, payload.principalId, principalId, signal)
+    return { ok: true, value: result }
   }
 
   private async chat(
@@ -1881,5 +2053,6 @@ function failure(code: string, message: string): ConnectionRpcHandlerResult {
 
 function faultResult(error: unknown): ConnectionRpcHandlerResult {
   if (error instanceof SharedServiceFault) return failure(error.code, error.message)
+  if (error instanceof SharedGroupError) return failure(error.code, error.message)
   return failure('gateway/internal', 'shared Bot request failed')
 }
