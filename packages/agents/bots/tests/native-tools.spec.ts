@@ -40,6 +40,7 @@ describe('native Bot actions', () => {
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
     expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
       'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+      'schedule_pause', 'schedule_resume', 'schedule_history',
     ]))
     const list = tools.find(tool => tool.name === 'schedule_list')
     const create = tools.find(tool => tool.name === 'schedule_create')
@@ -51,6 +52,23 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledTimes(1)
     await expect(create.execute({ title: 'Daily check' }, context())).resolves.toMatchObject({ success: true })
     expect(routine).toHaveBeenCalledWith('create', { title: 'Daily check' }, expect.anything())
+  })
+
+  it('requires approval for Bot routine pause/resume and keeps history read-only', async () => {
+    const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
+    const approval = vi.fn(async () => false)
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], routine,
+      routineAvailable: async () => true,
+    })
+    const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
+    const pause = tools.find(tool => tool.name === 'schedule_pause')
+    const history = tools.find(tool => tool.name === 'schedule_history')
+    if (pause === undefined || history === undefined) throw new Error('routine lifecycle tools missing')
+    await expect(pause.execute({ id: 'schedule-1' }, context({ requestApproval: approval }))).resolves.toMatchObject({ success: false })
+    expect(routine).not.toHaveBeenCalled()
+    await expect(history.execute({ id: 'schedule-1', limit: 10 }, context({ requestApproval: approval }))).resolves.toMatchObject({ success: true })
+    expect(routine).toHaveBeenCalledWith('history', { id: 'schedule-1', limit: 10 }, expect.anything())
   })
 
   it('releases a durable reservation when approval is cancelled', async () => {

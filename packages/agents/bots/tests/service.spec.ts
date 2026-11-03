@@ -201,6 +201,7 @@ describe('durable Bot roster', () => {
       const tools = await provider.resolve({ sessionId })
       expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
         'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+        'schedule_pause', 'schedule_resume', 'schedule_history',
       ]))
       const create = tools.find(tool => tool.name === 'schedule_create')
       if (create === undefined) throw new Error('schedule_create missing')
@@ -256,6 +257,65 @@ describe('durable Bot roster', () => {
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
       else await close(h.ctx)
+    }
+  })
+
+  it('executes Bot-scoped pause, resume, and delivery-history actions through the real Schedule service', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Routine lifecycle owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const context = {
+        callId: 'routine-lifecycle', threadId: 'thread-lifecycle', turnId: 'turn-lifecycle',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const update = tools.find(tool => tool.name === 'schedule_update')
+      const pause = tools.find(tool => tool.name === 'schedule_pause')
+      const resume = tools.find(tool => tool.name === 'schedule_resume')
+      const history = tools.find(tool => tool.name === 'schedule_history')
+      if (create === undefined || update === undefined || pause === undefined || resume === undefined || history === undefined) {
+        throw new Error('Bot routine lifecycle tools were not mounted')
+      }
+      const createdRoutine = await create.execute({ title: 'Status check', prompt: 'Check status', every_seconds: 300 }, context)
+      expect(createdRoutine.success).toBe(true)
+      const routineId = JSON.parse(createdRoutine.contentItems[0]!.text).id as string
+      const paused = await pause.execute({ id: routineId }, { ...context, callId: 'pause-routine' })
+      expect(paused).toMatchObject({ success: true })
+      expect(await h.ctx.schedule.catalog()).toEqual([expect.objectContaining({ id: routineId, status: 'paused' })])
+      const edited = await update.execute({ id: routineId, title: 'Updated status check', prompt: 'Check updated status' }, {
+        ...context, callId: 'update-paused-routine', requestApproval: async () => true,
+      })
+      expect(edited).toMatchObject({ success: true })
+      expect(await h.ctx.schedule.catalog()).toEqual([expect.objectContaining({
+        id: routineId, status: 'paused', title: 'Updated status check', prompt: 'Check updated status',
+      })])
+      const resumed = await resume.execute({ id: routineId }, { ...context, callId: 'resume-routine' })
+      expect(resumed).toMatchObject({ success: true })
+      expect(await h.ctx.schedule.catalog()).toEqual([expect.objectContaining({ id: routineId, status: 'active' })])
+      const deliveries = await history.execute({ id: routineId, limit: 10 }, { ...context, callId: 'history-routine' })
+      expect(deliveries).toMatchObject({ success: true })
+      expect(JSON.parse(deliveries.contentItems[0]!.text)).toMatchObject({ id: routineId, records: [] })
+
+      const unsupported = await create.execute({
+        title: 'Event check', prompt: 'Watch an event', event: { source: 'webhook' },
+      }, { ...context, callId: 'unsupported-event' })
+      expect(unsupported).toMatchObject({ success: false })
+      expect(unsupported.contentItems[0]?.text).toContain('Event-triggered routines are not supported')
+      const unsupportedUpdate = await update.execute({
+        id: routineId, event: { source: 'webhook' },
+      }, { ...context, callId: 'unsupported-event-update' })
+      expect(unsupportedUpdate).toMatchObject({ success: false })
+      expect(unsupportedUpdate.contentItems[0]?.text).toContain('Event-triggered routines are not supported')
+    } finally {
+      await close(h.ctx)
     }
   })
 

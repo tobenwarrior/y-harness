@@ -59,6 +59,17 @@ it('seeds legacy history only from its actual receipt and appends through wall-c
 })
 
 describe('Host Schedule timer', () => {
+  it('does not schedule or deliver a paused task until it is resumed', async () => {
+    const records = [{ ...task(createAfterScheduleRecord(ScheduleId('paused'), 'Paused', 1, Date.now() - 2000, 'Paused')), status: 'paused' as const }]
+    const test = await setup(records)
+    test.runtime.requestDrive()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.resolve).not.toHaveBeenCalled()
+    expect(test.followup).not.toHaveBeenCalled()
+    expect(test.commit).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('restores the original Session and retains an ended one-shot with its flushed message receipt', async () => {
     const tasks = [task(createAfterScheduleRecord(ScheduleId('once'), 'Remember', 2, Date.now(), 'Remember'))]
     const test = await setup(tasks)

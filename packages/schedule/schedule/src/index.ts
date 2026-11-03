@@ -14,14 +14,15 @@ import { resolveScheduleUpdate } from './update.ts'
 import {
   foldScheduleEvents, ScheduleInputError, ScheduleLogError, ScheduleId, createAfterScheduleRecord, createAtScheduleRecord,
   createEveryScheduleRecord, createDailyScheduleRecord, createWeeklyScheduleRecord, createCronScheduleRecord,
-  parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle,
+  parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle, scheduleView,
 } from './domain.ts'
 import type {
   DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleCreateOptions, ScheduleCreateResolution,
   ScheduleCreateReservation,
-  ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest,
+  ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleLifecycleRequest,
+  ScheduleLifecycleView, ScheduleListRequest, SchedulePauseValue,
   ScheduleRecord,
-  ScheduleId as ScheduleIdType,
+  ScheduleId as ScheduleIdType, ScheduleResumeValue,
   ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
 } from './types.ts'
 
@@ -161,6 +162,11 @@ function createOperation(
     sessionId, idempotencyKey, requestFingerprint, status,
     ...(record === undefined ? {} : { record }),
   }
+}
+
+/** Add the durable lifecycle status to a management view without changing the record. */
+function lifecycleView(record: ScheduleRecord, status: 'active' | 'paused'): ScheduleLifecycleView {
+  return { ...scheduleView(record, Date.now()), status }
 }
 
 /** Storage writer needed by the Host-only create-operation helpers. */
@@ -622,7 +628,7 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
-   * Read all active and inactive Host reminders with their original Session bindings.
+   * Read all active, paused, and inactive Host reminders with their original Session bindings.
    * A deleted reminder has no row, so it is absent here.
    * Does not activate Sessions or read Session history.
    * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
@@ -660,6 +666,66 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
+   * Pause one active routine without deleting its target or saved delivery history.
+   *
+   * A repeated pause is idempotent and returns the paused view. Ended tasks remain
+   * in the catalog but cannot be re-armed; a foreign Session never reveals the row.
+   * @param request - Session binding and task identity.
+   * @param signal - Cancellation checked before the lifecycle write.
+   * @returns The paused view or a bounded lookup/ended result.
+   */
+  @Remote('pause')
+  async pause(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<SchedulePauseValue> {
+    return this.serialize<SchedulePauseValue>(async () => {
+      const refusal = this.reminderTargetRefusal(request.sessionId)
+      if (refusal !== undefined) return refusal
+      const tasks = (await this.getDomain()).table('tasks')
+      signal?.throwIfAborted()
+      const current = tasks.get(request.id)
+      if (current === undefined || current.sessionId !== request.sessionId) {
+        return { id: request.id, paused: false, code: 'schedule_not_found' }
+      }
+      if (current.status === 'inactive') return { id: request.id, paused: false, code: 'schedule_ended' }
+      if (current.status === 'active') {
+        await tasks.put(request.id, { ...current, status: 'paused' })
+        this.emitChanged()
+        this.runtime?.requestDrive()
+      }
+      return { ...lifecycleView(current.record, 'paused'), paused: true }
+    })
+  }
+
+  /**
+   * Resume one paused routine without changing its committed target.
+   *
+   * A repeated resume is idempotent. A recurring task whose target is already
+   * overdue is picked up by the normal Host runtime after it is re-armed.
+   * @param request - Session binding and task identity.
+   * @param signal - Cancellation checked before the lifecycle write.
+   * @returns The active view or a bounded lookup/ended result.
+   */
+  @Remote('resume')
+  async resume(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<ScheduleResumeValue> {
+    return this.serialize<ScheduleResumeValue>(async () => {
+      const refusal = this.reminderTargetRefusal(request.sessionId)
+      if (refusal !== undefined) return refusal
+      const tasks = (await this.getDomain()).table('tasks')
+      signal?.throwIfAborted()
+      const current = tasks.get(request.id)
+      if (current === undefined || current.sessionId !== request.sessionId) {
+        return { id: request.id, resumed: false, code: 'schedule_not_found' }
+      }
+      if (current.status === 'inactive') return { id: request.id, resumed: false, code: 'schedule_ended' }
+      if (current.status === 'paused') {
+        await tasks.put(request.id, { ...current, status: 'active' })
+        this.emitChanged()
+        this.runtime?.requestDrive()
+      }
+      return { ...lifecycleView(current.record, 'active'), resumed: true }
+    })
+  }
+
+  /**
    * Delete one task belonging to the selected Session, leaving queued messages intact.
    *
    * The row is removed: the task no longer schedules, leaves `list` and `catalog`, and its
@@ -687,7 +753,7 @@ export class ScheduleService extends TypertRemoteService {
   }
 
   /**
-   * Update the name, instruction, and timing of an active task within the original Session
+   * Update the name, instruction, and timing of an active or paused task within the original Session
    * binding without activating the Session or changing saved deliveries.
    *
    * Each supplied field replaces its stored value; an omitted field keeps it. A name or

@@ -274,6 +274,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(ctx.tools.schemas(senderAgent).filter(tool => tool.name === 'schedule_create')).toHaveLength(1)
   expect(ctx.tools.schemas(senderAgent).map(tool => tool.name)).toEqual(expect.arrayContaining([
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+    'schedule_pause', 'schedule_resume', 'schedule_history',
   ]))
   expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
   expect(scopeOf(senderAgent.ctx)).toBeDefined()
@@ -281,6 +282,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+    'schedule_pause', 'schedule_resume', 'schedule_history',
   ]))
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
@@ -297,6 +299,8 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     expect.objectContaining({ name: 'list_bots' }), expect.objectContaining({ name: 'inspect_bot' }), expect.objectContaining({ name: 'send_bot_message' }),
     expect.objectContaining({ name: 'schedule_create' }), expect.objectContaining({ name: 'schedule_list' }),
     expect.objectContaining({ name: 'schedule_update' }), expect.objectContaining({ name: 'schedule_delete' }),
+    expect.objectContaining({ name: 'schedule_pause' }), expect.objectContaining({ name: 'schedule_resume' }),
+    expect.objectContaining({ name: 'schedule_history' }),
   ]))
   if (peerFixture.toolResults.length !== 3) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })

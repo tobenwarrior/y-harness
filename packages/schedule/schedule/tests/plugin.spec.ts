@@ -678,7 +678,10 @@ describe('Schedule activation and shutdown', () => {
     const child = agentFor(test.ctx, 'owned-child')
     test.ctx.effect(() => test.ctx.agents.enter(child, parent))
     expect(test.ctx.agents.roots()).toEqual([parent])
-    for (const name of ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']) {
+    for (const name of [
+      'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+      'schedule_pause', 'schedule_resume', 'schedule_history',
+    ]) {
       expect(test.ctx.tools.get(name, parent)).toBeUndefined()
       expect(test.ctx.tools.get(name, child)).toBeUndefined()
       expect(test.ctx.tools.get(name)).toBeUndefined()
@@ -702,6 +705,46 @@ describe('Schedule activation and shutdown', () => {
     await expect(test.service.create(SessionId('caller'), {
       prompt: 'Conflicting selectors', title: 'Conflicting selectors', after_seconds: 60, at: new Date(Date.now() + 60_000).toISOString(),
     })).rejects.toMatchObject({ code: 'invalid_selector', message: 'Exactly one reminder selector is required.' })
+  })
+
+  it('pauses and resumes one Bot-owned routine durably without deleting its history', async () => {
+    const test = await setup()
+    const sessionId = SessionId('routine-lifecycle')
+    const record = await test.service.create(sessionId, { prompt: 'Check', every_seconds: 300, title: 'Check' })
+
+    await expect(test.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', paused: true, status: 'paused',
+    })
+    expect(await test.service.list({ sessionId })).toEqual([])
+    expect(await test.service.catalog()).toEqual([{ ...record, sessionId, status: 'paused' }])
+    await expect(test.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', paused: true, status: 'paused',
+    })
+
+    await expect(test.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', resumed: true, status: 'active',
+    })
+    expect(await test.service.list({ sessionId })).toEqual([record])
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({ status: 'paused' })
+    await expect(restarted.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({ status: 'active' })
+  })
+
+  it('reports missing and ended routine lifecycle transitions without mutating storage', async () => {
+    const test = await setup()
+    const sessionId = SessionId('routine-lifecycle-errors')
+    await expect(test.service.pause({ sessionId, id: ScheduleId('missing') })).resolves.toEqual({
+      id: ScheduleId('missing'), paused: false, code: 'schedule_not_found',
+    })
+    const record = await test.service.create(sessionId, { prompt: 'Once', after_seconds: 60, title: 'Once' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    await domain.table('tasks').put(record.id, { ...domain.table('tasks').get(record.id)!, status: 'inactive' })
+    await expect(test.service.resume({ sessionId, id: record.id })).resolves.toEqual({
+      id: record.id, resumed: false, code: 'schedule_ended',
+    })
   })
 
   it('warns for loaded active legacy reminders but not completed history', async () => {

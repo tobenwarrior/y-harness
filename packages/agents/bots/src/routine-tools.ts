@@ -4,7 +4,7 @@ import type { Context } from '@yharness/cordis'
 import { scopeOf } from '@yharness/scope'
 import type { PreToolDecision, ToolExecution } from '@yharness/tools'
 
-const ROUTINE_MUTATIONS = new Set(['schedule_create', 'schedule_update', 'schedule_delete'])
+const ROUTINE_MUTATIONS = new Set(['schedule_create', 'schedule_update', 'schedule_delete', 'schedule_pause', 'schedule_resume'])
 
 /**
  * Add durable routine management to one Bot Agent scope.

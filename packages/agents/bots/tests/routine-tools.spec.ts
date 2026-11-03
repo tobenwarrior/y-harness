@@ -45,6 +45,7 @@ describe('Bot routine tools', () => {
     try {
       expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual(expect.arrayContaining([
         'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+        'schedule_pause', 'schedule_resume', 'schedule_history',
       ]))
 
       const listed = await execute(h.ctx, h.agent, 'schedule_list', {})

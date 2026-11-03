@@ -39,7 +39,7 @@ export const scheduleTaskSchema = z.object({
   idempotencyKey: z.string().min(1).max(256).refine(value => value.trim() === value).optional(),
   requestFingerprint: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   record: recordSchema,
-  status: z.enum(['active', 'inactive']).default('active'),
+  status: z.enum(['active', 'paused', 'inactive']).default('active'),
   lastDelivery: deliveryReceiptSchema.optional(),
   deliveryHistory: deliveryHistorySchema.optional(),
 }).strict().refine((task) => {

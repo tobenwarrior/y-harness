@@ -78,7 +78,7 @@ export interface BotNativeToolHost {
   readonly manage?: (action: 'create' | 'edit', args: JsonObject, context: BotNativeToolContext) => Promise<unknown>
   /** Manage a durable routine owned by the calling Bot Session. */
   readonly routine?: (
-    action: 'create' | 'list' | 'update' | 'delete',
+    action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
     args: JsonObject,
     context: BotNativeToolContext,
   ) => Promise<unknown>
@@ -108,7 +108,7 @@ export interface BotNativeToolProvider {
 
 const BOT_TOOL_NAMES = [
   'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
-  'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+  'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete', 'schedule_pause', 'schedule_resume', 'schedule_history',
 ] as const
 const BOT_TOOL_NAME_SET: ReadonlySet<string> = new Set(BOT_TOOL_NAMES)
 const MAX_EVENT_STRING = 16_000
@@ -625,7 +625,7 @@ interface RoutineCreateReceipt {
 
 /** Build one native routine action over the Host Schedule adapter. */
 function routineTool(
-  action: 'create' | 'list' | 'update' | 'delete',
+  action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
   routine: NonNullable<BotNativeToolHost['routine']>,
   reconcile: BotNativeToolHost['routineReconcile'],
   reserve: BotNativeToolHost['routineReserve'],
@@ -637,7 +637,7 @@ function routineTool(
   createReceipts: Map<string, RoutineCreateReceipt>,
 ): BotNativeTool {
   const name = `schedule_${action}`
-  const mutates = action !== 'list'
+  const mutates = action !== 'list' && action !== 'history'
   return {
     name,
     description: action === 'list'
@@ -646,7 +646,13 @@ function routineTool(
         ? 'Create a durable routine owned by this Bot Session. This action requires approval.'
         : action === 'update'
           ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
-          : 'Delete a durable routine owned by this Bot Session. This action requires approval.',
+          : action === 'pause'
+            ? 'Pause a durable routine owned by this Bot Session. This action requires approval.'
+            : action === 'resume'
+              ? 'Resume a durable routine owned by this Bot Session. This action requires approval.'
+              : action === 'history'
+                ? 'Read retained delivery history for a routine owned by this Bot Session.'
+                : 'Delete a durable routine owned by this Bot Session. This action requires approval.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -662,12 +668,16 @@ function routineTool(
           at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),
-        ...(action === 'delete' ? {
+        ...(action === 'delete' || action === 'pause' || action === 'resume' || action === 'history' ? {
           id: { type: 'string', description: 'Routine id returned by schedule_list.' },
+        } : {}),
+        ...(action === 'history' ? {
+          limit: { type: 'number', description: 'Maximum number of retained deliveries to return (1-100, default 50).' },
+          before: { type: 'string', description: 'Exclusive message id cursor returned by an earlier history page.' },
         } : {}),
       },
       ...(action === 'create' ? { required: ['prompt', 'title'] } : {}),
-      ...(action === 'update' || action === 'delete' ? { required: ['id'] } : {}),
+      ...(action === 'update' || action === 'delete' || action === 'pause' || action === 'resume' || action === 'history' ? { required: ['id'] } : {}),
       additionalProperties: false,
     },
     execute: async (arguments_, context) => {
@@ -911,6 +921,9 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         routineTool('list', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
         routineTool('update', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
         routineTool('delete', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('pause', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('resume', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('history', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },

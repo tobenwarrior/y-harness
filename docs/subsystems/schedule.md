@@ -6,7 +6,7 @@ Schedule stores reminders independently of Session activation and delivers them 
 
 Host retry-aware creation persists an operation-specific idempotency key and canonical request fingerprint in the task and create-operation records; a repeated key for the same Session returns the existing task only when its request fingerprint matches. Bot approval reserves the create operation before asking for approval, so concurrent reconciliation remains unknown until approval releases the reservation or commits the task; reservations left by a stopped Host are retired during the next Schedule start. Create-operation reconciliation, active listing, and catalog share the Schedule write queue, so a lost native reply is resolved against a linearized task state: an unregistered operation remains unknown, while an absent registered operation is durably retired for later intentional repeats.
 
-`ScheduleId` is a globally unique [branded id](core.md#branded-ids). The version-1 `schedule` storage domain owns a `tasks` table whose entries bind a `ScheduleRecord` to its original `sessionId`, with stored `status: 'active' | 'inactive'` and optional `lastDelivery`. Records lacking status normalize to `active` without scanning or recreating historical Sessions. Creation canonicalizes the target into RFC 3339 UTC `scheduledAt`; `after` retains the submitted delay, `every` retains its fixed interval, `daily` and `weekly` retain normalized local `time` and their explicit `timeZone`, and `cron` retains its canonical five-field `expression` and explicit `timeZone`. Daily, weekly, and cron decoding preserve the committed instant and stored zone spelling. The stored task record declares a required `title`, the short name the task surfaces show; creation requires it and never derives it from the instruction. No stored record may omit its title: a record whose `title` is missing, blank after trimming, untrimmed, or longer than 120 characters fails durable decoding with `ScheduleLogError`, and the schedule domain declares no backup-and-skip policy, so one such stored task rejects the whole domain open instead of being dropped. Only explicit deletion removes a task; previously physically deleted tasks are not restored or fabricated.
+`ScheduleId` is a globally unique [branded id](core.md#branded-ids). The version-1 `schedule` storage domain owns a `tasks` table whose entries bind a `ScheduleRecord` to its original `sessionId`, with stored `status: 'active' | 'paused' | 'inactive'` and optional `lastDelivery`. Records lacking status normalize to `active` without scanning or recreating historical Sessions. Paused records remain durable but do not schedule or deliver until resumed. Creation canonicalizes the target into RFC 3339 UTC `scheduledAt`; `after` retains the submitted delay, `every` retains its fixed interval, `daily` and `weekly` retain normalized local `time` and their explicit `timeZone`, and `cron` retains its canonical five-field `expression` and explicit `timeZone`. Daily, weekly, and cron decoding preserve the committed instant and stored zone spelling. The stored task record declares a required `title`, the short name the task surfaces show; creation requires it and never derives it from the instruction. No stored record may omit its title: a record whose `title` is missing, blank after trimming, untrimmed, or longer than 120 characters fails durable decoding with `ScheduleLogError`, and the schedule domain declares no backup-and-skip policy, so one such stored task rejects the whole domain open instead of being dropped. Only explicit deletion removes a task; previously physically deleted tasks are not restored or fabricated.
 
 ```ts type-equiv
 /** Durable one-shot reminder created from a positive delay. */
@@ -116,7 +116,7 @@ interface LocalAtInput {
 type AtInput = string | LocalAtInput
 ```
 
-The shipped Web composition mounts the `schedule` service and the `ui-schedule` task page. The clock reading and the four reminder tools are preset-owned: `standard`, `cordis`, and `ptc` declare `time-context` and `@yharness/tool-schedule` together, and `minimal` declares neither. The `tool-subagent` and `tool-subagent-fork` rows in those three presets deny the four tools, and each tool refuses a delegated caller with `subagent_session`, so a delegated child neither sees the tools nor has a call accepted. Time-context tells the model to interpret otherwise-unqualified natural-language dates and times in that request-local zone when the open turn has one unambiguous browser zone; mixed or missing browser-zone records tell the model to ask. That guidance is not a durable Session default: the model must still pass an offset in the string form or `time_zone` in the local form, and Schedule never reads browser, Session, process, or model context.
+The shipped Web composition mounts the `schedule` service and the `ui-schedule` task page. The clock reading and the seven reminder tools are preset-owned: `standard`, `cordis`, and `ptc` declare `time-context` and `@yharness/tool-schedule` together, and `minimal` declares neither. The `tool-subagent` and `tool-subagent-fork` rows in those three presets deny the seven tools, and each tool refuses a delegated caller with `subagent_session`, so a delegated child neither sees the tools nor has a call accepted. Time-context tells the model to interpret otherwise-unqualified natural-language dates and times in that request-local zone when the open turn has one unambiguous browser zone; mixed or missing browser-zone records tell the model to ask. That guidance is not a durable Session default: the model must still pass an offset in the string form or `time_zone` in the local form, and Schedule never reads browser, Session, process, or model context.
 
 Schedule rejects invalid offsets and zones, offset-free strings, non-future targets, and local times inside daylight-saving gaps. A daylight-saving overlap chooses its first, earlier instant. Successful creation stores only canonical UTC `scheduledAt`, so replay never depends on ambient time-zone state.
 
@@ -337,7 +337,7 @@ type ScheduleDeleteResult =
 
 ## Web catalog
 
-The Remote `schedule.catalog()` method returns active and inactive Host tasks with their original Session bindings, ordered by `scheduledAt` ascending and then lexicographically by `id`. It reads only the Schedule domain, without activating Sessions or reading their history. Browser consumers receive this browser-safe type:
+The Remote `schedule.catalog()` method returns active, paused, and inactive Host tasks with their original Session bindings, ordered by `scheduledAt` ascending and then lexicographically by `id`. It reads only the Schedule domain, without activating Sessions or reading their history. Browser consumers receive this browser-safe type:
 
 ```ts type-equiv
 /** Durable Session inbox delivery acknowledgment, not model execution completion. */
@@ -356,20 +356,51 @@ interface ScheduleDeliveryReceipt {
 type ScheduleCatalogEntry = ScheduleRecord & {
   /** Session receiving this reminder when it becomes due. */
   readonly sessionId: SessionId
-  /** Inactive reminders remain visible but never schedule another delivery. */
-  readonly status: 'active' | 'inactive'
+  /** Paused reminders remain visible but never schedule another delivery. Inactive reminders are ended. */
+  readonly status: 'active' | 'paused' | 'inactive'
   /** Most recent durably acknowledged inbox delivery, when available. */
   readonly lastDelivery?: ScheduleDeliveryReceipt
 }
 ```
 
+```ts type-equiv
+/** Execution-local view returned by pause and resume transitions. */
+type ScheduleLifecycleView = ScheduleView & {
+  /** Whether the retained task is currently armed or paused. */
+  readonly status: 'active' | 'paused'
+}
+```
+
+```ts type-equiv
+/** Session and task identity used by pause and resume transitions. */
+interface ScheduleLifecycleRequest extends ScheduleDeleteRequest {}
+```
+
+```ts type-equiv
+/** Successful pause or a non-mutating lookup/ended result. */
+type SchedulePauseValue =
+  | (ScheduleLifecycleView & { readonly paused: true })
+  | { readonly id: ScheduleId; readonly paused: false; readonly code: 'schedule_not_found' | 'schedule_ended' }
+  | ScheduleToolError
+```
+
+```ts type-equiv
+/** Successful resume or a non-mutating lookup/ended result. */
+type ScheduleResumeValue =
+  | (ScheduleLifecycleView & { readonly resumed: true })
+  | { readonly id: ScheduleId; readonly resumed: false; readonly code: 'schedule_not_found' | 'schedule_ended' }
+  | ScheduleToolError
+```
+
 The Remote `schedule.list({ sessionId })`, model `schedule_list`, and Session-header catalog return only active tasks. A model view's derived timing `state` remains distinct from stored lifecycle `status`. Deletion uses `schedule.delete({ sessionId, id })` with the entry's original binding; a mismatched binding returns not found. Model tools supply the current Agent's Session, whereas the global user interface supplies the selected task's binding. The binding check alone does not establish caller authorization. The payload-free `schedule/changed` event invalidates client lists; reconnecting clients fetch current state again.
 
-The shipped Web composition mounts `ui-schedule` with the Host capability. The [client package](../../packages/client/ui-schedule/README.md) owns the catalog, empty state, and deletion controls. The page separately filters all, active, and inactive tasks, retains inactive details and an original-Session control in the detail tab strip, and requires explicit confirmed deletion. The Rules and Records tabs separate task settings from lazily paged saved receipts. Neither a receipt nor inactive status confirms model execution.
+The shipped Web composition mounts `ui-schedule` with the Host capability. The [client package](../../packages/client/ui-schedule/README.md) owns the catalog, empty state, and deletion controls. The page separately filters all, active, paused, and inactive tasks, retains paused and inactive details and an original-Session control in the detail tab strip, and requires explicit confirmed deletion. The Rules and Records tabs separate task settings from lazily paged saved receipts. Neither a receipt nor paused or inactive status confirms model execution.
 
 ## Timing edits
 
-`schedule.update({ sessionId, id, expected, change })` edits an active task without activating its Session. `expected` is the complete observed `ScheduleRecord`, not a catalog entry with extra metadata. The Host compares it to the current record inside the same FIFO used by dispatch and deletion. Normal delivery can advance the target during editing; that stale snapshot returns `schedule_conflict` instead of overwriting the current rule. Missing or mismatched bindings return `schedule_not_found`, and inactive tasks return `schedule_ended`.
+`schedule.update({ sessionId, id, expected, change })` edits an active or paused task without activating its Session. `expected` is the complete observed `ScheduleRecord`, not a catalog entry with extra metadata. The Host compares it to the current record inside the same FIFO used by dispatch and deletion. Normal delivery can advance the target during editing; that stale snapshot returns `schedule_conflict` instead of overwriting the current rule. Missing or mismatched bindings return `schedule_not_found`, and inactive tasks return `schedule_ended`.
+
+`schedule.pause({ sessionId, id })` and `schedule.resume({ sessionId, id })` serialize lifecycle transitions with delivery and updates. Pause preserves the timing target and saved delivery records while removing the task from active lists; resume restores active scheduling with the same target. Repeating either operation is idempotent, and inactive tasks return `schedule_ended` rather than being re-armed.
 
 ```ts type-equiv
 /** Timing-only edit; it may select a different recurrence kind than the stored record, and one-shot targets use an absolute `at`. */
@@ -555,7 +586,7 @@ async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, ide
 @Remote('list') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>
 
 /**
- * Read all active and inactive Host reminders with their original Session bindings.
+ * Read all active, paused, and inactive Host reminders with their original Session bindings.
  * A deleted reminder has no row, so it is absent here.
  * Does not activate Sessions or read Session history.
  * @returns Reminders ordered by scheduledAt ascending, then lexicographically by id.
@@ -572,6 +603,28 @@ async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, ide
 @Remote('history') async history(request: ScheduleDeliveryHistoryRequest): Promise<ScheduleDeliveryHistoryResult>
 
 /**
+ * Pause one active routine without deleting its target or saved delivery history.
+ *
+ * A repeated pause is idempotent and returns the paused view. Ended tasks remain
+ * in the catalog but cannot be re-armed; a foreign Session never reveals the row.
+ * @param request - Session binding and task identity.
+ * @param signal - Cancellation checked before the lifecycle write.
+ * @returns The paused view or a bounded lookup/ended result.
+ */
+@Remote('pause') async pause(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<SchedulePauseValue>
+
+/**
+ * Resume one paused routine without changing its committed target.
+ *
+ * A repeated resume is idempotent. A recurring task whose target is already
+ * overdue is picked up by the normal Host runtime after it is re-armed.
+ * @param request - Session binding and task identity.
+ * @param signal - Cancellation checked before the lifecycle write.
+ * @returns The active view or a bounded lookup/ended result.
+ */
+@Remote('resume') async resume(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<ScheduleResumeValue>
+
+/**
  * Delete one task belonging to the selected Session, leaving queued messages intact.
  *
  * The row is removed: the task no longer schedules, leaves `list` and `catalog`, and its
@@ -585,7 +638,7 @@ async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, ide
 @Remote('delete') async delete(request: ScheduleDeleteRequest, signal?: AbortSignal): Promise<ScheduleDeleteResult>
 
 /**
- * Update the name, instruction, and timing of an active task within the original Session
+ * Update the name, instruction, and timing of an active or paused task within the original Session
  * binding without activating the Session or changing saved deliveries.
  *
  * Each supplied field replaces its stored value; an omitted field keeps it. A name or

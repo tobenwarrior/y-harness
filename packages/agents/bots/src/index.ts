@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import { Context, Service } from '@yharness/cordis'
+import { MessageId } from '@yharness/llm/brand'
 import type { Agent } from '@yharness/agent'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
@@ -11,7 +12,9 @@ import type {
   AtInput,
   CronInput,
   DailyInput,
+  ScheduleCatalogEntry,
   ScheduleCreateRequest,
+  ScheduleRecord,
   ScheduleTimingChange,
   WeeklyInput,
 } from '@yharness/schedule'
@@ -258,6 +261,7 @@ function routineCron(value: unknown): CronInput {
 }
 
 function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
+  rejectUnsupportedRoutineTrigger(args)
   const prompt = routineText(args, 'prompt')
   const title = routineText(args, 'title')
   if (prompt === undefined || title === undefined) {
@@ -275,6 +279,25 @@ function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
     throw new BotCollaborationError('message-invalid', 'A routine needs exactly one timing selector.')
   }
   return { ...request, ...selectors }
+}
+
+/** Reject event-trigger requests until a real Host event source is available. */
+function rejectUnsupportedRoutineTrigger(args: RoutineArguments): void {
+  if (Object.hasOwn(args, 'event') || Object.hasOwn(args, 'trigger') || Object.hasOwn(args, 'on_event')) {
+    throw new BotCollaborationError(
+      'message-invalid',
+      'Event-triggered routines are not supported. Use after_seconds, at, every_seconds, daily, weekly, or cron.',
+    )
+  }
+}
+
+/** Remove catalog-only ownership and lifecycle fields before a compare-and-update. */
+function routineCatalogRecord(entry: ScheduleCatalogEntry): ScheduleRecord {
+  const { sessionId, status, lastDelivery, ...record } = entry
+  void sessionId
+  void status
+  void lastDelivery
+  return record
 }
 
 /** Stable Host retry identity for one Bot Session's native routine operation. */
@@ -314,6 +337,7 @@ function routineUpdateContent(args: RoutineArguments): { readonly title?: string
 }
 
 function routineTimingChange(args: RoutineArguments): ScheduleTimingChange | undefined {
+  rejectUnsupportedRoutineTrigger(args)
   const selectors = ['at', 'every_seconds', 'daily', 'weekly', 'cron'].filter(key => args[key] !== undefined)
   if (selectors.length > 1) throw new BotCollaborationError('message-invalid', 'A routine update accepts at most one timing selector.')
   const selector = selectors[0]
@@ -580,7 +604,10 @@ export class BotService extends TypertRemoteService {
         const agent = ctx.agents.get(sessionId)
         if (agent === undefined) return false
         await this.installPrompt(agent)
-        return ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']
+        return [
+          'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+          'schedule_pause', 'schedule_resume', 'schedule_history',
+        ]
           .every(name => ctx.tools.get(name, agent) !== undefined)
       },
       persist: async (event) => {
@@ -653,7 +680,7 @@ export class BotService extends TypertRemoteService {
    * @returns The canonical Schedule result or a structured management result.
    */
   private async runRoutine(
-    action: 'create' | 'list' | 'update' | 'delete',
+    action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
     args: RoutineArguments,
     context: Parameters<NonNullable<BotNativeToolHost['routine']>>[2],
   ): Promise<unknown> {
@@ -674,23 +701,47 @@ export class BotService extends TypertRemoteService {
         return scheduleView(record, Date.now())
       }
       if (action === 'list') {
-        const records = await schedule.list({ sessionId })
+        const entries = (await schedule.catalog()).filter(entry => entry.sessionId === sessionId && entry.status !== 'inactive')
         context.signal.throwIfAborted()
-        return records.map(record => scheduleView(record, Date.now()))
+        return entries.map(entry => ({ ...scheduleView(routineCatalogRecord(entry), Date.now()), status: entry.status }))
       }
       if (action === 'delete') {
         const id = routineId(args)
         return await schedule.delete({ sessionId, id: ScheduleId(id) }, context.signal)
       }
+      if (action === 'pause') {
+        const id = routineId(args)
+        return await schedule.pause({ sessionId, id: ScheduleId(id) }, context.signal)
+      }
+      if (action === 'resume') {
+        const id = routineId(args)
+        return await schedule.resume({ sessionId, id: ScheduleId(id) }, context.signal)
+      }
+      if (action === 'history') {
+        const id = routineId(args)
+        const limit = args.limit === undefined ? 50 : routineNumber(args.limit, 'limit')
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+          throw new BotCollaborationError('message-invalid', 'limit must be a safe integer from 1 through 100.')
+        }
+        if (args.before !== undefined && typeof args.before !== 'string') {
+          throw new BotCollaborationError('message-invalid', 'before must be a message id string.')
+        }
+        return await schedule.history({
+          sessionId, id: ScheduleId(id), limit,
+          ...(args.before === undefined ? {} : { before: MessageId(args.before) }),
+        })
+      }
       const id = routineId(args)
-      const expected = (await schedule.list({ sessionId })).find(record => String(record.id) === id)
+      const entry = (await schedule.catalog()).find(candidate => candidate.sessionId === sessionId
+        && String(candidate.id) === id && candidate.status !== 'inactive')
       context.signal.throwIfAborted()
-      if (expected === undefined) {
+      if (entry === undefined) {
         const catalog = await schedule.catalog()
         context.signal.throwIfAborted()
         const ended = catalog.some(entry => entry.sessionId === sessionId && String(entry.id) === id)
         return { id, updated: false, code: ended ? 'schedule_ended' : 'schedule_not_found' }
       }
+      const expected = routineCatalogRecord(entry)
       const content = routineUpdateContent(args)
       const change = routineTimingChange(args)
       if (change === undefined && content.title === undefined && content.prompt === undefined) {

@@ -2,13 +2,13 @@
 
 ## Summary
 
-Create reminders in a conversation, then inspect active and inactive tasks and edit an active task's name, instruction, and run time from the Automation tasks page. Daily reminders follow a saved local time and time zone; fixed-rate reminders follow elapsed intervals. Delivered one-shot tasks remain available until you explicitly delete them.
+Create reminders in a conversation, then inspect active, paused, and inactive tasks and edit an active or paused task's name, instruction, and run time from the Automation tasks page. Daily reminders follow a saved local time and time zone; fixed-rate reminders follow elapsed intervals. Delivered one-shot tasks remain available until you explicitly delete them.
 
 ## Table of Contents
 
 - [Create reminders](#create-reminders)
 - [Inspect and delete tasks](#manage-tasks)
-- [Edit an active task](#edit-timing)
+- [Edit an active or paused task](#edit-timing)
 - [Timing and delivery reference](#timing-and-delivery)
 - [Further Exploration](#further-exploration)
 
@@ -17,16 +17,16 @@ Create reminders in a conversation, then inspect active and inactive tasks and e
 
 The shipped Web profile includes the Host Schedule service and the Automation tasks page. Configure a model provider before asking it to create reminders.
 
-The `standard`, `cordis`, and `ptc` presets declare the four reminder tools and the clock context that gives the model the current time and the browser's zone, so those presets provide `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`; the `minimal` preset declares neither. A delegated subagent sees none of the four tools, because the presets' delegation rows deny them; a call that reaches one anyway is refused.
+The `standard`, `cordis`, and `ptc` presets declare the seven reminder tools and the clock context that gives the model the current time and the browser's zone, so those presets provide `schedule_create`, `schedule_list`, `schedule_update`, `schedule_delete`, `schedule_pause`, `schedule_resume`, and `schedule_history`; the `minimal` preset declares neither. A delegated subagent sees none of the seven tools, because the presets' delegation rows deny them; a call that reaches one anyway is refused.
 
-Ask the model to create, list, edit, or delete reminders. It uses `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` (update changes one reminder in place and keeps its id and saved delivery records); the Automation tasks page's New action opens a New Session for a creation instead, with the request already written in its composer. Supported choices are a one-time delay in positive whole seconds, an absolute date and time, a fixed interval of at least one minute, a daily local time with an IANA time zone, a weekly local time with an IANA time zone and ISO weekdays from Monday 1 through Sunday 7, or a five-field cron expression with an explicit IANA time zone, stored in canonical form.
+Ask the model to create, list, edit, delete, pause, resume, or inspect delivery history for reminders. It uses the seven `schedule_*` tools (update changes one reminder in place and keeps its id and saved delivery records; pause and resume preserve the timing target and history); the Automation tasks page's New action opens a New Session for a creation instead, with the request already written in its composer. Supported choices are a one-time delay in positive whole seconds, an absolute date and time, a fixed interval of at least one minute, a daily local time with an IANA time zone, a weekly local time with an IANA time zone and ISO weekdays from Monday 1 through Sunday 7, or a five-field cron expression with an explicit IANA time zone, stored in canonical form. Event-triggered routines are not supported because the Host has no event-source adapter.
 
 For example, ask: “Remind me every day at 23:00 in Asia/Shanghai to check the weather.” Open Automation tasks and select the created reminder. Check that its frequency shows a daily rule and the requested zone, not Once. A one-time reminder does not become recurring after delivery.
 
 <a id="manage-tasks"></a>
 ## Inspect and delete tasks
 
-Open Automation tasks from the sidebar to view reminders across Sessions without activating their conversations. Search by the stored task name, the instruction, or the task's internal Session id, and filter by the single All, Enabled, or Inactive status row. An idle, unarchived Session row whose Session has at least one active task shows a clock mark; an archived row keeps that cell blank, with its live status on the hover card only. A long hover on a Session row with active tasks lists up to two of those tasks with their frequency and their next run as a device-zone time with its relative duration. The open Session's header shows an icon-only reminder clock while active reminders exist: it opens the sole task's details directly, or a list of the Session's reminders otherwise.
+Open Automation tasks from the sidebar to view reminders across Sessions without activating their conversations. Search by the stored task name, the instruction, or the task's internal Session id, and filter by All, Enabled, Paused, or Inactive status. An idle, unarchived Session row whose Session has at least one active task shows a clock mark; an archived row keeps that cell blank, with its live status on the hover card only. A long hover on a Session row with active tasks lists up to two of those tasks with their frequency and their next run as a device-zone time with its relative duration. The open Session's header shows an icon-only reminder clock while active reminders exist: it opens the sole task's details directly, or a list of the Session's reminders otherwise.
 
 Select a task to open Rules, then choose Records to load the newest 20 saved records. Each saved record reads as one compact row: a clock glyph, the occurrence time in the task's saved zone (the browser's zone for a one-shot or interval task), and the saved instruction when one was stored. Records without a saved instruction never show the current instruction in its place. Load older records adds the next page. Records follow newest-first saved order even if the clock moves backward; they do not describe model execution results. The original Session entry sits in the detail tab strip, so it stays visible while the Rules view scrolls. Unmodified Left/Right arrows and Home/End switch the focused tabs; Alt, Ctrl, Meta, and Shift combinations are not intercepted. Refreshing the task preserves the selected tab.
 
@@ -34,16 +34,16 @@ An empty record view means a successful query returned no saved records. Loading
 
 For tasks without saved history, only an existing latest receipt can be shown until new deliveries add records; later deliveries do not recover the missing history or clear its notice. Unsaved earlier records and instruction snapshots cannot be recovered, and the current instruction is not substituted for a missing saved instruction. The earlier-history notice appears only when the Host marks earlier records unavailable; new tasks with no deliveries show the empty state without that notice.
 
-Active tasks participate in scheduling. Inactive tasks do not schedule another delivery. A one-time task becomes inactive after its reminder is durably written to the conversation inbox; choose All tasks or Inactive to find it. The conversation-header catalog and model `schedule_list` show only active reminders, so disappearance from those views does not mean the retained task was deleted.
+Active tasks participate in scheduling. Paused tasks remain stored but do not schedule or deliver until resumed. Inactive tasks do not schedule another delivery. A one-time task becomes inactive after its reminder is durably written to the conversation inbox; choose All tasks, Paused, or Inactive to find it. The conversation-header catalog and model `schedule_list` show only active reminders, so disappearance from those views does not mean the retained task was deleted.
 
 The Linked session entry in the detail tab strip opens the original conversation when its metadata is ready and the Session is available and unarchived. Otherwise the entry is disabled with a reason. The task details and deletion action remain available even when its original Session cannot open. Browsing tasks does not unarchive Sessions.
 
 Choose Delete task and confirm to stop future delivery and remove the task from the list, including for an inactive task. Deletion removes the task together with its saved delivery records, so the task's saved history is gone. Confirming the deletion closes the panel or tab that asked for it and reports the outcome in one app-wide notice — deleted, or a failure that leaves the task in place to retry; it does not remove the original conversation or retract a message already queued there. The row stays visible until a successful query confirms the remaining tasks. If a query fails, Retry reloads the catalog; the error is not an empty successful result.
 
 <a id="edit-timing"></a>
-## Edit an active task
+## Edit an active or paused task
 
-In Automation tasks, select an active task and open Rules to edit its name, instruction, and run time. Inactive tasks are read-only, and edits stay in a local draft until you choose Save changes. Editing keeps the task id, original conversation, latest delivery receipt, and all saved delivery records.
+In Automation tasks, select an active or paused task and open Rules to edit its name, instruction, and run time. Inactive tasks are read-only, and edits stay in a local draft until you choose Save changes. Editing keeps the task id, original conversation, latest delivery receipt, and all saved delivery records.
 
 - Daily and Weekly: edit Time and Time zone; a weekly rule also toggles Weekday. A clock row shows whole seconds, an untouched row keeps a stored millisecond value for its submit, and the stored IANA zone is kept. A changed rule selects its first future occurrence using the DST rules below.
 - Every: choose Every N hours, Every N minutes, or Every N seconds and enter the quantity in the unit the row states; the smallest accepted interval is 1 hour, 1 minute, or 60 seconds for that unit, and the submitted interval is whole seconds. A changed interval starts from the Host's accepted-save time, with the first target one new interval later. Time zones do not affect this elapsed interval.
@@ -64,7 +64,7 @@ Saved delivery records confirm messages persisted in the conversation inbox, not
 
 Saved records are pruned when an acknowledgment is appended: the Host keeps the records whose acknowledgment time falls inside the configured `deliveryHistoryDays` window, measured back from the appended receipt's `deliveredAt`, and at most the newest `deliveryHistoryRecords` records. The latest receipt always survives, and a pruned window marks earlier records unavailable. The Host keeps the retained history in memory and rewrites the full task row for each acknowledgment. Pagination limits returned record count, not the retained history or instruction bytes.
 
-Pause and a new Session for each run are not supported. Name, instruction, and run-time editing is available to the model through `schedule_update`, which changes the reminder in place and keeps its id and saved delivery records, and to the Automation tasks page against the selected task's binding; neither is a cross-Session relay workflow. Reminders recorded only in an older Session log are not scheduled automatically; recreate the ones you still need. Previously deleted task records are not reconstructed.
+Pause and resume are available to Bot-native routine tools and preserve the Bot's Session binding, timing target, and saved delivery records. A paused task does not deliver until resumed. A new Session for each run and cross-Session relay workflow are not supported. Reminders recorded only in an older Session log are not scheduled automatically; recreate the ones you still need. Previously deleted task records are not reconstructed.
 
 <a id="further-exploration"></a>
 ## Further Exploration
