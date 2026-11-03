@@ -1,7 +1,7 @@
 /** Shared Bot membership policy and private-conversation routing primitives. */
 
 import { brandString, type Branded } from '@yharness/brand'
-import type { SessionId } from '@yharness/session'
+import type { SessionId } from '@yharness/session/types'
 import type { BotId } from './types.ts'
 
 /**

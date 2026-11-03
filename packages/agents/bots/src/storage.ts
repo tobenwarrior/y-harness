@@ -60,11 +60,11 @@ export const botRecordSchema = z.object({
   connectedAppIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app ids must be unique' },
-  ).optional(),
+  ).readonly().optional(),
   connectedAppDenyIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app deny ids must be unique' },
-  ).optional(),
+  ).readonly().optional(),
   pinned: z.boolean().optional(),
   hidden: z.boolean().optional(),
   group: z.string().max(80).refine(value => value.trim() === value, {
