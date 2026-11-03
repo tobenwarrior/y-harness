@@ -73,7 +73,7 @@ export class McpResourceRuntime extends Service {
 
   /**
    * Register one server and expose resource tools while that scope has providers.
-   * @param server - configured server name, unique in this scope.
+   * @param server - exact opaque server id, unique in this scope; empty and long ids are preserved.
    * @param provider - connection-owned resource operations.
    * @returns the effect disposer for this exact registration.
    */

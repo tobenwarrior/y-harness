@@ -1777,6 +1777,25 @@ describe('ToolRuntime', () => {
     expect(entered).toBe(false) // A denied call never enters the around-dispatch extension point.
   })
 
+  it('preserves structured failure info from a monotonic guard', async () => {
+    const ctx = await setup()
+    const body = vi.fn(async () => 'called')
+    ctx.tools.register({ ...echoTool, name: 'guarded', execute: body })
+    ctx.tools.guard(() => ({
+      message: 'revoked before dispatch',
+      info: { name: 'GuardError', code: 'ACCESS_REVOKED' },
+    }))
+
+    await expect(ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('guarded'), name: 'guarded', arguments: {},
+    })).resolves.toMatchObject({
+      isError: true,
+      error: { message: 'revoked before dispatch', info: { code: 'ACCESS_REVOKED' } },
+    })
+    expect(body).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('runs beforeDispatch after async around work and preserves structured denial metadata', async () => {
     const ctx = await setup()
     const body = vi.fn(async () => 'called')

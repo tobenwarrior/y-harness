@@ -767,13 +767,13 @@ interface ToolView {
 
 /**
  * A monotonic execution guard evaluated after every `tools/pre-execute`
- * listener and before the tool body. Returning a reason denies the call;
- * returning `undefined` leaves it unchanged. Because guards have no allow
- * result, listener ordering cannot turn a denial back into permission.
+ * listener and before the tool body. A string or failure detail denies the
+ * call; returning `undefined` leaves it unchanged. Because guards have no
+ * allow result, listener ordering cannot turn a denial back into permission.
  * @param execution - the identity-protected call after extensible pre-execute policy completed.
- * @returns a final denial reason, or `undefined` to leave the call allowed.
+ * @returns a final denial reason or structured failure, or `undefined` to leave the call allowed.
  */
-export type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined
+export type ToolGuard = (execution: Readonly<ToolExecution>) => string | ToolFailure | undefined
 
 /** One scope's complete tool-registry contribution. */
 class ToolLayer implements ScopeLayer {
@@ -811,10 +811,11 @@ class ToolLayer implements ScopeLayer {
   }
 
   /** First monotonic denial from this layer's live guard registrations. */
-  guardReason(exec: ToolExecution): string | undefined {
+  guardFailure(exec: ToolExecution): ToolFailure | undefined {
     for (const guard of this.guards.values()) {
-      const reason = guard(exec)
-      if (reason !== undefined) return reason
+      const denial = guard(exec)
+      if (denial === undefined) continue
+      return typeof denial === 'string' ? { message: denial } : denial
     }
     return undefined
   }
@@ -1183,10 +1184,10 @@ export class ToolRuntime extends Service {
    * Register a monotonic guard after the extensible `tools/pre-execute`
    * waterfall. A plain-context guard applies globally; one registered through
    * `agent.ctx` applies only to that agent. Any matching guard may deny by
-   * returning a reason, while no guard can force-allow a call another guard
-   * denied. The exact effect disposer is returned for ordered ownership and
-   * HMR cleanup.
-   * @param guard - synchronous check; a returned string denies the execution.
+   * returning a reason or structured failure, while no guard can force-allow a
+   * call another guard denied. The exact effect disposer is returned for
+   * ordered ownership and HMR cleanup.
+   * @param guard - synchronous check; a returned string or failure detail denies the execution.
    * @returns the exact disposer that unregisters the guard.
    */
   guard(guard: ToolGuard): () => void {
@@ -1217,13 +1218,13 @@ export class ToolRuntime extends Service {
   }
 
   /** First monotonic denial from the global then the scope chain's guard layers, farthest first. */
-  private guardReason(exec: ToolExecution): string | undefined {
-    const globalReason = this.layers.global.guardReason(exec)
-    if (globalReason !== undefined) return globalReason
+  private guardFailure(exec: ToolExecution): ToolFailure | undefined {
+    const globalFailure = this.layers.global.guardFailure(exec)
+    if (globalFailure !== undefined) return globalFailure
     if (exec.agent === undefined) return undefined
     for (const layer of this.layers.chainLayers(exec.agent)) {
-      const reason = layer.guardReason(exec)
-      if (reason !== undefined) return reason
+      const failure = layer.guardFailure(exec)
+      if (failure !== undefined) return failure
     }
     return undefined
   }
@@ -1605,16 +1606,20 @@ export class ToolRuntime extends Service {
       if (decision.kind === 'cancel') {
         return await next({ kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() })
       }
-      const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason
-      const denialInfo = decision.kind === 'deny' ? decision.info : undefined
-      if (denialReason !== undefined) {
+      const denial = decision.kind === 'allow'
+        ? this.guardFailure(exec)
+        : {
+          message: decision.reason,
+          ...decision.info === undefined ? {} : { info: decision.info },
+        }
+      if (denial !== undefined) {
         return await next({
           kind: 'post-result',
           exec,
           result: this.materializeFinalResult({
-            content: [{ type: 'text', text: `Error: ${denialReason}` }],
+            content: [{ type: 'text', text: `Error: ${denial.message}` }],
             isError: true,
-            error: { message: denialReason, ...denialInfo === undefined ? {} : { info: denialInfo } },
+            error: denial,
           }),
         })
       }

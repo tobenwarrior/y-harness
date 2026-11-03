@@ -80,6 +80,7 @@ export const en = {
   connectApps: 'App access',
   connectedAppsTitle: 'Connected apps',
   connectedAppsDescription: 'Choose which connected apps {name} can use.',
+  connectedAppFallbackName: 'Connected app {id}',
   connectedAppDescription: 'MCP tools from {name}',
   connectedAppsLoading: 'Loading connected apps…',
   connectedAppsEmpty: 'Connect an app to manage access here.',

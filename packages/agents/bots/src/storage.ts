@@ -56,11 +56,11 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
-  connectedAppIds: z.array(z.string().min(1).max(64)).max(128).refine(
+  connectedAppIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app ids must be unique' },
   ).optional(),
-  connectedAppDenyIds: z.array(z.string().min(1).max(64)).max(128).refine(
+  connectedAppDenyIds: z.array(z.string()).max(128).refine(
     values => new Set(values).size === values.length,
     { message: 'Connected-app deny ids must be unique' },
   ).optional(),

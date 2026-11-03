@@ -65,7 +65,7 @@ describe('Bot roster and detail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
-    await waitFor(() => expect(rename).toHaveBeenCalledWith('research', 'Market scout'))
+    await waitFor(() => { expect(rename).toHaveBeenCalledWith('research', 'Market scout') })
   })
 
   it('keeps the rename dialog open when saving fails', async () => {
@@ -416,6 +416,89 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('research', 'github', true) })
     expect(within(dialog).getByText('Access allowed')).toBeTruthy()
+  })
+
+  it('keeps nameless connected apps distinct and accessible', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'custom-alpha', name: '', allowed: false },
+      { id: 'custom-beta', name: '-', allowed: false },
+    ])
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
+
+    expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
+    expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
+    expect(within(dialog).getByText('MCP tools from Connected app custom-alpha')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
+    expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')
+    expect(dialog.querySelector('[data-app-id="custom-beta"]')?.textContent).not.toBe('')
+  })
+
+  it('clears the previous Bot catalog when a reload fails', async () => {
+    const onLoadConnectedApps = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+      ])
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull() })
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const reloadedDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledTimes(2) })
+    expect((await within(reloadedDialog).findByRole('alert')).textContent).toContain('catalog unavailable')
+    expect(reloadedDialog.querySelector('[data-app-id="github"]')).toBeNull()
+  })
+
+  it('does not apply a completed toggle from a previous Bot to the current catalog', async () => {
+    const save = Promise.withResolvers<undefined>()
+    const onLoadConnectedApps = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Research tools', allowed: false },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'github', name: 'GitHub', description: 'Release tools', allowed: false },
+      ])
+    const onSetConnectedAppAccess = vi.fn().mockReturnValue(save.promise)
+    const props: BotWorkspaceProps = {
+      bots,
+      selectedBotId: 'research',
+      onSelectBot: vi.fn(),
+      onCreateBot: vi.fn(),
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+    }
+    const view = render(<BotRoster {...props} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'App access' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('research', 'github', true) })
+
+    view.rerender(<BotRoster {...props} selectedBotId="release" t={t} />)
+    await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy() })
+
+    save.resolve(undefined)
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Done' }).hasAttribute('disabled')).toBe(false) })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy() })
   })
 
   it('checks generation, previews the returned image, and commits the selected avatar', async () => {

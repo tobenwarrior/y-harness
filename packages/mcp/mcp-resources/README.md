@@ -37,6 +37,8 @@ When system-prompt assembly is mounted, the prompt lists server names visible to
 
 Every operation resolves the server in the calling agent's scope. A missing server argument or unavailable server fails before dispatch. When the caller is a Bot, its connected-app policy sees the explicit `server` argument and enforces the grant at the last-mile tool-body boundary, including after an asynchronous `tools/execute` wrapper. A denied call retains `BOT_APP_ACCESS_REQUIRED` structured metadata for Host routing while the model sees the concise reason. The connection owner handles request cancellation, timeouts, and recovery; a failed request remains a failed tool call.
 
+Resource providers register exact opaque server ids. Registration preserves every string exactly, including empty, long, and punctuation-bearing ids such as braces. Durable Bot connected-app policy stores up to 128 exact ids in each allow or deny list; it does not trim or normalize ids.
+
 -----
 
 <a id="understand-the-implementation"></a>

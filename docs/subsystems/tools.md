@@ -375,18 +375,18 @@ type ToolDispatchGuard = (
 
 `ToolExecutionToken` is an opaque runtime `Symbol` used only for identity comparison. Before policy, `execute()` materializes and freezes arguments, rejects non-JSON input, and assigns the token. Identity fields, the required caller signal, and the optional parent token remain readonly. A `ToolDispatchExecution` wrapper may replace but not remove the signal; the registry re-fuses the caller signal before invoking the body. Final observers receive the frozen execution identity.
 
-A `ToolGuard` is scope-aware final pre-dispatch policy. Its return type deliberately has no allow result: `undefined` preserves the waterfall decision, while a returned reason can only reduce permission, so a later listener cannot undo it.
+A `ToolGuard` is scope-aware final pre-dispatch policy. Its return type deliberately has no allow result: `undefined` preserves the waterfall decision, while a returned reason or `ToolFailure` can only reduce permission, so a later listener cannot undo it. Structured failure details retain `ToolErrorInfo` in the result.
 
 ```ts type-equiv
 /**
  * A monotonic execution guard evaluated after every `tools/pre-execute`
- * listener and before the tool body. Returning a reason denies the call;
- * returning `undefined` leaves it unchanged. Because guards have no allow
- * result, listener ordering cannot turn a denial back into permission.
+ * listener and before the tool body. A string or failure detail denies the
+ * call; returning `undefined` leaves it unchanged. Because guards have no
+ * allow result, listener ordering cannot turn a denial back into permission.
  * @param execution - the identity-protected call after extensible pre-execute policy completed.
- * @returns a final denial reason, or `undefined` to leave the call allowed.
+ * @returns a final denial reason or structured failure, or `undefined` to leave the call allowed.
  */
-type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined
+type ToolGuard = (execution: Readonly<ToolExecution>) => string | ToolFailure | undefined
 ```
 
 `ctx.tools.beforeDispatch()` registers the synchronous last-mile form. It runs after every `tools/execute` wrapper has settled and before the body starts, so revoking a capability while an async wrapper waits cannot let that body run. A denial can carry `ToolErrorInfo`; the registry keeps that structured identity in the result while the model sees only `Error: <reason>`.
@@ -597,10 +597,10 @@ restrict(filter: ToolRestriction): () => void
  * Register a monotonic guard after the extensible `tools/pre-execute`
  * waterfall. A plain-context guard applies globally; one registered through
  * `agent.ctx` applies only to that agent. Any matching guard may deny by
- * returning a reason, while no guard can force-allow a call another guard
- * denied. The exact effect disposer is returned for ordered ownership and
- * HMR cleanup.
- * @param guard - synchronous check; a returned string denies the execution.
+ * returning a reason or structured failure, while no guard can force-allow a
+ * call another guard denied. The exact effect disposer is returned for
+ * ordered ownership and HMR cleanup.
+ * @param guard - synchronous check; a returned string or failure detail denies the execution.
  * @returns the exact disposer that unregisters the guard.
  */
 guard(guard: ToolGuard): () => void

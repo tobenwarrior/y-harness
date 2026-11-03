@@ -9,6 +9,7 @@ import type {
   ToolDispatchDecision,
   ToolDispatchExecution,
   ToolExecution,
+  ToolFailure,
 } from '@yharness/tools'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
@@ -173,15 +174,9 @@ function normalizeOptionalBoolean(label: string, value: boolean | undefined): bo
   return value
 }
 
-const CONNECTED_APP_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
-
-function normalizeConnectedAppId(value: string | undefined): string {
+function normalizeConnectedAppId(value: unknown): string {
   if (typeof value !== 'string') return badRequest('Connected-app id must be a string')
-  const id = value.trim()
-  if (!CONNECTED_APP_ID_PATTERN.test(id)) {
-    return badRequest('Connected-app id must contain simple URL-safe segments')
-  }
-  return id
+  return value
 }
 
 function connectedAppName(id: string): string {
@@ -794,8 +789,14 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Recheck one Bot's MCP app policy immediately before tool dispatch. */
-  private connectedAppGuard(agent: Pick<Agent, 'id'>, exec: Readonly<ToolExecution>): string | undefined {
-    return this.connectedAppDenial(agent, exec)?.reason
+  private connectedAppGuard(agent: Pick<Agent, 'id'>, exec: Readonly<ToolExecution>): ToolFailure | undefined {
+    const denial = this.connectedAppDenial(agent, exec)
+    return denial === undefined
+      ? undefined
+      : {
+        message: denial.reason,
+        ...(denial.info === undefined ? {} : { info: denial.info }),
+      }
   }
 
   /** Recheck one MCP app grant at the final tool-body boundary. */

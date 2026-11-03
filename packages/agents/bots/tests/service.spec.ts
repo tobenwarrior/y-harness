@@ -822,11 +822,96 @@ describe('durable Bot roster', () => {
       approval.resolve('allowed-once')
 
       const result = await running
-      expect(result).toMatchObject({ isError: true })
+      expect(result).toMatchObject({
+        isError: true,
+        error: {
+          info: {
+            name: 'BotConnectedAppAccessError',
+            code: 'BOT_APP_ACCESS_REQUIRED',
+            reason: 'Bot "Approval race owner" does not have access to MCP app "GitHub". Grant access in Bot settings before using mcp__github__list_issues.',
+          },
+        },
+      })
       expect(JSON.stringify(result)).toContain('does not have access to MCP app')
       expect(calls).not.toHaveBeenCalled()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('updates access for an opaque registered MCP resource id', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Opaque id owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const server = 'docs{{literal}}'
+      const request = vi.fn(async () => ({ resources: [] }))
+      h.ctx.mcpResources.register(server, { request })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('opaque-id test Agent was not created')
+
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [{ id: server, allowed: false }],
+      })
+      await expect(h.service.setConnectedAppAccess({ botId: created.bot.id, appId: server, allowed: true })).resolves.toMatchObject({
+        app: { id: server, allowed: true },
+      })
+      await expect(h.service.setConnectedAppAccess({
+        botId: created.bot.id, appId: 7 as never, allowed: false,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('opaque-id-resource'), name: 'list_mcp_resources',
+        arguments: { server }, signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: false })
+      expect(request).toHaveBeenCalledOnce()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('persists empty and long opaque MCP resource ids for connected-app access', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Boundary id owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    let closed = false
+    const ids = ['', 'x'.repeat(65)]
+    try {
+      const request = vi.fn(async () => ({ resources: [] }))
+      for (const id of ids) h.ctx.mcpResources.register(id, { request })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('boundary-id test Agent was not created')
+
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: false }))),
+      })
+      for (const [index, id] of ids.entries()) {
+        await expect(h.service.setConnectedAppAccess({ botId: created.bot.id, appId: id, allowed: true })).resolves.toMatchObject({
+          app: { id, allowed: true },
+        })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId(`boundary-id-${String(index)}`), name: 'list_mcp_resources',
+          arguments: { server: id }, signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+      }
+      await close(h.ctx)
+      closed = true
+
+      const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+      try {
+        await expect(reopened.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+          apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: true }))),
+        })
+      } finally {
+        await close(reopened.ctx)
+      }
+    } finally {
+      if (!closed) await close(h.ctx)
     }
   })
 

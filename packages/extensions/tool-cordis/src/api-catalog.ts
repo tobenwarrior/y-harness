@@ -1805,7 +1805,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'register(server: string, provider: McpResourceProvider): () => void',
         description: 'Register one server and expose resource tools while that scope has providers.',
-        parameters: [{ name: 'server', description: 'configured server name, unique in this scope.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
+        parameters: [{ name: 'server', description: 'exact opaque server id, unique in this scope; empty and long ids are preserved.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
         returns: 'the effect disposer for this exact registration.',
       },
       {
@@ -3889,8 +3889,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'guard(guard: ToolGuard): () => void',
-        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
-        parameters: [{ name: 'guard', description: 'synchronous check; a returned string denies the execution.' }],
+        description: 'Register a monotonic guard after the extensible `tools/pre-execute` waterfall. A plain-context guard applies globally; one registered through `agent.ctx` applies only to that agent. Any matching guard may deny by returning a reason or structured failure, while no guard can force-allow a call another guard denied. The exact effect disposer is returned for ordered ownership and HMR cleanup.',
+        parameters: [{ name: 'guard', description: 'synchronous check; a returned string or failure detail denies the execution.' }],
         returns: 'the exact disposer that unregisters the guard.',
       },
       {
@@ -9261,7 +9261,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolGuard',
-    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | undefined;',
+    declaration: 'export type ToolGuard = (execution: Readonly<ToolExecution>) => string | ToolFailure | undefined;',
   },
   {
     name: 'ToolHistory',
