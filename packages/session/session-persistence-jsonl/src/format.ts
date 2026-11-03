@@ -464,13 +464,20 @@ export class SessionLogScanner {
    */
   finish(): SessionLogScan {
     this.finished = true
-    const artifact = this.restore.finish()
-    restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
-    return {
-      meta: this.meta,
-      inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
-      events: artifact.events as unknown as SessionEvent[],
-      committedBytes: this.committedBytes,
+    try {
+      const artifact = this.restore.finish()
+      restoreReleasedV5Artifact(artifact, KNOWN_SESSION_EVENT_TYPES)
+      return {
+        meta: this.meta,
+        inheritedEventCount: SessionLogOffset(artifact.inheritedEventCount),
+        events: artifact.events as unknown as SessionEvent[],
+        committedBytes: this.committedBytes,
+      }
+    } catch (error: unknown) {
+      if (error instanceof SessionFormatUnsupportedMigrationError) {
+        throw new SessionFormatUnsupportedError(error.message)
+      }
+      throw error
     }
   }
 
