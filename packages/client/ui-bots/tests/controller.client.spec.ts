@@ -820,10 +820,27 @@ describe('BotWorkspaceController', () => {
       undefined,
       undefined,
       { durable: false, read: () => ({ creations: {}, messages: {} }), write: () => false },
+      key => `localized:${key}`,
     )
 
     await expect(controller.face().createGroup({ name: 'No store', botIds: [first.id, second.id].map(String) }))
-      .rejects.toThrow('retry persistence is unavailable')
+      .rejects.toThrow('localized:groupRetryUnavailable')
+    expect(remote.createGroup).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
+  it('uses localized copy when a new group retry cannot be saved', async () => {
+    const first = bot('bot-first-save-failed', 'session-first-save-failed')
+    const second = bot('bot-second-save-failed', 'session-second-save-failed')
+    const remote = remoteFixture([first, second])
+    const controller = new BotWorkspaceController(
+      remote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined,
+      { durable: true, read: () => ({ creations: {}, messages: {} }), write: () => false },
+      key => `localized:${key}`,
+    )
+
+    await expect(controller.face().createGroup({ name: 'No save', botIds: [first.id, second.id].map(String) }))
+      .rejects.toThrow('localized:groupCreateRetryUnavailable')
     expect(remote.createGroup).not.toHaveBeenCalled()
     controller.dispose()
   })
@@ -841,7 +858,7 @@ describe('BotWorkspaceController', () => {
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
 
     await expect(controller.face().createGroup({ name: 'Corrupt store', botIds: [first.id, second.id].map(String) }))
-      .rejects.toThrow('retry persistence is unavailable')
+      .rejects.toThrow('unexpected response')
     expect(remote.createGroup).not.toHaveBeenCalled()
     controller.dispose()
   })
