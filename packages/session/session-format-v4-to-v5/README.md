@@ -31,7 +31,7 @@ Use the [format catalog](../session-format-catalog/README.md) to restore a Sessi
 
 The header-only operation advances the generation without converting event data:
 
-```ts
+```text
 const targetHeader = sessionFormatV4ToV5.migrateHeader(sourceHeader)
 ```
 

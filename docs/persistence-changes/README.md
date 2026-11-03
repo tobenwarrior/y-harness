@@ -35,7 +35,7 @@ Each dated record has four sibling files:
 | `YYYY-MM-DD-slug.i18n.yaml` | Generated bilingual consistency record |
 | `YYYY-MM-DD-slug.schema.json` | Generated complete after schemas for the affected roots that remain present |
 
-`finalized/vN.json` records the complete root classifications/digests of an accepted compatibility baseline and semantic hashes of its accepted records. The [finalization record](../session-format-status.md#finalization-record) requires its checkpoint. Current V4 schemas may evolve compatibly; the checkpoint protects accepted machine declarations and after schemas even after the writer advances, while excluding prose, aliases, and source locations from record hashes.
+`finalized/vN.json` records the complete root classifications/digests of an accepted compatibility baseline and semantic hashes of its accepted records. The [finalization record](../session-format-status.md#finalization-record) requires its checkpoint. Current schemas may evolve compatibly; the checkpoint protects accepted machine declarations and after schemas even after the writer advances, while excluding prose, aliases, and source locations from record hashes.
 
 A maintainer captures an agreed format with [`createPersistenceFinalizationCheckpoint`](../../scripts/persistence-finalization.ts), writes a new version-named checkpoint without replacing an earlier one, and advances the paired `latestFinalizedVersion`. The helper requires current schemas to match complete acknowledged history. Run the ordinary verifier before committing.
 

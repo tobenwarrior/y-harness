@@ -653,7 +653,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         format: {
           ...this.generationFormat,
           createRestore: header => createSessionFormatCatalogWithChildren(related.facts).createRestore(header, {
-            recovery: 'recoverable', validation: header.version === 4 ? 'current' : 'transformed',
+            recovery: 'recoverable', validation: header.version === SESSION_FORMAT_VERSION ? 'current' : 'transformed',
           }),
         },
         validateRelatedSources,

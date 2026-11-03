@@ -25,7 +25,7 @@ function mirror(events = [nativeEvent('native-user', 'user', 'Repair parser'), n
 }
 function fixture(bounds: Partial<Pick<CodingSessionLinkedImportOptions, 'maxBytes' | 'maxEvents' | 'maxGenerations' | 'maxRecords'>> = {}) {
   const id = SessionId('ordinary-y-session')
-  const initial = Session.create(id, undefined, { id, version: 4, createdAt: 1, isSeeded: false, cwd: '/fixture/project' })
+  const initial = Session.create(id, undefined, { id, version: 5, createdAt: 1, isSeeded: false, cwd: '/fixture/project' })
   // Authored valid ordinary-Y history reserves the mandatory protected system head.
   initial.append('turn/start', { turn: 1 })
   initial.append('step/start', { turn: 1, step: 1 })
