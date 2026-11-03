@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import { agentEvents, type Agent } from '@yharness/agent'
@@ -10,6 +13,7 @@ import type { UserMessage } from '@yharness/llm'
 import Storage from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { Domain } from '@yharness/storage-domain'
+import * as StorageJson from '@yharness/storage-json'
 import type { StorageBackend } from '@yharness/storage'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
@@ -17,10 +21,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
-import { BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
+import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
+import type { BotView } from '../src/types.ts'
 
 declare module '@yharness/llm' {
   interface MessageSourceMap {
@@ -592,6 +597,79 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!hClosed) await close(h.ctx)
+    }
+  })
+
+  it('uses path-safe per-record delivery keys and retries from JSON storage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-groups-'))
+    const bots: readonly BotView[] = [
+      {
+        id: BotId('bot-real-alpha'), sessionId: SessionId('session-real-alpha'), name: 'Alpha',
+        identity: 'agent', accent: 'blue', cwd: '/tmp', state: 'active', availability: 'idle',
+        pinned: false, hidden: false, createdAt: 1, updatedAt: 1,
+      },
+      {
+        id: BotId('bot-real-beta'), sessionId: SessionId('session-real-beta'), name: 'Beta',
+        identity: 'agent', accent: 'teal', cwd: '/tmp', state: 'active', availability: 'idle',
+        pinned: false, hidden: false, createdAt: 2, updatedAt: 2,
+      },
+    ]
+    const open = async () => {
+      const ctx = new Context()
+      await ctx.plugin(Storage)
+      await ctx.plugin(StorageJson, { root })
+      const facility = new DomainFacility(ctx, { backend: 'json' })
+      const domain = await facility.open(botGroupDomain)
+      return { ctx, domain }
+    }
+    const delivered: string[] = []
+    try {
+      const first = await open()
+      try {
+        const groups = new BotGroupService(first.domain, {
+          listBots: async () => bots,
+          deliverToBot: async ({ targetBotId }) => {
+            delivered.push(String(targetBotId))
+            return 'accepted'
+          },
+        })
+        const group = await groups.create({
+          id: BotGroupId('bot-group-real-storage'), name: 'Real storage room', botIds: bots.map(bot => bot.id),
+        })
+        await expect(groups.send({
+          groupId: group.group.id,
+          text: 'Persist this safely.',
+          messageId: BotGroupMessageId('bot-group-message-real-storage'),
+        })).resolves.toMatchObject({ status: 'accepted' })
+      } finally {
+        await first.domain.close()
+        await first.ctx.fiber.dispose()
+      }
+
+      const reopened = await open()
+      try {
+        const groups = new BotGroupService(reopened.domain, {
+          listBots: async () => bots,
+          deliverToBot: async ({ targetBotId }) => {
+            delivered.push(String(targetBotId))
+            return 'accepted'
+          },
+        })
+        await expect(groups.send({
+          groupId: BotGroupId('bot-group-real-storage'),
+          text: 'Persist this safely.',
+          messageId: BotGroupMessageId('bot-group-message-real-storage'),
+        })).resolves.toMatchObject({
+          status: 'duplicate',
+          deliveries: [{ status: 'duplicate' }, { status: 'duplicate' }],
+        })
+        expect(delivered).toEqual(['bot-real-alpha', 'bot-real-beta'])
+      } finally {
+        await reopened.domain.close()
+        await reopened.ctx.fiber.dispose()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 

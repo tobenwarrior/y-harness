@@ -59,7 +59,7 @@ export interface BotGroupMessageRecord {
 
 /** Durable per-recipient delivery state for one group message. */
 export interface BotGroupDeliveryRecord {
-  /** Composite key `${messageId}:${botId}`. */
+  /** Stable path-safe key derived from the message and recipient identities. */
   readonly id: string
   /** Parent group. */
   readonly groupId: BotGroupId
@@ -647,7 +647,7 @@ export class BotGroupService {
 }
 
 function deliveryId(messageId: BotGroupMessageId, botId: BotId): string {
-  return `${String(messageId)}:${String(botId)}`
+  return `delivery-${createHash('sha256').update(`${String(messageId)}:${String(botId)}`).digest('hex')}`
 }
 
 /** Keep the table type visible to BotService without exposing its implementation. */
