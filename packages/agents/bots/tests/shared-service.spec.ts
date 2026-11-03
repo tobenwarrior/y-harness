@@ -404,186 +404,54 @@ async function principal(fixtureValue: Fixture, enrollment: SharedAccessEnrollme
 }
 
 describe('shared Bot service', () => {
-  it('lists only fully shared groups, attributes collaborators, and rejects revoked writers', async () => {
+  it('fails closed instead of exposing a pre-existing owner-local group transcript', async () => {
     const value = await fixture(10, true)
     try {
-      const chiefOwnerEnrollment = await value.service.enroll(
-        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
-        enrollmentRequest(),
-      )
-      const secondOwnerEnrollment = await value.service.enroll(
-        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
-        enrollmentRequest(),
-      )
-      const collaboratorChiefEnrollment = await value.service.enroll(
-        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
-        enrollmentRequest(),
-      )
-      const collaboratorSecondEnrollment = await value.service.enroll(
-        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
-        request(cookie(collaboratorChiefEnrollment)),
-      )
-      const chiefOwner = await principal(value, chiefOwnerEnrollment)
-      const secondOwner = await principal(value, secondOwnerEnrollment)
-      const collaborator = await principal(value, collaboratorChiefEnrollment)
-      const collaboratorSecond = await principal(value, collaboratorSecondEnrollment)
-      expect(collaboratorSecond.botPrincipalId).toBe(collaborator.botPrincipalId)
-      const sharedGroup = await groupView(value, 'bot-group-shared', 'Shared room', [BotId('bot-chief'), BotId('bot-second')])
-      const privateGroup = await groupView(value, 'bot-group-private', 'Private room', [BotId('bot-chief'), BotId('bot-unshared')])
-      const sent: Array<{ readonly principalId: string; readonly request: BotGroupSendRemoteRequest }> = []
-      const seen = new Set<string>()
-      const host = value.host as SharedGroupHost
-      host.listGroups = vi.fn(async () => ({ groups: [sharedGroup, privateGroup] }))
-      host.createGroup = vi.fn(async () => ({ group: sharedGroup }))
-      host.updateGroup = vi.fn(async () => ({ group: sharedGroup }))
-      host.inspectGroup = vi.fn(async request => ({
-        group: sharedGroup,
-        messages: [{
-          id: BotGroupMessageId('bot-group-message-shared'),
-          groupId: request.groupId,
-          sender: { kind: 'user', principalId: collaborator.botPrincipalId },
-          text: 'Visible collaborator note',
-          createdAt: 1_001,
-        }],
-        deliveries: [],
-      }))
-      host.sendGroupMessage = vi.fn(async (principalId, request) => {
-        sent.push({ principalId: String(principalId), request })
-        const duplicate = seen.has(String(request.messageId))
-        seen.add(String(request.messageId))
-        return {
-          messageId: request.messageId ?? BotGroupMessageId('bot-group-message-generated'),
-          status: duplicate ? 'duplicate' : 'accepted',
-          deliveries: [],
-        }
-      })
-
-      expect(SHARED_BOT_ENDPOINTS).toEqual(expect.arrayContaining([
+      expect(SHARED_BOT_ENDPOINTS).not.toEqual(expect.arrayContaining([
         'bots/share/list-groups',
+        'bots/share/create-group',
+        'bots/share/update-group',
         'bots/share/inspect-group',
         'bots/share/send-group-message',
       ]))
-      await expect(value.service.handle(
-        'bots/share/list-groups', {}, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({
-        ok: true,
-        value: { groups: [{ id: BotGroupId('bot-group-shared') }] },
-      })
-      await expect(value.service.handle(
-        'bots/share/inspect-group', { groupId: 'bot-group-shared' }, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({
-        ok: true,
-        value: { messages: [{ sender: { kind: 'user', principalId: collaborator.botPrincipalId } }] },
-      })
-      await expect(value.service.handle(
-        'bots/share/inspect-group', { groupId: 'bot-group-private' }, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({ ok: false, error: { code: 'gateway/forbidden' } })
-      expect(host.inspectGroup).not.toHaveBeenCalledWith(expect.objectContaining({ groupId: BotGroupId('bot-group-private') }), expect.anything())
-      await expect(value.service.handle(
-        'bots/share/send-group-message', {
-          groupId: 'bot-group-shared',
-          text: 'Coordinate the release',
-          messageId: 'bot-group-message-retry',
-        }, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
-      await expect(value.service.handle(
-        'bots/share/send-group-message', {
-          groupId: 'bot-group-shared',
-          text: 'Coordinate the release',
-          messageId: 'bot-group-message-retry',
-        }, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({ ok: true, value: { status: 'duplicate' } })
-      expect(sent).toHaveLength(2)
-      expect(sent[0]?.principalId).toBe(String(collaborator.botPrincipalId))
-
-      await expect(value.service.revokeMember(
-        BotId('bot-second'), collaborator.botPrincipalId, secondOwner.botPrincipalId,
-      )).resolves.toMatchObject({ revoked: true })
-      await expect(value.service.handle(
-        'bots/share/send-group-message', {
-          groupId: 'bot-group-shared', text: 'must be blocked', messageId: 'bot-group-message-revoked',
-        }, new AbortController().signal, collaborator.peer,
-      )).resolves.toMatchObject({ ok: false, error: { code: 'gateway/forbidden' } })
-      void chiefOwner
-    } finally {
-      await value.close()
-    }
-  })
-
-  it('serializes shared group writes across service instances', async () => {
-    const value = await fixture(10, true)
-    const secondary = await secondaryFixture(value)
-    try {
-      const chiefOwner = await value.service.enroll(
+      await value.service.enroll(
         (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
         enrollmentRequest(),
       )
-      const secondOwner = await value.service.enroll(
+      await value.service.enroll(
         (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
         enrollmentRequest(),
       )
-      const collaboratorChief = await value.service.enroll(
+      const collaboratorEnrollment = await value.service.enroll(
         (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
         enrollmentRequest(),
       )
-      const collaboratorSecond = await value.service.enroll(
+      const secondEnrollment = await value.service.enroll(
         (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
-        request(cookie(collaboratorChief)),
+        request(cookie(collaboratorEnrollment)),
       )
-      const chiefOwnerPrincipal = await principal(value, chiefOwner)
-      const secondOwnerPrincipal = await principal(value, secondOwner)
-      const collaborator = await principal(value, collaboratorChief)
-      const collaboratorSecondPrincipal = await principal(value, collaboratorSecond)
-      expect(collaboratorSecondPrincipal.botPrincipalId).toBe(collaborator.botPrincipalId)
-      void chiefOwnerPrincipal
-      void secondOwnerPrincipal
-      const sharedGroup = await groupView(value, 'bot-group-cross-host', 'Cross-host room', [BotId('bot-chief'), BotId('bot-second')])
-      const primary = value.host as SharedGroupHost
-      const replica = secondary.host as SharedGroupHost
-      const started = Promise.withResolvers<boolean>()
-      const release = Promise.withResolvers<boolean>()
-      let calls = 0
-      const create = vi.fn(async (_request: BotGroupCreateRequest) => {
-        calls += 1
-        if (calls === 1) {
-          started.resolve(true)
-          await release.promise
-        }
-        return { group: sharedGroup }
-      })
-      primary.listGroups = vi.fn(async () => ({ groups: [] }))
-      primary.createGroup = create
-      primary.updateGroup = vi.fn(async () => ({ group: sharedGroup }))
-      primary.inspectGroup = vi.fn(async () => ({ group: sharedGroup, messages: [], deliveries: [] }))
-      primary.sendGroupMessage = vi.fn(async () => ({
-        messageId: BotGroupMessageId('bot-group-message-cross-host'), status: 'accepted', deliveries: [],
+      const collaborator = await principal(value, collaboratorEnrollment)
+      expect((await principal(value, secondEnrollment)).botPrincipalId).toBe(collaborator.botPrincipalId)
+
+      const localGroup = await groupView(value, 'bot-group-owner-local', 'Owner-only room', [
+        BotId('bot-chief'), BotId('bot-second'),
+      ])
+      const host = value.host as SharedGroupHost
+      host.listGroups = vi.fn(async () => ({ groups: [localGroup] }))
+      host.createGroup = vi.fn(async () => ({ group: localGroup }))
+      host.updateGroup = vi.fn(async () => ({ group: localGroup }))
+      host.inspectGroup = vi.fn(async _request => ({ group: localGroup, messages: [], deliveries: [] }))
+      host.sendGroupMessage = vi.fn(async (_principalId, request) => ({
+        messageId: request.messageId ?? BotGroupMessageId('bot-group-message-local'),
+        status: 'accepted' as const,
+        deliveries: [],
       }))
-      replica.listGroups = vi.fn(async () => ({ groups: [] }))
-      replica.createGroup = create
-      replica.updateGroup = vi.fn(async () => ({ group: sharedGroup }))
-      replica.inspectGroup = vi.fn(async () => ({ group: sharedGroup, messages: [], deliveries: [] }))
-      replica.sendGroupMessage = vi.fn(async () => ({
-        messageId: BotGroupMessageId('bot-group-message-cross-host'), status: 'accepted', deliveries: [],
-      }))
-      const requestPayload = {
-        name: 'Cross-host room',
-        botIds: ['bot-chief', 'bot-second'],
-      }
-      const first = value.service.handle(
-        'bots/share/create-group', requestPayload, new AbortController().signal, collaborator.peer,
-      )
-      await started.promise
-      const second = secondary.service.handle(
-        'bots/share/create-group', requestPayload, new AbortController().signal, collaborator.peer,
-      )
-      await Promise.resolve()
-      expect(calls).toBe(1)
-      release.resolve(true)
-      await expect(first).resolves.toMatchObject({ ok: true })
-      await expect(second).resolves.toMatchObject({ ok: true })
-      expect(calls).toBe(2)
+
+      await expect(value.service.handle(
+        'bots/share/list-groups', {}, new AbortController().signal, collaborator.peer,
+      )).resolves.toMatchObject({ ok: false, error: { code: 'gateway/forbidden' } })
+      expect(host.listGroups).not.toHaveBeenCalled()
     } finally {
-      await secondary.close()
       await value.close()
     }
   })

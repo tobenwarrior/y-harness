@@ -82,31 +82,38 @@ describe('Bot group delivery with a running Agent', () => {
         messages: [{ sender: { kind: 'user' }, text: 'Legacy transcript row' }],
       })
 
-      const sharedMessageId = BotGroupMessageId('bot-group-message-shared-author')
-      await expect(service.sendAsPrincipal(BotPrincipalId('principal-alpha'), {
-        groupId: group.group.id,
-        text: 'Attributed collaborator note',
-        messageId: sharedMessageId,
-        targetBotIds: [beta.id],
-      })).resolves.toMatchObject({ status: 'accepted' })
-      await expect(service.sendAsPrincipal(BotPrincipalId('principal-alpha'), {
-        groupId: group.group.id,
-        text: 'Attributed collaborator note',
-        messageId: sharedMessageId,
-        targetBotIds: [beta.id],
-      })).resolves.toMatchObject({ status: 'duplicate' })
-      await expect(service.sendAsPrincipal(BotPrincipalId('principal-beta'), {
-        groupId: group.group.id,
-        text: 'Spoofed retry',
-        messageId: sharedMessageId,
-        targetBotIds: [beta.id],
-      })).rejects.toMatchObject({ code: 'invalid' })
       await expect(service.inspect({ groupId: group.group.id })).resolves.toMatchObject({
-        messages: [
-          { sender: { kind: 'user' }, text: 'Legacy transcript row' },
-          { sender: { kind: 'user', principalId: 'principal-alpha' }, text: 'Attributed collaborator note' },
-        ],
+        messages: [{ sender: { kind: 'user' }, text: 'Legacy transcript row' }],
       })
+    } finally {
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
+  it('fails closed for principal delivery when no isolated shared session exists', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-shared-alpha'), SessionId('session-shared-alpha'), 'Shared alpha')
+    const beta = botView(BotId('bot-shared-beta'), SessionId('session-shared-beta'), 'Shared beta')
+    let ordinaryDeliveries = 0
+    try {
+      const service = new BotGroupService(storage.domain, {
+        listBots: async () => [alpha, beta],
+        deliverToBot: async () => {
+          ordinaryDeliveries += 1
+          return 'accepted'
+        },
+      })
+      const group = await service.create({
+        id: BotGroupId('bot-group-shared-isolation'), name: 'Shared isolation room', botIds: [alpha.id, beta.id],
+      })
+
+      await expect(service.sendAsPrincipal(BotPrincipalId('principal-shared'), {
+        groupId: group.group.id,
+        text: 'Must not enter an owner-local Session.',
+        messageId: BotGroupMessageId('bot-group-message-shared-isolation'),
+      })).rejects.toMatchObject({ code: 'delivery-failed' })
+      expect(ordinaryDeliveries).toBe(0)
+      await expect(service.inspect({ groupId: group.group.id })).resolves.toMatchObject({ messages: [] })
     } finally {
       await storage.ctx.fiber.dispose()
     }

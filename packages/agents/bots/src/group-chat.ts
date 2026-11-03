@@ -274,6 +274,21 @@ export interface BotGroupDeliveryHost {
     readonly messageId: BotGroupMessageId
     readonly signal?: AbortSignal
   }) => Promise<'accepted' | 'duplicate'>
+  /**
+   * Queue a shared-principal message in an isolated shared-group Session.
+   * Hosts that cannot provide this separate durable Session must omit the
+   * capability; principal-authored sends then fail before any transcript row
+   * is written rather than entering an owner-local Bot Session.
+   */
+  readonly deliverToSharedGroup?: (request: {
+    readonly principalId: BotPrincipalIdType
+    readonly targetBotId: BotId
+    readonly groupId: BotGroupId
+    readonly groupName: string
+    readonly text: string
+    readonly messageId: BotGroupMessageId
+    readonly signal?: AbortSignal
+  }) => Promise<'accepted' | 'duplicate'>
 }
 
 /** Error raised when a group operation cannot be admitted. */
@@ -612,6 +627,9 @@ export class BotGroupService {
     senderBotId?: BotId,
     principalId?: BotPrincipalIdType,
   ): Promise<BotGroupSendValue> {
+    if (principalId !== undefined && this.host.deliverToSharedGroup === undefined) {
+      throw new BotGroupError('delivery-failed', 'Shared Bot group delivery is unavailable without an isolated Session')
+    }
     const createdFlights: Array<{ readonly id: string; readonly flight: BotGroupDeliveryFlight }> = []
     let prepared: PreparedBotGroupSend
     try {
@@ -672,6 +690,7 @@ export class BotGroupService {
             id, groupId, messageId, botId, groupName: group.name, text,
             flight: nextFlight,
             owner,
+            ...(principalId === undefined ? {} : { principalId }),
             ...(senderName === undefined ? {} : { senderName }),
             ...(request.signal === undefined ? {} : { signal: request.signal }),
           })
@@ -1001,15 +1020,32 @@ export class BotGroupService {
 
   private async deliverExternal(delivery: PreparedBotGroupDelivery): Promise<void> {
     try {
-      const result = await this.host.deliverToBot({
-        targetBotId: delivery.botId,
-        groupId: delivery.groupId,
-        groupName: delivery.groupName,
-        ...(delivery.senderName === undefined ? {} : { senderName: delivery.senderName }),
-        text: delivery.text,
-        messageId: delivery.messageId,
-        ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
-      })
+      let result: 'accepted' | 'duplicate'
+      if (delivery.principalId === undefined) {
+        result = await this.host.deliverToBot({
+          targetBotId: delivery.botId,
+          groupId: delivery.groupId,
+          groupName: delivery.groupName,
+          ...(delivery.senderName === undefined ? {} : { senderName: delivery.senderName }),
+          text: delivery.text,
+          messageId: delivery.messageId,
+          ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
+        })
+      } else {
+        const deliverToSharedGroup = this.host.deliverToSharedGroup
+        if (deliverToSharedGroup === undefined) {
+          throw new BotGroupError('delivery-failed', 'Shared Bot group delivery is unavailable without an isolated Session')
+        }
+        result = await deliverToSharedGroup({
+          principalId: delivery.principalId,
+          targetBotId: delivery.botId,
+          groupId: delivery.groupId,
+          groupName: delivery.groupName,
+          text: delivery.text,
+          messageId: delivery.messageId,
+          ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
+        })
+      }
       delivery.flight.resolve({ delivery, result })
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -1026,6 +1062,7 @@ interface PreparedBotGroupDelivery {
   readonly groupName: string
   readonly flight: BotGroupDeliveryFlight
   readonly owner: boolean
+  readonly principalId?: BotPrincipalIdType
   readonly senderName?: string
   readonly text: string
   readonly signal?: AbortSignal

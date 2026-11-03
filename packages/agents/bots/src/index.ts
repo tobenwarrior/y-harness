@@ -4031,39 +4031,6 @@ export class BotService extends TypertRemoteService {
         await this.ctx.sessions.flush(session)
         signal?.throwIfAborted()
       },
-      listGroups: async (signal) => {
-        signal?.throwIfAborted()
-        const groups = await (await this.getGroupService()).list({})
-        signal?.throwIfAborted()
-        return groups
-      },
-      createGroup: async (request, signal) => {
-        signal?.throwIfAborted()
-        const result = await (await this.getGroupService()).create(request)
-        signal?.throwIfAborted()
-        return result
-      },
-      updateGroup: async (request, signal) => {
-        signal?.throwIfAborted()
-        const result = await (await this.getGroupService()).update(request)
-        signal?.throwIfAborted()
-        return result
-      },
-      inspectGroup: async (request, signal) => {
-        signal?.throwIfAborted()
-        const result = await (await this.getGroupService()).inspect(request)
-        signal?.throwIfAborted()
-        return result
-      },
-      sendGroupMessage: async (principalId, request, signal) => {
-        signal?.throwIfAborted()
-        const result = await (await this.getGroupService()).sendAsPrincipal(principalId, {
-          ...request,
-          ...(signal === undefined ? {} : { signal }),
-        })
-        signal?.throwIfAborted()
-        return result
-      },
     }
   }
 
