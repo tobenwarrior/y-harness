@@ -166,7 +166,7 @@ export function installBotCollaborationTools(
       description: 'Save one durable memory for this Bot when the user asks you to remember it. Future prompts use it as untrusted reference data; the result returns only its id and timestamp.',
       parameters: {
         text: { type: 'string', required: true, description: 'The concise fact or preference to remember.' },
-        memoryId: { type: 'string', description: 'Optional retry identity returned by a prior call; omitted calls use a stable sender-and-text recovery identity.' },
+        memoryId: { type: 'string', description: 'Optional retry identity; reuse it for recovery or choose a distinct id to retain identical text separately. Omitted calls use stable sender-and-text recovery.' },
       },
       output: jsonOutput(MEMORY_RECEIPT_SCHEMA),
       async execute(args, exec) {

@@ -487,12 +487,12 @@ function memoryListTool(client: BotCollaborationClient): BotNativeTool {
 function memoryRememberTool(client: BotCollaborationClient, host: BotNativeToolHost, sessionId: SessionId): BotNativeTool {
   return {
     name: 'remember_bot_memory',
-    description: 'Save one durable memory for this Bot when the user asks; future prompts use it as untrusted reference data. The result returns only its id and timestamp.',
+    description: 'Save one durable memory for this Bot when the user asks; future prompts use it as untrusted reference data. Reuse memoryId to recover a retry or deduplicate across native turns; choose a distinct id to retain identical text separately. The result returns only its id and timestamp.',
     inputSchema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Concise fact or preference to remember.' },
-        memoryId: { type: 'string', description: 'Optional retry identity.' },
+        memoryId: { type: 'string', description: 'Optional stable retry or deduplication identity; choose a distinct id to retain identical text separately.' },
       },
       required: ['text'], additionalProperties: false,
     },

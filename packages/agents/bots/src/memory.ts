@@ -25,7 +25,7 @@ export interface BotMemoryRecord {
 export interface BotMemoryRememberRequest {
   /** Reference text to retain for this Bot. */
   readonly text: string
-  /** Optional retry identity; repeated writes with the same text are idempotent. */
+  /** Optional stable identity; reuse it for idempotent retries or to deduplicate intentionally. */
   readonly memoryId?: BotMemoryId
   /** Cancellation from the model tool or provider bridge. */
   readonly signal?: AbortSignal
@@ -41,7 +41,7 @@ export interface BotMemoryForgetRequest {
 
 /** Provider-facing operations scoped to one trusted Bot Session. */
 export interface BotMemoryClient {
-  /** Save or idempotently replay one memory for the current Bot. */
+  /** Save one memory, or idempotently replay it when the request supplies a stable id. */
   readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>
   /** List the current Bot's durable memories in creation order. */
   readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>

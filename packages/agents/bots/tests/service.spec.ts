@@ -291,6 +291,23 @@ describe('durable Bot roster', () => {
     expect(() => projectBotMemories(conflict, BotId('bot-alpha'))).toThrow(/conflicting text/)
   })
 
+  it('keeps identical text separate when callers choose distinct explicit ids', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Duplicate text owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      const bot = await h.service.collaborationFor({ id: created.bot.sessionId })
+      const firstMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-first'), text: 'Same reference.' })
+      const secondMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-second'), text: 'Same reference.' })
+      await expect(bot.memory!.list()).resolves.toEqual([firstMemory, secondMemory])
+      expect(h.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory')).toHaveLength(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('keeps the live memory projection aligned with an uncertain flush and retries idempotently', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

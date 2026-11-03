@@ -1433,6 +1433,8 @@ def smoke_sdk_dynamic_tools(base_url: str, executable: Path, update_snapshots: b
     with tempfile.TemporaryDirectory(prefix="dsh-sdk-dynamic-tools-") as temporary:
         root = Path(temporary).resolve()
         dsh_home = root / "home"
+        bundled_primary_runtime = root / "bundled-primary-runtime"
+        bundled_primary_runtime.mkdir()
         sessions = dsh_home / "sessions"
         task = root / "dynamic-tool-task.txt"
         task.write_text("Call snapshot_ping once.\n", encoding="utf-8")
@@ -1454,7 +1456,11 @@ def smoke_sdk_dynamic_tools(base_url: str, executable: Path, update_snapshots: b
         with YHarness(
             provider="deepseek-official", model="smoke-model", cwd=str(root),
             yh_bin=str(executable), yh_home=str(dsh_home), patches=(str(patch),),
-            env={"DSH_PERMISSION_MODE": "danger-full-access", "DSH_TELEMETRY_DISABLED": "1"},
+            env={
+                "DSH_PERMISSION_MODE": "danger-full-access",
+                "DSH_TELEMETRY_DISABLED": "1",
+                "DSH_BUNDLED_PRIMARY_RUNTIME": str(bundled_primary_runtime),
+            },
             api_key="sk-keyless-smoke", base_url=base_url, request_timeout_seconds=60,
         ) as harness:
             result = harness.run(DYNAMIC_TOOLS_PROMPT, session_id="dynamic-tools-smoke")
@@ -2480,6 +2486,7 @@ def build_dynamic_tools_snapshot_files(
     headers = [event for event in events if event["type"] == "request/header"]
     assert len(headers) == 3, headers
     names = [[tool["name"] for tool in event["data"]["header"]["tools"]] for event in headers]
+    assert all("load_workspace_dependencies" in tools for tools in names), names
     assert ["snapshot_ping" in tools for tools in names] == [False, True, False], names
     assert names[1] == sorted([*names[0], "snapshot_ping"]), names
     assert names[2] == names[0], names
