@@ -138,7 +138,7 @@ async function harness(
     await close(ctx)
     throw error
   }
-  return { ctx, service, pool, create, readImage, saveImages, agents, inspect, resolveAgent, flush, followups }
+  return { ctx, service, pool, create, readImage, saveImages, saveImage, agents, inspect, resolveAgent, flush, followups }
 }
 
 async function close(ctx: Context): Promise<void> {
@@ -3169,6 +3169,96 @@ describe('durable Bot roster', () => {
       } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
     } finally {
       await close(importedAfterRevocation.ctx)
+    }
+  })
+
+  it('does not leave an active Bot when imported avatar admission fails', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Avatar source', cwd: '/private/avatar-source' })
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'bc'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      await target.service.approveTemplate({
+        shareCode: published.template.shareCode, fingerprint: published.template.fingerprint!,
+      })
+      target.readImage.mockRejectedValueOnce(new Error('avatar admission blocked'))
+      await expect(target.service.importTemplate({ shareCode: published.template.shareCode } as never))
+        .rejects.toMatchObject({ code: 'bot-template/avatar-invalid' })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
+      expect(target.create).not.toHaveBeenCalled()
+
+      const targetAvatar: ImageAttachmentRef = {
+        attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+      }
+      target.saveImage.mockResolvedValue(targetAvatar)
+      target.readImage.mockResolvedValue({ ref: targetAvatar, data: Uint8Array.of(1, 2, 3) })
+      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode } as never)
+      expect(target.saveImage).toHaveBeenCalledTimes(2)
+      expect(target.readImage).toHaveBeenCalledTimes(2)
+      expect(imported.bot).toMatchObject({ name: 'Avatar source', avatar: { mediaType: 'image/png' } })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ id: imported.bot.id }] })
+      expect(target.create).toHaveBeenCalledOnce()
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('shows the target Host effective preset tools in template approval data', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Permission source', agentPreset: 'research-preset' })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const target = await harness()
+    try {
+      target.ctx.tools.register(mcpFixtureTool('local-read', 'local', async () => 'read'))
+      const localSchemas = target.ctx.tools.schemas()
+      const acquireScope = vi.fn(async () => ({ key: {}, [Symbol.asyncDispose]: async () => {} }))
+      target.ctx.provide('agentPresets', { defaultId: 'target-default', acquireScope } as never)
+      vi.spyOn(target.ctx.tools, 'schemas').mockReturnValue(localSchemas)
+
+      const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
+      expect(preview.localPermissions).toEqual({
+        status: 'resolved', preset: 'research-preset', tools: localSchemas.map(schema => schema.name).sort(),
+      })
+      expect(acquireScope).toHaveBeenCalledWith('research-preset')
+      await target.service.approveTemplate({ shareCode: published.template.shareCode, fingerprint: published.template.fingerprint! })
+    } finally {
+      await close(target.ctx)
+    }
+  })
+
+  it('recovers a failed portable import from its durable provisioning row', async () => {
+    const source = await harness()
+    const sourceBot = await source.service.create({ name: 'Recoverable source' })
+    const sourceAvatar: ImageAttachmentRef = {
+      attachmentId: AttachmentId(`sha256:${'cd'.repeat(32)}`), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+    }
+    await source.service.updateAvatar({ botId: sourceBot.bot.id, avatar: sourceAvatar })
+    const published = await source.service.publishTemplate({ botId: sourceBot.bot.id })
+    await close(source.ctx)
+
+    const create = vi.fn(async (request: { sessionId?: string }) => ({ sessionId: request.sessionId }))
+    create.mockRejectedValueOnce(new Error('session unavailable'))
+    const target = await harness(new MemoryMediaPool(), create)
+    try {
+      await target.service.approveTemplate({ shareCode: published.template.shareCode, fingerprint: published.template.fingerprint! })
+      const request = { shareCode: published.template.shareCode, importId: 'recoverable-import' } as never
+      await expect(target.service.importTemplate(request)).rejects.toMatchObject({ code: 'bot/provisioning-failed' })
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ state: 'provisioning', avatar: { mediaType: 'image/png' } }] })
+
+      const recovered = await target.service.importTemplate(request)
+      expect(recovered.bot).toMatchObject({ name: 'Recoverable source', state: 'active', avatar: { mediaType: 'image/png' } })
+      expect(target.create).toHaveBeenCalledTimes(2)
+      await expect(target.service.list({})).resolves.toMatchObject({ bots: [{ id: recovered.bot.id, state: 'active' }] })
+    } finally {
+      await close(target.ctx)
     }
   })
 

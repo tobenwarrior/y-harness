@@ -32,6 +32,8 @@ import type {
   BotTemplateImportValue,
   BotTemplateApproveRequest,
   BotTemplateApproveValue,
+  BotTemplateAvatar,
+  BotTemplateLocalPermissions,
   BotTemplateListRequest,
   BotTemplateListValue,
   BotTemplatePreviewRequest,
@@ -271,6 +273,7 @@ export class BotWorkspaceController {
   private creating: Promise<void> | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private readonly templateImportIds = new Map<string, string>()
+  private templatePreviewGeneration = 0
   private readonly pendingGroupMessages = new Map<string, {
     readonly text: string
     readonly messageId: BotGroupMessageIdType
@@ -314,6 +317,7 @@ export class BotWorkspaceController {
     this.selectedReference = undefined
     this.avatarLoads.clear()
     this.templateImportIds.clear()
+    this.templatePreviewGeneration++
   }
 
   private persistPendingGroupOperations(): boolean {
@@ -621,12 +625,14 @@ export class BotWorkspaceController {
       setTemplateCode: (code) => {
         if (this.disposed) return
         const current = this.source.getSnapshot()
+        const changed = code.trim() !== current.templates.code.trim()
+        if (changed) this.templatePreviewGeneration++
         this.source.set({
           ...current,
           templates: {
             ...current.templates,
             code,
-            preview: code.trim() === current.templates.code.trim() ? current.templates.preview : null,
+            preview: changed ? null : current.templates.preview,
             error: null,
           },
         })
@@ -712,6 +718,7 @@ export class BotWorkspaceController {
 
   private async previewTemplate(code?: string): Promise<void> {
     const requestedCode = (code ?? this.source.getSnapshot().templates.code).trim()
+    const previewGeneration = ++this.templatePreviewGeneration
     const current = this.source.getSnapshot()
     this.source.set({ ...current, templates: { ...current.templates, code: requestedCode, error: null } })
     await this.runTemplateAction(async () => {
@@ -725,13 +732,18 @@ export class BotWorkspaceController {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
       if (!result.ok) throw new Error(result.error.message)
+      if (!validLocalPermissions(result.value.localPermissions)) throw new Error(this.unexpectedResponse())
       const preview = templateSummary(result.value.template)
-      if (preview.shareCode !== requestedCode || preview.fingerprint === undefined || preview.issuerFingerprint === undefined) {
+      if (preview.shareCode !== requestedCode || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
+        || !validTemplateAvatar(preview.avatar)) {
         throw new Error(this.unexpectedResponse())
       }
       const latest = this.source.getSnapshot()
-      if (this.disposed || latest.templates.code.trim() !== requestedCode) return
-      this.source.set({ ...latest, templates: { ...latest.templates, preview, error: null } })
+      if (this.disposed || previewGeneration !== this.templatePreviewGeneration || latest.templates.code.trim() !== requestedCode) return
+      this.source.set({
+        ...latest,
+        templates: { ...latest.templates, preview: { ...preview, localPermissions: result.value.localPermissions }, error: null },
+      })
     })
   }
 
@@ -744,9 +756,12 @@ export class BotWorkspaceController {
       if (requestedCode === '') throw new Error(this.unexpectedResponse())
       const preview = current.templates.preview
       if (preview === null || preview.shareCode !== requestedCode
-        || preview.fingerprint === undefined || preview.issuerFingerprint === undefined) {
+        || preview.fingerprint === undefined || preview.issuerFingerprint === undefined
+        || preview.localPermissions === undefined || !validLocalPermissions(preview.localPermissions)
+        || preview.localPermissions.status !== 'resolved') {
         throw new Error(this.unexpectedResponse())
       }
+      const previewGeneration = this.templatePreviewGeneration
       const normalizedName = name?.trim()
       const importKey = `${requestedCode}\n${normalizedName ?? ''}`
       const importId = this.templateImportIds.get(importKey) ?? `ui-${randomUUID()}`
@@ -765,18 +780,25 @@ export class BotWorkspaceController {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
       if (!approval.ok) throw new Error(approval.error.message)
+      if (!validLocalPermissions(approval.value.localPermissions)) throw new Error(this.unexpectedResponse())
       const approved = templateSummary(approval.value.template)
       if (approved.shareCode !== requestedCode
         || approved.fingerprint !== preview.fingerprint
         || approved.issuerFingerprint !== preview.issuerFingerprint
-        || approved.approved !== true) {
+        || approved.approved !== true
+        || !validTemplateAvatar(approved.avatar)
+        || !sameTemplateAvatar(approved.avatar, preview.avatar)
+        || !sameLocalPermissions(approval.value.localPermissions, preview.localPermissions)) {
         throw new Error(this.unexpectedResponse())
       }
       const latestBeforeImport = this.source.getSnapshot().templates
-      if (latestBeforeImport.code.trim() !== requestedCode
+      if (this.disposed || previewGeneration !== this.templatePreviewGeneration
+        || latestBeforeImport.code.trim() !== requestedCode
         || latestBeforeImport.preview?.shareCode !== requestedCode
         || latestBeforeImport.preview.fingerprint !== preview.fingerprint
-        || latestBeforeImport.preview.issuerFingerprint !== preview.issuerFingerprint) {
+        || latestBeforeImport.preview.issuerFingerprint !== preview.issuerFingerprint
+        || latestBeforeImport.preview.localPermissions === undefined
+        || !sameLocalPermissions(latestBeforeImport.preview.localPermissions, preview.localPermissions)) {
         throw new Error(this.unexpectedResponse())
       }
       let result: RemoteResult<BotTemplateImportValue>
@@ -1464,6 +1486,44 @@ function templateSummary(template: BotTemplateView): BotTemplateSummary {
     createdAt: template.createdAt,
     ...(template.revokedAt === undefined ? {} : { revokedAt: template.revokedAt }),
   }
+}
+
+function validLocalPermissions(value: unknown): value is BotTemplateLocalPermissions {
+  if (!isRecord(value) || (value.status !== 'resolved' && value.status !== 'unavailable')) return false
+  if (value.preset !== undefined && (typeof value.preset !== 'string' || value.preset.trim() !== value.preset || value.preset.length === 0)) return false
+  if (!Array.isArray(value.tools) || value.tools.some(tool => typeof tool !== 'string' || tool.trim() !== tool || tool.length === 0)) return false
+  return new Set(value.tools).size === value.tools.length
+}
+
+function validTemplateAvatar(value: unknown): value is BotTemplateAvatar {
+  if (value === undefined) return true
+  if (!isRecord(value)) return false
+  const { mediaType, data, bytes, width, height, name } = value
+  if ((mediaType !== 'image/png' && mediaType !== 'image/jpeg' && mediaType !== 'image/webp' && mediaType !== 'image/gif')
+    || typeof data !== 'string'
+    || typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes <= 0
+    || typeof width !== 'number' || !Number.isInteger(width) || width <= 0
+    || typeof height !== 'number' || !Number.isInteger(height) || height <= 0
+    || (name !== undefined && (typeof name !== 'string' || name.length === 0))) return false
+  return data.length > 0
+    && Math.floor(data.length * 3 / 4) === bytes
+    && /^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-]{2}|[A-Za-z0-9_-]{3})?$/u.test(data)
+}
+
+function sameTemplateAvatar(left: BotTemplateAvatar | undefined, right: BotTemplateAvatar | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.mediaType === right.mediaType
+    && left.data === right.data
+    && left.bytes === right.bytes
+    && left.width === right.width
+    && left.height === right.height
+    && left.name === right.name
+}
+
+function sameLocalPermissions(left: BotTemplateLocalPermissions, right: BotTemplateLocalPermissions): boolean {
+  if (left.status !== right.status || left.preset !== right.preset || left.tools.length !== right.tools.length) return false
+  const rightTools = new Set(right.tools)
+  return left.tools.every(tool => rightTools.has(tool))
 }
 
 function sameStringIdSet(left: readonly string[], right: readonly string[]): boolean {

@@ -13,6 +13,7 @@ import type {
 } from '@yharness/tools'
 import type {} from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
+import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
@@ -98,6 +99,7 @@ import type {
   BotTemplateApproveValue,
   BotTemplateImportRequest,
   BotTemplateImportValue,
+  BotTemplateLocalPermissions,
   BotTemplateListRequest,
   BotTemplateListValue,
   BotTemplatePreviewRequest,
@@ -1438,7 +1440,10 @@ export class BotService extends TypertRemoteService {
   async previewTemplate(request: BotTemplatePreviewRequest): Promise<BotTemplatePreviewValue> {
     return this.serialize(async () => {
       const active = await this.activeTemplate(request)
-      return { template: active.template }
+      return {
+        template: active.template,
+        localPermissions: await this.localTemplatePermissions(active.payload.agentPreset),
+      }
     })
   }
 
@@ -1470,7 +1475,10 @@ export class BotService extends TypertRemoteService {
           approvals: { ...approvals, [active.fingerprint]: Date.now() },
         })
       }
-      return { template: { ...active.template, approved: true } }
+      return {
+        template: { ...active.template, approved: true },
+        localPermissions: await this.localTemplatePermissions(active.payload.agentPreset),
+      }
     })
   }
 
@@ -1506,16 +1514,12 @@ export class BotService extends TypertRemoteService {
           { importId },
         )
       }
+      const id = importId === undefined
+        ? BotId(`bot-${randomUUID()}`)
+        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
       if (previousBinding !== undefined && importId !== undefined) {
         const existing = (await this.getDomain()).table('bots').get(BotId(previousBinding.botId))
-        if (existing === undefined || existing.ownerId !== this.ownerId) {
-          throw new RemoteError(
-            'bot-template/import-conflict',
-            'The previous template import no longer has its Bot row.',
-            { importId },
-          )
-        }
-        return { bot: this.view(existing), template }
+        if (existing?.ownerId === this.ownerId && existing.state === 'active') return { bot: this.view(existing), template }
       }
       if (!active.approved) {
         throw new RemoteError(
@@ -1524,17 +1528,27 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
-      const id = importId === undefined
-        ? undefined
-        : BotId(`bot-template-import-${importDigest?.slice(0, 48)}`)
       if (importDigest !== undefined && previousBinding === undefined
         && Object.keys(bindings ?? {}).length >= BOT_TEMPLATE_IMPORT_BINDING_LIMIT) {
         throw new RemoteError('gateway/bad-request', 'This Host has reached its template import retry limit.', {})
       }
+      if (importDigest !== undefined && previousBinding === undefined) {
+        const currentGlobal = templateDomain.global.get()
+        await templateDomain.global.set({
+          ...currentGlobal,
+          imports: {
+            ...(currentGlobal.imports ?? {}),
+            [importDigest]: { fingerprint: active.fingerprint, botId: String(id), name },
+          },
+        })
+      }
+      const preparedAvatar = payload.avatar === undefined || (await this.getDomain()).table('bots').get(id)?.avatar !== undefined
+        ? undefined
+        : await this.prepareImportedAvatar(id, payload.avatar)
       let created: BotCreateValue
       try {
         created = await this.createRecord({
-          ...(id === undefined ? {} : { id }),
+          id,
           name,
           ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
           identity: payload.profile.identity,
@@ -1542,7 +1556,7 @@ export class BotService extends TypertRemoteService {
           ...(payload.persona === undefined ? {} : { persona: payload.persona }),
           capabilities: payload.capabilities,
           ...(payload.agentPreset === undefined ? {} : { agentPreset: payload.agentPreset }),
-        })
+        }, undefined, preparedAvatar)
       } catch (error: unknown) {
         const errorCode = remoteErrorOf(error)?.code
         if (importId !== undefined && (errorCode === 'bot/id-conflict' || errorCode === 'bot/provisioning-conflict')) {
@@ -1555,10 +1569,7 @@ export class BotService extends TypertRemoteService {
         }
         throw error
       }
-      let bot = created.bot
-      if (payload.avatar !== undefined && bot.avatar === undefined) {
-        bot = await this.attachImportedAvatar(bot.id, payload.avatar)
-      }
+      const bot = created.bot
       if (importDigest !== undefined && importId !== undefined) {
         const currentGlobal = templateDomain.global.get()
         await templateDomain.global.set({
@@ -1645,7 +1656,11 @@ export class BotService extends TypertRemoteService {
     return this.serialize(() => this.createRecord(request, signal))
   }
 
-  private async createRecord(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
+  private async createRecord(
+    request: BotCreateRequest,
+    signal?: AbortSignal,
+    avatar?: ImageAttachmentRef,
+  ): Promise<BotCreateValue> {
     const normalized = normalizeCreate(request)
     const bots = (await this.getDomain()).table('bots')
     signal?.throwIfAborted()
@@ -1656,7 +1671,12 @@ export class BotService extends TypertRemoteService {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
-        return { bot: this.view(existing) }
+        if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
+        const next: BotRecord = { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
+        await bots.put(id, next)
+        this.recordsBySession.set(String(next.sessionId), next)
+        this.emitChanged()
+        return { bot: this.view(next) }
       }
       if (existing.state !== 'provisioning') {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
@@ -1668,7 +1688,14 @@ export class BotService extends TypertRemoteService {
           { botId: id },
         )
       }
-      const active = await this.provision(existing, bots)
+      const pending = avatar === undefined || existing.avatar !== undefined
+        ? existing
+        : { ...existing, avatar, updatedAt: Math.max(Date.now(), existing.updatedAt) }
+      if (pending !== existing) {
+        await bots.put(id, pending)
+        this.recordsBySession.set(String(pending.sessionId), pending)
+      }
+      const active = await this.provision(pending, bots)
       return { bot: this.view(active) }
     }
 
@@ -1685,6 +1712,7 @@ export class BotService extends TypertRemoteService {
       ...(normalized.description === undefined ? {} : { description: normalized.description }),
       identity: normalized.identity,
       accent: normalized.accent,
+      ...(avatar === undefined ? {} : { avatar }),
       connectedAppIds: [],
       pinned: false,
       hidden: false,
@@ -2286,6 +2314,32 @@ export class BotService extends TypertRemoteService {
     return { template, payload: decoded.payload, fingerprint: decoded.fingerprint, approved }
   }
 
+  /** Resolve the target Host's effective tool view for one imported preset. */
+  private async localTemplatePermissions(agentPreset: string | undefined): Promise<BotTemplateLocalPermissions> {
+    const presets = this.ctx.get('agentPresets')
+    const preset = agentPreset ?? presets?.defaultId
+    if (presets === undefined || preset === undefined) return {
+      status: 'unavailable',
+      ...(preset === undefined ? {} : { preset }),
+      tools: [],
+    }
+    try {
+      const lease = await presets.acquireScope(preset)
+      try {
+        return {
+          status: 'resolved',
+          preset,
+          tools: this.ctx.tools.schemas(lease.key).map(tool => tool.name).sort(),
+        }
+      } finally {
+        await lease[Symbol.asyncDispose]()
+      }
+    } catch (error: unknown) {
+      this.ctx.logger.debug(`bots: local template permissions unavailable for preset "${preset}": ${String(error)}`)
+      return { status: 'unavailable', preset, tools: [] }
+    }
+  }
+
   private async exportTemplateAvatar(botId: BotRecord['id'], avatar: ImageAttachmentRef): Promise<BotTemplateAvatar> {
     try {
       const stored = await this.ctx.attachments.readImage(avatar)
@@ -2321,7 +2375,7 @@ export class BotService extends TypertRemoteService {
     }
   }
 
-  private async attachImportedAvatar(botId: BotRecord['id'], avatar: BotTemplateAvatar): Promise<BotView> {
+  private async prepareImportedAvatar(botId: BotRecord['id'], avatar: BotTemplateAvatar): Promise<ImageAttachmentRef> {
     let reference: ImageAttachmentRef
     try {
       const data = Buffer.from(avatar.data, 'base64url')
@@ -2342,23 +2396,10 @@ export class BotService extends TypertRemoteService {
       )
     }
     try {
-      const admitted = await this.admitAvatar(botId, reference)
-      const bots = (await this.getDomain()).table('bots')
-      const current = bots.get(botId)
-      if (current === undefined) throw new Error(`Bot "${botId}" was not found after template import`)
-      const next: BotRecord = { ...current, avatar: admitted, updatedAt: Math.max(Date.now(), current.updatedAt) }
-      await bots.put(botId, next)
-      this.recordsBySession.set(String(next.sessionId), next)
-      this.emitChanged()
-      return this.view(next)
+      return await this.admitAvatar(botId, reference)
     } catch (error: unknown) {
       if (error instanceof RemoteError && error.code === 'bot-template/avatar-invalid') throw error
-      throw new RemoteError(
-        'bot-template/avatar-invalid',
-        'The portable template avatar could not be admitted on this Host.',
-        { reason: 'unavailable' },
-        { cause: error },
-      )
+      throw new RemoteError('bot-template/avatar-invalid', 'The portable template avatar could not be admitted on this Host.', { reason: 'unavailable' }, { cause: error })
     }
   }
 

@@ -160,6 +160,8 @@ describe('Bot roster and detail', () => {
       persona: 'Summarize evidence before recommending action.',
       capabilities: ['chat', 'collaboration'],
       agentPreset: 'research-preset',
+      avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 1, height: 1 },
+      localPermissions: { status: 'resolved', preset: 'research-preset', tools: ['chat', 'read_file'] },
     }
     const actions: BotTemplateActions = {
       setTemplateCode: vi.fn(),
@@ -183,8 +185,40 @@ describe('Bot roster and detail', () => {
     expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
     expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
     expect(screen.getByText('chat, collaboration')).toBeTruthy()
-    expect(screen.getByText('research-preset')).toBeTruthy()
+    expect(screen.getAllByText('research-preset')).toHaveLength(2)
+    expect(screen.getByRole('img', { name: 'Portable template avatar' }).getAttribute('src')).toBe('data:image/png;base64,AQID')
+    expect(screen.getByText('chat, read_file')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Approve and create Bot' })).toBeTruthy()
+  })
+
+  it('does not offer approval when local permissions are unavailable', async () => {
+    const preview = {
+      ...templateState.templates[0]!,
+      issuerFingerprint: 'issuer-fingerprint-unavailable',
+      fingerprint: 'artifact-fingerprint-unavailable',
+      localPermissions: { status: 'unavailable' as const, preset: 'research-preset', tools: [] },
+    }
+    const actions: BotTemplateActions = {
+      setTemplateCode: vi.fn(),
+      publishTemplate: vi.fn(async () => {}),
+      revokeTemplate: vi.fn(async () => {}),
+      previewTemplate: vi.fn(async () => {}),
+      importTemplate: vi.fn(async () => {}),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      templates={{ ...templateState, preview }}
+      templateActions={actions}
+      t={t}
+    />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
+    expect(importButton).toHaveProperty('disabled', true)
+    expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
   })
 
   it('keeps bot selection and creation usable in the collapsed sidebar rail', () => {

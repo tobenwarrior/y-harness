@@ -11,6 +11,11 @@ import type { BotSummary, BotTemplateActions, BotTemplateState } from './types.t
 
 type Translate = PropsLocale<'bots'>['t']
 
+function templateAvatarURL(data: string, mediaType: string): string {
+  const base64 = data.replaceAll('-', '+').replaceAll('_', '/')
+  return `data:${mediaType};base64,${base64}${'='.repeat((4 - base64.length % 4) % 4)}`
+}
+
 /** Reusable Bot template catalog and share/import flow. */
 export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
   /** Existing Bots whose safe configuration can be published. */
@@ -135,7 +140,13 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
         </div>
         {state.preview !== null && (
           <div className={css.templatePreview}>
-            <BotAvatar name={state.preview.name} identity={state.preview.identity} accent={state.preview.accent} botId={state.preview.id} loadAvatar={undefined} size="large" />
+            {state.preview.avatar === undefined
+              ? <BotAvatar name={state.preview.name} identity={state.preview.identity} accent={state.preview.accent} botId={state.preview.id} loadAvatar={undefined} size="large" />
+              : <img
+                className={css.templatePreviewAvatar}
+                src={templateAvatarURL(state.preview.avatar.data, state.preview.avatar.mediaType)}
+                alt={t('templatesAvatarPreviewAlt')}
+              />}
             <div className={css.templatePreviewCopy}>
               <strong>{state.preview.name}</strong>
               {state.preview.description !== undefined && <span>{state.preview.description}</span>}
@@ -154,6 +165,14 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
                 : state.preview.capabilities.join(', ')}</dd>
               <dt>{t('templatesSignedPreset')}</dt>
               <dd>{state.preview.agentPreset ?? t('templatesNotIncluded')}</dd>
+              <dt>{t('templatesLocalPreset')}</dt>
+              <dd>{state.preview.localPermissions?.preset ?? t('templatesLocalToolsUnavailable')}</dd>
+              <dt>{t('templatesLocalTools')}</dt>
+              <dd>{state.preview.localPermissions?.status !== 'resolved'
+                ? t('templatesLocalToolsUnavailable')
+                : state.preview.localPermissions.tools.length === 0
+                  ? t('templatesLocalToolsNone')
+                  : state.preview.localPermissions.tools.join(', ')}</dd>
             </dl>
             <div className={css.templateImportControls}>
               <Input
@@ -165,7 +184,7 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
               <Button
                 variant="primary"
                 icon={<IconDownloadOutlineRegular size={14} />}
-                disabled={state.busy || state.preview === null}
+                disabled={state.busy || state.preview === null || state.preview.localPermissions?.status !== 'resolved'}
                 onClick={() => { void importBot() }}
               >
                 {state.busy ? t('templatesImporting') : t('templatesImport')}

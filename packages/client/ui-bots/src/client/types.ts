@@ -5,6 +5,7 @@ import type {
   BotIdentity as SharedBotIdentity,
   BotTemplateAvatar,
   BotTemplateCapability,
+  BotTemplateLocalPermissions,
   BotTemplateProfile,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
@@ -166,12 +167,14 @@ export interface BotTemplateSummary {
   readonly avatar?: BotTemplateAvatar
   /** Stable signed-artifact fingerprint. */
   readonly fingerprint?: string
-  /** SHA-256 fingerprint of the public key that signed the artifact. */
+  /** Self-asserted SHA-256 fingerprint of the public key that signed the artifact; it does not establish identity. */
   readonly issuerFingerprint?: string
   /** Portable code format version. */
   readonly portableVersion?: number
   /** Whether this Host has explicitly approved the signed artifact. */
   readonly approved?: boolean
+  /** Target-Host effective preset tools shown before approval; absent in catalog rows. */
+  readonly localPermissions?: BotTemplateLocalPermissions
   /** Publication time in Unix milliseconds. */
   readonly createdAt: number
   /** Revocation time, when the code is no longer usable. */

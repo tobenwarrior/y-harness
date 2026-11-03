@@ -5691,7 +5691,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotTemplateApproveValue',
-    declaration: 'export interface BotTemplateApproveValue {\n    readonly template: BotTemplateView;\n}',
+    declaration: 'export interface BotTemplateApproveValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n}',
   },
   {
     name: 'BotTemplateAvatar',
@@ -5726,12 +5726,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotTemplateListValue {\n    readonly templates: readonly BotTemplateView[];\n}',
   },
   {
+    name: 'BotTemplateLocalPermissions',
+    declaration: 'export interface BotTemplateLocalPermissions {\n    readonly status: \'resolved\' | \'unavailable\';\n    readonly preset?: string;\n    readonly tools: readonly string[];\n}',
+  },
+  {
     name: 'BotTemplatePreviewRequest',
     declaration: 'export interface BotTemplatePreviewRequest {\n    readonly shareCode: BotTemplateShareCode;\n}',
   },
   {
     name: 'BotTemplatePreviewValue',
-    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n}',
+    declaration: 'export interface BotTemplatePreviewValue {\n    readonly template: BotTemplateView;\n    readonly localPermissions: BotTemplateLocalPermissions;\n}',
   },
   {
     name: 'BotTemplateProfile',

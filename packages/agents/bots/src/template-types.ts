@@ -92,7 +92,7 @@ export interface BotTemplateView extends BotTemplateConfiguration {
   readonly revokedAt?: number
   /** Content fingerprint used for keyed import retries. */
   readonly fingerprint?: string
-  /** SHA-256 fingerprint of the public key that signed this artifact. */
+  /** Self-asserted SHA-256 fingerprint of the public key that signed this artifact; it does not establish identity. */
   readonly issuerFingerprint?: string
   /** Portable code format version. */
   readonly portableVersion?: number
@@ -150,10 +150,22 @@ export interface BotTemplatePreviewRequest {
   readonly shareCode: BotTemplateShareCode
 }
 
+/** Target-Host tools available after resolving the signed preset locally. */
+export interface BotTemplateLocalPermissions {
+  /** Whether the target Host could resolve the effective preset tool view. */
+  readonly status: 'resolved' | 'unavailable'
+  /** Preset selected by the target Host, including its configured default. */
+  readonly preset?: string
+  /** Effective model-facing tool names for that local preset. */
+  readonly tools: readonly string[]
+}
+
 /** Preview response. */
 export interface BotTemplatePreviewValue {
   /** Safe configuration that import will use. */
   readonly template: BotTemplateView
+  /** Current target-Host preset and tool view; never signed into the portable code. */
+  readonly localPermissions: BotTemplateLocalPermissions
 }
 
 /** Approve one exact verified artifact for future imports on this Host. */
@@ -186,6 +198,8 @@ export interface BotTemplateImportValue {
 export interface BotTemplateApproveValue {
   /** The verified template with its Host-local approval state. */
   readonly template: BotTemplateView
+  /** Current target-Host preset and tool view shown during approval. */
+  readonly localPermissions: BotTemplateLocalPermissions
 }
 
 /** Stable operation identity for an idempotent template import. */

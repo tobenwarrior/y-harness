@@ -1105,6 +1105,13 @@
   white-space: nowrap;
 }
 
+.templatePreviewAvatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  object-fit: cover;
+}
+
 .templatePreviewDetails {
   display: grid;
   grid-column: 1 / -1;
