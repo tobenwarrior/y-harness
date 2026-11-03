@@ -3,7 +3,7 @@ import type {
   SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
 } from '@yharness/api-session-controller/client'
 import type { SessionId } from '@yharness/session/types'
-import { BotId, type BotGroupId, type BotGroupInspectValue, type BotGroupView, type BotView } from '@yharness/bots/client'
+import { BotId, type BotGroupId, type BotGroupInspectValue, type BotGroupMessageId, type BotGroupView, type BotView } from '@yharness/bots/client'
 import { brandString } from '@yharness/brand'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotGroupPendingState, type BotGroupPendingStore, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
@@ -81,11 +81,17 @@ function pendingStoreFixture(initial: BotGroupPendingState = { creations: {}, me
 function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
   readonly list: ReturnType<typeof vi.fn>
   readonly create: ReturnType<typeof vi.fn>
+  readonly createGroup: ReturnType<typeof vi.fn>
+  readonly sendGroupMessage: ReturnType<typeof vi.fn>
 } {
   const create = vi.fn<BotWorkspaceRemote['create']>()
+  const createGroup = vi.fn<NonNullable<BotWorkspaceRemote['createGroup']>>()
+  const sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
   return {
     list: vi.fn(async () => ({ ok: true as const, value: { bots: rows } })),
     create,
+    createGroup,
+    sendGroupMessage,
     rename: vi.fn(),
   }
 }
@@ -464,12 +470,12 @@ describe('BotWorkspaceController', () => {
     const group = groupView('bot-group-release', 'Release room', [first, second])
     const detail: BotGroupInspectValue = {
       group,
-      messages: [{ id: brandString('bot-group-message-1'), groupId: group.id, sender: { kind: 'user' }, text: 'Plan it.', createdAt: 1 }],
+      messages: [{ id: brandString<BotGroupMessageId>('bot-group-message-1'), groupId: group.id, sender: { kind: 'user' }, text: 'Plan it.', createdAt: 1 }],
     }
     const remote = remoteFixture([first, second])
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
     remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
-    remote.sendGroupMessage = vi.fn(async () => ({ ok: true as const, value: { messageId: brandString('bot-group-message-1'), status: 'accepted' as const, deliveries: [] } }))
+    remote.sendGroupMessage = vi.fn(async () => ({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-1'), status: 'accepted' as const, deliveries: [] } }))
     const { retain, sessions } = sessionsFixture()
     const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture())
 
@@ -517,7 +523,7 @@ describe('BotWorkspaceController', () => {
     const second = bot('bot-order-b', 'session-order-b')
     const group = groupView('bot-group-order', 'Order room', [first, second])
     const remote = remoteFixture([first, second])
-    remote.createGroup = vi.fn()
+    remote.createGroup.mockReset()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
       .mockResolvedValueOnce({ ok: true as const, value: { group } })
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [] } }))
@@ -553,7 +559,7 @@ describe('BotWorkspaceController', () => {
     const second = bot('bot-second-create-retry', 'session-second-create-retry')
     const group = groupView('bot-group-create-retry', 'Retry room', [first, second])
     const remote = remoteFixture([first, second])
-    remote.createGroup = vi.fn()
+    remote.createGroup.mockReset()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
       .mockResolvedValueOnce({ ok: true as const, value: { group } })
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [] } }))
@@ -644,7 +650,7 @@ describe('BotWorkspaceController', () => {
     remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
     remote.sendGroupMessage = vi.fn()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
-      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString('bot-group-message-storage'), status: 'accepted' as const, deliveries: [] } })
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-storage'), status: 'accepted' as const, deliveries: [] } })
 
     const firstController = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
     await firstController.load()
@@ -742,7 +748,7 @@ describe('BotWorkspaceController', () => {
     const first = bot('bot-first-create-no-store', 'session-first-create-no-store')
     const second = bot('bot-second-create-no-store', 'session-second-create-no-store')
     const remote = remoteFixture([first, second])
-    remote.createGroup = vi.fn()
+    remote.createGroup.mockReset()
     const controller = new BotWorkspaceController(
       remote,
       sessionsFixture().sessions,
@@ -767,7 +773,7 @@ describe('BotWorkspaceController', () => {
     const first = bot('bot-first-create-corrupt-store', 'session-first-create-corrupt-store')
     const second = bot('bot-second-create-corrupt-store', 'session-second-create-corrupt-store')
     const remote = remoteFixture([first, second])
-    remote.createGroup = vi.fn()
+    remote.createGroup.mockReset()
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
 
     await expect(controller.face().createGroup({ name: 'Corrupt store', botIds: [first.id, second.id].map(String) }))
@@ -785,7 +791,7 @@ describe('BotWorkspaceController', () => {
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
     remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
     remote.sendGroupMessage = vi.fn().mockRejectedValueOnce(new Error('connection closed after commit'))
-      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString('bot-group-message-retry'), status: 'accepted' as const, deliveries: [] } })
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-retry'), status: 'accepted' as const, deliveries: [] } })
     const controller = new BotWorkspaceController(
       remote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture(),
     )
@@ -808,7 +814,7 @@ describe('BotWorkspaceController', () => {
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
     remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
     remote.sendGroupMessage = vi.fn().mockRejectedValueOnce(new Error('connection closed after commit'))
-      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString('bot-group-message-restart'), status: 'accepted' as const, deliveries: [] } })
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-restart'), status: 'accepted' as const, deliveries: [] } })
     const pendingStore = pendingStoreFixture()
     const firstController = new BotWorkspaceController(
       remote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, pendingStore,
@@ -848,7 +854,7 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
 
     await expect(controller.face().sendGroupMessage('Fail closed.')).rejects.toThrow('connection closed after commit')
-    remote.inspectGroup = undefined
+    delete remote.inspectGroup
     await expect(controller.face().sendGroupMessage('Fail closed.')).rejects.toThrow('group transcript is unavailable')
     expect(remote.sendGroupMessage).toHaveBeenCalledOnce()
     controller.dispose()
@@ -863,7 +869,7 @@ describe('BotWorkspaceController', () => {
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
     remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: detail }))
     remote.sendGroupMessage = vi.fn(async () => ({ ok: true as const, value: {
-      messageId: brandString('bot-group-message-partial'), status: 'partial' as const,
+      messageId: brandString<BotGroupMessageId>('bot-group-message-partial'), status: 'partial' as const,
       deliveries: [{ botId: first.id, status: 'accepted' as const }, { botId: second.id, status: 'failed' as const, error: 'offline' }],
     } }))
     const controller = new BotWorkspaceController(
@@ -888,13 +894,13 @@ describe('BotWorkspaceController', () => {
     const group = groupView('bot-group-refresh-race', 'Refresh race room', [first, second])
     const stale: BotGroupInspectValue = {
       group,
-      messages: [{ id: brandString('bot-group-message-stale'), groupId: group.id, sender: { kind: 'user' }, text: 'Before refresh.', createdAt: 1 }],
+      messages: [{ id: brandString<BotGroupMessageId>('bot-group-message-stale'), groupId: group.id, sender: { kind: 'user' }, text: 'Before refresh.', createdAt: 1 }],
     }
     const fresh: BotGroupInspectValue = {
       group,
       messages: [
         ...stale.messages,
-        { id: brandString('bot-group-message-fresh'), groupId: group.id, sender: { kind: 'user' }, text: 'Arrived during refresh.', createdAt: 2 },
+        { id: brandString<BotGroupMessageId>('bot-group-message-fresh'), groupId: group.id, sender: { kind: 'user' }, text: 'Arrived during refresh.', createdAt: 2 },
       ],
     }
     const remote = remoteFixture([first, second])
