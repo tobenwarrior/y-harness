@@ -102,7 +102,9 @@ async function harness(
   }])
   ctx.provide('attachments', { readImage, saveImages } as never)
   const inspect = vi.fn(async (sessionId: SessionId) => ({
-    events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? [],
+    events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
+      ?? existingSessionSeeds.get(String(sessionId))
+      ?? [],
   }))
   const resolveAgent = vi.fn(async (sessionId: SessionId) => {
     const agent = agents.find(candidate => candidate.id === sessionId)
@@ -1259,6 +1261,65 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('reconciles a cold group member during inspection without opening its Agent', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const alpha = await seed.service.create({ name: 'Alpha', cwd: '/tmp' })
+    const beta = await seed.service.create({ name: 'Beta', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
+    const group = await first.service.createGroup({ name: 'Cold inspection room', botIds: [alpha.bot.id, beta.bot.id] })
+    await first.service.sendGroupMessage({
+      groupId: group.group.id,
+      text: 'Recover this while cold.',
+      messageId: BotGroupMessageId('bot-group-message-cold-inspection'),
+    })
+    const delivered = first.followups[1]?.mock.calls[0]?.[0]
+    const betaAgent = first.agents[1]
+    if (delivered === undefined || betaAgent === undefined) throw new Error('cold inspection delivery was not admitted')
+    betaAgent.session.append('turn/start', { turn: 33 })
+    betaAgent.session.append('step/start', { turn: 33, step: 1 })
+    betaAgent.session.append('user/message', delivered, { surfaceOp: 'append' })
+    betaAgent.session.append('user/message', freezeMessage({
+      id: MessageId('cold-inspection-time-context'),
+      role: 'user',
+      content: [{ type: 'text', text: 'Current time: 12:00.' }],
+      source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+    }), { surfaceOp: 'append' })
+    betaAgent.session.append('turn/end', {
+      turn: 33,
+      reason: { kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'provider key missing' } },
+    })
+    const persistedEvents = JSON.parse(JSON.stringify(betaAgent.session.snapshotEvents())) as SessionEvent[]
+    await close(first.ctx)
+
+    const cold = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map(),
+      new Map([[String(beta.bot.sessionId), persistedEvents]]),
+    )
+    try {
+      expect(cold.agents).toHaveLength(0)
+      await expect(cold.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
+        deliveries: expect.arrayContaining([
+          expect.objectContaining({
+            messageId: 'bot-group-message-cold-inspection',
+            botId: beta.bot.id,
+            status: 'failed',
+            error: expect.stringContaining('provider credentials are missing'),
+          }),
+        ]),
+      })
+      expect(cold.agents).toHaveLength(0)
+    } finally {
+      await close(cold.ctx)
     }
   })
 

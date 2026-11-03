@@ -952,7 +952,10 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('inspectGroup')
   async inspectGroup(request: BotGroupInspectRequest): Promise<BotGroupInspectValue> {
-    return (await this.getGroupService()).inspect(request)
+    const service = await this.getGroupService()
+    const initial = await service.inspect(request)
+    await this.reconcileGroupMembers(initial.group.botIds)
+    return service.inspect(request)
   }
 
   /**
@@ -1364,7 +1367,12 @@ export class BotService extends TypertRemoteService {
 
   /** Rebuild group delivery claims and response projections from a resumed Bot Session. */
   private async reconcileGroupSession(agent: Agent): Promise<void> {
-    const record = this.recordsBySession.get(String(agent.id))
+    await this.reconcileGroupSessionId(agent.id)
+  }
+
+  /** Rebuild group delivery claims and response projections from one durable Session log. */
+  private async reconcileGroupSessionId(sessionId: SessionId): Promise<void> {
+    const record = this.recordsBySession.get(String(sessionId))
     if (record === undefined) return
     const inputs = new Map<string, {
       readonly turn: number
@@ -1391,7 +1399,7 @@ export class BotService extends TypertRemoteService {
         && rawMessages.some(message => message.source.kind !== 'bot-group-message')
       return hasUnloggedRawCompetingInput ? rawMessages : messages
     }
-    const inspection = await this.ctx.sessionController.inspect(agent.id)
+    const inspection = await this.ctx.sessionController.inspect(sessionId)
     for (const event of inspection.events) {
       if (event.type === 'agent/inbox/spliced') {
         const queue = inbox[event.data.target]
@@ -1482,6 +1490,16 @@ export class BotService extends TypertRemoteService {
         }
       })
     }
+  }
+
+  /** Reconcile every member Session before returning a group transcript. */
+  private async reconcileGroupMembers(botIds: readonly BotId[]): Promise<void> {
+    const bots = (await this.list({ includeHidden: true })).bots
+    const sessionIds = botIds.flatMap((botId): SessionId[] => {
+      const bot = bots.find(candidate => candidate.id === botId)
+      return bot === undefined ? [] : [bot.sessionId]
+    })
+    await Promise.all(sessionIds.map(sessionId => this.reconcileGroupSessionId(sessionId)))
   }
 
   private async groupToolsFor(agent: Pick<Agent, 'id'>): Promise<BotGroupToolHost> {
