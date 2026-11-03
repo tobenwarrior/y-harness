@@ -215,22 +215,47 @@ function textFromContent(content: readonly ContentBlock[]): string {
 }
 
 function transcript(events: readonly SessionEvent[]): BotCollaborationTranscriptEntry[] {
-  let groupTurn = false
+  // Group messages are model-visible user messages, so filtering one message
+  // at a time is insufficient: a steering/private message can follow the
+  // group input in the same turn and the assistant may answer both. Build the
+  // set of affected turns first, including compaction replacements that cite
+  // an earlier group message.
+  const groupSourceSeqs = new Set<string>()
+  const groupTurns = new Set<number>()
+  let currentTurn: number | undefined
+  let groupWithoutTurn = false
+  for (const event of events) {
+    if (event.type === 'turn/start') {
+      currentTurn = event.data.turn
+      continue
+    }
+    if (event.type === 'turn/end') {
+      if (currentTurn === event.data.turn) currentTurn = undefined
+      continue
+    }
+    if (event.type === 'assistant/message') {
+      if (groupWithoutTurn) {
+        groupTurns.add(event.data.turn)
+        groupWithoutTurn = false
+      }
+      continue
+    }
+    if (event.type !== 'user/message') continue
+    const citesGroup = event.data.source.kind === 'bot-group-message'
+      || event.sourceEventSeqs?.some(seq => groupSourceSeqs.has(String(seq))) === true
+    if (!citesGroup) continue
+    groupSourceSeqs.add(String(event.seq))
+    if (currentTurn === undefined) groupWithoutTurn = true
+    else groupTurns.add(currentTurn)
+  }
   const entries = events.flatMap((event): BotCollaborationTranscriptEntry[] => {
     if (event.type === 'user/message') {
       const text = textFromContent(event.data.content)
-      if (event.data.source.kind === 'bot-group-message') {
-        // A group request and every assistant response that follows it belong
-        // to the shared transcript. Generic peer inspection must not expose
-        // that turn; members use inspect_bot_group instead.
-        groupTurn = true
-        return []
-      }
-      groupTurn = false
+      if (groupSourceSeqs.has(String(event.seq))) return []
       return text === '' ? [] : [{ role: 'user', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }
     if (event.type === 'assistant/message') {
-      if (groupTurn) return []
+      if (groupTurns.has(event.data.turn)) return []
       const text = textFromContent(event.data.message.content)
       return text === '' ? [] : [{ role: 'assistant', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }

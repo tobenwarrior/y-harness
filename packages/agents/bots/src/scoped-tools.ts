@@ -100,13 +100,13 @@ const GROUP_CREATE_RESULT_SCHEMA = { type: 'object', additionalProperties: false
   group: { ...GROUP_SCHEMA, required: true },
 } } as const
 
-function scopedGroupId(callId: string): BotGroupId {
-  const digest = createHash('sha256').update(callId).digest('hex')
+function scopedGroupId(operationKey: string): BotGroupId {
+  const digest = createHash('sha256').update(operationKey).digest('hex')
   return BotGroupId(`bot-group-tool-${digest}`)
 }
 
-function scopedGroupMessageId(callId: string): BotGroupMessageId {
-  const digest = createHash('sha256').update(callId).digest('hex')
+function scopedGroupMessageId(operationKey: string): BotGroupMessageId {
+  const digest = createHash('sha256').update(operationKey).digest('hex')
   return BotGroupMessageId(`bot-group-message-tool-${digest}`)
 }
 
@@ -207,15 +207,18 @@ export function installBotCollaborationTools(
       })))
       register(scope.tools.register(defineTool({
         name: 'create_bot_group',
-        description: 'Create a persistent shared group with one to five other existing Bots when requested; the calling Bot is added automatically.',
+        description: 'Create a persistent shared group with one to five other existing Bots when requested; the calling Bot is added automatically. Reusing the same name and members is retry-safe; provide groupId to intentionally create another group with the same metadata.',
         parameters: {
           name: { type: 'string', required: true },
           botIds: { type: 'array', required: true, items: { type: 'string' } },
           groupId: { type: 'string', description: 'Optional retry identity for this group.' },
         },
         output: jsonOutput(GROUP_CREATE_RESULT_SCHEMA),
-        async execute(args, exec) {
-          const groupId = args.groupId === undefined ? scopedGroupId(String(exec.callId)) : BotGroupId(args.groupId)
+        async execute(args) {
+          const client = await bind()
+          const groupId = args.groupId === undefined
+            ? scopedGroupId([String(client.sender.id), args.name.trim(), ...args.botIds].join('\u0000'))
+            : BotGroupId(args.groupId)
           const value = await (await groups()).create({ id: groupId, name: args.name, botIds: args.botIds.map(BotId) })
           return {
             group: {
@@ -231,13 +234,16 @@ export function installBotCollaborationTools(
       })))
       register(scope.tools.register(defineTool({
         name: 'send_bot_group_message',
-        description: 'Send a message to every other Bot in a shared group when the user explicitly requests it; this action requires approval.',
+        description: 'Send a message to every other Bot in a shared group when the user explicitly requests it; this action requires approval. Reusing the same group and text is retry-safe; provide messageId to intentionally send identical text again.',
         parameters: {
           groupId: { type: 'string', required: true }, text: { type: 'string', required: true }, messageId: { type: 'string' },
         },
         output: jsonOutput(GROUP_SEND_RESULT_SCHEMA),
         async execute(args, exec) {
-          const messageId = args.messageId === undefined ? scopedGroupMessageId(String(exec.callId)) : BotGroupMessageId(args.messageId)
+          const client = await bind()
+          const messageId = args.messageId === undefined
+            ? scopedGroupMessageId([String(client.sender.id), args.groupId, args.text.trim()].join('\u0000'))
+            : BotGroupMessageId(args.messageId)
           const value = await (await groups()).send({
             groupId: BotGroupId(args.groupId), text: args.text,
             ...(messageId === undefined ? {} : { messageId }), signal: exec.signal,

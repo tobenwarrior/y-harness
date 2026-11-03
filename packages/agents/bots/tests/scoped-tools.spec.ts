@@ -57,9 +57,9 @@ async function harness(withManagement = false, withGroups = false) {
   return { ctx, agent, bound, dispose, manage, groupTools }
 }
 
-async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown) {
+async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
   return ctx.tools.execute({
-    callId: ToolCallId(`bot-call-${name}`), name, arguments: arguments_,
+    callId: ToolCallId(callId), name, arguments: arguments_,
     signal: new AbortController().signal, agent,
   })
 }
@@ -122,12 +122,18 @@ describe('scoped Bot collaboration tools', () => {
       expect(denied.isError).toBe(true)
       expect(h.groupTools.send).not.toHaveBeenCalled()
       h.ctx.on('tools/pre-execute', () => Promise.resolve({ kind: 'allow' as const }), { prepend: true })
-      const created = await execute(h.ctx, h.agent, 'create_bot_group', { name: 'Room', botIds: ['bot-beta'] })
+      const created = await execute(h.ctx, h.agent, 'create_bot_group', { name: 'Room', botIds: ['bot-beta'] }, 'create-first')
       expect(created.isError).toBe(false)
       expect(vi.mocked(h.groupTools.create).mock.calls[0]?.[0].id).toMatch(/^bot-group-tool-/)
-      const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' })
+      const createdRetry = await execute(h.ctx, h.agent, 'create_bot_group', { name: 'Room', botIds: ['bot-beta'] }, 'create-after-lost-response')
+      expect(createdRetry.isError).toBe(false)
+      expect(vi.mocked(h.groupTools.create).mock.calls[1]?.[0].id).toBe(vi.mocked(h.groupTools.create).mock.calls[0]?.[0].id)
+      const sent = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-first')
       expect(sent.isError).toBe(false)
       expect(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId).toMatch(/^bot-group-message-tool-/)
+      const sentRetry = await execute(h.ctx, h.agent, 'send_bot_group_message', { groupId: 'bot-group-room', text: 'hello' }, 'send-after-lost-response')
+      expect(sentRetry.isError).toBe(false)
+      expect(vi.mocked(h.groupTools.send).mock.calls[1]?.[0].messageId).toBe(vi.mocked(h.groupTools.send).mock.calls[0]?.[0].messageId)
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

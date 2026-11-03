@@ -43,11 +43,11 @@ function harness(entries = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot(
   return { service, client: service.bind({ id: SessionId('bot-session-alpha') }), bots, events, followups }
 }
 
-function assistantEvent(text: string, seq: number): SessionEvent<'assistant/message'> {
+function assistantEvent(text: string, seq: number, turn = 1): SessionEvent<'assistant/message'> {
   return {
     type: 'assistant/message', seq: SessionSeq(seq), time: seq,
     data: {
-      turn: 1, step: seq,
+      turn, step: seq,
       message: freezeMessage({
         id: MessageId(`assistant-${String(seq)}`), role: 'assistant',
         content: [{ type: 'text', text }], source: { kind: 'model', provider: 'test', model: 'test' },
@@ -83,6 +83,7 @@ describe('Bot collaboration seam', () => {
     ])
     const targetEvents = h.events.get('bot-session-beta')
     if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
     targetEvents.push(userEvent(createUserMessage({
       content: [{ type: 'text', text: 'Shared secret for Alpha and Beta.' }],
       source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-alpha'), messageId: BotGroupMessageId('bot-group-message-alpha') },
@@ -92,14 +93,37 @@ describe('Bot collaboration seam', () => {
       content: [{ type: 'text', text: 'Gamma may see this private request.' }], source: { kind: 'user' },
     }), 3))
     targetEvents.push(assistantEvent('Beta private reply.', 4))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(5), time: 5, data: { turn: 1, reason: { kind: 'completed' } } })
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(6), time: 6, data: { turn: 2 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'A later private request.' }], source: { kind: 'user' },
+    }), 7))
+    targetEvents.push(assistantEvent('Beta later private reply.', 8, 2))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(9), time: 9, data: { turn: 2, reason: { kind: 'completed' } } })
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(10), time: 10, data: { turn: 3 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Compacted shared secret.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-alpha'), messageId: BotGroupMessageId('bot-group-message-compacted') },
+    }), 11))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Compacted surface replacement.' }], source: { kind: 'user' },
+    }), 12))
+    targetEvents[targetEvents.length - 1] = {
+      ...targetEvents[targetEvents.length - 1]!,
+      sourceEventSeqs: [SessionSeq(11)],
+    }
+    targetEvents.push(assistantEvent('Beta compacted shared reply.', 13, 3))
 
     const gamma = await h.service.bind({ id: SessionId('bot-session-gamma') })
     const inspected = await gamma.inspect(BotId('bot-beta'))
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Shared secret')
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta shared reply')
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta private reply')
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Compacted shared secret')
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta compacted shared reply')
     expect(inspected.recent).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'user', text: expect.stringContaining('Gamma may see this private request.') }),
-      expect.objectContaining({ role: 'assistant', text: expect.stringContaining('Beta private reply.') }),
+      expect.objectContaining({ role: 'user', text: expect.stringContaining('A later private request.') }),
+      expect.objectContaining({ role: 'assistant', text: expect.stringContaining('Beta later private reply.') }),
     ]))
   })
 
