@@ -3605,7 +3605,7 @@ describe('durable Bot roster', () => {
       const first = leftHost.deliverSharedGroup?.(request)
       await entered.promise
       const second = rightHost.deliverSharedGroup?.(request)
-      await vi.waitFor(() => { expect(right.inspect).toHaveBeenCalled() })
+      await Promise.resolve()
       release.resolve(undefined)
       await expect(first).resolves.toBe('accepted')
       const secondResult = await second
@@ -3684,11 +3684,202 @@ describe('durable Bot roster', () => {
         sessionId: binding.sessionId,
         text: 'Do not enqueue after losing the claim.',
         messageId: BotGroupMessageId('bot-group-message-recipient-claim-loss'),
-      })).rejects.toThrow('claim was lost')
+      })).resolves.toMatchObject({ kind: 'busy' })
       expect(replaced).toBe(true)
       expect(h.followups[0]).not.toHaveBeenCalled()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('does not admit a recipient with an expired matching claim lease', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-expired-claim'
+    const h = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Expired recipient claim', cwd: '/tmp' })
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-expired-claim'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+      let expired = false
+      h.credentials.modifyRecord = async (key, mutate) => {
+        const result = await originalModifyRecord(key, mutate)
+        if (!expired && key === deliveryKey) {
+          const current = records.get(key)
+          if (current?.kind === 'grant' && typeof current.payload === 'object' && current.payload !== null
+            && 'messages' in current.payload && Array.isArray(current.payload.messages)) {
+            expired = true
+            await originalModifyRecord(key, async (stored) => {
+              if (stored?.kind !== 'grant' || typeof stored.payload !== 'object' || stored.payload === null
+                || !('messages' in stored.payload) || !Array.isArray(stored.payload.messages)) return stored
+              return {
+                kind: 'grant',
+                payload: {
+                  version: 1,
+                  messages: stored.payload.messages.map(message => ({
+                    ...message,
+                    ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
+                  })),
+                },
+              }
+            })
+          }
+        }
+        return result
+      }
+      const result = await host.deliverSharedGroup?.({
+        groupId: binding.groupId,
+        groupName: 'Expired recipient claim',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Do not admit after the lease expires.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-expired-claim'),
+      })
+      expect(result).toMatchObject({ kind: 'busy' })
+      expect(expired).toBe(true)
+      expect(h.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not commit recipient acceptance after its admission operation times out', async () => {
+    vi.useFakeTimers()
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-late-claim'
+    const h = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Late recipient claim', cwd: '/tmp' })
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-late-claim'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+      const release = Promise.withResolvers<undefined>()
+      let deliveryModifyCalls = 0
+      h.credentials.modifyRecord = (key, mutate) => {
+        if (key !== deliveryKey || ++deliveryModifyCalls !== 2) return originalModifyRecord(key, mutate)
+        return originalModifyRecord(key, async (stored) => {
+          await release.promise
+          return mutate(stored)
+        })
+      }
+      const pending = host.deliverSharedGroup?.({
+        groupId: binding.groupId,
+        groupName: 'Late recipient claim',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Do not commit a late claim.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-late-claim'),
+      })
+      const rejected = expect(pending).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(15_001)
+      await rejected
+      release.resolve(undefined)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(records.get(deliveryKey)).toMatchObject({
+        payload: { messages: [{ status: 'pending' }] },
+      })
+    } finally {
+      await close(h.ctx)
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not enqueue twice when a recipient takeover races a blocked flush', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient takeover', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-takeover'
+    const left = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const right = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-takeover'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const leftHost = productionSharedHost(left.service)
+      const rightHost = productionSharedHost(right.service)
+      leftHost.registerSharedGroupSessions?.([binding])
+      rightHost.registerSharedGroupSessions?.([binding])
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      left.flush.mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return true
+      })
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Recipient takeover',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Admit this exactly once.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-takeover'),
+      }
+      const first = leftHost.deliverSharedGroup?.(request)
+      await entered.promise
+      const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+      const current = records.get(deliveryKey)
+      if (current?.kind !== 'grant' || typeof current.payload !== 'object' || current.payload === null
+        || !('messages' in current.payload) || !Array.isArray(current.payload.messages)) {
+        throw new Error('recipient takeover did not create a durable claim')
+      }
+      records.set(deliveryKey, {
+        kind: 'grant',
+        payload: {
+          version: 1,
+          messages: current.payload.messages.map(message => ({
+            ...message,
+            ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
+          })),
+        },
+      })
+      const second = rightHost.deliverSharedGroup?.(request)
+      await Promise.resolve()
+      release.resolve(undefined)
+      await expect(first).resolves.toBe('accepted')
+      await expect(second).resolves.toBe('duplicate')
+      expect(left.followups[0]).toHaveBeenCalledTimes(1)
+      expect(right.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(right.ctx)
+      await close(left.ctx)
     }
   })
 
@@ -3748,6 +3939,70 @@ describe('durable Bot roster', () => {
         sessionId: binding.sessionId,
         text: 'Make room for this receipt.',
         messageId: BotGroupMessageId('bot-group-message-ledger-new'),
+      })).resolves.toBe('accepted')
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('scans past unprunable receipts and validates retired shared Session history', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Retired receipt pruning', cwd: '/tmp' })
+    await close(seed.ctx)
+    const activeSessionId = 'shared-session-group-retired-pruning-active'
+    const retiredSessionId = 'shared-session-group-retired-pruning-history'
+    const groupId = BotGroupId('bot-group-retired-pruning')
+    const deliveredMessageId = BotGroupMessageId('bot-group-message-retired-pruning')
+    const retiredMessage = freezeMessage({
+      id: MessageId(String(deliveredMessageId)),
+      role: 'user',
+      content: [{ type: 'text', text: 'Already durable in a retired Session.' }],
+      source: { kind: 'bot-group-message', groupId, messageId: deliveredMessageId },
+    })
+    const entries = Array.from({ length: 4_096 }, (_, index) => ({
+      targetSessionId: index === 64 ? retiredSessionId : `shared-session-group-unprunable-${String(index)}`,
+      messageId: index === 64 ? String(deliveredMessageId) : `bot-group-message-retired-ledger-${String(index)}`,
+      status: 'accepted' as const,
+    }))
+    const records = new Map<CredentialKey, CredentialRecord>([
+      [credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+        kind: 'grant', payload: { version: 1, messages: entries },
+      }],
+    ])
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [activeSessionId, retiredSessionId],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId: SessionId(activeSessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const retired = h.agents.find(agent => String(agent.id) === retiredSessionId)?.session
+      if (retired === undefined) throw new Error('retired receipt Session was not created')
+      retired.append('user/message', retiredMessage, { surfaceOp: 'append' })
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Retired receipt pruning',
+        targetBotId: created.bot.id,
+        sessionId: binding.sessionId,
+        text: 'Make room using validated retired history.',
+        messageId: BotGroupMessageId('bot-group-message-retired-pruning-new'),
       })).resolves.toBe('accepted')
       expect(h.followups[0]).toHaveBeenCalledTimes(1)
     } finally {

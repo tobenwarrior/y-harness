@@ -1101,6 +1101,98 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('does not accept an authority delivery after its matching dispatch lease expires', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Expired authority lease room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-expired-authority-lease')
+      value.host.deliverSharedGroup.mockImplementationOnce(async () => {
+        await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+          const deliveries = groups.deliveries.map(delivery => delivery.messageId === messageId
+            ? { ...delivery, dispatchLeaseUntil: value.clock.value - 1 }
+            : delivery)
+          return {
+            value: undefined,
+            next: { ...membership, sharedGroups: { ...groups, deliveries } },
+          }
+        })
+        return 'accepted'
+      })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'This must remain retryable after lease takeover.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'partial',
+          deliveries: [{ status: 'failed', error: 'Shared Bot group delivery is pending retry after its lease ended' }],
+        },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('coalesces duplicate pending-delivery recovery timers', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true, false, { value: 1_000 })
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Recovery timer room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-recovery-timer-dedupe')
+      value.host.deliverSharedGroup.mockImplementation(async () => ({
+        kind: 'busy' as const,
+        retryAt: value.clock.value + 1_000,
+      }))
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Retry this delivery once per timer.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      value.clock.value = 31_001
+      await value.service.recoverSharedGroupDeliveries()
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
+      value.clock.value = 62_000
+      await vi.advanceTimersByTimeAsync(30_001)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(3)
+    } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('recovers pending deliveries with bounded concurrency', async () => {
     const value = await fixture(10, true)
     let secondary: SecondaryFixture | undefined
@@ -1179,6 +1271,62 @@ describe('shared Bot service', () => {
       const rejected = expect(recovery).rejects.toMatchObject({ code: 'gateway/unavailable' })
       await vi.advanceTimersByTimeAsync(5_001)
       await rejected
+    } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not commit a late authority outcome after its mutation times out', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Late authority outcome room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-late-authority-outcome')
+      const authorityKey = credentialKey('client-connection', 'shared-access')
+      const originalModifyRecord = value.credentials.modifyRecord.bind(value.credentials)
+      const release = Promise.withResolvers<undefined>()
+      let holdNextAuthorityMutation = false
+      value.credentials.modifyRecord = (key, mutate) => {
+        if (key !== authorityKey || !holdNextAuthorityMutation) return originalModifyRecord(key, mutate)
+        holdNextAuthorityMutation = false
+        return originalModifyRecord(key, async (stored) => {
+          await release.promise
+          return mutate(stored)
+        })
+      }
+      value.host.deliverSharedGroup.mockImplementationOnce(async () => {
+        holdNextAuthorityMutation = true
+        throw new Error('late isolated delivery failure')
+      })
+      const send = value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Do not commit a late failure outcome.',
+        messageId,
+      }, new AbortController().signal, owner.peer)
+      await vi.advanceTimersByTimeAsync(5_001)
+      await expect(send).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unavailable' } })
+      release.resolve(undefined)
+      await Promise.resolve()
+      await Promise.resolve()
+      const extension = await value.authority.readExtension('agent-bots/shared-memberships')
+      const membership = sharedMembershipSnapshotSchema.parse(extension.value)
+      const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      expect(groups.deliveries.find(delivery => delivery.messageId === messageId)?.status).toBe('pending')
     } finally {
       await value.close()
       vi.useRealTimers()

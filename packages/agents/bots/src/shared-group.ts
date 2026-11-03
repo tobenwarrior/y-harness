@@ -70,6 +70,7 @@ const MAX_SHARED_GROUP_RECOVERY_BATCH = 64
 const SHARED_GROUP_RECOVERY_CONCURRENCY = 4
 const SHARED_GROUP_RECOVERY_TIMEOUT_MS = 15_000
 const SHARED_GROUP_AUTHORITY_TIMEOUT_MS = 5_000
+const SHARED_GROUP_RECOVERY_MAX_RETRY_DELAY_MS = 30_000
 
 const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId)
 const groupIdSchema = z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId)
@@ -378,7 +379,9 @@ interface SharedGroupMutationResult<T> {
 export class SharedBotGroupService {
   private readonly now: () => number
   private readonly recoveryController = new AbortController()
-  private readonly recoveryTimers = new Set<ReturnType<typeof setTimeout>>()
+  private readonly recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly recoveryAttempts = new Map<string, number>()
+  private readonly recoveryDeliveryTasks = new Map<string, Promise<void>>()
   private readonly recoveryTasks = new Set<Promise<void>>()
   private recoverySweepTimer: ReturnType<typeof setTimeout> | undefined
   private stopped = false
@@ -399,12 +402,14 @@ export class SharedBotGroupService {
   async dispose(): Promise<void> {
     this.stopped = true
     this.recoveryController.abort()
-    for (const timer of this.recoveryTimers) clearTimeout(timer)
+    for (const timer of this.recoveryTimers.values()) clearTimeout(timer)
     this.recoveryTimers.clear()
+    this.recoveryAttempts.clear()
     if (this.recoverySweepTimer !== undefined) clearTimeout(this.recoverySweepTimer)
     this.recoverySweepTimer = undefined
     await Promise.allSettled([...this.recoveryTasks])
     this.recoveryTasks.clear()
+    this.recoveryDeliveryTasks.clear()
   }
 
   /** Return durable group Session bindings for Host startup recovery. */
@@ -436,7 +441,7 @@ export class SharedBotGroupService {
         const delivery = batch[index]
         if (delivery === undefined) return
         try {
-          await this.recoverPendingDelivery(delivery.id, signal)
+          await this.startPendingRecovery(delivery.id, signal)
         } catch (error: unknown) {
           if (signal?.aborted || this.recoveryController.signal.aborted) throw error
           // A row-level timeout schedules its own bounded retry. Other row
@@ -1183,6 +1188,8 @@ export class SharedBotGroupService {
           leaseUntil: deliveryResult.retryAt,
         }
       }
+      const stillOwnsClaim = await this.assertDeliveryClaim(attempt.deliveryId, claim.token, dispatchSignal)
+      if (!stillOwnsClaim) throw new SharedGroupClaimLostError()
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'accepted', undefined, dispatchSignal)
       return { kind: 'accepted', result: deliveryResult }
     } catch (error: unknown) {
@@ -1209,7 +1216,9 @@ export class SharedBotGroupService {
     error?: string,
     signal?: AbortSignal,
   ): Promise<void> {
+    let cancelled = false
     await withSharedGroupAuthorityTimeout(this.mutateWithoutActor((snapshot) => {
+      if (cancelled) return snapshot
       const current = snapshot.deliveries.find(delivery => delivery.id === deliveryId)
       if (current === undefined) return snapshot
       if (dispatchToken === undefined
@@ -1232,11 +1241,13 @@ export class SharedBotGroupService {
           ? { responseReservations: snapshot.responseReservations.filter(id => id !== deliveryId) }
           : {}),
       }
-    }), signal)
+    }), signal, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
   }
 
   private async failPendingDelivery(deliveryId: string, error: string, signal?: AbortSignal): Promise<void> {
+    let cancelled = false
     await withSharedGroupAuthorityTimeout(this.authority.mutateExtension('agent-bots/shared-memberships', (stored) => {
+      if (cancelled) return { value: undefined, next: stored }
       const membershipSnapshot = parseMembershipExtension(stored)
       const snapshot = parseGroups(membershipSnapshot.sharedGroups)
       const delivery = snapshot.deliveries.find(candidate => candidate.id === deliveryId)
@@ -1253,7 +1264,7 @@ export class SharedBotGroupService {
         responseReservations: snapshot.responseReservations.filter(id => id !== deliveryId),
       }
       return { value: undefined, next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(next) } }
-    }), signal)
+    }), signal, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
   }
 
   private async claimDelivery(
@@ -1261,10 +1272,12 @@ export class SharedBotGroupService {
     attempt: SharedGroupDeliveryPlan,
     signal?: AbortSignal,
   ): Promise<SharedGroupDeliveryClaimResult> {
+    let cancelled = false
     return withSharedGroupAuthorityTimeout(
       this.authority.mutateExtension<SharedGroupDeliveryClaimResult>(
         'agent-bots/shared-memberships',
         (current, authorityState) => {
+          if (cancelled) return { value: { kind: 'denied' }, next: current }
           const membershipSnapshot = parseMembershipExtension(current)
           const groups = parseGroups(membershipSnapshot.sharedGroups)
           const group = groups.groups.find(candidate => candidate.id === plan.groupId)
@@ -1325,6 +1338,8 @@ export class SharedBotGroupService {
         },
       ),
       signal,
+      SHARED_GROUP_AUTHORITY_TIMEOUT_MS,
+      () => { cancelled = true },
     )
   }
 
@@ -1358,14 +1373,17 @@ export class SharedBotGroupService {
   }
 
   private async renewDeliveryClaim(deliveryId: string, dispatchToken: string): Promise<boolean> {
+    let cancelled = false
     return withSharedGroupAuthorityTimeout(this.authority.mutateExtension<boolean>('agent-bots/shared-memberships', (current) => {
+      if (cancelled) return { value: false, next: current }
       const membershipSnapshot = parseMembershipExtension(current)
       const groups = parseGroups(membershipSnapshot.sharedGroups)
       const delivery = groups.deliveries.find(candidate => candidate.id === deliveryId)
-      if (delivery === undefined || delivery.status !== 'pending' || delivery.dispatchToken !== dispatchToken) {
+      const now = this.now()
+      if (delivery === undefined || delivery.status !== 'pending' || delivery.dispatchToken !== dispatchToken
+        || delivery.dispatchLeaseUntil === undefined || delivery.dispatchLeaseUntil <= now) {
         return { value: false, next: current }
       }
-      const now = this.now()
       const nextGroups = {
         ...groups,
         revision: groups.revision + 1,
@@ -1379,7 +1397,7 @@ export class SharedBotGroupService {
         value: true,
         next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(nextGroups) },
       }
-    }))
+    }), undefined, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
   }
 
   private async assertDeliveryClaim(
@@ -1388,30 +1406,60 @@ export class SharedBotGroupService {
     signal: AbortSignal,
   ): Promise<boolean> {
     signal.throwIfAborted()
+    let cancelled = false
     return withSharedGroupAuthorityTimeout(this.authority.mutateExtension<boolean>('agent-bots/shared-memberships', (current) => {
+      if (cancelled) return { value: false, next: current }
       const membershipSnapshot = parseMembershipExtension(current)
       const groups = parseGroups(membershipSnapshot.sharedGroups)
       const delivery = groups.deliveries.find(candidate => candidate.id === deliveryId)
       return {
-        value: delivery?.status === 'pending' && delivery.dispatchToken === dispatchToken,
+        value: delivery?.status === 'pending'
+          && delivery.dispatchToken === dispatchToken
+          && delivery.dispatchLeaseUntil !== undefined
+          && delivery.dispatchLeaseUntil > this.now(),
         next: current,
       }
-    }), signal)
+    }), signal, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
   }
 
   private schedulePendingRecovery(deliveryId: string, delayMs: number): void {
     if (this.stopped) return
+    if (this.recoveryTimers.has(deliveryId)) return
+    const attempt = this.recoveryAttempts.get(deliveryId) ?? 0
+    const backoff = Math.min(
+      SHARED_GROUP_RECOVERY_MAX_RETRY_DELAY_MS,
+      SHARED_GROUP_AUTHORITY_TIMEOUT_MS * 2 ** Math.min(attempt, 4),
+    )
+    const delay = Math.max(1, Math.min(
+      SHARED_GROUP_RECOVERY_MAX_RETRY_DELAY_MS,
+      Math.max(delayMs, backoff),
+    ))
     const timer = setTimeout(() => {
-      this.recoveryTimers.delete(timer)
-      const task = this.recoverPendingDelivery(deliveryId)
-      this.recoveryTasks.add(task)
-      void task.then(
-        () => { this.recoveryTasks.delete(task) },
-        () => { this.recoveryTasks.delete(task) },
-      )
-    }, Math.max(1, delayMs))
+      this.recoveryTimers.delete(deliveryId)
+      this.recoveryAttempts.set(deliveryId, attempt + 1)
+      void this.startPendingRecovery(deliveryId)
+    }, delay)
     timer.unref?.()
-    this.recoveryTimers.add(timer)
+    this.recoveryTimers.set(deliveryId, timer)
+  }
+
+  private startPendingRecovery(deliveryId: string, signal = this.recoveryController.signal): Promise<void> {
+    const existing = this.recoveryDeliveryTasks.get(deliveryId)
+    if (existing !== undefined) return existing
+    const task = this.recoverPendingDelivery(deliveryId, signal)
+    this.recoveryDeliveryTasks.set(deliveryId, task)
+    this.recoveryTasks.add(task)
+    void task.then(
+      () => {
+        this.recoveryTasks.delete(task)
+        if (this.recoveryDeliveryTasks.get(deliveryId) === task) this.recoveryDeliveryTasks.delete(deliveryId)
+      },
+      () => {
+        this.recoveryTasks.delete(task)
+        if (this.recoveryDeliveryTasks.get(deliveryId) === task) this.recoveryDeliveryTasks.delete(deliveryId)
+      },
+    )
+    return task
   }
 
   private scheduleRecoverySweep(): void {
@@ -1427,6 +1475,13 @@ export class SharedBotGroupService {
     }, 1)
     timer.unref?.()
     this.recoverySweepTimer = timer
+  }
+
+  private clearPendingRecovery(deliveryId: string): void {
+    this.recoveryAttempts.delete(deliveryId)
+    const timer = this.recoveryTimers.get(deliveryId)
+    if (timer !== undefined) clearTimeout(timer)
+    this.recoveryTimers.delete(deliveryId)
   }
 
   private async recoverPendingDelivery(deliveryId: string, signal = this.recoveryController.signal): Promise<void> {
@@ -1445,13 +1500,17 @@ export class SharedBotGroupService {
     }
     const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
     const delivery = snapshot.deliveries.find(candidate => candidate.id === deliveryId)
-    if (delivery === undefined || delivery.status !== 'pending') return
+    if (delivery === undefined || delivery.status !== 'pending') {
+      this.clearPendingRecovery(deliveryId)
+      return
+    }
     const group = snapshot.groups.find(candidate => candidate.id === delivery.groupId)
     const message = snapshot.messages.find(candidate => candidate.id === delivery.messageId)
     const binding = snapshot.sessions.find(candidate => candidate.groupId === delivery.groupId
       && candidate.botId === delivery.botId && candidate.revokedAt === undefined)
     if (group === undefined || message === undefined || binding === undefined || message.sender.kind !== 'user') {
       await this.failPendingDelivery(delivery.id, 'Shared Bot group Session is unavailable', signal)
+      this.clearPendingRecovery(deliveryId)
       return
     }
     const plan: SharedGroupSendPlan = {
@@ -1482,6 +1541,7 @@ export class SharedBotGroupService {
       return
     }
     if (result.kind === 'busy') this.schedulePendingRecovery(delivery.id, result.leaseUntil - this.now())
+    else this.clearPendingRecovery(deliveryId)
   }
 
   private async locked<T>(
@@ -1737,6 +1797,7 @@ async function withSharedGroupAuthorityTimeout<T>(
   operation: Promise<T>,
   signal?: AbortSignal,
   timeoutMs = SHARED_GROUP_AUTHORITY_TIMEOUT_MS,
+  onCancel?: () => void,
 ): Promise<T> {
   signal?.throwIfAborted()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1758,10 +1819,12 @@ async function withSharedGroupAuthorityTimeout<T>(
       reject(error instanceof Error ? error : new Error(String(error)))
     }
     const onAbort = (): void => {
+      onCancel?.()
       const reason = signal?.reason
       finishReject(reason instanceof Error ? reason : new SharedGroupError('gateway/unavailable', 'shared Bot operation was cancelled'))
     }
     timer = setTimeout(() => {
+      onCancel?.()
       finishReject(new SharedGroupError('gateway/unavailable', 'shared Bot authority operation timed out'))
     }, timeoutMs)
     timer.unref?.()
