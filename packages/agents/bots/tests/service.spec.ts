@@ -3964,6 +3964,42 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('does not cache a Bot skill catalog across a Host revocation', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Catalog revocation owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const hostB = await harness(pool)
+    hostA.ctx.skills.registerProvider(() => ({
+      name: 'catalog-revocation-fixture',
+      list: () => Promise.resolve([{
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'catalog-revocation-fixture', source: 'bundled', rank: 600, locator: 'release-notes',
+      }]),
+      get: async candidate => ({ ...candidate, content: 'release notes body' }),
+    }))
+    const agent = hostA.agents[0]
+    if (agent === undefined) throw new Error('catalog revocation test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('catalog revocation test Agent has no scope')
+    try {
+      await expect(hostA.ctx.skills.list({ scope })).resolves.toMatchObject([
+        { name: 'release-notes', invocation: { modelInvocable: true } },
+      ])
+      await hostB.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['release-notes'],
+      })
+      await expect(hostA.ctx.skills.list({ scope })).resolves.toMatchObject([
+        { name: 'release-notes', invocation: { modelInvocable: false, userInvocable: false } },
+      ])
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
   it('reads cold Bot skill metadata through its selected preset scope', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

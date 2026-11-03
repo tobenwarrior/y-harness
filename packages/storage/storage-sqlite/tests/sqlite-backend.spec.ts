@@ -64,6 +64,30 @@ describe('sqlite backend specifics', () => {
     await backend.close()
   })
 
+  it('waits for a second connection to release an immediate write lock', async () => {
+    const path = await freshDbPath()
+    const backend = backendAt(path)
+    const unit = await backend.kv.open(DESCRIPTOR)
+    await unit.putRecord('records', 'counter', { n: 0 })
+    const blocker = new DatabaseSync(path)
+    blocker.exec('BEGIN IMMEDIATE')
+    try {
+      const update = unit.updateRecord!('records', 'counter', value => ({
+        n: (value as { n: number }).n + 1,
+      }))
+      await new Promise(resolve => setTimeout(resolve, 30))
+      blocker.exec('COMMIT')
+      await expect(update).resolves.toEqual({ found: true, value: { n: 1 } })
+    } finally {
+      try { blocker.exec('ROLLBACK') } catch (error) {
+        // The commit above may have released the transaction already.
+        void error
+      }
+      blocker.close()
+      await backend.close()
+    }
+  })
+
   it('materializes STRICT record tables and stamps the schema version', async () => {
     const path = await freshDbPath()
     const backend = backendAt(path)

@@ -452,6 +452,21 @@ describe('withFileLock', () => {
     await expect(withFileLock(target, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
   })
 
+  it('recovers the lock path after a committed operation cannot unlink it', async () => {
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    state.lockRemovalFails = true
+
+    await expect(withFileLock(target, async () => {
+      await writeFileAtomic(target, 'committed', { mode: 0o600 })
+      return 'committed'
+    }, { waitMs: 0 })).resolves.toBe('committed')
+
+    expect(await readFile(target, 'utf8')).toBe('committed')
+    await expect(stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(dir)).toEqual(['document'])
+  })
+
   it('waits for the caller-stated limit rather than the protocol default', async () => {
     // An operation whose work includes a network round trip legitimately holds
     // the lock far longer than the render-and-rename the default was sized

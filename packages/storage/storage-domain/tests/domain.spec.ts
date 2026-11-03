@@ -271,6 +271,28 @@ describe('KvTable writes', () => {
     expect(await table.getFresh('once')).toEqual(expect.objectContaining({ label: expect.stringMatching(/first|second/) }))
   })
 
+  it('parses fresh and fenced-update records through the table schema transform', async () => {
+    type LegacyRecord = { count: number; ownerId: string }
+    const legacyRecordSchema = z.object({ count: z.number(), ownerId: z.string().optional() })
+      .transform(record => ({ count: record.count, ownerId: record.ownerId ?? 'legacy-owner' }))
+    const legacySpec = defineDomain({
+      name: 'legacy_schema',
+      version: 1,
+      tables: { records: domainTable<string, LegacyRecord>(legacyRecordSchema) },
+    })
+    const pool = new MemoryMediaPool()
+    const { facility } = await harness({ pool })
+    const table = (await facility.open(legacySpec)).table('records')
+    await table.put('legacy', { count: 1, ownerId: 'stored-owner' })
+    pool.media.get('legacy_schema')!.tables.get('records')!.set('legacy', { count: 1 })
+
+    await expect(table.getFresh('legacy')).resolves.toEqual({ count: 1, ownerId: 'legacy-owner' })
+    await expect(table.update('legacy', current => ({ ...current, count: current.count + 1 })))
+      .resolves.toEqual({ count: 2, ownerId: 'legacy-owner' })
+    expect(pool.media.get('legacy_schema')!.tables.get('records')!.get('legacy'))
+      .toEqual({ count: 2, ownerId: 'legacy-owner' })
+  })
+
   it('serializes concurrent updates on one key without losing increments', async () => {
     const { facility } = await harness()
     const table = (await facility.open(spec)).table('items')

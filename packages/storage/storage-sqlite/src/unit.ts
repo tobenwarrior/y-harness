@@ -1,9 +1,9 @@
 /**
  * One opened SQLite KV unit: prepared per-table statements over the
  * `u_<unit>_<table>` record tables plus this unit's row in the shared
- * `unit_globals` table. Each primitive is a single statement, so atomicity
- * comes from SQLite itself — no explicit transactions, and no write queue
- * (write ordering is the caller's responsibility per the KV contract).
+ * `unit_globals` table. Ordinary primitives are single statements; fenced
+ * updates use a bounded-retry `BEGIN IMMEDIATE` transaction. There is no write
+ * queue (write ordering is the caller's responsibility per the KV contract).
  * @module @yharness/storage-sqlite/unit
  */
 
@@ -11,6 +11,11 @@ import type { DatabaseSync, StatementSync } from 'node:sqlite'
 import { StorageError } from '@yharness/storage'
 import type { KvUnit, KvUnitDescriptor } from '@yharness/storage'
 import { recordTableName } from './schema.ts'
+
+/** Bounded retry cadence for a second SQLite connection holding the write lock. */
+const WRITE_LOCK_RETRY_INITIAL_MS = 5
+const WRITE_LOCK_RETRY_MAX_MS = 100
+const WRITE_LOCK_RETRY_BUDGET_MS = 2_000
 
 /** Prepared statements for one declared table. */
 interface TableStatements {
@@ -81,23 +86,15 @@ export class SqliteKvUnit implements KvUnit {
     key: string,
     update: (current: unknown) => unknown,
   ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
-    return this.settle(() => {
+    return this.withImmediateTransaction(() => {
       const statements = this.statementsFor(table)
-      this.db.exec('BEGIN IMMEDIATE')
-      try {
-        const row = statements.selectOne.get(key) as { value: string } | undefined
-        if (row === undefined) {
-          this.db.exec('ROLLBACK')
-          return { found: false }
-        }
-        const value = update(this.parseValue(row.value, `table '${table}' key '${key}'`))
-        statements.upsert.run(key, JSON.stringify(value))
-        this.db.exec('COMMIT')
-        return { found: true, value }
-      } catch (error: unknown) {
-        try { this.db.exec('ROLLBACK') } catch (rollbackError: unknown) { void rollbackError }
-        throw error
+      const row = statements.selectOne.get(key) as { value: string } | undefined
+      if (row === undefined) {
+        return { found: false }
       }
+      const value = update(this.parseValue(row.value, `table '${table}' key '${key}'`))
+      statements.upsert.run(key, JSON.stringify(value))
+      return { found: true, value }
     })
   }
 
@@ -183,6 +180,42 @@ export class SqliteKvUnit implements KvUnit {
     }
   }
 
+  /**
+   * Acquire SQLite's write lock with bounded asynchronous retries. The
+   * synchronous driver returns `database is locked` immediately when another
+   * connection owns the lock, so waiting between attempts keeps the event loop
+   * available for that connection to commit while still failing a permanently
+   * contended medium within a fixed budget.
+   */
+  private async withImmediateTransaction<T>(operation: () => T): Promise<T> {
+    try {
+      this.ensureOpen()
+      const deadline = Date.now() + WRITE_LOCK_RETRY_BUDGET_MS
+      let delay = WRITE_LOCK_RETRY_INITIAL_MS
+      for (;;) {
+        try {
+          this.db.exec('BEGIN IMMEDIATE')
+        } catch (error) {
+          if (!isSqliteBusy(error) || Date.now() >= deadline) throw error
+          const remaining = deadline - Date.now()
+          await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining)))
+          delay = Math.min(delay * 2, WRITE_LOCK_RETRY_MAX_MS)
+          continue
+        }
+        try {
+          const result = operation()
+          this.db.exec('COMMIT')
+          return result
+        } catch (error: unknown) {
+          try { this.db.exec('ROLLBACK') } catch (rollbackError: unknown) { void rollbackError }
+          throw error
+        }
+      }
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
   private ensureOpen(): void {
     if (this.closed) {
       throw new StorageError('closed', `kv unit '${this.descriptor.name}' is closed`)
@@ -196,4 +229,12 @@ export class SqliteKvUnit implements KvUnit {
     }
     return statements
   }
+}
+
+/** Return true only for SQLite's transient writer-lock errors. */
+function isSqliteBusy(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if ('code' in error && typeof error.code === 'string'
+    && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED')) return true
+  return /database (?:is )?locked|database busy/i.test(error.message)
 }

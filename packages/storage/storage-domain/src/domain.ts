@@ -51,7 +51,8 @@ export interface KvTable<K extends string, V> {
   get(key: K): V | undefined
 
   /**
-   * Read one record from the current durable medium state.
+   * Read one record from the current durable medium state and parse it through
+   * the declaring table schema.
    * @param key - Record key.
    * @returns the current record, or `undefined` when absent.
    */
@@ -91,7 +92,8 @@ export interface KvTable<K extends string, V> {
 
   /**
    * Atomic read-modify-write on the domain's write chain: `fn` sees the
-   * value current at its queue slot, so concurrent updates never interleave.
+   * schema-parsed value current at its queue slot, and its result is parsed
+   * before publication, so concurrent updates never interleave.
    * @param key - Record key; a missing key rejects with `missing-key`.
    * @param fn - Synchronous pure transform from current to next record.
    * @returns the stored next record.
@@ -141,6 +143,8 @@ export interface Domain<S extends DomainSpec> {
 interface TableHost {
   readonly domainName: string
   readonly unit: KvUnit
+  /** Parse one durable record through its declaring table schema. */
+  parseRecord(table: string, key: string, value: unknown): unknown
   /** Queue one job on the domain's single write chain. */
   enqueue<T>(job: () => Promise<T>): Promise<T>
   /** Throw `closed` once the domain has fully closed (reads stay valid while draining). */
@@ -196,6 +200,13 @@ export class DomainImpl {
     const host: TableHost = {
       domainName: spec.name,
       unit,
+      parseRecord: (table, key, value) => {
+        const tableSpec = spec.tables[table]
+        if (tableSpec === undefined) {
+          throw new Error(`domain '${spec.name}' declares no table '${table}'`)
+        }
+        return parseTableRecord(spec.name, table, key, () => tableSpec.valueSchema.parse(value))
+      },
       enqueue: job => this.enqueue(job),
       assertReadable: () => { this.assertReadable() },
       emitChanged: (change) => { this.emitChanged(change) },
@@ -318,7 +329,9 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
     const getRecord = this.host.unit.getRecord
     return getRecord === undefined
       ? Promise.resolve(this.get(key))
-      : getRecord.call(this.host.unit, this.tableName, key).then(value => value as V | undefined)
+      : getRecord.call(this.host.unit, this.tableName, key).then(value => value === undefined
+        ? undefined
+        : this.host.parseRecord(this.tableName, key, value) as V)
   }
 
   entries(): IterableIterator<[K, V]> {
@@ -377,14 +390,17 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
         this.emitPut(key, next)
         return next
       }
-      const result = await updateRecord.call(this.host.unit, this.tableName, key, current => fn(current as V))
+      const result = await updateRecord.call(this.host.unit, this.tableName, key, (current) => {
+        const parsedCurrent = this.host.parseRecord(this.tableName, key, current) as V
+        return this.host.parseRecord(this.tableName, key, fn(parsedCurrent))
+      })
       if (!result.found) {
         throw new DomainError(
           'missing-key',
           `domain '${this.host.domainName}' table '${this.tableName}' has no record '${key}' to update`,
         )
       }
-      const next = result.value as V
+      const next = this.host.parseRecord(this.tableName, key, result.value) as V
       this.records.set(key, next)
       this.emitPut(key, next)
       return next
@@ -417,5 +433,18 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
       operation: 'put',
       value,
     })
+  }
+}
+
+/** Parse one fresh or atomically updated table record with its durable location. */
+function parseTableRecord<T>(domain: string, table: string, key: string, parse: () => T): T {
+  try {
+    return parse()
+  } catch (error) {
+    throw new DomainError(
+      'invalid-record',
+      `domain '${domain}': stored record '${key}' in table '${table}' does not match its schema`,
+      { detail: { table, key }, cause: error },
+    )
   }
 }

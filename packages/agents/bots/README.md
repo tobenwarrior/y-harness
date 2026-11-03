@@ -149,7 +149,7 @@ Changing a Bot grant does not rewrite Session history. The scoped tool set remai
 
 #### What the model sees
 
-The Host discovers skill metadata through the existing skill registry, then installs a scoped provider for each Bot. In `all` mode the Bot can discover and load every current local skill except names in `disabled`; in `selected` mode it can discover and load only names in `enabled` that are not disabled. Denied candidates remain non-invocable and their bodies are never loaded, including when a user or model requests a denied name directly. The policy is read again for each discovery and load, and an update invalidates the catalog before the next operation. Skill catalog and explicit invocation messages retain the existing durable source records, so a policy edit does not create an unlogged model-visible message.
+The Host discovers skill metadata through the existing skill registry, then installs a scoped provider for each Bot. In `all` mode the Bot can discover and load every current local skill except names in `disabled`; in `selected` mode it can discover and load only names in `enabled` that are not disabled. Denied candidates remain non-invocable and their bodies are never loaded, including when a user or model requests a denied name directly. The durable policy is read again for every discovery and load, and policy-backed discovery is non-cacheable so a revocation made by another Host is observed before the next model-visible catalog. Skill catalog and explicit invocation messages retain the existing durable source records, so a policy edit does not create an unlogged model-visible message.
 
 #### Token effect
 

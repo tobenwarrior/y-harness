@@ -148,10 +148,17 @@ export function createBotSkillPolicyProvider(
     async list(options) {
       const summaries = await registry.list(parentOptions(options))
       const currentPolicy = await readPolicy(policy)
-      return summaries.map((summary, index) => {
-        const candidate = candidateFromSummary(summary, index)
-        return projectedCandidate(candidate, botSkillPolicyAllows(currentPolicy, candidate.name))
-      })
+      // The policy is durable and may be changed by another Host. Do not let
+      // SkillRegistry retain this projection in its local catalog cache: each
+      // discovery must read the current policy before exposing model-visible
+      // invocation flags.
+      return {
+        candidates: summaries.map((summary, index) => {
+          const candidate = candidateFromSummary(summary, index)
+          return projectedCandidate(candidate, botSkillPolicyAllows(currentPolicy, candidate.name))
+        }),
+        complete: false,
+      }
     },
     async get(candidate, options) {
       const currentPolicy = await readPolicy(policy)

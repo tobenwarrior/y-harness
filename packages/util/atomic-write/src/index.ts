@@ -183,6 +183,7 @@ async function takeOverExitedLock(lockPath: string): Promise<boolean> {
  */
 const LOCK_RETRY_INITIAL_MS = 20
 const LOCK_RETRY_MAX_MS = 200
+const LOCK_RELEASE_RETRY_LIMIT = 2
 
 /**
  * How long a contender waits when the caller states no limit — sized for the
@@ -194,6 +195,43 @@ const LOCK_RETRY_MAX_MS = 200
  * alone.
  */
 const DEFAULT_LOCK_WAIT_MS = 2_000
+
+/**
+ * Release a held lock without leaving its pathname occupied after the
+ * operation has settled. A transient unlink failure is retried; if the path
+ * still cannot be unlinked, an atomic rename removes it from the acquisition
+ * protocol and the detached diagnostic sibling is cleaned up best-effort.
+ */
+async function releaseLock(lockPath: string): Promise<void> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < LOCK_RELEASE_RETRY_LIMIT; attempt += 1) {
+    try {
+      await rm(lockPath, { force: true })
+      return
+    } catch (error) {
+      lastError = error
+    }
+  }
+  const releasedPath = `${lockPath}.released-${process.pid}-${randomBytes(6).toString('hex')}`
+  try {
+    await rename(lockPath, releasedPath)
+  } catch (error) {
+    // If another actor already removed the path, release has succeeded. A
+    // remaining error means this holder could not clear its acquisition path.
+    try {
+      await rm(lockPath, { force: true })
+      return
+    } catch {
+      throw lastError ?? error
+    }
+  }
+  try {
+    await rm(releasedPath, { force: true })
+  } catch {
+    // The released sibling is outside the lock pathname; its cleanup is not
+    // allowed to turn a committed operation into a failed lock release.
+  }
+}
 
 /** Options for one {@link withFileLock} acquisition. */
 export interface FileLockOptions {
@@ -263,6 +301,6 @@ export async function withFileLock<T>(
   try {
     return await operation()
   } finally {
-    await rm(lockPath, { force: true })
+    await releaseLock(lockPath)
   }
 }
