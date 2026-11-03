@@ -414,6 +414,11 @@
     },
     {
       "doc": "docs/subsystems/schedule.md",
+      "symbol": "ScheduleCreateResolution",
+      "source": "packages/schedule/schedule/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/schedule.md",
       "symbol": "ScheduleListRequest",
       "source": "packages/schedule/schedule/src/types.ts"
     },

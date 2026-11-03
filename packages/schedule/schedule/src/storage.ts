@@ -52,11 +52,27 @@ export const scheduleTaskSchema = z.object({
     && latest.messageId === task.lastDelivery.messageId
 }, { message: 'Last delivery must match the latest saved delivery receipt' })
 
+const scheduleCreateOperationSchema = z.object({
+  sessionId: z.string().min(1).transform(SessionId),
+  idempotencyKey: z.string().min(1).max(256).refine(value => value.trim() === value),
+  requestFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
+  status: z.enum(['pending', 'committed', 'resolved_absent']),
+  record: recordSchema.optional(),
+}).strict().refine(operation => (operation.status === 'committed') === (operation.record !== undefined), {
+  message: 'A committed create operation must have a record and an unresolved operation must not have one',
+})
+
 /** Persistent task value; absent history retains only its legacy last receipt without a read-time rewrite. */
 export type ScheduleTask = z.infer<typeof scheduleTaskSchema>
+
+/** Durable state for one Host retry operation, including an explicit no-record resolution. */
+export type ScheduleCreateOperation = z.infer<typeof scheduleCreateOperationSchema>
 
 /** Authoritative Schedule storage; malformed tasks reject opening the domain. */
 export const scheduleDomain = defineDomain({
   name: 'schedule', version: 1,
-  tables: { tasks: domainTable<ScheduleId, ScheduleTask>(scheduleTaskSchema) },
+  tables: {
+    tasks: domainTable<ScheduleId, ScheduleTask>(scheduleTaskSchema),
+    create_operations: domainTable<string, ScheduleCreateOperation>(scheduleCreateOperationSchema),
+  },
 })

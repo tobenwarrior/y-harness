@@ -95,6 +95,77 @@ describe('shared Schedule management', () => {
     expect(await test.service.list({ sessionId })).toHaveLength(1)
   })
 
+  it('serializes reconciliation and listing behind an in-flight create', async () => {
+    vi.useRealTimers()
+    const pool = new MemoryMediaPool()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    let gated = false
+    const backend = gatedScheduleBackend(pool, {
+      putRecord: async (table) => {
+        if (table !== 'tasks' || gated) return
+        gated = true
+        entered.resolve(undefined)
+        await release.promise
+      },
+    })
+    const test = await setup({ pool, backend })
+    const sessionId = SessionId('serialized-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const creating = test.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
+    await entered.promise
+    const resolving = test.service.reconcileCreate(sessionId, request, 'lost-create')
+    const listing = test.service.list({ sessionId })
+    let resolutionSettled = false
+    let listingSettled = false
+    void resolving.then(() => { resolutionSettled = true })
+    void listing.then(() => { listingSettled = true })
+    await Promise.resolve()
+    expect(resolutionSettled).toBe(false)
+    expect(listingSettled).toBe(false)
+    release.resolve(undefined)
+    const created = await creating
+    await expect(resolving).resolves.toEqual({ status: 'committed', record: created })
+    await expect(listing).resolves.toEqual([created])
+  })
+
+  it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
+    const test = await setup()
+    const sessionId = SessionId('structured-at')
+    const first = await test.service.create(sessionId, {
+      prompt: 'Check the build', title: 'Build check',
+      at: { date: '2099-05-01', time: '09:00:00', time_zone: 'US/Eastern' },
+    }, undefined, { idempotencyKey: 'structured-at-key' })
+    const retry = await test.service.create(sessionId, {
+      prompt: ' Check the build ', title: ' Build check ',
+      at: { date: '2099-05-01', time: '09:00:00.000', time_zone: 'America/New_York' },
+    }, undefined, { idempotencyKey: 'structured-at-key' })
+    expect(retry).toEqual(first)
+    expect(await test.service.list({ sessionId })).toEqual([first])
+  })
+
+  it('durably retires an absent operation so later identical requests can repeat', async () => {
+    const test = await setup()
+    const sessionId = SessionId('retired-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.reconcileCreate(sessionId, request, 'lost-create'))
+      .resolves.toEqual({ status: 'absent' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    expect([...domain.table('create_operations').entries()]).toHaveLength(1)
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.reconcileCreate(sessionId, request, 'lost-create'))
+      .resolves.toEqual({ status: 'absent' })
+    const retriedSameOperation = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
+    expect(retriedSameOperation.id).toMatch(/^schedule-/)
+    const first = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'repeat-one' })
+    const second = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'repeat-two' })
+    expect(second.id).not.toBe(first.id)
+    expect(first.id).not.toBe(retriedSameOperation.id)
+  })
+
   it('returns an empty catalog when the Host has no active reminders', async () => {
     const { service } = await setup()
     expect(await service.catalog()).toEqual([])

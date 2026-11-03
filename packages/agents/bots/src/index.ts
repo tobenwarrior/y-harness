@@ -25,7 +25,7 @@ import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import { BotCollaborationError, BotCollaborationService } from './collaboration.ts'
 import type { BotCollaborationClient } from './collaboration.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
-import type { BotNativeToolHost } from './native-tools.ts'
+import type { BotNativeToolHost, BotRoutineCreateResolution } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type {
@@ -278,9 +278,9 @@ function routineCreateRequest(args: RoutineArguments): ScheduleCreateRequest {
 }
 
 /** Stable Host retry identity for one Bot Session's native routine operation. */
-function routineIdempotencyKey(
+function routineOperationKey(
   sessionId: SessionId,
-  context: Parameters<NonNullable<BotNativeToolHost['routine']>>[2],
+  context: Pick<Parameters<NonNullable<BotNativeToolHost['routine']>>[2], 'callId' | 'threadId' | 'turnId'>,
 ): string {
   return createHash('sha256')
     .update('bot-routine-create\0')
@@ -292,6 +292,13 @@ function routineIdempotencyKey(
     .update('\0')
     .update(context.turnId)
     .digest('hex')
+}
+
+function routineIdempotencyKey(
+  sessionId: SessionId,
+  context: Parameters<NonNullable<BotNativeToolHost['routine']>>[2],
+): string {
+  return routineOperationKey(sessionId, context)
 }
 
 function routineUpdateContent(args: RoutineArguments): { readonly title?: string; readonly prompt?: string } {
@@ -505,6 +512,31 @@ export class BotService extends TypertRemoteService {
         return { id: botId, updated: true }
       },
       routine: (action, args, context) => this.runRoutine(action, args, context),
+      routineReconcile: async (args, pending, context): Promise<BotRoutineCreateResolution> => {
+        const sessionId = context.sessionId
+        if (sessionId === undefined || this.recordsBySession.get(String(sessionId)) === undefined) {
+          throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+        }
+        const schedule = ctx.get('schedule')
+        if (schedule === undefined) throw new Error('Bot routines are unavailable.')
+        try {
+          const request = routineCreateRequest(args)
+          const resolution = await schedule.reconcileCreate(
+            sessionId, request, routineOperationKey(sessionId, pending), context.signal,
+          )
+          context.signal.throwIfAborted()
+          return resolution.status === 'absent'
+            ? resolution
+            : { status: 'committed', record: { ...scheduleView(resolution.record, Date.now()) } }
+        } catch (error: unknown) {
+          if (error instanceof BotCollaborationError) throw error
+          if (context.signal.aborted) throw new BotCollaborationError('cancelled', 'The Bot routine was cancelled.', { cause: error })
+          if (error instanceof ScheduleInputError) {
+            throw new BotCollaborationError('message-invalid', error.message, { cause: error })
+          }
+          throw error
+        }
+      },
       routineAvailable: async (sessionId) => {
         const agent = ctx.agents.get(sessionId)
         if (agent === undefined) return false

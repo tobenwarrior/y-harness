@@ -72,21 +72,16 @@ describe('native Bot actions', () => {
     expect(routine).not.toHaveBeenCalled()
   })
 
-  it('allows a cross-call retry after a successful list proves the request is absent', async () => {
+  it('allows a cross-call retry after the Schedule service proves the request is absent', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, routine,
+      routineReconcile: async () => ({ status: 'absent' }),
       routineAvailable: async () => true,
       replay: async () => [{
         phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
         arguments: { title: ' Daily check ', prompt: ' Check the report ' },
-      }, {
-        phase: 'started', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
-        arguments: {},
-      }, {
-        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
-        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: '[]' }] },
       }],
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
@@ -98,7 +93,7 @@ describe('native Bot actions', () => {
     expect(routine).toHaveBeenCalledOnce()
   })
 
-  it('replays a matching routine found by the reconciliation list', async () => {
+  it('replays a matching routine found by Schedule reconciliation', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async () => ({ id: 'schedule-new' }))
     const existing = {
@@ -107,16 +102,11 @@ describe('native Bot actions', () => {
     }
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, routine,
+      routineReconcile: async () => ({ status: 'committed', record: existing }),
       routineAvailable: async () => true,
       replay: async () => [{
         phase: 'started', name: 'schedule_create', callId: 'earlier', threadId: 'old', turnId: 'old', sessionId,
         arguments: { title: ' Daily check ', prompt: ' Check the report ', after_seconds: 60 },
-      }, {
-        phase: 'started', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
-        arguments: {},
-      }, {
-        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
-        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify([existing]) }] },
       }],
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
@@ -128,7 +118,7 @@ describe('native Bot actions', () => {
     expect(routine).not.toHaveBeenCalled()
   })
 
-  it('retries the same call when a routine listing raced the uncertain create', async () => {
+  it('retries the same call when its native result is missing', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({
@@ -137,9 +127,6 @@ describe('native Bot actions', () => {
       replay: async () => [{
         phase: 'started', name: 'schedule_create', callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId,
         arguments: { title: 'Daily check' },
-      }, {
-        phase: 'settled', name: 'schedule_list', callId: 'list', threadId: 'new', turnId: 'new', sessionId,
-        arguments: {}, result: { success: true, contentItems: [{ type: 'inputText', text: '[]' }] },
       }],
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')

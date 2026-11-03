@@ -35,6 +35,11 @@ export interface BotNativeToolContext {
   readonly requestApproval: (reason: string) => Promise<boolean>
 }
 
+/** Host-owned resolution of an earlier routine create whose native reply was lost. */
+export type BotRoutineCreateResolution =
+  | { readonly status: 'absent' }
+  | { readonly status: 'committed'; readonly record: JsonObject }
+
 /** One explicitly registered native Bot action. */
 export interface BotNativeTool {
   readonly name: string
@@ -71,6 +76,12 @@ export interface BotNativeToolHost {
     args: JsonObject,
     context: BotNativeToolContext,
   ) => Promise<unknown>
+  /** Reconcile one earlier routine operation inside the Schedule write queue. */
+  readonly routineReconcile?: (
+    args: JsonObject,
+    pending: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'>,
+    context: BotNativeToolContext,
+  ) => Promise<BotRoutineCreateResolution>
   /** Report whether the calling Bot scope visibly mounts every routine tool. */
   readonly routineAvailable?: (sessionId: SessionId) => Promise<boolean>
 }
@@ -349,11 +360,12 @@ function pendingRoutineCreate(
   current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
     readonly arguments: Readonly<Record<string, unknown>>
   },
-): number | undefined {
+): Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> | undefined {
   const currentKey = nativeCallKey(sessionId, { name: 'schedule_create', ...current })
   const currentArguments = canonicalRoutineArguments(current.arguments)
   const keys = new Set(events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId).map(dynamicCallKey))
-  let pendingIndex: number | undefined
+  let pending: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> | undefined
+  let pendingIndex = -1
   for (const key of keys) {
     if (key === currentKey) continue
     const matches = events.filter(event => event.name === 'schedule_create' && event.sessionId === sessionId
@@ -362,92 +374,15 @@ function pendingRoutineCreate(
     if (startedIndex < 0 || canonicalRoutineArguments(matches[startedIndex]?.arguments ?? {}) !== currentArguments) continue
     const settledIndex = matches.findLastIndex(event => event.phase === 'settled')
     if (startedIndex <= settledIndex) continue
-    const absoluteIndex = events.findLastIndex(event => event === matches[startedIndex])
-    if (absoluteIndex >= 0 && (pendingIndex === undefined || absoluteIndex > pendingIndex)) pendingIndex = absoluteIndex
-  }
-  return pendingIndex
-}
-
-interface RoutineListReconciliation {
-  readonly kind: 'unknown' | 'absent' | 'found'
-  readonly record?: JsonObject
-}
-
-function routineRecordArguments(record: JsonObject): JsonObject | undefined {
-  const title = record['title']
-  const prompt = record['prompt']
-  const kind = record['kind']
-  if (typeof title !== 'string' || typeof prompt !== 'string' || typeof kind !== 'string') return undefined
-  if (kind === 'after' && typeof record['afterSeconds'] === 'number') {
-    return { title, prompt, after_seconds: record['afterSeconds'] }
-  }
-  if (kind === 'at' && typeof record['scheduledAt'] === 'string') {
-    return { title, prompt, at: record['scheduledAt'] }
-  }
-  if (kind === 'every' && typeof record['everySeconds'] === 'number') {
-    return { title, prompt, every_seconds: record['everySeconds'] }
-  }
-  if (kind === 'daily' && typeof record['time'] === 'string' && typeof record['timeZone'] === 'string') {
-    return { title, prompt, daily: { time: record['time'], time_zone: record['timeZone'] } }
-  }
-  if (kind === 'weekly' && typeof record['time'] === 'string' && typeof record['timeZone'] === 'string'
-    && Array.isArray(record['weekdays']) && record['weekdays'].every(item => typeof item === 'number')) {
-    return {
-      title, prompt,
-      weekly: { time: record['time'], time_zone: record['timeZone'], weekdays: record['weekdays'] },
+    const started = matches[startedIndex]
+    if (started === undefined) continue
+    const absoluteIndex = events.findLastIndex(event => event === started)
+    if (absoluteIndex > pendingIndex) {
+      pendingIndex = absoluteIndex
+      pending = started
     }
   }
-  if (kind === 'cron' && typeof record['expression'] === 'string' && typeof record['timeZone'] === 'string') {
-    return { title, prompt, cron: { expression: record['expression'], time_zone: record['timeZone'] } }
-  }
-  return undefined
-}
-
-function routineListValue(event: BotDynamicToolEvent): readonly JsonObject[] | undefined {
-  if (event.phase !== 'settled' || event.result?.success !== true) return undefined
-  const text = event.result.contentItems[0]?.text
-  if (text === undefined) return undefined
-  try {
-    const parsed: unknown = JSON.parse(text)
-    if (!Array.isArray(parsed)) return undefined
-    const records = parsed.filter((value): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value))
-    return records.length === parsed.length ? records : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Reconcile one unresolved create after a durable schedule listing. A
- * successful list with a matching record proves the earlier write committed;
- * a successful list without one permits a retry. Missing or malformed list
- * evidence stays uncertain because it cannot distinguish a lost reply from a
- * still-running write.
- */
-function reconcilePendingRoutineCreate(
-  events: readonly BotDynamicToolEvent[],
-  sessionId: SessionId,
-  current: Pick<BotDynamicToolEvent, 'callId' | 'threadId' | 'turnId'> & {
-    readonly arguments: Readonly<Record<string, unknown>>
-  },
-): RoutineListReconciliation | undefined {
-  const pendingIndex = pendingRoutineCreate(events, sessionId, current)
-  if (pendingIndex === undefined) return undefined
-  const listStartedIndex = events.findLastIndex((event, index) => index > pendingIndex
-    && event.sessionId === sessionId && event.phase === 'started' && event.name === 'schedule_list')
-  const listSettledIndex = events.findLastIndex((event, index) => index > pendingIndex
-    && event.sessionId === sessionId && event.phase === 'settled' && event.name === 'schedule_list')
-  if (listStartedIndex > listSettledIndex || listSettledIndex < 0) return { kind: 'unknown' }
-  const settledList = events[listSettledIndex]
-  if (settledList === undefined) return { kind: 'unknown' }
-  const list = routineListValue(settledList)
-  if (list === undefined) return { kind: 'unknown' }
-  const currentKey = canonicalRoutineArguments(current.arguments)
-  const record = list.find((candidate) => {
-    const candidateArguments = routineRecordArguments(candidate)
-    return candidateArguments !== undefined && canonicalRoutineArguments(candidateArguments) === currentKey
-  })
-  return record === undefined ? { kind: 'absent' } : { kind: 'found', record }
+  return pending
 }
 
 function safeString(value: string): string {
@@ -654,6 +589,7 @@ interface RoutineCreateReceipt {
 function routineTool(
   action: 'create' | 'list' | 'update' | 'delete',
   routine: NonNullable<BotNativeToolHost['routine']>,
+  reconcile: BotNativeToolHost['routineReconcile'],
   replay: BotNativeToolHost['replay'],
   sessionId: SessionId,
   createFlights: Map<string, RoutineCreateFlight>,
@@ -713,13 +649,20 @@ function routineTool(
             return failure('uncertain-outcome', 'This native routine call identity was already used with different arguments.')
           }
           if (prior !== undefined) return prior
-          const reconciliation = reconcilePendingRoutineCreate(replayed, sessionId, current)
-          if (reconciliation?.kind === 'found') return output(reconciliation.record)
-          if (reconciliation?.kind === 'unknown') {
-            return failure(
-              'uncertain-outcome',
-              'An earlier routine creation with the same request has an unknown outcome. List Bot routines before retrying.',
-            )
+          const pending = pendingRoutineCreate(replayed, sessionId, current)
+          if (pending !== undefined) {
+            if (reconcile === undefined) {
+              return failure(
+                'uncertain-outcome',
+                'An earlier routine creation has an unknown outcome. Reconcile it with the Schedule service before retrying.',
+              )
+            }
+            try {
+              const resolution = await reconcile(arguments_, pending, context)
+              if (resolution.status === 'committed') return output(resolution.record)
+            } catch (error: unknown) {
+              return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+            }
           }
         }
         if (mutates) {
@@ -831,10 +774,10 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         && host.routineAvailable !== undefined
         && await host.routineAvailable(sessionId)
       const routines = !routineEnabled || routine === undefined ? [] : [
-        routineTool('create', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('list', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('update', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
-        routineTool('delete', routine, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('create', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('list', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('update', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
+        routineTool('delete', routine, host.routineReconcile, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
       ]
       return [listTool(client), inspectTool(client), sendTool(client, host, sessionId), managementTool('create'), managementTool('edit'), ...routines]
     },

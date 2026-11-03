@@ -392,6 +392,11 @@ export interface ScheduleCreateOptions {
   readonly idempotencyKey?: string
 }
 
+/** Result of resolving one durable create operation after its native reply was lost. */
+export type ScheduleCreateResolution =
+  | { readonly status: 'absent' }
+  | { readonly status: 'committed'; readonly record: ScheduleRecord }
+
 /** Session-scoped task list, without Agent activation. */
 export interface ScheduleListRequest {
   /** Original Session binding. */

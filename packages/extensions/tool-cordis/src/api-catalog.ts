@@ -2204,9 +2204,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal, options?: ScheduleCreateOptions, ): Promise<ScheduleRecord>',
-        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading inside the serialized queue, after an idempotency lookup, so a retry that finds an existing task never allocates a fresh task id or timing anchor. A reused key with a different canonical request is rejected.',
+        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading inside the serialized queue, after an idempotency lookup, so a retry that finds an existing task never allocates a fresh task id or timing anchor. A reused key with a different canonical request is rejected. Create-operation reconciliation and active listing use the same FIFO, so a lost native result cannot be resolved against a stale empty task set.',
         parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'signal', description: 'Optional cancellation checked before reads and persistence, and after a committed write.' }, { name: 'options', description: 'Optional operation-specific Host retry identity. A repeated key for this Session returns the original record only when the canonical request matches.' }],
         returns: 'The durably stored schedule. Cancellation does not roll back an in-flight write.',
+      },
+      {
+        signature: 'async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateResolution>',
+        description: 'Resolve one Bot create operation after its native reply was lost.\n\nResolution runs in the same FIFO as creation, so a list cannot observe an empty task set while an earlier create is still committing. A pending operation with no task is durably marked absent; later identical requests can therefore be intentional new operations instead of inheriting stale uncertainty forever.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity from the earlier native call.' }, { name: 'signal', description: 'Optional cancellation checked before reads and resolution writes.' }],
+        returns: 'The committed task or a durable absent resolution.',
       },
       {
         signature: '@Remote(\'list\') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>',
@@ -7428,6 +7434,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleCreateRequest',
     declaration: 'export interface ScheduleCreateRequest {\n    prompt: string;\n    title: string;\n    after_seconds?: number;\n    at?: AtInput;\n    every_seconds?: number;\n    daily?: DailyInput;\n    weekly?: WeeklyInput;\n    cron?: CronInput;\n}',
+  },
+  {
+    name: 'ScheduleCreateResolution',
+    declaration: 'export type ScheduleCreateResolution = {\n    readonly status: \'absent\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
   },
   {
     name: 'ScheduleDeleteRequest',

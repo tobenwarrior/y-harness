@@ -205,42 +205,25 @@ describe('durable Bot roster', () => {
       const create = tools.find(tool => tool.name === 'schedule_create')
       if (create === undefined) throw new Error('schedule_create missing')
       const arguments_ = { title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }
+      const startedArguments = { title: ' Daily check ', prompt: ' Check the report ', after_seconds: 60 }
       const context = {
         callId: 'routine-create', threadId: 'thread-1', turnId: 'turn-1', sessionId,
         signal: new AbortController().signal, approvalPolicy: 'on-request' as const, requestApproval: async () => true,
       }
-      const started: BotNativeToolEvent = { phase: 'started', name: 'schedule_create', ...context, arguments: arguments_ }
+      const started: BotNativeToolEvent = { phase: 'started', name: 'schedule_create', ...context, arguments: startedArguments }
       await provider.observe(started)
       const result = await create.execute(arguments_, context)
       expect(result.success).toBe(true)
       const firstRecords = await h.ctx.schedule.list({ sessionId })
       expect(firstRecords).toHaveLength(1)
       expect(await h.ctx.schedule.list({ sessionId: SessionId('other-session') })).toEqual([])
-      // The native result is intentionally not settled. A new native call
-      // cannot be distinguished from an intentional repeat, so it must stay
-      // uncertain rather than allocating a second task.
+      // The native result is intentionally not settled. Schedule reconciliation
+      // resolves the prior durable create before the new call can retry it.
       const newCallContext = {
         ...context, callId: 'routine-new-call', threadId: 'thread-new', turnId: 'turn-new',
       }
       const duplicate = await create.execute(arguments_, newCallContext)
-      expect(duplicate.success).toBe(false)
-      expect(duplicate.contentItems[0]?.text).toContain('uncertain-outcome')
-      expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
-
-      // A successful list is the explicit recovery point for a lost create
-      // reply. It proves the committed task exists, so the next native call
-      // replays that record instead of remaining blocked forever.
-      const list = tools.find(tool => tool.name === 'schedule_list')
-      if (list === undefined) throw new Error('schedule_list missing')
-      const listContext = {
-        ...context, callId: 'routine-list', threadId: 'thread-list', turnId: 'turn-list',
-      }
-      await provider.observe({ phase: 'started', name: 'schedule_list', ...listContext, arguments: {} })
-      const listed = await list.execute({}, listContext)
-      expect(listed.success).toBe(true)
-      await provider.observe({ phase: 'settled', name: 'schedule_list', ...listContext, arguments: {}, result: listed })
-      const reconciled = await create.execute(arguments_, newCallContext)
-      expect(reconciled.success).toBe(true)
+      expect(duplicate.success).toBe(true)
       expect(await h.ctx.schedule.list({ sessionId })).toHaveLength(1)
       const serviceCancelled = new AbortController()
       serviceCancelled.abort()

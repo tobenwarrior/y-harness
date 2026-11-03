@@ -8,7 +8,7 @@ import { delegationDepthOf } from '@yharness/subagent'
 import type { SessionId } from '@yharness/session'
 import type { SessionActivity } from '@yharness/workspace'
 import { ScheduleRuntime } from './runtime.ts'
-import { scheduleDomain } from './storage.ts'
+import { scheduleDomain, type ScheduleCreateOperation } from './storage.ts'
 import { deliveryHistoryPage } from './delivery-history.ts'
 import { resolveScheduleUpdate } from './update.ts'
 import {
@@ -17,8 +17,9 @@ import {
   parseAtInput, parseDailyInput, parseWeeklyInput, parseCronInput, scheduleTitle,
 } from './domain.ts'
 import type {
-  DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleDeleteRequest, ScheduleDeleteResult,
-  ScheduleCreateOptions, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest, ScheduleRecord,
+  DeliveryRetentionBounds, ScheduleCatalogEntry, ScheduleCreateRequest, ScheduleCreateOptions, ScheduleCreateResolution,
+  ScheduleDeleteRequest, ScheduleDeleteResult, ScheduleDeliveryHistoryRequest, ScheduleDeliveryHistoryResult, ScheduleListRequest,
+  ScheduleRecord,
   ScheduleUpdateRequest, ScheduleUpdateResult, SubagentSessionError,
 } from './types.ts'
 
@@ -113,6 +114,23 @@ function scheduleCreateFingerprint(request: ScheduleCreateRequest, title: string
   }
   if (request.cron !== undefined) canonical.cron = parseCronInput(request.cron)
   return createHash('sha256').update(canonicalJson(canonical)).digest('hex')
+}
+
+function scheduleOperationKey(sessionId: SessionId, idempotencyKey: string): string {
+  return createHash('sha256').update(String(sessionId)).update('\0').update(idempotencyKey).digest('hex')
+}
+
+function createOperation(
+  sessionId: SessionId,
+  idempotencyKey: string,
+  requestFingerprint: string,
+  status: ScheduleCreateOperation['status'],
+  record?: ScheduleRecord,
+): ScheduleCreateOperation {
+  return {
+    sessionId, idempotencyKey, requestFingerprint, status,
+    ...(record === undefined ? {} : { record }),
+  }
 }
 
 /**
@@ -247,7 +265,9 @@ export class ScheduleService extends TypertRemoteService {
    * The record is built from the clock reading inside the serialized queue, after
    * an idempotency lookup, so a retry that finds an existing task never allocates
    * a fresh task id or timing anchor. A reused key with a different canonical
-   * request is rejected.
+   * request is rejected. Create-operation reconciliation and active listing use
+   * the same FIFO, so a lost native result cannot be resolved against a stale
+   * empty task set.
    * @param sessionId - Original Session receiving the reminder.
    * @param request - Validated tool selector, required title, and reminder content.
    * @param signal - Optional cancellation checked before reads and persistence, and after a committed write.
@@ -280,15 +300,44 @@ export class ScheduleService extends TypertRemoteService {
       const domain = await this.getDomain()
       signal?.throwIfAborted()
       if (idempotencyKey !== undefined) {
-        const existing = [...domain.table('tasks').entries()].find(([, task]) =>
-          task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+        const operationId = idempotencyKey
+        const fingerprint = requestFingerprint
+        if (fingerprint === undefined) throw new ScheduleLogError('A retry operation is missing its request fingerprint.')
+        const tasks = domain.table('tasks')
+        const operations = domain.table('create_operations')
+        const operationKey = scheduleOperationKey(sessionId, operationId)
+        const operation = operations.get(operationKey)
+        if (operation !== undefined && operation.requestFingerprint !== fingerprint) {
+          throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+        }
+        if (operation?.status === 'committed') {
+          const committed = operation.record
+          if (committed === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+          // Keep the read inside the serialized operation so cancellation after
+          // an idempotent lookup remains observable even if the task was later deleted.
+          const matching = [...tasks.entries()].find(([, task]) =>
+            task.sessionId === sessionId && task.idempotencyKey === operationId)
+          if (matching !== undefined && matching[1].requestFingerprint !== fingerprint) {
+            throw new ScheduleLogError('A committed create operation conflicts with its stored task.')
+          }
+          signal?.throwIfAborted()
+          return committed
+        }
+        const existing = [...tasks.entries()].find(([, task]) =>
+          task.sessionId === sessionId && task.idempotencyKey === operationId)
         signal?.throwIfAborted()
         if (existing !== undefined) {
-          if (existing[1].requestFingerprint !== requestFingerprint) {
+          if (existing[1].requestFingerprint !== fingerprint) {
             throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
           }
+          await operations.put(operationKey, createOperation(
+            sessionId, operationId, fingerprint, 'committed', existing[1].record,
+          ))
+          signal?.throwIfAborted()
           return existing[1].record
         }
+        await operations.put(operationKey, createOperation(sessionId, operationId, fingerprint, 'pending'))
+        signal?.throwIfAborted()
       }
       const id = ScheduleId(`schedule-${randomUUID()}`)
       const now = Date.now()
@@ -311,10 +360,85 @@ export class ScheduleService extends TypertRemoteService {
         ...(idempotencyKey === undefined ? {} : { idempotencyKey, requestFingerprint }),
         deliveryHistory: { records: [], earlierRecordsUnavailable: false },
       })
+      if (idempotencyKey !== undefined && requestFingerprint !== undefined) {
+        await domain.table('create_operations').put(
+          scheduleOperationKey(sessionId, idempotencyKey),
+          createOperation(sessionId, idempotencyKey, requestFingerprint, 'committed', record),
+        )
+      }
       this.emitChanged()
       this.runtime?.requestDrive()
       signal?.throwIfAborted()
       return record
+    })
+  }
+
+  /**
+   * Resolve one Bot create operation after its native reply was lost.
+   *
+   * Resolution runs in the same FIFO as creation, so a list cannot observe an
+   * empty task set while an earlier create is still committing. A pending
+   * operation with no task is durably marked absent; later identical requests
+   * can therefore be intentional new operations instead of inheriting stale
+   * uncertainty forever.
+   *
+   * @param sessionId - Original Session receiving the reminder.
+   * @param request - Validated tool selector, required title, and reminder content.
+   * @param idempotencyKey - Operation identity from the earlier native call.
+   * @param signal - Optional cancellation checked before reads and resolution writes.
+   * @returns The committed task or a durable absent resolution.
+   */
+  async reconcileCreate(
+    sessionId: SessionId,
+    request: ScheduleCreateRequest,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ScheduleCreateResolution> {
+    if (Number(request.at !== undefined) + Number(request.after_seconds !== undefined)
+      + Number(request.every_seconds !== undefined) + Number(request.daily !== undefined)
+      + Number(request.weekly !== undefined) + Number(request.cron !== undefined) > 1) {
+      throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
+    }
+    const title = scheduleTitle(request.title)
+    if (idempotencyKey.length === 0 || idempotencyKey.length > 256 || idempotencyKey.trim() !== idempotencyKey) {
+      throw new ScheduleInputError('invalid_rule', 'idempotencyKey must be non-empty, trimmed, and at most 256 characters.')
+    }
+    const requestFingerprint = scheduleCreateFingerprint(request, title)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      signal?.throwIfAborted()
+      const tasks = domain.table('tasks')
+      const operations = domain.table('create_operations')
+      const operationKey = scheduleOperationKey(sessionId, idempotencyKey)
+      const operation = operations.get(operationKey)
+      if (operation !== undefined && operation.requestFingerprint !== requestFingerprint) {
+        throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+      }
+      const committed = (record: ScheduleRecord): ScheduleCreateResolution => {
+        return { status: 'committed', record }
+      }
+      if (operation?.status === 'committed') {
+        const record = operation.record
+        if (record === undefined) throw new ScheduleLogError('A committed create operation is missing its stored task record.')
+        signal?.throwIfAborted()
+        return committed(record)
+      }
+      const existing = [...tasks.entries()].find(([, task]) =>
+        task.sessionId === sessionId && task.idempotencyKey === idempotencyKey)
+      if (existing !== undefined) {
+        if (existing[1].requestFingerprint !== requestFingerprint) {
+          throw new ScheduleInputError('invalid_rule', 'idempotencyKey was already used for a different reminder request.')
+        }
+        signal?.throwIfAborted()
+        await operations.put(operationKey, createOperation(
+          sessionId, idempotencyKey, requestFingerprint, 'committed', existing[1].record,
+        ))
+        return { status: 'committed', record: existing[1].record }
+      }
+      if (operation?.status === 'resolved_absent') return { status: 'absent' }
+      signal?.throwIfAborted()
+      await operations.put(operationKey, createOperation(sessionId, idempotencyKey, requestFingerprint, 'resolved_absent'))
+      return { status: 'absent' }
     })
   }
 
@@ -325,10 +449,12 @@ export class ScheduleService extends TypertRemoteService {
    */
   @Remote('list')
   async list(request: ScheduleListRequest): Promise<ScheduleRecord[]> {
-    const domain = await this.getDomain()
-    return [...domain.table('tasks').entries()]
-      .filter(([, task]) => task.sessionId === request.sessionId && task.status === 'active')
-      .map(([, task]) => task.record)
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      return [...domain.table('tasks').entries()]
+        .filter(([, task]) => task.sessionId === request.sessionId && task.status === 'active')
+        .map(([, task]) => task.record)
+    })
   }
 
   /**
