@@ -195,6 +195,23 @@ describe('virtualManifest', () => {
     }
   })
 
+  it('selects the newest version deterministically when no exact version is requested', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-deterministic-'))
+    try {
+      const name = '@scope/pkg'
+      const store = join(root, 'store')
+      for (const version of ['2.6.9', '4.4.3']) {
+        const manifestDir = join(store, `${name.replace('/', '+')}@${version}`, 'node_modules', name)
+        mkdirSync(manifestDir, { recursive: true })
+        writeFileSync(join(manifestDir, 'package.json'), JSON.stringify({ name, version, license: 'MIT' }))
+      }
+
+      expect(virtualManifest(store, name)).toMatchObject({ name, version: '4.4.3' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('returns undefined when neither the prefix nor the content scan finds the package', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-notices-miss-'))
     try {

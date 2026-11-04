@@ -11,6 +11,7 @@
 import { existsSync, globSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import * as yaml from 'js-yaml'
+import { compare, valid } from 'semver'
 import { parse as parseToml, type TomlTableWithoutBigInt, type TomlValueWithoutBigInt } from 'smol-toml'
 import parseSpdx from 'spdx-expression-parse'
 import primaryRuntimeLock from './primary-runtime/lock.json' with { type: 'json' }
@@ -257,15 +258,16 @@ export function claudeDistributionFromManifest(
 }
 
 /**
- * Resolve one package's manifest inside a pnpm virtual store. The prefix scan
- * matches ordinary `@scope+name@version` directory names; pnpm 11 truncates
- * long names (a peer-suffixed name past the length limit becomes
- * `<prefix>_<hash>`), so a content scan falls back over the whole store when
- * the prefix misses.
+ * Resolve one package's manifest inside a pnpm virtual store. The store can
+ * retain historical versions and pnpm 11 can truncate long directory names,
+ * so candidates are inspected by content and ordered independently of
+ * filesystem enumeration. An exact expected version remains authoritative;
+ * otherwise the newest valid package version is selected.
  *
  * @param virtual - the `.pnpm` virtual store directory to scan.
  * @param name - the external package name, exactly as `node_modules` spells it.
- * @param expectedVersion - exact version required when the store retains more than one.
+ * @param expectedVersion - exact version required when the store retains more than one;
+ *   without it, the newest valid version is selected deterministically.
  * @returns the parsed manifest, or `undefined` when neither the prefix match
  *   nor the content scan finds the requested package version.
  */
@@ -274,20 +276,30 @@ export function virtualManifest(
   name: string,
   expectedVersion?: string,
 ): VirtualManifest | undefined {
-  const prefix = `${name.replace('/', '+')}@`
   const entries = readdirSync(virtual)
-  for (const entry of entries.filter(dir => dir.startsWith(prefix))) {
-    const manifest = JSON.parse(readFileSync(resolve(virtual, entry, 'node_modules', name, 'package.json'), 'utf8')) as VirtualManifest
-    if (expectedVersion === undefined || manifest.version === expectedVersion) return manifest
-  }
-  for (const dir of entries) {
-    const candidate = resolve(virtual, dir, 'node_modules', name, 'package.json')
-    if (existsSync(candidate)) {
-      const manifest = JSON.parse(readFileSync(candidate, 'utf8')) as VirtualManifest
-      if (expectedVersion === undefined || manifest.version === expectedVersion) return manifest
+  const candidates: Array<{ readonly path: string; readonly manifest: VirtualManifest }> = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const candidate = resolve(virtual, entry, 'node_modules', name, 'package.json')
+    if (!existsSync(candidate) || seen.has(candidate)) continue
+    seen.add(candidate)
+    const manifest = JSON.parse(readFileSync(candidate, 'utf8')) as VirtualManifest
+    if (expectedVersion === undefined || manifest.version === expectedVersion) {
+      candidates.push({ path: candidate, manifest })
     }
   }
-  return undefined
+  candidates.sort((left, right) => {
+    const leftVersion = left.manifest.version === undefined ? null : valid(left.manifest.version)
+    const rightVersion = right.manifest.version === undefined ? null : valid(right.manifest.version)
+    if (leftVersion !== null && rightVersion === null) return -1
+    if (leftVersion === null && rightVersion !== null) return 1
+    if (leftVersion !== null && rightVersion !== null) {
+      const versionOrder = compare(rightVersion, leftVersion)
+      if (versionOrder !== 0) return versionOrder
+    }
+    return left.path.localeCompare(right.path)
+  })
+  return candidates[0]?.manifest
 }
 
 const workspaceLinkedManifestCache = new Map<string, VirtualManifest | undefined>()
@@ -314,10 +326,24 @@ function workspaceLinkedManifest(name: string, manifests: Map<string, Manifest>)
   return undefined
 }
 
+/** Resolve one exact workspace declaration when the virtual store has historical copies. */
+function exactWorkspaceDependencyVersion(name: string, manifests: Map<string, Manifest>): string | undefined {
+  const versions = new Set<string>()
+  for (const manifest of manifests.values()) {
+    for (const kind of ALL_KINDS) {
+      const spec = manifest[kind]?.[name]
+      const version = spec === undefined ? null : valid(spec)
+      if (version !== null) versions.add(version)
+    }
+  }
+  return versions.size === 1 ? [...versions][0] : undefined
+}
+
 /** Resolve one installed external package manifest from either pnpm store. */
 function installedManifest(name: string, manifests: Map<string, Manifest>, expectedVersion?: string): VirtualManifest | undefined {
+  const resolvedExpectedVersion = expectedVersion ?? exactWorkspaceDependencyVersion(name, manifests)
   const linked = workspaceLinkedManifest(name, manifests)
-  if (linked !== undefined && (expectedVersion === undefined || linked.version === expectedVersion)) return linked
+  if (linked !== undefined && (resolvedExpectedVersion === undefined || linked.version === resolvedExpectedVersion)) return linked
   let manifest: (Manifest & { license?: string; repository?: string | { url?: string }; homepage?: string }) | undefined
   // Workspace-local link farms can expose a dependency that is not linked at
   // the repository root; both are backed by the root workspace's lockfile.
@@ -325,14 +351,14 @@ function installedManifest(name: string, manifests: Map<string, Manifest>, expec
     const direct = resolve(root, store, name, 'package.json')
     if (existsSync(direct)) {
       const candidate = JSON.parse(readFileSync(direct, 'utf8')) as typeof manifest
-      if (expectedVersion === undefined || candidate?.version === expectedVersion) {
+      if (resolvedExpectedVersion === undefined || candidate?.version === resolvedExpectedVersion) {
         manifest = candidate
         break
       }
     }
     const virtual = resolve(root, store, '.pnpm')
     if (!existsSync(virtual)) continue
-    manifest = virtualManifest(virtual, name, expectedVersion)
+    manifest = virtualManifest(virtual, name, resolvedExpectedVersion)
     if (manifest !== undefined) break
   }
   return manifest

@@ -3597,7 +3597,11 @@ export class BotService extends TypertRemoteService {
 
   /** Recover all Bot edits that were interrupted after their intent was saved. */
   private async recoverPendingMemoryUpdates(bots: KvTable<BotRecord['id'], BotStoredRecord>): Promise<void> {
-    const profileState = await this.readProfileRevisionState(bots, true)
+    const profileState = await this.readProfileRevisionState(bots, true, true)
+    // A crashed Host may leave the shared-roster fence in the profile record.
+    // Startup can inspect that state so the owner can recover it, but must not
+    // replay or clear Bot edits while another Host's profile mutation is unresolved.
+    if (profileState.sharedRosterFence !== undefined) return
     for (const [, stored] of bots.entries()) {
       const record = applyProfileSnapshot(stored, profileState.profiles[String(stored.id)])
       this.cacheBotRecord(record)
@@ -5298,10 +5302,14 @@ export class BotService extends TypertRemoteService {
     return this.listFromDomain(request, await this.getDomain())
   }
 
-  private async listFromDomain(request: BotListRequest, domain: Domain<typeof botDomain>): Promise<BotListValue> {
+  private async listFromDomain(
+    request: BotListRequest,
+    domain: Domain<typeof botDomain>,
+    allowSharedRosterFence = false,
+  ): Promise<BotListValue> {
     const bots = domain.table('bots')
     const includeHidden = request.includeHidden === true
-    const profileState = await this.readProfileRevisionState(bots)
+    const profileState = await this.readProfileRevisionState(bots, false, allowSharedRosterFence)
     const rows = [...bots.entries()].map(([, record]) => {
       const current = applyProfileSnapshot(record, profileState.profiles[String(record.id)])
       this.cacheBotRecord(current)
@@ -7059,12 +7067,16 @@ export class BotService extends TypertRemoteService {
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
    * Released v1 and setup-release v2 records are read only as migration sources
    * for the v3 successor; both predecessors remain unchanged.
+   * Startup discovery may allow a held shared-roster fence only for a
+   * read-only projection so the owner can inspect and recover an abandoned
+   * fence; ordinary reads continue to fail closed while the fence is held.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
     reconcilePending = false,
+    allowSharedRosterFence = false,
   ): Promise<BotProfileRevisionState> {
-    return this.withProfileRevisionState(bots, state => state, reconcilePending)
+    return this.withProfileRevisionState(bots, state => state, reconcilePending, allowSharedRosterFence)
   }
 
   /**
@@ -7075,12 +7087,15 @@ export class BotService extends TypertRemoteService {
    * @param bots - Durable Bot table used for identity and revision checks.
    * @param read - Projection to evaluate against the fenced profile state.
    * @param reconcilePending - Whether a blocked local pending transaction may retry.
+   * @param allowSharedRosterFence - Startup-only read permission for an existing
+   *   fence; it suppresses profile recovery and record writes while held.
    * @returns The projection produced from one fenced profile and Bot-table view.
    */
   private async withProfileRevisionState<T>(
     bots: KvTable<BotRecord['id'], BotRecord>,
     read: (state: BotProfileRevisionState) => T | PromiseLike<T>,
     reconcilePending = false,
+    allowSharedRosterFence = false,
   ): Promise<T> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) {
@@ -7097,13 +7112,16 @@ export class BotService extends TypertRemoteService {
       )
       let state = merged.state
       let changed = merged.changed
-      if (state.sharedRosterFence !== undefined) {
+      const sharedRosterFenceHeld = state.sharedRosterFence !== undefined
+      if (sharedRosterFenceHeld && !allowSharedRosterFence) {
         throw new Error('Bot profile is changing during a shared group admission')
       }
-      const allowPendingStateTransition = state.pending === undefined
-        || reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)
+      const allowPendingStateTransition = state.pending === undefined || (
+        !sharedRosterFenceHeld
+        && (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId))
+      )
       assertProfileRosterMatchesDurableBots(state, bots, allowPendingStateTransition)
-      if (state.pending !== undefined) {
+      if (state.pending !== undefined && allowPendingStateTransition) {
         if (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)) {
           const pendingTransactionId = state.pending.transactionId
           state = await this.recoverPendingProfile(state, bots)
@@ -7112,6 +7130,7 @@ export class BotService extends TypertRemoteService {
         }
       }
       projection = { value: await read(state) }
+      if (sharedRosterFenceHeld) return undefined
       if (state.pending === undefined) return changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
       return profileRevisionRecordOfState(state)
@@ -7424,7 +7443,7 @@ export class BotService extends TypertRemoteService {
           this.sharedSessionFailures.add(sessionKey)
         }
       }
-      const bots = (await this.listFromDomain({ includeHidden: true }, domain)).bots
+      const bots = (await this.listFromDomain({ includeHidden: true }, domain, true)).bots
       const botsById = new Map(bots.map(bot => [String(bot.id), bot]))
       for (const binding of bindings) {
         if (!validPrivateSessionKeys.has(String(binding.sessionId))) continue
