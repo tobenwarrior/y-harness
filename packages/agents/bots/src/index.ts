@@ -768,11 +768,16 @@ function legacyPendingWasApplied(
   if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
   const expected = profileSnapshotOf(pending.record)
   const fields: readonly (keyof BotProfileSnapshot)[] = [
-    'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
+    'roster', 'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
     'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate',
     'pinned', 'hidden', 'group', 'updatedAt',
   ]
-  const matches = fields.every(field => profileValuesEqual(profile[field] ?? null, expected[field] ?? null))
+  const matches = fields.every((field) => {
+    // An omitted field is not evidence for an explicit null clear. Require every
+    // field claimed by the immutable pending row to be present in the v2 snapshot.
+    return !Object.hasOwn(expected, field)
+      || (Object.hasOwn(profile, field) && profileValuesEqual(profile[field], expected[field]))
+  })
   if (!matches) throw new Error('Bot profile revision cannot acknowledge a conflicting legacy pending transaction')
   return true
 }
