@@ -676,11 +676,6 @@ interface BotProfileRevisionState {
 
 type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
 
-const BOT_PROFILE_COMPLETE_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
-  'roster', 'name', 'persona', 'capabilities', 'identity', 'accent',
-  'pendingMemoryUpdate', 'pinned', 'hidden', 'group', 'updatedAt',
-]
-
 function profileValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
@@ -767,28 +762,40 @@ function legacyPendingWasApplied(
 ): boolean {
   const id = String(pending.record.id)
   const revision = current.revisions[id]
-  if (revision === undefined || revision < pending.record.updatedAt) return false
+  if (revision === undefined) {
+    if (current.profiles[id] !== undefined) {
+      throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+    }
+    return false
+  }
   const profile = current.profiles[id]
   if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
-  if (revision > pending.record.updatedAt) {
-    // A newer revision supersedes the pending row only when its required fields are present.
-    const complete = BOT_PROFILE_COMPLETE_FIELDS.every(field => Object.hasOwn(profile, field))
-    if (!complete) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
-    return true
-  }
+  if (profile.updatedAt !== revision) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+  if (revision < pending.record.updatedAt) return false
   const expected = profileSnapshotOf(pending.record)
   const fields: readonly (keyof BotProfileSnapshot)[] = [
     'roster', 'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
     'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate',
     'pinned', 'hidden', 'group', 'updatedAt',
   ]
+  const newer = revision > pending.record.updatedAt
   const matches = fields.every((field) => {
-    // Preserve omission as data: an optional field present only in v2 can be a
-    // stale value from another generation, not evidence for this pending row.
     const expectedHasField = Object.hasOwn(expected, field)
     const profileHasField = Object.hasOwn(profile, field)
-    return expectedHasField === profileHasField
-      && (!expectedHasField || profileValuesEqual(profile[field], expected[field]))
+    if (expectedHasField !== profileHasField) return false
+    if (!expectedHasField) return true
+    if (!newer) return profileValuesEqual(profile[field], expected[field])
+    if (field === 'updatedAt') return profile.updatedAt === revision
+    if (field === 'roster') {
+      const expectedRoster = expected.roster
+      const profileRoster = profile.roster
+      return expectedRoster !== undefined && profileRoster !== undefined
+        && profileRoster.id === expectedRoster.id
+        && profileRoster.sessionId === expectedRoster.sessionId
+        && profileRoster.ownerId === expectedRoster.ownerId
+        && profileRoster.createdAt === expectedRoster.createdAt
+    }
+    return true
   })
   if (!matches) throw new Error('Bot profile revision cannot acknowledge a conflicting legacy pending transaction')
   return true

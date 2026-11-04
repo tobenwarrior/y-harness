@@ -4693,6 +4693,223 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed when a newer v2 revision omits pending optional fields', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer optional evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      description: 'Pending description',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      avatar: {
+        attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`),
+        mediaType: 'image/png',
+        bytes: 3,
+        width: 1,
+        height: 1,
+      },
+      eventRoutines: [],
+      connectedAppIds: [],
+      connectedAppDenyIds: [],
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-optional-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when newer v2 evidence has an inconsistent timestamp or roster identity', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer identity evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-identity-evidence', record: pendingRecord },
+      },
+    })
+    const revision = pendingRecord.updatedAt + 1
+    const completeProfile = {
+      roster: {
+        id,
+        sessionId: String(pendingRecord.sessionId),
+        ownerId: pendingRecord.ownerId,
+        cwd: pendingRecord.cwd,
+        state: pendingRecord.state,
+        createdAt: pendingRecord.createdAt,
+      },
+      name: pendingRecord.name,
+      persona: null,
+      capabilities: null,
+      identity: pendingRecord.identity,
+      accent: pendingRecord.accent,
+      pendingMemoryUpdate: null,
+      pinned: false,
+      hidden: false,
+      group: null,
+      updatedAt: revision,
+    }
+    try {
+      for (const profile of [
+        { ...completeProfile, updatedAt: revision - 1 },
+        { ...completeProfile, roster: { ...completeProfile.roster, id: 'bot-other' } },
+      ]) {
+        records.set(currentKey, {
+          kind: 'grant',
+          payload: { version: 2, revisions: { [id]: revision }, profiles: { [id]: profile } },
+        })
+        await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when an existing newer v2 profile has no revision evidence', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Missing revision evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Stale pending profile',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-missing-revision-evidence', record: pendingRecord },
+      },
+    })
+    records.set(currentKey, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: {},
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: 'Newer durable profile',
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    })
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails closed when same-revision v2 evidence restores omitted description or avatar', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
