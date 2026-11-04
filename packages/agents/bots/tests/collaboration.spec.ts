@@ -400,6 +400,55 @@ describe('Bot collaboration seam', () => {
     expect(text).not.toContain('Descendant of earlier markerless routine request.')
   })
 
+  it('fails closed when an incomplete markerless group follows a legacy turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ambiguous earlier private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Ambiguous earlier private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete group source after legacy turn.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-incomplete-after'), messageId: BotGroupMessageId('bot-group-incomplete-after-message') },
+    }), 3))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete group private request.' }], source: { kind: 'user' },
+    }), 4))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Ambiguous earlier private request.')
+    expect(text).not.toContain('Ambiguous earlier private reply.')
+    expect(text).not.toContain('Incomplete group private request.')
+  })
+
+  it('fails closed when an incomplete markerless routine follows a legacy turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ambiguous earlier routine request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Ambiguous earlier routine reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete routine source after legacy turn.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-incomplete-after', triggerEventSeq: 3,
+      },
+    }), 3))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete routine private request.' }], source: { kind: 'user' },
+    }), 4))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Ambiguous earlier routine request.')
+    expect(text).not.toContain('Ambiguous earlier routine reply.')
+    expect(text).not.toContain('Incomplete routine private request.')
+  })
+
   it('delivers to the target Session with durable sender identity and is idempotent', async () => {
     const h = harness()
     const client = await h.client

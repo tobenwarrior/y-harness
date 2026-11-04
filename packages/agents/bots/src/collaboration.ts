@@ -307,7 +307,12 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
     markTurnEvents(turn)
   }
 
+  const taintAmbiguousLegacyTurn = (): void => {
+    if (lastLegacyAssistantTurn !== undefined) taintTurn(lastLegacyAssistantTurn)
+  }
+
   const closeLegacySegment = (failClosedForTaintedTurn: boolean): void => {
+    if (legacySegmentTainted) taintAmbiguousLegacyTurn()
     if (legacySegmentTainted
       || (failClosedForTaintedTurn
         && lastLegacyAssistantTurn !== undefined
@@ -375,7 +380,10 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       || event.sourceEventSeqs?.some(seq => groupSourceSeqs.has(String(seq))) === true
     if (citesGroup) {
       groupSourceSeqs.add(seq)
-      if (currentTurn === undefined) legacySegmentTainted = true
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
       else {
         taintTurn(currentTurn)
       }
@@ -384,7 +392,10 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       || event.sourceEventSeqs?.some(seq => routineSourceSeqs.has(String(seq))) === true
     if (citesRoutine) {
       routineSourceSeqs.add(seq)
-      if (currentTurn === undefined) legacySegmentTainted = true
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
       else {
         taintTurn(currentTurn)
       }
@@ -394,7 +405,10 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       return taintedEventSeqs.has(source)
     }) === true
     if (citesTainted) {
-      if (currentTurn === undefined) legacySegmentTainted = true
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
       else {
         taintTurn(currentTurn)
       }
