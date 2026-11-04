@@ -36,11 +36,33 @@ import type {
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
-import type { BotShareActions } from './controller.ts'
+import { createPendingGroupStore } from './controller.ts'
+import type { BotGroupPendingStore, BotShareActions } from './controller.ts'
 import type { BotSummary } from './types.ts'
 import type { SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
+
+const SHARED_GROUP_PENDING_STORAGE_KEY = 'yharness.client-ui-bots.pending-shared-group-operations'
+
+interface SharedPendingGroupMessage {
+  readonly text: string
+  readonly messageId: BotGroupMessageIdType
+}
+
+interface SharedPendingGroupState {
+  readonly store: BotGroupPendingStore
+  readonly creations: Map<string, BotGroupIdType>
+  readonly messages: Map<string, SharedPendingGroupMessage>
+}
+
+function sharedGroupCreationKey(name: string, botIds: readonly string[]): string {
+  return `${name}\u0000${[...botIds].sort().join('\u0000')}`
+}
+
+function sharedGroupMessageKey(groupId: string, text: string): string {
+  return `${groupId}\u0000${text}`
+}
 
 function shareRoleLabel(role: BotShareRole, t: Translate): string {
   switch (role) {
@@ -358,15 +380,23 @@ function SharedGroupCreateDialog({ open, onClose, onCreate, bots, error, t }: {
   const [name, setName] = useState('')
   const [selected, setSelected] = useState<readonly string[]>([])
   const [submitting, setSubmitting] = useState(false)
-  const requestIdRef = useRef<{ readonly signature: string; readonly id: BotGroupIdType } | null>(null)
+  const openRef = useRef(open)
+  openRef.current = open
+  const dialogGenerationRef = useRef(0)
 
   useEffect(() => {
+    dialogGenerationRef.current += 1
     if (!open) return
     setName('')
     setSelected([])
     setSubmitting(false)
-    requestIdRef.current = null
   }, [open])
+
+  const close = (): void => {
+    dialogGenerationRef.current += 1
+    setSubmitting(false)
+    onClose()
+  }
 
   const toggle = (id: string, checked: boolean): void => {
     setSelected(current => checked ? [...current, id] : current.filter(value => value !== id))
@@ -379,33 +409,28 @@ function SharedGroupCreateDialog({ open, onClose, onCreate, bots, error, t }: {
       return bot === undefined ? [] : [bot.id]
     })
     if (trimmed === '' || botIds.length < 2 || botIds.length > 6 || submitting) return
-    const signature = `${trimmed}\u0000${botIds.map(String).join('\u0000')}`
-    const requestId = requestIdRef.current?.signature === signature
-      ? requestIdRef.current.id
-      : brandString<BotGroupIdType>(`bot-group-${randomUUID()}`)
-    requestIdRef.current = { signature, id: requestId }
+    const dialogGeneration = dialogGenerationRef.current
     setSubmitting(true)
     try {
-      await onCreate({ id: requestId, name: trimmed, botIds })
-      requestIdRef.current = null
-      onClose()
+      await onCreate({ name: trimmed, botIds })
+      if (openRef.current && dialogGenerationRef.current === dialogGeneration) close()
     } catch {
       // Keep the selection and draft in place so the owner can retry.
     } finally {
-      setSubmitting(false)
+      if (openRef.current && dialogGenerationRef.current === dialogGeneration) setSubmitting(false)
     }
   }
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={close}
       title={t('sharedGroupCreateTitle')}
       description={t('sharedGroupCreateDescription')}
       closeLabel={t('cancel')}
       footer={(
         <>
-          <Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="ghost" onClick={close}>{t('cancel')}</Button>
           <Button
             variant="primary"
             onClick={() => { void submit() }}
@@ -497,6 +522,18 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const [pendingGroupState] = useState<SharedPendingGroupState>(() => {
+    const store = createPendingGroupStore(SHARED_GROUP_PENDING_STORAGE_KEY)
+    const restored = store.read()
+    return {
+      store,
+      creations: new Map(Object.entries(restored.creations).map(([key, id]) => [key, brandString<BotGroupIdType>(id)])),
+      messages: new Map(Object.entries(restored.messages).map(([key, message]) => [key, {
+        text: message.text,
+        messageId: brandString<BotGroupMessageIdType>(message.messageId),
+      }])),
+    }
+  })
   const openRef = useRef(open)
   openRef.current = open
   const selectedBotIdRef = useRef<string | null>(null)
@@ -514,7 +551,16 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const groupDraftRevisionRef = useRef(0)
   const groupInviteGenerationRef = useRef(0)
   const createGroupGenerationRef = useRef(0)
-  const groupPendingMessageIdsRef = useRef(new Map<string, BotGroupMessageIdType>())
+  const persistPendingGroupState = (): boolean => pendingGroupState.store.write({
+    creations: Object.fromEntries(pendingGroupState.creations),
+    messages: Object.fromEntries([...pendingGroupState.messages.entries()].map(([key, message]) => [key, {
+      text: message.text,
+      messageId: String(message.messageId),
+    }])),
+  })
+  const requirePendingGroupDurability = (): void => {
+    if (!pendingGroupState.store.durable) throw new Error(t('sharedGroupRetryUnavailable'))
+  }
   const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
   const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
   const hasPendingChat = chatWorkingBotIds.size > 0
@@ -688,6 +734,39 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setGroupWorking(current => current === 'create' ? null : current)
   }
 
+  const reconcileGroupCreation = async (
+    id: BotGroupIdType,
+    name: string,
+    botIds: readonly string[],
+  ): Promise<BotGroupView | undefined> => {
+    const listGroups = client.listGroups
+    if (listGroups === undefined) throw new Error(t('sharedGroupRetryUnavailable'))
+    const result = await listGroups()
+    if (!result.ok) throw new Error(result.error.message || t('sharedGroupRetryUnavailable'))
+    const existing = result.value.groups.find(group => String(group.id) === String(id))
+    if (existing === undefined) return undefined
+    const existingIds = existing.botIds.map(String).sort()
+    const requestedIds = [...botIds].map(String).sort()
+    if (existing.name !== name || existingIds.length !== requestedIds.length
+      || !existingIds.every((botId, index) => botId === requestedIds[index])) {
+      throw new Error(t('sharedGroupRetryConflict'))
+    }
+    return existing
+  }
+
+  const reconcileGroupMessage = async (groupId: string, messageId: BotGroupMessageIdType, text: string): Promise<boolean> => {
+    const inspectGroup = client.inspectGroup
+    if (inspectGroup === undefined) throw new Error(t('sharedGroupRetryUnavailable'))
+    const result = await inspectGroup(groupId)
+    if (!result.ok) throw new Error(result.error.message || t('sharedGroupRetryUnavailable'))
+    const existing = result.value.messages.find(messageRow => String(messageRow.id) === String(messageId))
+    if (existing === undefined) return false
+    if (String(existing.groupId) !== groupId || existing.text !== text || existing.sender.kind !== 'user') {
+      throw new Error(t('sharedGroupRetryConflict'))
+    }
+    return true
+  }
+
   useEffect(() => {
     lifecycleGenerationRef.current += 1
     readGenerationRef.current += 1
@@ -820,6 +899,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const create = client.createGroup
     const lifecycleGeneration = lifecycleGenerationRef.current
     if (create === undefined || !isCurrentLifecycle(lifecycleGeneration)) return
+    const name = request.name.trim()
+    const botIds = request.botIds.map(String)
+    const pendingKey = sharedGroupCreationKey(name, botIds)
+    const pendingId = pendingGroupState.creations.get(pendingKey)
+    const id = pendingId ?? brandString<BotGroupIdType>(`bot-group-${randomUUID()}`)
     const createGeneration = createGroupGenerationRef.current
     const selectionGeneration = groupOperationGenerationRef.current
     const selectedGroupBeforeCreate = selectedGroupIdRef.current
@@ -832,10 +916,34 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setCreateGroupError(null)
     setGroupWorking('create')
     try {
-      const result = await create(request)
+      let created: BotGroupView | undefined
+      if (pendingId !== undefined) {
+        requirePendingGroupDurability()
+        created = await reconcileGroupCreation(pendingId, name, botIds)
+        if (!isCurrentCreate()) return
+      }
+      if (created === undefined) {
+        if (pendingId === undefined) {
+          requirePendingGroupDurability()
+          pendingGroupState.creations.set(pendingKey, id)
+          if (!persistPendingGroupState()) {
+            pendingGroupState.creations.delete(pendingKey)
+            throw new Error(t('sharedGroupCreateRetryUnavailable'))
+          }
+        }
+        const result = await create({ ...request, id, name, botIds: request.botIds })
+        if (!isCurrentCreate()) return
+        if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+        created = result.value.group
+      }
       if (!isCurrentCreate()) return
-      if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
-      const created = result.value.group
+      if (pendingGroupState.creations.get(pendingKey) === id) {
+        pendingGroupState.creations.delete(pendingKey)
+        if (!persistPendingGroupState()) {
+          pendingGroupState.creations.set(pendingKey, id)
+          throw new Error(t('sharedGroupCreateRetryCleanupFailed'))
+        }
+      }
       setGroups(current => [
         ...current.filter(group => String(group.id) !== String(created.id)),
         created,
@@ -892,10 +1000,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       || groupWorking !== null || hasPendingChat || hasPendingMemory) return
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
-    const pendingMessageKey = `${submittedGroupId}\u0000${draft}`
-    const messageId = groupPendingMessageIdsRef.current.get(pendingMessageKey)
+    const pendingMessageKey = sharedGroupMessageKey(submittedGroupId, draft)
+    const pendingMessage = pendingGroupState.messages.get(pendingMessageKey)
+    const messageId = pendingMessage?.messageId
       ?? brandString<BotGroupMessageIdType>(`bot-group-message-${randomUUID()}`)
-    groupPendingMessageIdsRef.current.set(pendingMessageKey, messageId)
     const operationGeneration = groupOperationGenerationRef.current + 1
     groupOperationGenerationRef.current = operationGeneration
     const isCurrentGroupOperation = (): boolean => (
@@ -906,6 +1014,28 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setGroupWorking('send')
     setError(null)
     try {
+      if (pendingMessage === undefined) {
+        requirePendingGroupDurability()
+        pendingGroupState.messages.set(pendingMessageKey, { text: draft, messageId })
+        if (!persistPendingGroupState()) {
+          pendingGroupState.messages.delete(pendingMessageKey)
+          throw new Error(t('sharedGroupSendRetryUnavailable'))
+        }
+      } else {
+        requirePendingGroupDurability()
+        const reconciled = await reconcileGroupMessage(submittedGroupId, messageId, draft)
+        if (!isCurrentGroupOperation()) return
+        if (reconciled) {
+          pendingGroupState.messages.delete(pendingMessageKey)
+          if (!persistPendingGroupState()) {
+            pendingGroupState.messages.set(pendingMessageKey, pendingMessage)
+            throw new Error(t('sharedGroupSendRetryCleanupFailed'))
+          }
+          if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
+          await readGroup(submittedGroupId)
+          return
+        }
+      }
       const result = await send({
         groupId: brandString<BotGroupIdType>(groupId),
         text: draft,
@@ -918,7 +1048,13 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           setError(t('sharedGroupSendFailed'))
           return
         }
-        groupPendingMessageIdsRef.current.delete(pendingMessageKey)
+        if (pendingGroupState.messages.get(pendingMessageKey)?.messageId === messageId) {
+          pendingGroupState.messages.delete(pendingMessageKey)
+          if (!persistPendingGroupState()) {
+            pendingGroupState.messages.set(pendingMessageKey, { text: draft, messageId })
+            throw new Error(t('sharedGroupSendRetryCleanupFailed'))
+          }
+        }
         if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
         await readGroup(submittedGroupId)
       } else {
