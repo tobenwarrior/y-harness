@@ -7488,6 +7488,226 @@ describe('durable Bot roster', () => {
     expect(records.get(v3Key)).toBeUndefined()
   })
 
+  it('fails closed when a same-id v3 roster changes the durable execution binding', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Foreign execution binding',
+      cwd: '/tmp',
+      agentPreset: 'fixture-owner',
+      persona: 'Owner persona',
+      capabilities: ['chat'],
+    })
+    const id = String(created.bot.id)
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v3')
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(created.bot.sessionId),
+            ownerId: 'local-owner',
+            persona: 'Foreign persona',
+            capabilities: ['foreign-capability'],
+            cwd: '/foreign/cwd',
+            agentPreset: 'foreign-preset',
+            state: 'provisioning',
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).rejects.toThrow('identity')
+      expect(records.get(currentKey)).toEqual(current)
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('fails closed instead of replaying a same-id pending row with a foreign execution binding', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({
+      name: 'Foreign pending execution binding',
+      cwd: '/tmp',
+      agentPreset: 'fixture-owner',
+      persona: 'Owner persona',
+      capabilities: ['chat'],
+    })
+    const id = String(created.bot.id)
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v3')
+    const pending: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Foreign pending execution binding',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      persona: 'Foreign persona',
+      capabilities: ['foreign-capability'],
+      cwd: '/foreign/cwd',
+      agentPreset: 'foreign-preset',
+      state: 'provisioning',
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'foreign-execution-binding', record: pending },
+      },
+    }
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('identity changed')
+      expect(records.get(currentKey)).toEqual(current)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when equal-revision profile snapshots disagree on nested routine state', async () => {
+    const cases = [
+      {
+        label: 'roster',
+        current: (created: BotView) => ({
+          id: String(created.id),
+          sessionId: String(created.sessionId),
+          ownerId: 'local-owner',
+          cwd: created.cwd,
+          state: created.state,
+          createdAt: created.createdAt,
+        }),
+        legacy: (created: BotView) => ({
+          id: String(created.id),
+          sessionId: String(created.sessionId),
+          ownerId: 'local-owner',
+          cwd: '/different/cwd',
+          state: created.state,
+          createdAt: created.createdAt,
+        }),
+      },
+      {
+        label: 'timedRoutines',
+        current: (created: BotView) => [{
+          record: {
+            id: 'schedule-equal-revision-current',
+            kind: 'every' as const,
+            title: 'Current routine',
+            prompt: 'Current routine prompt.',
+            everySeconds: 3_600,
+            scheduledAt: '2099-01-01T00:00:00.000Z',
+          },
+          sessionId: String(created.sessionId),
+          status: 'active' as const,
+        }],
+        legacy: (created: BotView) => [{
+          record: {
+            id: 'schedule-equal-revision-current',
+            kind: 'every' as const,
+            title: 'Legacy routine',
+            prompt: 'Legacy routine prompt.',
+            everySeconds: 3_600,
+            scheduledAt: '2099-01-01T00:00:00.000Z',
+          },
+          sessionId: String(created.sessionId),
+          status: 'active' as const,
+        }],
+      },
+      {
+        label: 'timedRoutinesUpdatedAt',
+        current: (created: BotView) => created.updatedAt,
+        legacy: (created: BotView) => created.updatedAt + 1,
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const first = await harness(pool, undefined, undefined, [], new Map(), records)
+      const created = await first.service.create({ name: `Equal revision ${scenario.label}`, cwd: '/tmp' })
+      const id = String(created.bot.id)
+      const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+      const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+      const base = {
+        name: created.bot.name,
+        identity: created.bot.identity,
+        accent: created.bot.accent,
+        updatedAt: created.bot.updatedAt,
+      }
+      const currentProfile = {
+        ...base,
+        ...(scenario.label === 'roster' ? { roster: scenario.current(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutines' ? { timedRoutines: scenario.current(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutinesUpdatedAt' ? {
+          timedRoutines: [{
+            record: {
+              id: 'schedule-equal-revision-timestamp',
+              kind: 'every' as const,
+              title: 'Timestamp routine',
+              prompt: 'Timestamp routine prompt.',
+              everySeconds: 3_600,
+              scheduledAt: '2099-01-01T00:00:00.000Z',
+            },
+            sessionId: String(created.bot.sessionId),
+            status: 'active' as const,
+          }],
+          timedRoutinesUpdatedAt: scenario.current(created.bot),
+        } : {}),
+      }
+      const legacyProfile = {
+        ...base,
+        ...(scenario.label === 'roster' ? { roster: scenario.legacy(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutines' ? { timedRoutines: scenario.legacy(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutinesUpdatedAt' ? {
+          timedRoutines: currentProfile.timedRoutines,
+          timedRoutinesUpdatedAt: scenario.legacy(created.bot),
+        } : {}),
+      }
+      records.set(v2Key, {
+        kind: 'grant',
+        payload: { version: 2, revisions: { [id]: created.bot.updatedAt }, profiles: { [id]: legacyProfile } },
+      })
+      records.set(v3Key, {
+        kind: 'grant',
+        payload: { version: 3, revisions: { [id]: created.bot.updatedAt }, profiles: { [id]: currentProfile } },
+      })
+      await close(first.ctx)
+
+      const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+        initializeService: false,
+      })
+      try {
+        await expect(second.service.list({})).rejects.toThrow(`disagree on ${scenario.label}`)
+      } finally {
+        await close(second.ctx)
+      }
+    }
+  })
+
   it('preserves timed routines when a partial v3 profile merges a routine-era predecessor', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()
