@@ -5313,8 +5313,7 @@ export class BotService extends TypertRemoteService {
   async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue> {
     const botId = normalizeBotId(request.botId)
     if (botId === undefined) return badRequest('Bot id is required')
-    const domain = await this.getDomain()
-    const bot = this.requireOwnedBot(domain, botId)
+    const bot = await this.readOwnedBot(botId)
     const routines: BotRoutineView[] = []
     const schedule = this.ctx.get('schedule')
     if (schedule !== undefined) {
@@ -5337,7 +5336,7 @@ export class BotService extends TypertRemoteService {
     const botId = normalizeBotId(request.botId)
     if (botId === undefined) return badRequest('Bot id is required')
     const routineId = normalizeRoutineId(request.routineId)
-    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const bot = await this.readOwnedBot(botId)
     const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
     if (eventRoutine !== undefined) {
       await this.pauseEventRoutine(bot.sessionId, routineId)
@@ -5366,7 +5365,7 @@ export class BotService extends TypertRemoteService {
     const botId = normalizeBotId(request.botId)
     if (botId === undefined) return badRequest('Bot id is required')
     const routineId = normalizeRoutineId(request.routineId)
-    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const bot = await this.readOwnedBot(botId)
     const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
     if (eventRoutine !== undefined) {
       await this.resumeEventRoutine(bot.sessionId, routineId)
@@ -5395,7 +5394,7 @@ export class BotService extends TypertRemoteService {
     const botId = normalizeBotId(request.botId)
     if (botId === undefined) return badRequest('Bot id is required')
     const routineId = normalizeRoutineId(request.routineId)
-    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const bot = await this.readOwnedBot(botId)
     if (bot.eventRoutines?.some(routine => routine.id === routineId)) {
       await this.deleteEventRoutine(bot.sessionId, routineId)
       const latest = await this.findEventRoutine(bot.sessionId, routineId)
@@ -5425,7 +5424,7 @@ export class BotService extends TypertRemoteService {
     if (request.before !== undefined && typeof request.before !== 'string') {
       return badRequest('Routine history cursor must be a message id string')
     }
-    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const bot = await this.readOwnedBot(botId)
     const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
     if (eventRoutine !== undefined) {
       if (request.before !== undefined) return badRequest('Event routine history does not support a cursor')
@@ -6484,16 +6483,21 @@ export class BotService extends TypertRemoteService {
     return this.ready
   }
 
-  /** Read one Bot only when it belongs to this Host owner's scope. */
-  private requireOwnedBot(
-    domain: Domain<typeof botDomain>,
-    botId: BotRecord['id'],
-  ): BotStoredRecord {
-    const record = domain.table('bots').get(botId)
-    if (record === undefined || record.ownerId !== this.ownerId) {
+  /** Read one owner-scoped Bot through the authoritative V3 profile fence. */
+  private async readOwnedBot(botId: BotRecord['id']): Promise<BotStoredRecord> {
+    const bots = (await this.getDomain()).table('bots')
+    const profileState = await this.readProfileRevisionState(bots)
+    const stored = bots.get(botId)
+    if (stored === undefined) {
       throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
     }
-    return record
+    const current = applyProfileSnapshot(stored, profileState.profiles[String(botId)])
+    if (current.ownerId !== this.ownerId) {
+      throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+    }
+    this.recordsBySession.set(String(current.sessionId), current)
+    this.refreshSharedRecords(current)
+    return current
   }
 
   private async activeTemplate(

@@ -437,6 +437,58 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByText('Stale result')).toBeNull()
   })
 
+  it.each(['pause', 'resume', 'delete'] as const)('keeps a newer catalog after a stale %s completion', async (action) => {
+    const initialStatus = action === 'resume' ? 'paused' as const : 'active' as const
+    const initial = {
+      kind: 'event' as const,
+      id: `event-stale-${action}`,
+      title: `Stale ${action} routine`,
+      prompt: 'The old catalog must not win.',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: initialStatus,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const fresh = { ...initial, title: `Fresh ${action} catalog`, status: 'active' as const, updatedAt: 2 }
+    const lifecycle = Promise.withResolvers<typeof initial>()
+    const removal = Promise.withResolvers<undefined>()
+    const list = vi.fn()
+      .mockResolvedValueOnce([initial])
+      .mockResolvedValue([fresh])
+    const actions = {
+      list,
+      pause: vi.fn(() => action === 'pause' ? lifecycle.promise : Promise.resolve(fresh)),
+      resume: vi.fn(() => action === 'resume' ? lifecycle.promise : Promise.resolve(fresh)),
+      remove: vi.fn(() => action === 'delete' ? removal.promise : Promise.resolve()),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: initial.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: `View results for ${initial.title}` })
+
+    if (action === 'pause') {
+      fireEvent.click(screen.getByRole('button', { name: `Pause ${initial.title}` }))
+      await waitFor(() => { expect(actions.pause).toHaveBeenCalledWith('research', initial.id) })
+    } else if (action === 'resume') {
+      fireEvent.click(screen.getByRole('button', { name: `Resume ${initial.title}` }))
+      await waitFor(() => { expect(actions.resume).toHaveBeenCalledWith('research', initial.id) })
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: `Delete ${initial.title}` }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete routine' }))
+      await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', initial.id) })
+    }
+
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    expect(await screen.findAllByText(fresh.title)).not.toHaveLength(0)
+    if (action === 'delete') removal.resolve(undefined)
+    else lifecycle.resolve({ ...initial, status: action === 'pause' ? 'paused' : 'active' })
+    await waitFor(() => { expect(screen.getAllByText(fresh.title)).not.toHaveLength(0) })
+    expect(screen.queryAllByText(initial.title)).toHaveLength(0)
+  })
+
   it('moves the detail selection into the active filter', async () => {
     const active = {
       kind: 'event' as const,

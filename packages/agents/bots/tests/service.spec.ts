@@ -6543,6 +6543,57 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed for every routine Remote when the V3 roster identity is foreign', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await routineHarness(pool, undefined, undefined, [], true)
+    try {
+      const created = await h.service.create({ name: 'Foreign routine roster', cwd: '/tmp' })
+      const schedule = h.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(created.bot.sessionId, {
+        title: 'Foreign roster routine', prompt: 'This must not be exposed.', every_seconds: 300,
+      })
+      const id = String(created.bot.id)
+      h.records.set(credentialKey('agent-bots', 'profile-revisions-v3'), {
+        kind: 'grant',
+        payload: {
+          version: 3,
+          revisions: { [id]: created.bot.updatedAt },
+          profiles: {
+            [id]: {
+              roster: {
+                id,
+                sessionId: 'bot-session-foreign-routine',
+                ownerId: 'foreign-routine-owner',
+                cwd: created.bot.cwd,
+                state: created.bot.state,
+                createdAt: created.bot.createdAt,
+              },
+              name: created.bot.name,
+              identity: created.bot.identity,
+              accent: created.bot.accent,
+              updatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+
+      const operations = [
+        () => h.service.listRoutines({ botId: created.bot.id }),
+        () => h.service.pauseRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.resumeRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.routineHistory({ botId: created.bot.id, routineId: String(task.id), limit: 10 }),
+      ]
+      for (const operation of operations) {
+        await expect(operation()).rejects.toMatchObject({ code: 'gateway/conflict' })
+      }
+      await expect(schedule.list({ sessionId: created.bot.sessionId })).resolves.toHaveLength(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('creates a Bot message-triggered routine and records its model result', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

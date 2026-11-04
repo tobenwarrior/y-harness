@@ -273,10 +273,14 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
   const openRef = useRef(false)
   const revisionRef = useRef(revision)
   const tabRef = useRef<RoutineTab>('rule')
+  const catalogGenerationRef = useRef(0)
   const actionsRef = useRef(actions)
   actionsRef.current = actions
   filterRef.current = filter
   tabRef.current = tab
+  const catalogIsCurrent = (generation: number, botId: string): boolean => catalogGenerationRef.current === generation
+    && openRef.current
+    && openBotIdRef.current === botId
 
   const showHistory = async (routine: BotRoutineView, before?: HistoryCursor): Promise<void> => {
     const routineId = String(routine.id)
@@ -326,6 +330,8 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
       return
     }
     let live = true
+    const catalogGeneration = ++catalogGenerationRef.current
+    const isCurrentCatalog = (): boolean => live && catalogIsCurrent(catalogGeneration, bot.id)
     const resetHistory = !openRef.current || openBotIdRef.current !== bot.id
     openRef.current = true
     openBotIdRef.current = bot.id
@@ -342,12 +348,14 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
     setLoading(true)
     setLoadError(false)
     setMutationError(false)
+    setWorking(null)
+    setConfirmingId(null)
     setHistoryError(false)
     setHistoryLoading(false)
     setHistoryLoadingOlder(false)
     setHistoryOlderError(false)
     void actionsRef.current.list(bot.id).then((next) => {
-      if (!live) return
+      if (!isCurrentCatalog()) return
       setRoutines(next)
       const current = selectedIdRef.current
       const nextVisible = next.filter(routine => filterRef.current === 'all' || routineStatus(routine) === filterRef.current)
@@ -371,7 +379,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
         if (nextRoutine !== undefined) void showHistory(nextRoutine)
       }
     }).catch(() => {
-      if (live) {
+      if (isCurrentCatalog()) {
         setRoutines([])
         selectedIdRef.current = null
         setSelectedId(null)
@@ -386,10 +394,11 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
         setLoadError(true)
       }
     }).finally(() => {
-      if (live) setLoading(false)
+      if (isCurrentCatalog()) setLoading(false)
     })
     return () => {
       live = false
+      catalogGenerationRef.current++
       historyGenerationRef.current++
       historyTargetRef.current = null
     }
@@ -442,27 +451,33 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
 
   const changeStatus = async (routine: BotRoutineView): Promise<void> => {
     if (working !== null || routineStatus(routine) === 'inactive') return
+    const catalogGeneration = catalogGenerationRef.current
+    const botId = bot.id
     setWorking(String(routine.id))
     setMutationError(false)
     try {
       const next = routineStatus(routine) === 'active'
-        ? await actions.pause(bot.id, String(routine.id))
-        : await actions.resume(bot.id, String(routine.id))
+        ? await actions.pause(botId, String(routine.id))
+        : await actions.resume(botId, String(routine.id))
+      if (!catalogIsCurrent(catalogGeneration, botId)) return
       setRoutines(current => current.map(candidate => String(candidate.id) === String(next.id) ? next : candidate))
     } catch {
-      setMutationError(true)
+      if (catalogIsCurrent(catalogGeneration, botId)) setMutationError(true)
     } finally {
-      setWorking(current => current === String(routine.id) ? null : current)
+      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(current => current === String(routine.id) ? null : current)
     }
   }
 
   const remove = async (): Promise<void> => {
     if (confirmingId === null || working !== null) return
     const id = confirmingId
+    const catalogGeneration = catalogGenerationRef.current
+    const botId = bot.id
     setWorking(id)
     setMutationError(false)
     try {
-      await actions.remove(bot.id, id)
+      await actions.remove(botId, id)
+      if (!catalogIsCurrent(catalogGeneration, botId)) return
       setRoutines(current => current.filter(routine => String(routine.id) !== id))
       if (selectedIdRef.current === id) {
         selectedIdRef.current = null
@@ -471,9 +486,9 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
       }
       setConfirmingId(null)
     } catch {
-      setMutationError(true)
+      if (catalogIsCurrent(catalogGeneration, botId)) setMutationError(true)
     } finally {
-      setWorking(current => current === id ? null : current)
+      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(current => current === id ? null : current)
     }
   }
 
