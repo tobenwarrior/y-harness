@@ -1,7 +1,6 @@
 import { randomUUID } from '@yharness/util-crypto'
 
-const LEGACY_STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending'
-const STORAGE_PREFIX = `${LEGACY_STORAGE_PREFIX}.v2`
+const STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending.v2'
 const LOCK_PREFIX = 'yharness.client-ui-bots.shared-group-pending-lock'
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TEXT_LENGTH = 16_384
@@ -40,8 +39,6 @@ interface PendingCreationRecord {
   readonly botIds: readonly string[]
   readonly createdAt: number
   readonly expiresAt: number
-  /** Set on successful completion so older tabs cannot reserve a new id. */
-  readonly completedAt?: number
 }
 
 interface PendingMessageRecord {
@@ -54,8 +51,6 @@ interface PendingMessageRecord {
   readonly text?: string
   readonly createdAt: number
   readonly expiresAt: number
-  /** Set on successful completion so older tabs cannot reserve a new id. */
-  readonly completedAt?: number
 }
 
 type PendingRecord = PendingCreationRecord | PendingMessageRecord
@@ -76,7 +71,7 @@ export interface SharedPendingGroupMessage {
   readonly operationHash: string
   readonly id: string
   readonly groupId: string
-  /** Present for an interrupted message; completed records remain hidden from this view. */
+  /** Present for an interrupted message; completed records are removed. */
   readonly text?: string
   readonly createdAt: number
   readonly expiresAt: number
@@ -103,13 +98,13 @@ export interface SharedGroupPendingQueue {
   reserveCreation(operationKey: string, name: string, botIds: readonly string[]): Promise<SharedPendingGroupReservation>
   /** Remove one creation record only when its id still matches. */
   removeCreation(operationHash: string, id: string): Promise<void>
-  /** Retain a completion fence for older tabs while the id can still be reconciled. */
+  /** Remove a completed creation record after the server accepts it. */
   completeCreation(operationHash: string, id: string): Promise<void>
   /** Reserve or recover one stable message id for a group message operation. */
   reserveMessage(operationKey: string, groupId: string, text: string): Promise<SharedPendingGroupReservation>
   /** Remove one message record only when its operation hash and id still match. */
   removeMessage(operationHash: string, id: string): Promise<void>
-  /** Retain a V1-compatible completion fence while the id can still be reconciled. */
+  /** Remove a completed message record after the server accepts it. */
   completeMessage(operationHash: string, id: string): Promise<void>
 }
 
@@ -132,8 +127,7 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     || !isSafeTimestamp(value.createdAt) || !isSafeTimestamp(value.expiresAt) || value.expiresAt < value.createdAt) return undefined
   const status = value.status === undefined ? 'pending' : value.status
   if (status !== 'pending' && status !== 'expired') return undefined
-  const completedAt = value.completedAt
-  if (completedAt !== undefined && (status !== 'expired' || !isSafeTimestamp(completedAt))) return undefined
+  if (value.completedAt !== undefined) return undefined
   if (value.kind === 'creation') {
     if (typeof value.name !== 'string' || value.name.trim() === '' || value.name.length > 256
       || !Array.isArray(value.botIds) || value.botIds.length < 2 || value.botIds.length > 6) return undefined
@@ -152,13 +146,12 @@ function parseRecord(value: unknown): PendingRecord | undefined {
       botIds,
       createdAt: value.createdAt,
       expiresAt: value.expiresAt,
-      ...(completedAt === undefined ? {} : { completedAt }),
     }
   }
   if (value.kind !== 'message' || typeof value.groupId !== 'string' || !isSafeId(value.groupId)) return undefined
   if (value.text !== undefined && (typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH)) return undefined
   if (status === 'pending' && value.text === undefined) return undefined
-  if (status === 'expired' && value.text !== undefined && completedAt === undefined) return undefined
+  if (status === 'expired' && value.text !== undefined) return undefined
   return {
     version: 1,
     kind: 'message',
@@ -169,7 +162,6 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     ...(typeof value.text === 'string' ? { text: value.text } : {}),
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
-    ...(completedAt === undefined ? {} : { completedAt }),
   }
 }
 
@@ -200,20 +192,11 @@ function scopePrefix(scope: string): string {
   return `${STORAGE_PREFIX}.${encodeScope(scope)}`
 }
 
-function legacyScopePrefix(scope: string): string {
-  return `${LEGACY_STORAGE_PREFIX}.${encodeScope(scope)}`
-}
-
 function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
   return `${scopePrefix(scope)}.${kind}.${operationHash}`
 }
 
-function legacyRecordKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
-  return `${legacyScopePrefix(scope)}.${kind}.${operationHash}`
-}
-
-/** Lock name used by clients released before catalog-wide retry coordination. */
-function legacyLockKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
+function operationLockKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
   return `${LOCK_PREFIX}.${encodeScope(scope)}.${kind}.${operationHash}`
 }
 
@@ -282,16 +265,12 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     }
   }
 
-  const withCatalogAndLegacyLock = <T>(
+  const withCatalogAndOperationLock = <T>(
     kind: PendingRecord['kind'],
     operationHashValue: string,
     work: () => Promise<T>,
   ): Promise<T> => withLock(catalogLockKey(scope), () => (
-    // Keep the pre-catalog lock while the catalog lock protects cross-record
-    // pruning. This lets an older tab serialize the same operation with us;
-    // older tabs still need a reload before they can participate in the
-    // catalog-wide protocol for unrelated operations.
-    withLock(legacyLockKey(scope, kind, operationHashValue), work)
+    withLock(operationLockKey(scope, kind, operationHashValue), work)
   ))
 
   const read = (key: string): PendingRecord | undefined => {
@@ -317,58 +296,6 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
 
   const writeRecord = (record: PendingRecord): void => {
     write(recordKey(scope, record.kind, record.operationHash), record)
-    // Keep the v1 alias while older tabs can still recover this reservation.
-    write(legacyRecordKey(scope, record.kind, record.operationHash), record)
-  }
-
-  const ensureLegacyAlias = (record: PendingRecord): void => {
-    const key = legacyRecordKey(scope, record.kind, record.operationHash)
-    const legacy = read(key)
-    if (legacy !== undefined && legacy.id !== record.id) {
-      throw new Error('Shared-group retry record conflict')
-    }
-    if (legacy === undefined || JSON.stringify(legacy) !== JSON.stringify(record)) write(key, record)
-  }
-
-  const migrateLegacyRecord = (kind: PendingRecord['kind'], operationHashValue: string): void => {
-    const legacyKey = legacyRecordKey(scope, kind, operationHashValue)
-    const legacy = read(legacyKey)
-    if (legacy === undefined) return
-    const currentKey = recordKey(scope, kind, operationHashValue)
-    const current = read(currentKey)
-    if (current === undefined) {
-      write(currentKey, legacy)
-      return
-    }
-    if (current.id !== legacy.id) throw new Error('Shared-group retry record conflict')
-    ensureLegacyAlias(current)
-  }
-
-  const migrateLegacyRecords = async (): Promise<void> => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    const keys: string[] = []
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
-      if (key !== null && key.startsWith(`${legacyScopePrefix(scope)}.`)) keys.push(key)
-    }
-    for (const key of keys) {
-      const record = read(key)
-      if (record === undefined) continue
-      await withLock(legacyLockKey(scope, record.kind, record.operationHash), () => {
-        const current = read(key)
-        if (current !== undefined) migrateLegacyRecord(current.kind, current.operationHash)
-        return Promise.resolve()
-      })
-    }
-    const currentKeys: string[] = []
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
-      if (key !== null && key.startsWith(`${scopePrefix(scope)}.`)) currentKeys.push(key)
-    }
-    for (const key of currentKeys) {
-      const record = read(key)
-      if (record !== undefined) ensureLegacyAlias(record)
-    }
   }
 
   const ensureCapacity = (key: string): void => {
@@ -395,12 +322,6 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       const record = read(key)
       if (record === undefined) {
         if (read(key) === undefined) remove(key)
-      } else if (record.status === 'expired' && record.completedAt !== undefined && record.expiresAt <= now) {
-        if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
-        remove(key)
-        const legacyKey = legacyRecordKey(scope, record.kind, record.operationHash)
-        const legacy = read(legacyKey)
-        if (legacy !== undefined && JSON.stringify(legacy) === JSON.stringify(record)) remove(legacyKey)
       } else if (record.status === 'pending' && record.expiresAt <= now) {
         if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
         if (record.kind === 'creation') {
@@ -414,10 +335,33 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     return Promise.resolve()
   }
 
+  const findPendingCreation = (name: string, botIds: readonly string[]): PendingCreationRecord | undefined => {
+    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key === null || !key.startsWith(`${scopePrefix(scope)}.creation.`)) continue
+      const record = read(key)
+      if (record?.kind !== 'creation' || record.status !== 'pending' || record.name !== name
+        || record.botIds.length !== botIds.length || !record.botIds.every((botId, item) => botId === botIds[item])) continue
+      return record
+    }
+    return undefined
+  }
+
+  const findPendingMessage = (groupId: string, text: string): PendingMessageRecord | undefined => {
+    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key === null || !key.startsWith(`${scopePrefix(scope)}.message.`)) continue
+      const record = read(key)
+      if (record?.kind === 'message' && record.status === 'pending' && record.groupId === groupId && record.text === text) return record
+    }
+    return undefined
+  }
+
   return {
     get durable(): boolean { return healthy },
     listCreations: () => withLock(catalogLockKey(scope), async () => {
-      await migrateLegacyRecords()
       await prune()
       if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
       const records: SharedPendingGroupCreation[] = []
@@ -425,12 +369,11 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         const key = storage.key(index)
         if (key === null || !key.startsWith(`${scopePrefix(scope)}.creation.`)) continue
         const record = read(key)
-        if (record?.kind === 'creation' && record.completedAt === undefined) records.push(creationView(record))
+        if (record?.kind === 'creation') records.push(creationView(record))
       }
       return records.sort((left, right) => left.createdAt - right.createdAt)
     }),
     listMessages: () => withLock(catalogLockKey(scope), async () => {
-      await migrateLegacyRecords()
       await prune()
       if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
       const records: SharedPendingGroupMessage[] = []
@@ -438,15 +381,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         const key = storage.key(index)
         if (key === null || !key.startsWith(`${scopePrefix(scope)}.message.`)) continue
         const record = read(key)
-        if (record?.kind === 'message' && record.completedAt === undefined) records.push(messageView(record))
+        if (record?.kind === 'message') records.push(messageView(record))
       }
       return records.sort((left, right) => left.createdAt - right.createdAt)
     }),
     reserveCreation: async (operationKey, name, botIds) => {
       const hash = await operationHash(operationKey)
       const canonicalBotIds = [...botIds].sort()
-      return withCatalogAndLegacyLock('creation', hash, async () => {
-        migrateLegacyRecord('creation', hash)
+      return withCatalogAndOperationLock('creation', hash, async () => {
         await prune()
         const key = recordKey(scope, 'creation', hash)
         const current = read(key)
@@ -455,6 +397,10 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           && current.name === name && current.botIds.length === canonicalBotIds.length
           && current.botIds.every((botId, index) => botId === canonicalBotIds[index])) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
+        }
+        const pending = findPendingCreation(name, canonicalBotIds)
+        if (pending !== undefined) {
+          return { operationHash: pending.operationHash, id: pending.id, recovered: true, expired: false }
         }
         ensureCapacity(key)
         const record: PendingCreationRecord = {
@@ -472,29 +418,21 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withCatalogAndLegacyLock('creation', hash, () => {
-      migrateLegacyRecord('creation', hash)
+    removeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, () => {
       const key = recordKey(scope, 'creation', hash)
       const current = read(key)
       if (current?.kind === 'creation' && current.id === id) remove(key)
-      const legacy = read(legacyRecordKey(scope, 'creation', hash))
-      if (legacy?.kind === 'creation' && legacy.id === id) remove(legacyRecordKey(scope, 'creation', hash))
       return Promise.resolve()
     }),
-    completeCreation: (hash, id) => withCatalogAndLegacyLock('creation', hash, () => {
-      migrateLegacyRecord('creation', hash)
+    completeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, () => {
       const key = recordKey(scope, 'creation', hash)
       const current = read(key)
-      if (current?.kind === 'creation' && current.id === id) {
-        const now = Date.now()
-        writeRecord({ ...current, status: 'expired', completedAt: now, expiresAt: now + PENDING_TTL_MS })
-      }
+      if (current?.kind === 'creation' && current.id === id) remove(key)
       return Promise.resolve()
     }),
     reserveMessage: async (operationKey, groupId, text) => {
       const hash = await operationHash(operationKey)
-      return withCatalogAndLegacyLock('message', hash, async () => {
-        migrateLegacyRecord('message', hash)
+      return withCatalogAndOperationLock('message', hash, async () => {
         await prune()
         const key = recordKey(scope, 'message', hash)
         const current = read(key)
@@ -502,6 +440,10 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         if (current?.kind === 'message' && current.groupId === groupId
           && (current.status === 'expired' || current.text === text)) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
+        }
+        const pending = findPendingMessage(groupId, text)
+        if (pending !== undefined) {
+          return { operationHash: pending.operationHash, id: pending.id, recovered: true, expired: false }
         }
         ensureCapacity(key)
         const record: PendingMessageRecord = {
@@ -519,23 +461,16 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withCatalogAndLegacyLock('message', hash, () => {
-      migrateLegacyRecord('message', hash)
+    removeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
       const key = recordKey(scope, 'message', hash)
       const current = read(key)
       if (current?.kind === 'message' && current.id === id) remove(key)
-      const legacy = read(legacyRecordKey(scope, 'message', hash))
-      if (legacy?.kind === 'message' && legacy.id === id) remove(legacyRecordKey(scope, 'message', hash))
       return Promise.resolve()
     }),
-    completeMessage: (hash, id) => withCatalogAndLegacyLock('message', hash, () => {
-      migrateLegacyRecord('message', hash)
+    completeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
       const key = recordKey(scope, 'message', hash)
       const current = read(key)
-      if (current?.kind === 'message' && current.id === id) {
-        const now = Date.now()
-        writeRecord({ ...current, status: 'expired', completedAt: now, expiresAt: now + PENDING_TTL_MS })
-      }
+      if (current?.kind === 'message' && current.id === id) remove(key)
       return Promise.resolve()
     }),
   }

@@ -57,7 +57,18 @@ describe('shared-group browser retry queue', () => {
     expect(records.map(record => record.name).sort()).toEqual(['Launch room', 'Research room', 'Writing room'])
   })
 
-  it('keeps the legacy operation lock while coordinating through the catalog lock', async () => {
+  it('recovers a matching pending action even when the new action nonce differs', async () => {
+    const queue = createSharedGroupPendingQueue('principal-action-recovery')
+    const firstMessage = await queue.reserveMessage('first-action-nonce', 'bot-group-room', 'same message')
+    const retriedMessage = await queue.reserveMessage('second-action-nonce', 'bot-group-room', 'same message')
+    expect(retriedMessage).toMatchObject({ id: firstMessage.id, recovered: true })
+
+    const firstCreation = await queue.reserveCreation('first-create-nonce', 'Same room', ['bot-chief', 'bot-analyst'])
+    const retriedCreation = await queue.reserveCreation('second-create-nonce', 'Same room', ['bot-analyst', 'bot-chief'])
+    expect(retriedCreation).toMatchObject({ id: firstCreation.id, recovered: true })
+  })
+
+  it('coordinates one operation through the catalog lock', async () => {
     const requests: string[] = []
     const originalRequest = navigator.locks.request
     vi.spyOn(navigator.locks, 'request').mockImplementation((name, callback) => {
@@ -77,87 +88,28 @@ describe('shared-group browser retry queue', () => {
     }
   })
 
-  it('keeps a legacy alias while migrating so an active old tab reuses the same id', async () => {
-    const queue = createSharedGroupPendingQueue('principal-legacy')
-    const original = await queue.reserveMessage('legacy-operation', 'bot-group-room', 'legacy text')
-    const operationHash = original.operationHash
-    const currentKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-legacy.message.' + operationHash
-    const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy.message.' + operationHash
-    localStorage.removeItem(currentKey)
-    localStorage.setItem(legacyKey, JSON.stringify({
-      version: 1,
-      kind: 'message',
-      status: 'pending',
-      id: original.id,
-      operationHash,
-      groupId: 'bot-group-room',
-      createdAt: 1,
-      text: 'legacy text',
-      expiresAt: Number.MAX_SAFE_INTEGER,
-    }))
-
-    await expect(queue.listMessages()).resolves.toEqual([{
-      operationHash,
-      id: original.id,
-      groupId: 'bot-group-room',
-      text: 'legacy text',
-      createdAt: 1,
-      expiresAt: Number.MAX_SAFE_INTEGER,
-      expired: false,
-    }])
-
-    expect(localStorage.getItem(legacyKey)).not.toBeNull()
-    expect(localStorage.getItem(currentKey)).not.toBeNull()
-    expect(currentKey.startsWith('yharness.client-ui-bots.shared-group-pending.principal-legacy.')).toBe(false)
-
-    const recovered = await queue.reserveMessage('legacy-operation', 'bot-group-room', 'legacy text')
-    expect(recovered.id).toBe(original.id)
-    await queue.removeMessage(operationHash, original.id)
-    expect(localStorage.getItem(legacyKey)).toBeNull()
-    expect(localStorage.getItem(currentKey)).toBeNull()
-  })
-
-  it('keeps a completion fence for an old tab after the new tab finishes', async () => {
-    const queue = createSharedGroupPendingQueue('principal-completion-fence')
+  it('uses one storage record and removes message text after completion', async () => {
+    const queue = createSharedGroupPendingQueue('principal-single-protocol')
     const first = await queue.reserveMessage('completion-operation', 'bot-group-room', 'same message')
-    const currentKey = `yharness.client-ui-bots.shared-group-pending.v2.principal-completion-fence.message.${first.operationHash}`
-    const legacyKey = `yharness.client-ui-bots.shared-group-pending.principal-completion-fence.message.${first.operationHash}`
+    const currentKey = `yharness.client-ui-bots.shared-group-pending.v2.principal-single-protocol.message.${first.operationHash}`
+    const legacyKey = `yharness.client-ui-bots.shared-group-pending.principal-single-protocol.message.${first.operationHash}`
 
+    expect(localStorage.getItem(currentKey)).toContain('"text":"same message"')
+    expect(localStorage.getItem(legacyKey)).toBeNull()
     await queue.completeMessage(first.operationHash, first.id)
-    expect(localStorage.getItem(currentKey)).not.toBeNull()
-    expect(localStorage.getItem(legacyKey)).not.toBeNull()
-    expect(localStorage.getItem(legacyKey)).toContain('"status":"expired"')
-    expect(localStorage.getItem(legacyKey)).toContain('"text":"same message"')
+    expect(localStorage.getItem(currentKey)).toBeNull()
     await expect(queue.listMessages()).resolves.toEqual([])
-    const retried = await queue.reserveMessage('completion-operation', 'bot-group-room', 'same message')
-    expect(retried.id).toBe(first.id)
-    expect(retried.recovered).toBe(true)
   })
 
-  it('recovers legacy pending message text before the old queue can prune it', async () => {
-    const operationHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-    const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy-pending.message.' + operationHash
-    localStorage.setItem(legacyKey, JSON.stringify({
-      version: 1,
-      kind: 'message',
-      id: 'bot-group-message-legacy-pending',
-      operationHash,
-      groupId: 'bot-group-room',
-      text: 'recover this legacy message',
-      createdAt: 1,
-      expiresAt: Number.MAX_SAFE_INTEGER,
-    }))
-
-    const queue = createSharedGroupPendingQueue('principal-legacy-pending')
-    await expect(queue.listMessages()).resolves.toEqual([{
-      operationHash,
-      id: 'bot-group-message-legacy-pending',
-      groupId: 'bot-group-room',
-      text: 'recover this legacy message',
-      createdAt: 1,
-      expiresAt: Number.MAX_SAFE_INTEGER,
-      expired: false,
-    }])
+  it('does not consume the pending quota with completed messages', async () => {
+    const queue = createSharedGroupPendingQueue('principal-completed-quota')
+    for (let index = 0; index < SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS; index += 1) {
+      const reservation = await queue.reserveMessage(`completed-${index}`, 'bot-group-room', `message ${index}`)
+      await queue.completeMessage(reservation.operationHash, reservation.id)
+    }
+    const next = await queue.reserveMessage('after-completions', 'bot-group-room', 'new message')
+    expect(next.recovered).toBe(false)
+    await expect(queue.listMessages()).resolves.toHaveLength(1)
   })
 
   it('partitions retry records by server-issued principal scope and supports explicit discard', async () => {
