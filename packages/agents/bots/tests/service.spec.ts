@@ -4347,6 +4347,7 @@ describe('durable Bot roster', () => {
     const legacyKey = credentialKey('agent-bots', 'profile-revisions')
     const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
     const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
       id: created.bot.id,
       sessionId: created.bot.sessionId,
       name: 'Recovered pending profile',
@@ -4387,7 +4388,9 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: { version: 2 },
       })
-      expect(records.get(currentKey)?.payload).not.toHaveProperty('pending')
+      const migrated = records.get(currentKey)
+      if (migrated?.kind !== 'grant') throw new Error('migrated profile record was not stored')
+      expect(migrated.payload).not.toHaveProperty('pending')
     } finally {
       await close(second.ctx)
     }
