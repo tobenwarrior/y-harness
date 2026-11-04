@@ -48,7 +48,6 @@ import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-to
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
   botDomain,
-  botRecordSchema,
   SHARED_BOT_AGENT_PRESET,
   sharedBotDomain,
   sharedPrivateSessionSchema,
@@ -802,18 +801,16 @@ describe('durable Bot roster', () => {
       expect(initialPrompt).not.toContain('PRIVATE_OPERATOR_PERSONA_INITIAL')
       expect(initialPrompt).not.toContain('Declared capabilities: operator.private.')
 
-      const domain = h.ctx.storageDomain.get('agent_bots')
-      const bots = domain?.table('bots')
-      const storedValue = bots?.get(String(created.bot.id))
-      if (bots === undefined || storedValue === undefined || storedValue === null) {
-        throw new Error('shared identity test Bot row was not stored')
-      }
-      const stored = botRecordSchema.parse(storedValue)
-      await bots.put(String(created.bot.id), {
-        ...stored,
+      await expect(h.service.updateProfile({
+        botId: created.bot.id,
         persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
         capabilities: ['operator.refreshed'],
-        updatedAt: stored.updatedAt + 1,
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
+          capabilities: ['operator.refreshed'],
+        },
       })
       await expect(refreshBotRecord(h.service, agent)).resolves.toMatchObject({
         persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
@@ -9530,7 +9527,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('refreshes persona and capability edits in shared prompts and removes them after reset', async () => {
+  it('refreshes public profile edits in shared prompts while keeping private fields out', async () => {
     const sharedSessionId = SessionId('shared-session-profile-propagation')
     const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
     try {
@@ -9547,16 +9544,23 @@ describe('durable Bot roster', () => {
       if (agent === undefined) throw new Error('shared profile Agent was not created')
       await h.ctx.serial('agent/created', { agent, source: 'resume' })
 
-      await h.service.updateProfile({
+      await expect(h.service.updateProfile({
         botId: created.bot.id,
         description: 'Updated shared role.',
         persona: 'Use the updated shared persona.',
         capabilities: ['chat', 'research'],
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          description: 'Updated shared role.',
+          persona: 'Use the updated shared persona.',
+          capabilities: ['chat', 'research'],
+        },
       })
       let prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
       expect(prompt).toContain('Your role is: Updated shared role.')
-      expect(prompt).toContain('Your persona is: Use the updated shared persona.')
-      expect(prompt).toContain('Declared capabilities: chat, research.')
+      expect(prompt).not.toContain('Use the updated shared persona.')
+      expect(prompt).not.toContain('Declared capabilities: chat, research.')
 
       await h.service.updateProfile({ botId: created.bot.id, description: null, persona: null, capabilities: null })
       prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
