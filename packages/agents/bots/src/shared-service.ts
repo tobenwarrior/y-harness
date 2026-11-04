@@ -407,6 +407,8 @@ export class SharedBotService {
       throw new Error('shared Bot service requires a credential provider')
     }
     try {
+      await migrateSharedPairTable(domain.table('memberships'), 'memberships')
+      await migrateSharedPairTable(domain.table('private_sessions'), 'private_sessions')
       const membershipSnapshot = await initializeMembershipSnapshot(authority, credentials, domain.table('memberships'))
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
       return new SharedBotService(owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options)
@@ -2042,8 +2044,48 @@ function publicProfile(bot: BotView): SharedBotProfile {
   }
 }
 
+// These checks mirror the durable shared id schemas; `_` remains reserved as
+// the pair-key delimiter so the successor is path-safe and unambiguous.
+const SHARED_BOT_ID_KEY_RE = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
+const SHARED_PRINCIPAL_ID_KEY_RE = /^principal-[A-Za-z0-9-]+$/
+const SHARED_KEY_PREFIX = 'shared-v2_'
+
 function membershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {
+  const bot = String(botId)
+  const principal = String(principalId)
+  if (!SHARED_BOT_ID_KEY_RE.test(bot) || !SHARED_PRINCIPAL_ID_KEY_RE.test(principal)) {
+    throw new Error('shared Bot membership key contains an invalid identity')
+  }
+  return `${SHARED_KEY_PREFIX}${bot}_${principal}`
+}
+
+function legacyMembershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {
   return `${encodeURIComponent(String(botId))}:${encodeURIComponent(String(principalId))}`
+}
+
+/** Rewrite old colon-separated pair keys with a path-safe key before service use. */
+async function migrateSharedPairTable<T extends {
+  readonly botId: BotId
+  readonly principalId: ReturnType<typeof BotPrincipalId>
+}>(table: KvTable<string, T>, tableName: string): Promise<void> {
+  for (const [storedKey, record] of [...table.entries()]) {
+    const canonicalKey = membershipKey(record.botId, record.principalId)
+    if (storedKey === canonicalKey) continue
+    if (storedKey !== legacyMembershipKey(record.botId, record.principalId)) {
+      throw new Error(`shared Bot ${tableName} has an invalid key '${storedKey}'`)
+    }
+    const canonical = table.get(canonicalKey)
+    if (canonical !== undefined && JSON.stringify(canonical) !== JSON.stringify(record)) {
+      throw new Error(`shared Bot ${tableName} has conflicting legacy and canonical records`)
+    }
+    if (canonical === undefined) await table.put(canonicalKey, record)
+    const currentLegacy = table.get(storedKey)
+    if (currentLegacy === undefined) continue
+    if (JSON.stringify(currentLegacy) !== JSON.stringify(record)) {
+      throw new Error(`shared Bot ${tableName} changed during key migration`)
+    }
+    await table.delete(storedKey)
+  }
 }
 
 function sessionKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {

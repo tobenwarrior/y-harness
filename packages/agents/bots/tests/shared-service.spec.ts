@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
@@ -19,6 +22,7 @@ import type {
 } from '@yharness/credentials'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
+import { JsonStorageBackend } from '@yharness/storage-json'
 import { RemoteError } from '@yharness/typert-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import z from 'zod'
@@ -33,6 +37,7 @@ import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../sr
 import {
   sharedInviteSchema,
   sharedMemorySnapshotSchema,
+  sharedMembershipSchema,
   sharedMembershipSnapshotSchema,
   sharedPrivateSessionSchema,
 } from '../src/storage.ts'
@@ -346,6 +351,45 @@ async function fixture(
   }
 }
 
+interface JsonFixture extends Omit<Fixture, 'pool'> {
+  readonly root: string
+}
+
+async function jsonFixture(): Promise<JsonFixture> {
+  const ctx = new Context()
+  await ctx.plugin(Storage)
+  const root = await mkdtemp(join(tmpdir(), 'yh-shared-json-'))
+  const backend = new JsonStorageBackend(root)
+  ctx.effect(() => ctx.storage.backend.register('json', backend))
+  ctx.effect(() => async () => { await backend.close() })
+  const facility = new DomainFacility(ctx, { backend: 'json' })
+  ctx.effect(() => {
+    const unmount = ctx.storage.mount('domain', facility)
+    return async () => { await facility.closeAll(); unmount() }
+  })
+  const records = new Map<CredentialKey, CredentialRecord>()
+  const credentials = new KeyedCredentials(ctx, records)
+  const authority = await SharedAccessAuthority.create(ctx, credentials, {
+    sessionMaxAgeMs: 60_000,
+    inviteMaxAgeMs: 60_000,
+    now: () => 1_000,
+  })
+  const host = new SharedBotHostFixture()
+  const service = await SharedBotService.create(ctx, facility, authority, host, {
+    now: () => 1_000,
+    membershipPollIntervalMs: 10,
+  })
+  return {
+    ctx, facility, records, credentials, authority, service, host, clock: { value: 1_000 }, root,
+    close: async () => {
+      await service.dispose()
+      await authority.dispose()
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    },
+  }
+}
+
 interface SecondaryFixture {
   readonly ctx: Context
   readonly authority: SharedAccessAuthority
@@ -610,6 +654,23 @@ describe('shared Bot snapshot validation', () => {
 })
 
 describe('shared Bot service', () => {
+  it('enrolls through the JSON backend with path-safe shared keys', async () => {
+    const value = await jsonFixture()
+    try {
+      await expect(value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )).resolves.toMatchObject({ botId: BotId('bot-chief'), role: 'owner' })
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      expect([...domain.table('memberships').keys()]).toEqual([
+        expect.stringMatching(/^shared-v2_[a-zA-Z0-9-]+_[a-zA-Z0-9-]+$/),
+      ])
+    } finally {
+      await value.close()
+    }
+  })
+
   it('uses explicit shared-group state instead of a pre-existing owner-local group transcript', async () => {
     const value = await fixture(10, true)
     try {
@@ -2081,6 +2142,146 @@ describe('shared Bot service', () => {
       await expect(reloaded.handle('bots/share/chat', { botId: 'bot-chief', text: 'after restart' }, signal, firstAgain.peer)).resolves.toMatchObject({ ok: true })
       expect(reloaded.sessionFor(BotId('bot-chief'), firstPeer.botPrincipalId)).toBeDefined()
       await reloaded.dispose()
+    } finally {
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
+  it('migrates legacy shared membership and Session keys without changing authority records', async () => {
+    const value = await fixture()
+    let reloaded: SharedBotService | undefined
+    let concurrent: SecondaryFixture | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const admitted = await principal(value, enrollment)
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: BotId('bot-chief'), text: 'legacy key migration' },
+        new AbortController().signal,
+        admitted.peer,
+      )).resolves.toMatchObject({ ok: true })
+      const invite = await value.service.createInvite(BotId('bot-chief'), 'collaborator')
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const membershipEntries = [...domain.table('memberships').entries()]
+      const sessionEntries = [...domain.table('private_sessions').entries()]
+      expect(membershipEntries).toHaveLength(1)
+      expect(sessionEntries).toHaveLength(1)
+      const legacyMembershipKey = membershipEntries[0]?.[0]
+      const legacySessionKey = sessionEntries[0]?.[0]
+      if (legacyMembershipKey === undefined || legacySessionKey === undefined) {
+        throw new Error('shared legacy-key fixture is incomplete')
+      }
+      const membership = sharedMembershipSchema.parse(membershipEntries[0]?.[1])
+      const session = sharedPrivateSessionSchema.parse(sessionEntries[0]?.[1])
+      const legacyMembership = `${encodeURIComponent(String(membership.botId))}:${encodeURIComponent(String(membership.principalId))}`
+      const legacySession = `${encodeURIComponent(String(session.botId))}:${encodeURIComponent(String(session.principalId))}`
+      await domain.table('memberships').delete(legacyMembershipKey)
+      await domain.table('memberships').put(legacyMembership, membership)
+      await domain.table('private_sessions').delete(legacySessionKey)
+      await domain.table('private_sessions').put(legacySession, session)
+      expect(legacyMembership).toContain(':')
+      expect(legacySession).toContain(':')
+      const authorityBefore = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      const inviteKeysBefore = [...domain.table('invites').keys()]
+      expect(inviteKeysBefore).toContain(sharedInviteDigest(invite.code))
+
+      await value.service.dispose()
+      const services = await Promise.all([
+        SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+          now: () => value.clock.value,
+          membershipPollIntervalMs: 10,
+        }),
+        secondaryFixture(value),
+      ])
+      reloaded = services[0]
+      concurrent = services[1]
+
+      const migrated = value.facility.get('agent_bot_shares')
+      if (migrated === undefined) throw new Error('shared Bot domain did not reopen')
+      const migratedMemberships = [...migrated.table('memberships').entries()]
+      const migratedSessions = [...migrated.table('private_sessions').entries()]
+      expect(migratedMemberships).toHaveLength(1)
+      expect(migratedSessions).toHaveLength(1)
+      expect(migratedMemberships.every(([key]) => /^[a-zA-Z0-9_-]+$/.test(key))).toBe(true)
+      expect(migratedSessions.every(([key]) => /^[a-zA-Z0-9_-]+$/.test(key))).toBe(true)
+      expect(migratedMemberships[0]?.[1]).toEqual(membershipEntries[0]?.[1])
+      expect(migratedSessions[0]?.[1]).toEqual(sessionEntries[0]?.[1])
+      expect([...migrated.table('invites').keys()]).toEqual(inviteKeysBefore)
+      expect(sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )).toEqual(authorityBefore)
+      expect(reloaded.privateSessionBindings()).toEqual([session])
+    } finally {
+      await concurrent?.close()
+      await reloaded?.dispose()
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps a legacy key for retry when successor publication fails', async () => {
+    const value = await fixture()
+    let reloaded: SharedBotService | undefined
+    try {
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const [entry] = [...domain.table('memberships').entries()]
+      if (entry === undefined) throw new Error('shared membership fixture is missing')
+      const [canonicalKey, rawMembership] = entry
+      const membership = sharedMembershipSchema.parse(rawMembership)
+      const legacyKey = `${encodeURIComponent(String(membership.botId))}:${encodeURIComponent(String(membership.principalId))}`
+      await domain.table('memberships').delete(canonicalKey)
+      await domain.table('memberships').put(legacyKey, membership)
+      await value.service.dispose()
+      value.pool.failNextWrites = 1
+      await expect(SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })).rejects.toThrow('injected write failure')
+      reloaded = await SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })
+      const migrated = value.facility.get('agent_bot_shares')
+      if (migrated === undefined) throw new Error('shared Bot domain did not reopen')
+      expect([...migrated.table('memberships').keys()]).toEqual([
+        expect.stringMatching(/^shared-v2_[a-zA-Z0-9-]+_[a-zA-Z0-9-]+$/),
+      ])
+    } finally {
+      await reloaded?.dispose()
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
+  it('fails closed when a shared pair row has a key unrelated to its identities', async () => {
+    const value = await fixture()
+    try {
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const [entry] = [...domain.table('memberships').entries()]
+      if (entry === undefined) throw new Error('shared membership fixture is missing')
+      await domain.table('memberships').put('shared-v2_wrong_pair', sharedMembershipSchema.parse(entry[1]))
+      await value.service.dispose()
+      await expect(SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })).rejects.toThrow("shared Bot memberships has an invalid key 'shared-v2_wrong_pair'")
     } finally {
       await value.authority.dispose()
       await value.ctx.fiber.dispose()
