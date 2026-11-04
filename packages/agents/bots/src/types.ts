@@ -431,6 +431,8 @@ export interface BotRenameValue {
 export interface BotProfileUpdateRequest {
   /** Bot whose profile should change. */
   readonly botId: BotId
+  /** Optional row revision captured when an edit dialog opened. */
+  readonly expectedUpdatedAt?: number
   /** Optional replacement display name. */
   readonly name?: string
   /** Replacement routing description, or null to clear it. */

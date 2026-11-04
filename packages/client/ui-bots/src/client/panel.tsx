@@ -45,6 +45,7 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
   const status = statusOf(bot, statuses)
   return {
     id: bot.id,
+    updatedAt: bot.updatedAt,
     name: bot.name,
     ...(bot.description === undefined ? {} : { description: bot.description }),
     ...(bot.persona === undefined ? {} : { persona: bot.persona }),

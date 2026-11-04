@@ -532,7 +532,8 @@ function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonl
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
-const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions')
+const BOT_PROFILE_REVISION_RECORD_V1_KEY = credentialKey('agent-bots', 'profile-revisions')
+const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
 const MAX_BOT_MESSAGE_DELIVERIES = 4_096
@@ -568,13 +569,9 @@ const botCapabilitySnapshotSchema = zod.array(zod.string().regex(BOT_CAPABILITY_
   values => new Set(values).size === values.length,
   { message: 'Bot capabilities must be unique' },
 ).readonly()
-const botProfileSnapshotSchema = zod.object({
+const botProfileSnapshotBaseShape = {
   name: zod.string().min(1).max(80),
   description: zod.string().max(240).optional(),
-  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
-  persona: zod.string().max(4000).nullable().optional(),
-  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
-  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
   identity: zod.enum(BOT_IDENTITIES),
   accent: zod.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
@@ -593,13 +590,32 @@ const botProfileSnapshotSchema = zod.object({
   hidden: zod.boolean().optional(),
   group: zod.string().max(80).refine(value => value.trim() === value).nullable().optional(),
   updatedAt: zod.number().int().nonnegative(),
+} as const
+const botProfileSnapshotV1Schema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  /** Optional fields present in v1 records written after profile editing was added. */
+  persona: zod.string().max(4000).nullable().optional(),
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+}).strict()
+const botProfileSnapshotSchema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
+  persona: zod.string().max(4000).nullable().optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
 }).strict()
 const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
   record: botRecordSchema,
 }).strict()
-const botProfileRevisionRecordSchema = zod.object({
+const botProfileRevisionRecordV1Schema = zod.object({
   version: zod.literal(1),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotV1Schema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+const botProfileRevisionRecordSchema = zod.object({
+  version: zod.literal(2),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
   pending: botProfilePendingSchema.optional(),
@@ -613,7 +629,7 @@ const botMessageDeliveryRecordSchema = zod.object({
 }).strict()
 
 interface BotProfileRevisionState {
-  readonly version: 1
+  readonly version: 2
   readonly revisions: Record<string, number>
   readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
   readonly pending?: zod.infer<typeof botProfilePendingSchema>
@@ -907,13 +923,29 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
 
+function emptyProfileRevisionState(): BotProfileRevisionState {
+  return { version: 2, revisions: {}, profiles: {} }
+}
+
+function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRevisionState {
+  if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
+  const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Bot profile revision record is invalid')
+  return {
+    version: 2,
+    revisions: { ...parsed.data.revisions },
+    profiles: { ...parsed.data.profiles },
+    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+  }
+}
+
 function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfileRevisionState {
-  if (record === undefined) return { version: 1, revisions: {}, profiles: {} }
+  if (record === undefined) return emptyProfileRevisionState()
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 1,
+    version: 2,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
@@ -924,7 +956,7 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
   return {
     kind: 'grant',
     payload: {
-      version: 1,
+      version: 2,
       revisions: state.revisions,
       ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
       ...(state.pending === undefined ? {} : { pending: state.pending }),
@@ -997,7 +1029,7 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
 
 function commitProfileState(state: BotProfileRevisionState, record: BotRecord): BotProfileRevisionState {
   return {
-    version: 1,
+    version: 2,
     revisions: { ...state.revisions, [String(record.id)]: record.updatedAt },
     profiles: { ...state.profiles, [String(record.id)]: profileSnapshotOf(record) },
   }
@@ -2373,8 +2405,9 @@ export class BotService extends TypertRemoteService {
 
     const transactionId = randomUUID()
     let nextToCommit: BotStoredRecord | undefined
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = profileRevisionRecordOf(stored)
+      let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
       if (state.pending !== undefined) {
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -4999,6 +5032,10 @@ export class BotService extends TypertRemoteService {
       if (request === null || typeof request !== 'object') return badRequest('Bot profile request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
+      const expectedUpdatedAt = request.expectedUpdatedAt
+      if (expectedUpdatedAt !== undefined && (!Number.isSafeInteger(expectedUpdatedAt) || expectedUpdatedAt < 0)) {
+        return badRequest('Bot expectedUpdatedAt must be a non-negative integer')
+      }
       const name = request.name === undefined ? undefined : normalizeName(request.name)
       const description = request.description === null
         ? undefined
@@ -5047,7 +5084,7 @@ export class BotService extends TypertRemoteService {
           }
         }
         return updated
-      })
+      }, expectedUpdatedAt)
       this.recordsBySession.set(String(next.sessionId), next)
       this.refreshSharedRecords(next)
       this.emitChanged()
@@ -5766,6 +5803,8 @@ export class BotService extends TypertRemoteService {
    * Read the cross-process profile record and repair an unfinished row commit.
    * A row-write rejection observed by this process remains pending until an
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
+   * A released v1 record is read only as the migration source for the v2
+   * successor; the predecessor remains unchanged.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
@@ -5774,17 +5813,26 @@ export class BotService extends TypertRemoteService {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) {
       await this.reconcileNoCredentialIntents(bots, reconcilePending)
-      return { version: 1, revisions: {}, profiles: {} }
+      return emptyProfileRevisionState()
     }
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
-      const state = profileRevisionRecordOf(record)
-      if (state.pending === undefined) return undefined
+      const state = record === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(record)
+      const migrating = record === undefined && legacyProfileState !== undefined
+      if (state.pending === undefined) return migrating ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
       await bots.put(state.pending.record.id, state.pending.record)
       this.blockedProfileTransactions.delete(state.pending.transactionId)
       return profileRevisionRecordOfState(finishPendingProfile(state))
     })
     return profileRevisionRecordOf(stored)
+  }
+
+  /** Read the released profile-record generation without mutating or deleting it. */
+  private async readLegacyProfileRevisionState(credentials: CredentialProvider): Promise<BotProfileRevisionState | undefined> {
+    if (await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_KEY) !== undefined) return undefined
+    const record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
+    return record === undefined ? undefined : profileRevisionStateFromLegacy(record)
   }
 
   private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotStoredRecord | undefined> {
@@ -6191,6 +6239,11 @@ export class BotService extends TypertRemoteService {
         const { capabilities: ignoredCapabilities, ...withoutCapabilities } = next
         void ignoredCapabilities
         next = withoutCapabilities
+      }
+      if (bot.description === undefined) {
+        const { description: ignoredDescription, ...withoutDescription } = next
+        void ignoredDescription
+        next = withoutDescription
       }
       this.sharedRecordsBySession.set(key, next)
     }

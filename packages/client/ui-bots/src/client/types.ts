@@ -32,6 +32,8 @@ export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
 export interface BotSummary {
   /** Stable bot identity, distinct from the linked Session id. */
   readonly id: string
+  /** Latest durable Bot profile revision, when supplied by the owner. */
+  readonly updatedAt?: number
   /** Human-facing name displayed in the roster and conversation header. */
   readonly name: string
   /** Optional description persisted with the Bot record. */
@@ -153,6 +155,8 @@ export interface BotCreation {
 
 /** Complete profile submitted by the owner when editing an existing Bot. */
 export interface BotProfileUpdate {
+  /** Row revision captured when the edit dialog opened. */
+  readonly expectedUpdatedAt?: number
   readonly name: string
   readonly description: string
   readonly persona: string

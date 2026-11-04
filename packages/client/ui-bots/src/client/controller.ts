@@ -1613,12 +1613,17 @@ export class BotWorkspaceController {
     if (updateProfile === undefined) throw new Error('Bot profile editing is not mounted.')
     const result = await updateProfile({
       botId: brandString<BotIdType>(id),
+      ...(profile.expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt: profile.expectedUpdatedAt }),
       name: profile.name,
       description: profile.description.trim() === '' ? null : profile.description.trim(),
       persona: profile.persona.trim() === '' ? null : profile.persona.trim(),
       capabilities: profile.capabilities,
     })
-    if (!result.ok) throw new Error(result.error.message)
+    if (!result.ok) {
+      const error = new Error(result.error.message)
+      error.name = result.error.code === 'gateway/conflict' ? 'BotProfileConflictError' : 'BotProfileSaveError'
+      throw error
+    }
     if (result.value.bot.id !== id) throw new Error(this.unexpectedResponse())
     if (this.disposed) return
     const current = this.source.getSnapshot()

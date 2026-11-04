@@ -192,6 +192,7 @@ describe('BotWorkspaceController', () => {
     const selected = controller.face().reference()
 
     await controller.face().updateProfile?.(original.id, {
+      expectedUpdatedAt: original.updatedAt,
       name: original.name,
       description: updated.description!,
       persona: updated.persona!,
@@ -200,6 +201,7 @@ describe('BotWorkspaceController', () => {
 
     expect(updateProfile).toHaveBeenCalledWith({
       botId: original.id,
+      expectedUpdatedAt: original.updatedAt,
       name: original.name,
       description: updated.description,
       persona: updated.persona,

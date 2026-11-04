@@ -898,9 +898,17 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   const [profileDescription, setProfileDescription] = useState('')
   const [profilePersona, setProfilePersona] = useState('')
   const [profileCapabilities, setProfileCapabilities] = useState('')
-  const [profileError, setProfileError] = useState(false)
+  const [profileError, setProfileError] = useState<'conflict' | 'failed' | null>(null)
+  const [profileRevision, setProfileRevision] = useState<number | undefined>()
   const [profileSaving, setProfileSaving] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  useEffect(() => {
+    if (profileTarget !== null && profileTarget !== bot?.id) {
+      setProfileTarget(null)
+      setProfileRevision(undefined)
+      setProfileError(null)
+    }
+  }, [bot?.id, profileTarget])
   if (bot === undefined) {
     if (loading) {
       return (
@@ -938,7 +946,8 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
                   setProfileDescription(bot.description ?? '')
                   setProfilePersona(bot.persona ?? '')
                   setProfileCapabilities(profileCapabilityText(bot.capabilities))
-                  setProfileError(false)
+                  setProfileError(null)
+                  setProfileRevision(bot.updatedAt)
                   setProfileTarget(bot.id)
                 }} />
             </Tooltip>
@@ -979,34 +988,40 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
       </div>
       {onUpdateProfile !== undefined && <Modal
         open={profileTarget !== null}
-        onClose={() => { if (!profileSaving) setProfileTarget(null) }}
+        onClose={() => { if (!profileSaving) { setProfileTarget(null); setProfileRevision(undefined) } }}
         title={t('editBotProfile')}
         description={t('editBotProfileDescription')}
         closeLabel={t('cancel')}
         footer={(
           <>
-            <Button variant="ghost" onClick={() => { setProfileTarget(null) }} disabled={profileSaving}>{t('cancel')}</Button>
+            <Button variant="ghost" onClick={() => { setProfileTarget(null); setProfileRevision(undefined) }} disabled={profileSaving}>{t('cancel')}</Button>
             <Button
               variant="primary"
               disabled={profileSaving || profileName.trim() === ''}
               onClick={() => {
-                if (profileTarget === null) return
+                if (profileTarget === null || profileTarget !== bot.id) return
                 setProfileSaving(true)
-                setProfileError(false)
+                setProfileError(null)
                 const profile: BotProfileUpdate = {
+                  ...(profileRevision === undefined ? {} : { expectedUpdatedAt: profileRevision }),
                   name: profileName.trim(),
                   description: profileDescription.trim(),
                   persona: profilePersona.trim(),
                   capabilities: profileCapabilityList(profileCapabilities),
                 }
-                void onUpdateProfile(profileTarget, profile).then(() => { setProfileTarget(null) }, () => { setProfileError(true) })
+                void onUpdateProfile(profileTarget, profile).then(() => {
+                  setProfileTarget(null)
+                  setProfileRevision(undefined)
+                }, (cause: unknown) => {
+                  setProfileError(cause instanceof Error && cause.name === 'BotProfileConflictError' ? 'conflict' : 'failed')
+                })
                   .finally(() => { setProfileSaving(false) })
               }}
             >{t(profileSaving ? 'savingProfile' : 'saveProfile')}</Button>
           </>
         )}
       >
-        {profileError && <div className={css.dialogNotice} role="alert">{t('profileSaveFailed')}</div>}
+        {profileError !== null && <div className={css.dialogNotice} role="alert">{t(profileError === 'conflict' ? 'profileConflict' : 'profileSaveFailed')}</div>}
         <div className={css.dialogField} aria-busy={profileSaving}>
           <label className={css.dialogLabel} htmlFor="yharness-bot-profile-name">{t('newBotName')}</label>
           <Input

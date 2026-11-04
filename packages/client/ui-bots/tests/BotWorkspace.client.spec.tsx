@@ -21,6 +21,7 @@ const t = makeTranslate(en)
 const bots: readonly BotSummary[] = [
   {
     id: 'research',
+    updatedAt: 1,
     name: 'Research partner',
     description: 'Source scout',
     group: 'Research',
@@ -161,6 +162,7 @@ describe('Bot roster and detail', () => {
 
     await waitFor(() => {
       expect(updateProfile).toHaveBeenCalledWith('research', {
+        expectedUpdatedAt: bots[0]!.updatedAt,
         name: 'Research partner', description: 'Source scout updated',
         persona: 'Lead with evidence.', capabilities: ['chat', 'research', 'release-review'],
       })
@@ -184,6 +186,29 @@ describe('Bot roster and detail', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('The bot profile could not be saved')
     expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep the draft.')
+  })
+
+  it('explains a stale profile conflict without discarding the draft', async () => {
+    const updateProfile = vi.fn(async () => {
+      const error = new Error('stale profile')
+      error.name = 'BotProfileConflictError'
+      throw error
+    })
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+      onUpdateProfile={updateProfile}
+    ><span /></BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep my newer draft.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere')
+    expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep my newer draft.')
+    expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy()
   })
 
   it('renames the selected bot from its conversation header', async () => {
