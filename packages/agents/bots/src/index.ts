@@ -533,8 +533,11 @@ function isolatedGroupDelivery(messages: readonly UserMessage[], claims: readonl
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
 const BOT_PROFILE_REVISION_RECORD_V1_KEY = credentialKey('agent-bots', 'profile-revisions')
-const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
-const BOT_PROFILE_REVISION_RECORD_VERSION = 2 as const
+/** Frozen setup-release record. Routine writers use the v3 successor below. */
+const BOT_PROFILE_REVISION_RECORD_V2_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
+const BOT_PROFILE_REVISION_RECORD_V3_KEY = credentialKey('agent-bots', 'profile-revisions-v3')
+const BOT_PROFILE_REVISION_RECORD_KEY = BOT_PROFILE_REVISION_RECORD_V3_KEY
+const BOT_PROFILE_REVISION_RECORD_VERSION = 3 as const
 const MAX_BOT_TIMED_ROUTINES = 256
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
@@ -632,6 +635,14 @@ const botProfileSnapshotV1Schema = zod.object({
   persona: zod.string().max(4000).nullable().optional(),
   capabilities: botCapabilitySnapshotSchema.nullable().optional(),
 }).strict()
+/** The setup release's v2 snapshot is immutable; do not add routine fields here. */
+const botProfileSnapshotV2Schema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
+  persona: zod.string().max(4000).nullable().optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+}).strict()
 const botProfileSnapshotSchema = zod.object({
   ...botProfileSnapshotBaseShape,
   roster: botProfileRosterSchema.optional(),
@@ -651,6 +662,12 @@ const botProfileRevisionRecordV1Schema = zod.object({
   version: zod.literal(1),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotV1Schema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+const botProfileRevisionRecordV2Schema = zod.object({
+  version: zod.literal(2),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotV2Schema).optional(),
   pending: botProfilePendingSchema.optional(),
 }).strict()
 const botProfileRevisionRecordSchema = zod.object({
@@ -676,8 +693,30 @@ interface BotProfileRevisionState {
 
 type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
 
+const BOT_PROFILE_OPTIONAL_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
+  'description', 'avatar', 'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines',
+]
+
 function profileValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function stableBotIdentityMatches(
+  current: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
+  expected: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
+): boolean {
+  return String(current.id) === String(expected.id)
+    && String(current.sessionId) === String(expected.sessionId)
+    && current.ownerId === expected.ownerId
+    && current.createdAt === expected.createdAt
+}
+
+function isLegacyPendingReplay(
+  current: BotProfileRevisionState | undefined,
+  legacy: BotProfileRevisionState | undefined,
+  pending: zod.infer<typeof botProfilePendingSchema>,
+): boolean {
+  return current?.pending === undefined && legacy?.pending?.transactionId === pending.transactionId
 }
 
 /** Reject two same-generation profile snapshots that make different claims. */
@@ -755,7 +794,7 @@ function mergeProfileSnapshots(
   }
 }
 
-/** Return whether an immutable v1 pending row is already reflected in v2. */
+/** Return whether an immutable predecessor pending row is already reflected in v3. */
 function legacyPendingWasApplied(
   current: BotProfileRevisionState,
   pending: zod.infer<typeof botProfilePendingSchema>,
@@ -771,7 +810,12 @@ function legacyPendingWasApplied(
   const profile = current.profiles[id]
   if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
   if (profile.updatedAt !== revision) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
-  if (revision < pending.record.updatedAt) return false
+  if (revision < pending.record.updatedAt) {
+    if (profile.roster !== undefined && !stableBotIdentityMatches(profile.roster, pending.record)) {
+      throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+    }
+    return false
+  }
   const expected = profileSnapshotOf(pending.record)
   const fields: readonly (keyof BotProfileSnapshot)[] = [
     'roster', 'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
@@ -782,7 +826,11 @@ function legacyPendingWasApplied(
   const matches = fields.every((field) => {
     const expectedHasField = Object.hasOwn(expected, field)
     const profileHasField = Object.hasOwn(profile, field)
-    if (expectedHasField !== profileHasField) return false
+    if (expectedHasField !== profileHasField) {
+      // A complete newer snapshot may add or clear optional fields; required
+      // fields, revision, and stable identity are checked below.
+      return newer && BOT_PROFILE_OPTIONAL_FIELDS.includes(field)
+    }
     if (!expectedHasField) return true
     if (!newer) return profileValuesEqual(profile[field], expected[field])
     if (field === 'updatedAt') return profile.updatedAt === revision
@@ -790,10 +838,7 @@ function legacyPendingWasApplied(
       const expectedRoster = expected.roster
       const profileRoster = profile.roster
       return expectedRoster !== undefined && profileRoster !== undefined
-        && profileRoster.id === expectedRoster.id
-        && profileRoster.sessionId === expectedRoster.sessionId
-        && profileRoster.ownerId === expectedRoster.ownerId
-        && profileRoster.createdAt === expectedRoster.createdAt
+        && stableBotIdentityMatches(profileRoster, expectedRoster)
     }
     return true
   })
@@ -801,7 +846,7 @@ function legacyPendingWasApplied(
   return true
 }
 
-/** Converge the immutable released state into an incomplete v2 record exactly once. */
+/** Converge immutable predecessor state into an incomplete v3 record exactly once. */
 function mergeProfileRevisionStates(
   current: BotProfileRevisionState | undefined,
   legacy: BotProfileRevisionState | undefined,
@@ -838,7 +883,7 @@ function mergeProfileRevisionStates(
   if (pending !== undefined && legacy.pending !== undefined && !profileValuesEqual(pending, legacy.pending)) {
     throw new Error('Bot profile revision records contain conflicting pending transactions')
   }
-  // The v1 predecessor cannot be cleared, so an applied revision is the v2 acknowledgement.
+  // Immutable predecessors cannot be cleared, so an applied revision is the v3 acknowledgement.
   if (pending === undefined && legacy.pending !== undefined && !legacyPendingWasApplied(current, legacy.pending)) {
     pending = legacy.pending
     changed = true
@@ -1143,13 +1188,25 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
 }
 
 function emptyProfileRevisionState(): BotProfileRevisionState {
-  return { version: 2, revisions: {}, profiles: {} }
+  return { version: BOT_PROFILE_REVISION_RECORD_VERSION, revisions: {}, profiles: {} }
 }
 
 function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRevisionState {
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
+  return {
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
+    revisions: { ...parsed.data.revisions },
+    profiles: { ...parsed.data.profiles },
+    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+  }
+}
+
+function profileRevisionStateFromV2(record: CredentialRecord): BotProfileRevisionState {
+  if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
+  const parsed = botProfileRevisionRecordV2Schema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Bot profile revision v2 record is invalid')
   return {
     version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...parsed.data.revisions },
@@ -2656,12 +2713,21 @@ export class BotService extends TypertRemoteService {
     let nextToCommit: BotStoredRecord | undefined
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+      const currentState = stored === undefined ? undefined : profileRevisionRecordOf(stored)
       const merged = mergeProfileRevisionStates(
-        stored === undefined ? undefined : profileRevisionRecordOf(stored),
+        currentState,
         legacyProfileState,
       )
       let state = merged.state
       if (state.pending !== undefined) {
+        if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
+          const current = bots.get(state.pending.record.id)
+          if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
+            throw new RemoteError('gateway/conflict', 'Bot profile identity changed during legacy profile recovery', {
+              botId: state.pending.record.id,
+            })
+          }
+        }
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
         state = finishPendingProfile(state)
@@ -2784,9 +2850,19 @@ export class BotService extends TypertRemoteService {
     }
 
     const transactionId = randomUUID()
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = profileRevisionRecordOf(stored)
+      const currentState = profileRevisionRecordOf(stored)
+      let state = mergeProfileRevisionStates(currentState, legacyProfileState).state
       if (state.pending !== undefined) {
+        if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
+          const current = bots.get(state.pending.record.id)
+          if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
+            throw new RemoteError('gateway/conflict', 'Bot profile identity changed during legacy profile recovery', {
+              botId: state.pending.record.id,
+            })
+          }
+        }
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
         state = finishPendingProfile(state)
@@ -6056,8 +6132,8 @@ export class BotService extends TypertRemoteService {
    * Read the cross-process profile record and repair an unfinished row commit.
    * A row-write rejection observed by this process remains pending until an
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
-   * A released v1 record is read only as the migration source for the v2
-   * successor; the predecessor remains unchanged.
+   * Released v1 and setup-release v2 records are read only as migration sources
+   * for the v3 successor; both predecessors remain unchanged.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
@@ -6070,13 +6146,20 @@ export class BotService extends TypertRemoteService {
     }
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
+      const currentState = record === undefined ? undefined : profileRevisionRecordOf(record)
       const merged = mergeProfileRevisionStates(
-        record === undefined ? undefined : profileRevisionRecordOf(record),
+        currentState,
         legacyProfileState,
       )
       const state = merged.state
       if (state.pending === undefined) return merged.changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
+      if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
+        const current = bots.get(state.pending.record.id)
+        if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
+          throw new Error('Bot profile revision cannot replay a legacy pending transaction')
+        }
+      }
       await bots.put(state.pending.record.id, state.pending.record)
       this.blockedProfileTransactions.delete(state.pending.transactionId)
       return profileRevisionRecordOfState(finishPendingProfile(state))
@@ -6086,8 +6169,13 @@ export class BotService extends TypertRemoteService {
 
   /** Read the released profile-record generation without mutating or deleting it. */
   private async readLegacyProfileRevisionState(credentials: CredentialProvider): Promise<BotProfileRevisionState | undefined> {
-    const record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
-    return record === undefined ? undefined : profileRevisionStateFromLegacy(record)
+    const v2Record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V2_KEY)
+    const v1Record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
+    const v2 = v2Record === undefined ? undefined : profileRevisionStateFromV2(v2Record)
+    const v1 = v1Record === undefined ? undefined : profileRevisionStateFromLegacy(v1Record)
+    if (v2 === undefined) return v1
+    if (v1 === undefined) return v2
+    return mergeProfileRevisionStates(v2, v1).state
   }
 
   private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotStoredRecord | undefined> {
