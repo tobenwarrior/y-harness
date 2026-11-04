@@ -1661,6 +1661,60 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('never downgrades a delivered result when accepted settlement write fails', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Accepted settlement room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-accepted-settlement')
+      value.host.deliverSharedGroup.mockImplementation(async () => 'accepted')
+      const originalMutation = value.authority.mutateExtension.bind(value.authority)
+      let postDeliveryMutations = 0
+      const mutation = vi.spyOn(value.authority, 'mutateExtension')
+      mutation.mockImplementation(async (...args) => {
+        if (value.host.deliverSharedGroup.mock.calls.length > 0) {
+          postDeliveryMutations += 1
+          if (postDeliveryMutations === 2) throw new Error('accepted settlement write unavailable')
+        }
+        return originalMutation(...args)
+      })
+
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Keep this delivery accepted after settlement retry.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'accepted',
+          deliveries: [{ status: 'accepted' }],
+        },
+      })
+
+      const stored = await value.authority.readExtension('agent-bots/shared-memberships')
+      const membership = sharedMembershipSnapshotSchema.parse(stored.value)
+      const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      const delivery = groups.deliveries.find(candidate => candidate.messageId === messageId && candidate.botId === BotId('bot-chief'))
+      expect(delivery).toMatchObject({ status: 'accepted' })
+      expect(delivery === undefined ? false : groups.responseReservations.includes(delivery.id)).toBe(true)
+    } finally {
+      await value.close()
+    }
+  })
+
   it('rejects a group send before delivery when the durable transcript has no response capacity', async () => {
     const value = await fixture(10, true)
     try {

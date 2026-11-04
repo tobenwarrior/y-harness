@@ -1265,6 +1265,8 @@ export class SharedBotGroupService {
     }
     const lease = this.startDeliveryLeaseRenewal(attempt.deliveryId, claim.token)
     const dispatchSignal = sharedGroupSignal(signal, lease.signal)
+    // A successful recipient result must only retry accepted settlement.
+    let deliveredResult: 'accepted' | 'duplicate' | undefined
     try {
       const deliverSharedGroup = this.host.deliverSharedGroup
       if (deliverSharedGroup === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
@@ -1296,11 +1298,32 @@ export class SharedBotGroupService {
           leaseUntil: deliveryResult.retryAt,
         }
       }
+      deliveredResult = deliveryResult
       const stillOwnsClaim = await this.assertDeliveryClaim(attempt.deliveryId, claim.token, dispatchSignal)
       if (!stillOwnsClaim) throw new SharedGroupClaimLostError()
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'accepted', undefined, dispatchSignal)
       return { kind: 'accepted', result: deliveryResult }
     } catch (error: unknown) {
+      if (deliveredResult !== undefined) {
+        if (dispatchSignal.aborted || error instanceof SharedGroupClaimLostError) {
+          return {
+            kind: 'busy',
+            error: 'Shared Bot group delivery is pending retry after its lease ended',
+            leaseUntil: Math.max(this.now() + 1, this.now() + SHARED_GROUP_DELIVERY_LEASE_MS),
+          }
+        }
+        try {
+          await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'accepted', undefined, dispatchSignal)
+          return { kind: 'accepted', result: deliveredResult }
+        } catch {
+          const retryAt = this.now()
+          return {
+            kind: 'busy',
+            error: 'Shared Bot group delivery outcome is pending bounded durable recovery',
+            leaseUntil: retryAt + SHARED_GROUP_DELIVERY_LEASE_MS,
+          }
+        }
+      }
       if (dispatchSignal.aborted || error instanceof SharedGroupClaimLostError) {
         return {
           kind: 'busy',
