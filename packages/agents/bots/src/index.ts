@@ -1967,20 +1967,7 @@ export class BotService extends TypertRemoteService {
       const initiatorKey = initiator === undefined ? undefined : String(initiator.id)
       const sharedInitiator = initiatorKey !== undefined
         && (this.sharedSessionIds.has(initiatorKey) || this.sharedSessionFailures.has(initiatorKey))
-      if (sharedInitiator) {
-        if (initiator === undefined) throw new Error(SHARED_BOT_LLM_REJECTION)
-        if (sessionKey !== initiatorKey) {
-          if (sessionKey === undefined && isAuditedSharedAuxiliaryRequest(options)) {
-            if (!this.sharedScopeAgents.has(initiator)
-              || this.sharedScopeInstallations.has(initiator)
-              || this.sharedScopeFences.has(initiator)) {
-              throw new Error(SHARED_BOT_LLM_REJECTION)
-            }
-            return next()
-          }
-          throw new Error(SHARED_BOT_LLM_REJECTION)
-        }
-      }
+      if (sharedInitiator && sessionKey !== initiatorKey) throw new Error(SHARED_BOT_LLM_REJECTION)
       if (sessionKey !== undefined
         && this.sharedSessionIds.has(sessionKey)
         && initiator !== undefined
@@ -2315,9 +2302,13 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/created', async ({ agent }) => {
       if (agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET) {
         const sessionKey = String(agent.id)
-        this.sharedSessionIds.add(sessionKey)
-        if (!this.sharedRecordsBySession.has(sessionKey)) this.sharedSessionFailures.add(sessionKey)
-        this.ensureSharedScopeFence(agent)
+        if (this.recordsBySession.has(sessionKey)) {
+          this.restoreOwnerBotSession(agent)
+        } else {
+          this.sharedSessionIds.add(sessionKey)
+          if (!this.sharedRecordsBySession.has(sessionKey)) this.sharedSessionFailures.add(sessionKey)
+          this.ensureSharedScopeFence(agent)
+        }
       }
       await this.installPrompt(agent)
       void this.reconcileGroupSession(agent).catch((error: unknown) => {
@@ -5651,6 +5642,7 @@ export class BotService extends TypertRemoteService {
   private async installPrompt(agent: Agent): Promise<void> {
     await this.ready
     const sessionKey = String(agent.id)
+    this.restoreOwnerBotSession(agent)
     const record = this.recordsBySession.get(sessionKey) ?? this.sharedRecordsBySession.get(sessionKey)
     const sharedSession = this.sharedSessionIds.has(sessionKey)
     const operatorBot = this.recordsBySession.has(String(agent.id))
@@ -5843,6 +5835,16 @@ export class BotService extends TypertRemoteService {
     release()
   }
 
+  /** Keep an owner Bot session out of shared admission even if its preset is reused. */
+  private restoreOwnerBotSession(agent: Agent): void {
+    const sessionKey = String(agent.id)
+    if (!this.recordsBySession.has(sessionKey)) return
+    this.sharedRecordsBySession.delete(sessionKey)
+    this.sharedSessionIds.delete(sessionKey)
+    this.sharedSessionFailures.delete(sessionKey)
+    this.releaseSharedScopeFence(agent)
+  }
+
   /** Record installed shared scope and release a fence not owned by a pending installation. */
   private markSharedScopeInstalled(agent: Agent): void {
     this.sharedScopeAgents.add(agent)
@@ -5861,6 +5863,10 @@ export class BotService extends TypertRemoteService {
     for (const agent of this.ctx.agents.list()) {
       if (agent.session.header.agentPreset !== SHARED_BOT_AGENT_PRESET) continue
       const sessionKey = String(agent.id)
+      if (this.recordsBySession.has(sessionKey)) {
+        this.restoreOwnerBotSession(agent)
+        continue
+      }
       this.sharedSessionIds.add(sessionKey)
       this.sharedSessionFailures.add(sessionKey)
       this.ensureSharedScopeFence(agent)
@@ -6701,9 +6707,14 @@ export class BotService extends TypertRemoteService {
       const bot = this.recordsBySession.size === 0
         ? undefined
         : [...this.recordsBySession.values()].find(record => record.id === binding.botId)
-      if (bot !== undefined) this.sharedRecordsBySession.set(key, { ...bot, sessionId: binding.sessionId })
-      if (bot === undefined) this.sharedSessionFailures.add(key)
-      else this.sharedSessionFailures.delete(key)
+      if (bot === undefined) {
+        this.sharedRecordsBySession.delete(key)
+        this.sharedSessionFailures.add(key)
+        this.fenceExistingSharedAgent(binding.sessionId)
+      } else {
+        this.sharedRecordsBySession.set(key, { ...bot, sessionId: binding.sessionId })
+        this.sharedSessionFailures.delete(key)
+      }
     }
     for (const key of this.activeSharedGroupSessionKeys) if (!activeKeys.has(key)) this.activeSharedGroupSessionKeys.delete(key)
   }

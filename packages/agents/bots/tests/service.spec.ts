@@ -459,8 +459,21 @@ async function createHarness({
     if (agent === undefined && shouldResumeColdSessions
       && (persistedSessionSeeds.has(String(sessionId))
         || persistedSessionEvents.has(String(sessionId)))) {
-      agent = createAgent(String(sessionId))
-      await ctx.serial('agent/created', { agent, source: 'resume' })
+      if (options.realAgent) {
+        const seed = persistedSessionSeeds.get(String(sessionId))
+          ?? persistedSessionEvents.get(String(sessionId))
+          ?? []
+        const handle = await ctx.agentLoop.createAgent(ctx, {
+          sessionId,
+          seed,
+          agentOptions: { provider: 'mock', model: 'mock' },
+        })
+        agent = handle.agent
+        agents.push(agent)
+      } else {
+        agent = createAgent(String(sessionId))
+        await ctx.serial('agent/created', { agent, source: 'resume' })
+      }
     }
     return agent === undefined ? { error: new Error('session not found') } : { agent }
   })
@@ -483,7 +496,7 @@ async function createHarness({
   }
   if (!options.realAgent) ctx.provide('sessions', sessions as never)
   ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
-  ctx.provide('sessionPersistence', {} as never)
+  if (!options.realAgent) ctx.provide('sessionPersistence', {} as never)
   options.beforeService?.(ctx)
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   if (scheduleEnabled) await ctx.plugin(ScheduleService)
@@ -976,11 +989,11 @@ describe('durable Bot roster', () => {
                 content: [{ type: 'text', text: 'ambient attributed title input' }],
                 source: { kind: 'dsh-session-title-llm' },
               })],
-            })) { /* The audited auxiliary capability may omit a duplicate Session id. */ }
+            })) { /* No-session auxiliary calls must not bypass shared attribution. */ }
           })
         }
-        await expect(directAmbientTitle()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(1)
+        await expect(directAmbientTitle()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
 
         const directToolHistory = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -997,7 +1010,7 @@ describe('durable Bot roster', () => {
           })) { /* The guard must reject before the adapter is reached. */ }
         }
         await expect(directToolHistory()).rejects.toThrow(/shared Bot Session.*LLM/i)
-        expect(h.adapter.requests).toHaveLength(1)
+        expect(h.adapter.requests).toHaveLength(0)
 
         const directTitle = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1013,7 +1026,7 @@ describe('durable Bot roster', () => {
           })) { /* The audited auxiliary envelope is admitted. */ }
         }
         await expect(directTitle()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(2)
+        expect(h.adapter.requests).toHaveLength(1)
 
         const directAuxTools = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1030,7 +1043,7 @@ describe('durable Bot roster', () => {
           })) { /* The guard must reject before the adapter is reached. */ }
         }
         await expect(directAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
-        expect(h.adapter.requests).toHaveLength(2)
+        expect(h.adapter.requests).toHaveLength(1)
 
         const directEmptyAuxTools = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1047,7 +1060,7 @@ describe('durable Bot roster', () => {
           })) { /* Empty tool declarations remain an audited auxiliary envelope. */ }
         }
         await expect(directEmptyAuxTools()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(3)
+        expect(h.adapter.requests).toHaveLength(2)
 
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
@@ -1213,6 +1226,63 @@ describe('durable Bot roster', () => {
       })
       await expect(host.deliverSharedGroup?.(request)).resolves.toBe('accepted')
       expect(h.followups[0]).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fences a live Agent when dynamic group registration names a missing Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Removed group Bot', cwd: '/tmp' })
+    const records = seed.records
+    const bots = seed.ctx.storageDomain.get('agent_bots')
+    if (bots === undefined || !await bots.table('bots').delete(String(created.bot.id))) {
+      throw new Error('dynamic missing-Bot fixture did not remove the Bot row')
+    }
+    await close(seed.ctx)
+
+    const sessionId = SessionId('shared-session-group-missing-bot-dynamic')
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      {
+        connection: {
+          sharedRpc: {
+            enroll: vi.fn(() => async () => {}),
+            handle: vi.fn(() => async () => {}),
+          },
+        },
+        beforeService: (ctx) => {
+          ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+        },
+      },
+    )
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('dynamic missing-Bot Agent was not created')
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-missing-bot-dynamic'),
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      productionSharedHost(h.service).registerSharedGroupSessions?.([binding])
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-group-missing-bot-dynamic'),
+        name: 'bash',
+        arguments: {},
+        signal: new AbortController().signal,
+        agent,
+      })).resolves.toMatchObject({ isError: true })
     } finally {
       await close(h.ctx)
     }
@@ -1694,6 +1764,61 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('honors an owner Bot record when its Session uses the shared preset name', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let firstClosed = false
+    try {
+      const created = await first.service.create({
+        name: 'Shared-preset owner',
+        cwd: '/tmp',
+        agentPreset: SHARED_BOT_AGENT_PRESET,
+      })
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(created.bot.sessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          beforeService: (ctx) => {
+            const agent = ctx.agents.get(created.bot.sessionId)
+            if (agent === undefined) throw new Error('shared-preset owner Agent was not created')
+            Object.defineProperty(agent.session, 'header', {
+              configurable: true,
+              value: { ...agent.session.header, agentPreset: SHARED_BOT_AGENT_PRESET },
+            })
+            ctx.tools.register(plainFixtureTool('bash', async () => 'owner tool result'))
+          },
+        },
+      )
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('shared-preset owner Agent was not created')
+        await h.ctx.serial('agent/created', { agent, source: 'resume' })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-preset-owner-tool'),
+          name: 'bash',
+          arguments: {},
+          signal: new AbortController().signal,
+          agent,
+        })).resolves.toMatchObject({ isError: false, value: 'owner tool result' })
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
   it('keeps a live Agent fenced while validation metadata is pending or invalid', async () => {
     const sharedSessionId = SessionId('shared-session-admission-invalid-metadata')
     const pool = new MemoryMediaPool()
@@ -2050,6 +2175,11 @@ describe('durable Bot roster', () => {
             },
           },
           inspectSharedSessions: true,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          beforeService: (ctx) => {
+            ctx.on('session/flush', () => true)
+          },
         },
       )
       try {
@@ -2062,6 +2192,20 @@ describe('durable Bot roster', () => {
         const resumed = h.agents.find(agent => agent.id === sharedSessionId)
         if (resumed === undefined) throw new Error('cold legacy prompt Agent was not restored')
         expect(resumed.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(1)
+        expectCurrentSessionReload(resumed.session)
+        resumed.followup(createUserMessage({
+          content: [{ type: 'text', text: 'first model request after cold resume' }],
+          source: { kind: 'user' },
+        }))
+        await resumed.whenIdle()
+        expect(h.adapter?.requests).toHaveLength(1)
+        const request = h.adapter?.requests[0]
+        if (request === undefined) throw new Error('cold legacy prompt model request was not sent')
+        const requestText = request.messages.flatMap(message => message.content)
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')
+        expect(requestText).not.toContain('PRIVATE_COLD_LEGACY_PROMPT')
+        expect(resumed.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(2)
         expectCurrentSessionReload(resumed.session)
       } finally {
         await close(h.ctx)
