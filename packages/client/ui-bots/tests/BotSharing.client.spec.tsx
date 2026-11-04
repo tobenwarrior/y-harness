@@ -424,6 +424,20 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByText('Private answer')).toBeNull()
   })
 
+  it('bounds repeated forbidden roster refreshes instead of looping forever', async () => {
+    const list = vi.fn().mockResolvedValue({
+      ok: false as const,
+      error: { code: 'gateway/forbidden', message: 'membership revoked', details: {} },
+    })
+    const client = sharedClient({ list })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('alert').textContent).toContain('membership revoked')
+  })
+
   it('refreshes after enrollment with a real shared client without self-invalidating the request', async () => {
     let listCalls = 0
     const wireBot = (summary: CompleteBotSummary) => ({
@@ -494,6 +508,57 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
     await waitFor(() => { expect(list.mock.calls.length).toBeGreaterThan(initialRestoreCalls) })
+  })
+
+  it('keeps a newly typed invite code across the real client auth generation change', async () => {
+    const enrollment = Promise.withResolvers<{
+      readonly ok: true
+      readonly value: { readonly principalId: string; readonly expiresAt: number }
+    }>()
+    const enrollmentStarted = Promise.withResolvers<true>()
+    const wireBot = {
+      id: bot.id,
+      name: bot.name,
+      description: bot.description,
+      identity: bot.identity,
+      accent: bot.accent,
+      state: 'active' as const,
+      availability: 'idle' as const,
+      role: 'collaborator' as const,
+    }
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') {
+          enrollmentStarted.resolve(true)
+          return enrollment.promise
+        }
+        if (endpoint === 'bots/share/session') return { ok: true as const, value: { principalId: 'principal-member', expiresAt: 3_000 } }
+        if (endpoint === 'bots/share/list') return { ok: true as const, value: { bots: [wireBot] } }
+        if (endpoint === 'bots/share/read-private-chat') return { ok: true as const, value: { botId: bot.id, recent: [{ role: 'assistant', text: 'Private answer' }] } }
+        if (endpoint === 'bots/share/read-memory') return { ok: true as const, value: { botId: bot.id, enabled: true, updatedAt: 1, entries: [] } }
+        if (endpoint === 'bots/share/list-groups') return { ok: true as const, value: { groups: [] } }
+        return { ok: true as const, value: {} }
+      }),
+    }
+    vi.stubGlobal('BroadcastChannel', undefined)
+    try {
+      const client = createSharedBotsClient(rpc)
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+      fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'first-code' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+      await enrollmentStarted.promise
+      fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'second-code' } })
+
+      await act(async () => {
+        enrollment.resolve({ ok: true, value: { principalId: 'principal-member', expiresAt: 3_000 } })
+        await Promise.resolve()
+      })
+      await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+      expect(screen.getByRole('textbox', { name: 'Invite code' })).toHaveProperty('value', 'second-code')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('localizes the collaborator role in the shared roster', async () => {
@@ -903,6 +968,45 @@ describe('shared Bot collaboration surfaces', () => {
     })
     expect(screen.getByRole('dialog', { name: 'Create a shared group' })).toBeTruthy()
     view.unmount()
+  })
+
+  it('does not overlap a recovery while the previous recovery is still settling', async () => {
+    const queue = createSharedGroupPendingQueue('principal-member')
+    await queue.reserveCreation('recovery-overlap', 'Recovery room', [bot.id, analystBot.id])
+    const createGroup = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['createGroup']>>>>()
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      createGroup: vi.fn().mockReturnValue(createGroup.promise),
+    })
+    const view = render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    let dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    await waitFor(() => { expect(client.createGroup).toHaveBeenCalledOnce() })
+
+    await act(async () => {
+      view.rerender(<SharedBotsDialog client={client} open={false} onClose={vi.fn()} t={t} />)
+      await Promise.resolve()
+    })
+    view.rerender(<SharedBotsDialog client={client} open t={t} onClose={vi.fn()} />)
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    await waitFor(() => {
+      const recover = within(dialog).getByRole('button', { name: 'Recover' })
+      expect(recover).toBeTruthy()
+      expect((recover as HTMLButtonElement).disabled).toBe(false)
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    expect(client.createGroup).toHaveBeenCalledOnce()
+
+    createGroup.resolve({ ok: false, error: { code: 'gateway/transport', message: 'settled', details: {} } })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
   })
 
   it('reconciles a persisted shared-group create after reopening', async () => {

@@ -35,6 +35,7 @@ import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client
 const SHARED_BOTS_PATH = '/shared-bots' as const
 const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
 const SHARED_AUTH_MESSAGE = 'auth-invalidated' as const
+let nextSharedAuthSenderId = 0
 
 const BOT_IDENTITIES = [
   'agent',
@@ -87,12 +88,15 @@ function openSharedAuthChannel(listener: (event: { readonly data: unknown }) => 
   return channel
 }
 
-/** Notify other browser tabs that the shared HttpOnly cookie or ACL may have changed. */
-export function broadcastSharedAuthChanged(): void {
+/**
+ * Notify other browser tabs that the shared HttpOnly cookie or ACL may have changed.
+ * @param senderId - Optional client identity used to ignore this tab's own broadcast.
+ */
+export function broadcastSharedAuthChanged(senderId?: string): void {
   const channel = openSharedAuthChannel(() => {})
   if (channel === undefined) return
   try {
-    channel.postMessage({ type: SHARED_AUTH_MESSAGE })
+    channel.postMessage({ type: SHARED_AUTH_MESSAGE, ...(senderId === undefined ? {} : { senderId }) })
   } finally {
     setTimeout(() => { channel.close() }, 0)
   }
@@ -229,6 +233,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
+  const authSenderId = `shared-client-${nextSharedAuthSenderId += 1}`
+  let authTransitionVersion = 0
   let authTransitionTail: Promise<void> = Promise.resolve()
   let authChannel: SharedAuthChannel | undefined
   const authListeners = new Set<SharedBotAuthListener>()
@@ -245,12 +251,18 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     retryScope = next
     authGeneration += 1
     notifyAuth({ source, reason: next === undefined ? 'invalidated' : 'authenticated' })
-    if (broadcast) broadcastSharedAuthChanged()
+    if (broadcast) broadcastSharedAuthChanged(authSenderId)
   }
   const receiveCrossTabAuthChange = (event: { readonly data: unknown }): void => {
-    if (!isRecord(event.data) || event.data.type !== SHARED_AUTH_MESSAGE) return
-    retryScopeRequestGeneration += 1
-    setRetryScope(undefined, 'remote', false, true)
+    if (!isRecord(event.data) || event.data.type !== SHARED_AUTH_MESSAGE || event.data.senderId === authSenderId) return
+    const observedTransitionVersion = authTransitionVersion
+    void enqueueAuthTransition(() => {
+      if (authTransitionVersion !== observedTransitionVersion) return Promise.resolve()
+      authTransitionVersion += 1
+      retryScopeRequestGeneration += 1
+      setRetryScope(undefined, 'remote', false, true)
+      return Promise.resolve()
+    })
   }
   const enqueueAuthTransition = async <T>(work: () => Promise<T>): Promise<T> => {
     const previous = authTransitionTail
@@ -293,21 +305,27 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   }
 
   const enroll = (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
     setRetryScope(undefined, 'local', false, true)
     const result = await call('bots/share/enroll', { code }, parseEnrollment, false)
     if (requestGeneration === retryScopeRequestGeneration && result.ok) {
       setRetryScope(result.value.principalId, 'local', true, true)
+      authTransitionVersion += 1
     }
     return result
   })
   const restoreRetryScope = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
     setRetryScope(undefined)
     const result = await call('bots/share/session', {}, parseEnrollment)
-    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId, 'local', false, true)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', false, true)
+      authTransitionVersion += 1
+    }
     return result
   })
 

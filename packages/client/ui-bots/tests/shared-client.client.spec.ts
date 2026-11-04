@@ -1,6 +1,43 @@
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
+
+type MessageListener = (event: { readonly data: unknown }) => void
+
+class FakeBroadcastChannel {
+  static readonly peers = new Set<FakeBroadcastChannel>()
+  readonly listeners = new Set<MessageListener>()
+
+  constructor(readonly name: string) {
+    FakeBroadcastChannel.peers.add(this)
+  }
+
+  addEventListener(_type: 'message', listener: MessageListener): void {
+    this.listeners.add(listener)
+  }
+
+  removeEventListener(_type: 'message', listener: MessageListener): void {
+    this.listeners.delete(listener)
+  }
+
+  postMessage(data: unknown): void {
+    for (const peer of [...FakeBroadcastChannel.peers]) {
+      if (peer === this || peer.name !== this.name) continue
+      queueMicrotask(() => {
+        for (const listener of [...peer.listeners]) listener({ data })
+      })
+    }
+  }
+
+  close(): void {
+    FakeBroadcastChannel.peers.delete(this)
+    this.listeners.clear()
+  }
+}
+
+afterEach(() => {
+  FakeBroadcastChannel.peers.clear()
+})
 
 describe('shared Bot client capabilities', () => {
   it('advertises isolated shared-group operations when the server route is available', () => {
@@ -198,32 +235,6 @@ describe('shared Bot client capabilities', () => {
   })
 
   it('propagates an auth invalidation between two shared client tabs', async () => {
-    type MessageListener = (event: { readonly data: unknown }) => void
-    class FakeBroadcastChannel {
-      static readonly peers = new Set<FakeBroadcastChannel>()
-      readonly listeners = new Set<MessageListener>()
-      constructor(readonly name: string) {
-        FakeBroadcastChannel.peers.add(this)
-      }
-      addEventListener(_type: 'message', listener: MessageListener): void {
-        this.listeners.add(listener)
-      }
-      removeEventListener(_type: 'message', listener: MessageListener): void {
-        this.listeners.delete(listener)
-      }
-      postMessage(data: unknown): void {
-        for (const peer of [...FakeBroadcastChannel.peers]) {
-          if (peer === this || peer.name !== this.name) continue
-          queueMicrotask(() => {
-            for (const listener of [...peer.listeners]) listener({ data })
-          })
-        }
-      }
-      close(): void {
-        FakeBroadcastChannel.peers.delete(this)
-        this.listeners.clear()
-      }
-    }
     vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
     try {
       const rpc: ClientConnectionRpc = {
@@ -281,7 +292,8 @@ describe('shared Bot client capabilities', () => {
       enrollment.resolve({ ok: true, value: { principalId: 'principal-member', expiresAt: 3_000 } })
       await pending
       await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
-      expect(posts).toEqual([{ type: 'auth-invalidated' }])
+      expect(posts).toHaveLength(1)
+      expect(posts[0]).toMatchObject({ type: 'auth-invalidated' })
       stop?.()
     } finally {
       vi.unstubAllGlobals()
@@ -308,6 +320,39 @@ describe('shared Bot client capabilities', () => {
       await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
       expect(posts).toEqual([])
       stop?.()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('lets a successful enrollment win over a queued cross-tab invalidation', async () => {
+    const enrollment = Promise.withResolvers<{
+      readonly ok: true
+      readonly value: { readonly principalId: string; readonly expiresAt: number }
+    }>()
+    const rpcA: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => endpoint === 'bots/share/enroll'
+        ? enrollment.promise
+        : { ok: true as const, value: { bots: [] } }),
+    }
+    const rpcB: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: false as const, error: { code: 'gateway/unauthorized', message: 'expired', details: {} } })),
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const enrollingTab = createSharedBotsClient(rpcA)
+      const staleTab = createSharedBotsClient(rpcB)
+      const stopEnrolling = enrollingTab.subscribeAuth?.(() => {})
+      const stopStale = staleTab.subscribeAuth?.(() => {})
+      const pendingEnrollment = enrollingTab.enroll('new-invite')
+      const staleRestore = staleTab.restoreRetryScope()
+      await expect(staleRestore).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+      enrollment.resolve({ ok: true, value: { principalId: 'principal-new', expiresAt: 3_000 } })
+      await expect(pendingEnrollment).resolves.toMatchObject({ ok: true })
+      expect(enrollingTab.retryScope).toBe('principal-new')
+      stopEnrolling?.()
+      stopStale?.()
     } finally {
       vi.unstubAllGlobals()
     }

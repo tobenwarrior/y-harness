@@ -117,6 +117,20 @@ describe('shared-group browser retry queue', () => {
     expect(localStorage.getItem(currentKey)).toBeNull()
   })
 
+  it('keeps a completion fence for an old tab after the new tab finishes', async () => {
+    const queue = createSharedGroupPendingQueue('principal-completion-fence')
+    const first = await queue.reserveMessage('completion-operation', 'bot-group-room', 'same message')
+    const currentKey = `yharness.client-ui-bots.shared-group-pending.v2.principal-completion-fence.message.${first.operationHash}`
+    const legacyKey = `yharness.client-ui-bots.shared-group-pending.principal-completion-fence.message.${first.operationHash}`
+
+    await queue.completeMessage(first.operationHash, first.id)
+    expect(localStorage.getItem(currentKey)).not.toBeNull()
+    expect(localStorage.getItem(legacyKey)).not.toBeNull()
+    const retried = await queue.reserveMessage('completion-operation', 'bot-group-room', 'same message')
+    expect(retried.id).toBe(first.id)
+    expect(retried.recovered).toBe(true)
+  })
+
   it('recovers legacy pending message text before the old queue can prune it', async () => {
     const operationHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy-pending.message.' + operationHash

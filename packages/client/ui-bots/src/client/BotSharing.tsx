@@ -601,6 +601,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const createGroupGenerationRef = useRef(0)
   const pendingRefreshGenerationRef = useRef(0)
   const recoveryWorkingRef = useRef<string | null>(null)
+  const revalidationAttemptRef = useRef(0)
   const pendingMessageOperationRef = useRef<{ readonly id: string; readonly token: number } | null>(null)
   const pendingMessageOperationTokenRef = useRef(0)
   const chatOperationTokensRef = useRef<Record<string, number>>({})
@@ -608,6 +609,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const pendingGroupQueueRef = useRef<{ readonly scope: string; readonly queue: SharedGroupPendingQueue } | null>(null)
   const enrollmentOperationTokenRef = useRef(0)
   const enrollmentInFlightRef = useRef(false)
+  const enrollmentSubmittedCodeRevisionRef = useRef<number | null>(null)
+  const enrollmentClientRef = useRef<SharedBotsClient | null>(null)
   const deferredRevalidationRef = useRef(false)
   const clientIdentityRef = useRef(client)
   const clientGenerationRef = useRef(0)
@@ -734,7 +737,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
   }
 
-  const clearAuthenticatedState = (nextError: string | null = null): void => {
+  const clearAuthenticatedState = (
+    nextError: string | null = null,
+    preserveCodeRevision?: number,
+  ): void => {
     operationGenerationRef.current += 1
     groupOperationGenerationRef.current += 1
     createGroupGenerationRef.current += 1
@@ -751,8 +757,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setMessageDrafts({})
     setMemoryDrafts({})
     setGroupDraft('')
-    setCode('')
-    codeRevisionRef.current += 1
+    if (preserveCodeRevision === undefined || codeRevisionRef.current <= preserveCodeRevision) {
+      setCode('')
+      codeRevisionRef.current += 1
+    }
     messageDraftRevisionsRef.current = {}
     memoryDraftRevisionsRef.current = {}
     setRecent([])
@@ -769,7 +777,6 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setGroupWorking(null)
     setChatWorkingBotIds(new Set())
     setMemoryWorkingBotIds(new Set())
-    recoveryWorkingRef.current = null
     setRecoveryWorking(null)
     setDiscardWorking(false)
     setError(nextError)
@@ -786,7 +793,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       observedScopeRef.current = scope
       observedAuthGenerationRef.current = authGeneration
       authGenerationRef.current += 1
-      clearAuthenticatedState()
+      const preserveCodeRevision = enrollmentInFlightRef.current && enrollmentClientRef.current === currentClient
+        ? enrollmentSubmittedCodeRevisionRef.current ?? undefined
+        : undefined
+      clearAuthenticatedState(undefined, preserveCodeRevision)
     }
     if (scope === undefined) return undefined
     return {
@@ -852,6 +862,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const refresh = async (): Promise<void> => {
     if (!openRef.current) return
     syncAuthContext()
+    const admittedRevalidationAttempt = revalidationAttemptRef.current
     const lifecycleGeneration = lifecycleGenerationRef.current
     const clientContext = { client, clientGeneration: clientGenerationRef.current }
     const admissionAuthGeneration = clientIdentityRef.current.authGeneration
@@ -859,6 +870,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const refreshGeneration = refreshGenerationRef.current + 1
     refreshGenerationRef.current = refreshGeneration
     let refreshAuth: SharedDialogAuthContext | undefined
+    let refreshCompleted = false
     pendingGroupQueueRef.current = null
     invalidatePendingRetryState()
     setWorking('list')
@@ -941,6 +953,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
             setError(groupsResult.error.message || t('sharedGroupLoadFailed'))
           }
         }
+        refreshCompleted = true
       } else {
         if (result.error.code === 'gateway/unauthorized') clearAuthenticatedState(result.error.message)
         else if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
@@ -952,6 +965,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setError(cause instanceof Error ? cause.message : t('shareError'))
       }
     } finally {
+      if (refreshCompleted && revalidationAttemptRef.current === admittedRevalidationAttempt) {
+        revalidationAttemptRef.current = 0
+      }
       if (isCurrentClient(clientContext) && (refreshAuth === undefined || isCurrentAuth(refreshAuth))
         && isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
         setWorking(current => current === 'list' ? null : current)
@@ -959,8 +975,15 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
   }
 
-  const requestRevalidation = (immediate: boolean, nextError: string | null = null): void => {
+  const requestRevalidation = (
+    immediate: boolean,
+    nextError: string | null = null,
+    resetAttempt = false,
+  ): void => {
     if (!openRef.current) return
+    if (resetAttempt) revalidationAttemptRef.current = 0
+    const attempt = revalidationAttemptRef.current + 1
+    revalidationAttemptRef.current = attempt
     if (enrollmentInFlightRef.current) {
       deferredRevalidationRef.current = true
       if (immediate) {
@@ -971,6 +994,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
     authGenerationRef.current += 1
     clearAuthenticatedState(nextError)
+    if (attempt > 1) return
     void refresh()
   }
 
@@ -1112,6 +1136,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     operationGenerationRef.current += 1
     if (!open) {
       deferredRevalidationRef.current = false
+      revalidationAttemptRef.current = 0
       clearAuthenticatedState()
       return
     }
@@ -1128,7 +1153,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       if (change?.source === 'local' && enrollmentInFlightRef.current) return
       if (change?.source === 'local' && change.reason === 'authenticated') return
       if (change?.source === 'remote') {
-        requestRevalidation(true)
+        requestRevalidation(true, null, true)
         return
       }
       syncAuthContext()
@@ -1140,7 +1165,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   useEffect(() => {
     const revalidate = (): void => {
       if (!openRef.current) return
-      requestRevalidation(false)
+      requestRevalidation(false, null, true)
     }
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'visible') revalidate()
@@ -1165,6 +1190,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const enrollmentToken = enrollmentOperationTokenRef.current + 1
     enrollmentOperationTokenRef.current = enrollmentToken
     enrollmentInFlightRef.current = true
+    enrollmentSubmittedCodeRevisionRef.current = submittedCodeRevision
+    enrollmentClientRef.current = client
     operationGenerationRef.current = operationGeneration
     setWorking('enroll')
     setError(null)
@@ -1187,10 +1214,12 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     } finally {
       if (enrollmentOperationTokenRef.current === enrollmentToken) {
         enrollmentInFlightRef.current = false
+        enrollmentSubmittedCodeRevisionRef.current = null
+        enrollmentClientRef.current = null
         setWorking(current => current === 'enroll' ? null : current)
         if (deferredRevalidationRef.current) {
           deferredRevalidationRef.current = false
-          requestRevalidation(true)
+          requestRevalidation(true, null, true)
         }
       }
     }
@@ -1335,7 +1364,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const created = result.value.group
       if (!isCurrentCreate()) return
       if (!isCurrentAuth(auth)) return
-      await queue.removeCreation(reservation.operationHash, reservation.id)
+      await queue.completeCreation(reservation.operationHash, reservation.id)
       if (!isCurrentCreate()) return
       setGroups(current => [
         ...current.filter(group => String(group.id) !== String(created.id)),
@@ -1395,7 +1424,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         created = result.value.group
       }
       if (!isCurrentAuth(auth)) return
-      await queue.removeCreation(creation.operationHash, creation.id)
+      await queue.completeCreation(creation.operationHash, creation.id)
       if (!isCurrentRecovery()) return
       setPendingCreations(current => current.filter(candidate => candidate.id !== creation.id))
       setGroups(current => [
@@ -1585,7 +1614,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         }
         if (!isCurrentAuth(auth)) return
         const queue = getPendingGroupQueue(auth)
-        await queue.removeMessage(pending.operationHash, pending.id)
+        await queue.completeMessage(pending.operationHash, pending.id)
         if (!isCurrentRecovery()) return
         setPendingMessages(current => current.filter(candidate => candidate.id !== pending.id))
         if (groupDraftRevisionRef.current === submittedDraftRevision && submittedDraft.trim() === pending.text) setGroupDraft('')
@@ -1650,7 +1679,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           return
         }
         if (!isCurrentAuth(auth)) return
-        await queue.removeMessage(reservation.operationHash, reservation.id)
+        await queue.completeMessage(reservation.operationHash, reservation.id)
         if (!isCurrentAuth(auth) || !isCurrentGroupOperation()) return
         setPendingMessages(current => current.filter(candidate => candidate.id !== reservation.id))
         if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
