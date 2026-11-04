@@ -32,6 +32,8 @@ The browser uses HTTP POST for Remote unary calls. API Gateway owns the `/api/re
 
 -----
 
+RPC and shared routes follow the web server lifecycle: registrations can be made before the server is available, and are removed with their owning plugin.
+
 <a id="browser-authentication-and-request-trust"></a>
 ## Browser authentication and request trust
 

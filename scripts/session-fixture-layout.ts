@@ -16,10 +16,11 @@ import { releasedV0SessionFormatCodec, releasedV1SessionFormatCodec } from '@yha
 import { releasedV2SessionFormatCodec } from '@yharness/session-format-v1-to-v2'
 import { releasedV3SessionFormatCodec } from '@yharness/session-format-v2-to-v3'
 import { releasedV4SessionFormatCodec } from '@yharness/session-format-v3-to-v4'
+import { releasedV5SessionFormatCodec } from '@yharness/session-format-v4-to-v5'
 
 const historicalCodecs: readonly SessionFormatCodec[] = [
   releasedV0SessionFormatCodec, releasedV1SessionFormatCodec, releasedV2SessionFormatCodec,
-  releasedV3SessionFormatCodec, releasedV4SessionFormatCodec,
+  releasedV3SessionFormatCodec, releasedV4SessionFormatCodec, releasedV5SessionFormatCodec,
 ]
 
 /** Physical persistence artifacts validated by the WebWorker runtime fixture spec. */

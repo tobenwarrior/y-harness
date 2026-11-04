@@ -2394,10 +2394,28 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Shared management service; reads, deletion, and timing edits never activate a Session.\n\n`sessionPersistence` is a load-order requirement rather than a directly called service: a delivery commits only when `ctx.sessions.flush()` reports that a `session/flush` listener participated, and the persistence backend providing this service is the plugin that registers that listener.',
     methods: [
       {
-        signature: 'async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>',
-        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading taken before the request joins the serialized queue, so a create that waits behind a longer operation keeps its request-time anchor and may already be due when the queue reaches it.',
-        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'signal', description: 'Optional cancellation checked before persistence begins, including after FIFO waits.' }],
+        signature: 'async create( sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal, options?: ScheduleCreateOptions, ): Promise<ScheduleRecord>',
+        description: 'Create a reminder bound to the caller-selected Session without activating it.\n\nThe request must supply a title; a missing, blank-after-trim, or over-long title rejects with `invalid_prompt` instead of deriving one from the prompt. A Session a delegated child owns rejects with `subagent_session`, because delivery can never reach it: the child is one whose delegation depth is above zero. The record is built from the clock reading inside the serialized queue, after an idempotency lookup, so a retry that finds an existing task never allocates a fresh task id or timing anchor. A reused key with a different canonical request is rejected. Create-operation reconciliation and active listing use the same FIFO, so a lost native result cannot be resolved against a stale empty task set. Bot approval reserves its operation before the external approval request; a reservation left by a stopped Host is retired on restart.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'signal', description: 'Optional cancellation checked before reads and persistence, and after a committed write.' }, { name: 'options', description: 'Optional operation-specific Host retry identity. A repeated key for this Session returns the original record only when the canonical request matches.' }],
         returns: 'The durably stored schedule. Cancellation does not roll back an in-flight write.',
+      },
+      {
+        signature: 'async reserveCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateReservation>',
+        description: 'Reserve one Bot create operation before its external approval completes.\n\nA reservation is intentionally not a task: it only prevents another native call from creating the same routine while approval is pending. Reservations left by a stopped Host are retired during service initialization.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity retained across approval retries.' }, { name: 'signal', description: 'Optional cancellation checked before reservation persistence.' }],
+        returns: 'A new pending reservation or an already committed task.',
+      },
+      {
+        signature: 'async releaseCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, ): Promise<ScheduleCreateResolution>',
+        description: 'Retire a Bot create operation that was denied or cancelled before a task committed.\n\nA committed operation record always wins over retirement, so a cancellation that arrived after the task write cannot erase or hide its durable receipt.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity retained across approval retries.' }],
+        returns: 'The committed operation, a durable absent resolution, or unknown when no reservation exists.',
+      },
+      {
+        signature: 'async reconcileCreate( sessionId: SessionId, request: ScheduleCreateRequest, idempotencyKey: string, signal?: AbortSignal, ): Promise<ScheduleCreateResolution>',
+        description: 'Resolve one Bot create operation after its native reply was lost.\n\nResolution runs in the same FIFO as creation, so a list cannot observe an empty task set while an earlier create is still committing. An operation that has not reached Schedule remains unknown; a registered pending operation with no task is durably marked absent, so later identical requests can be intentional new operations instead of inheriting stale uncertainty forever.',
+        parameters: [{ name: 'sessionId', description: 'Original Session receiving the reminder.' }, { name: 'request', description: 'Validated tool selector, required title, and reminder content.' }, { name: 'idempotencyKey', description: 'Operation identity from the earlier native call.' }, { name: 'signal', description: 'Optional cancellation checked before reads and resolution writes.' }],
+        returns: 'The committed task, a durable absent resolution, or unknown when the operation was never registered.',
       },
       {
         signature: '@Remote(\'list\') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>',
@@ -2407,7 +2425,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'catalog\') async catalog(): Promise<ScheduleCatalogEntry[]>',
-        description: 'Read all active and inactive Host reminders with their original Session bindings. A deleted reminder has no row, so it is absent here. Does not activate Sessions or read Session history.',
+        description: 'Read all active, paused, and inactive Host reminders with their original Session bindings. A deleted reminder has no row, so it is absent here. Does not activate Sessions or read Session history.',
         parameters: [],
         returns: 'Reminders ordered by scheduledAt ascending, then lexicographically by id.',
       },
@@ -2419,6 +2437,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['ScheduleInputError when limit is not a safe integer from 1 through 100.'],
       },
       {
+        signature: '@Remote(\'pause\') async pause(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<SchedulePauseValue>',
+        description: 'Pause one active routine without deleting its target or saved delivery history.\n\nA repeated pause is idempotent and returns the paused view. Ended tasks remain in the catalog but cannot be re-armed; a foreign Session never reveals the row.',
+        parameters: [{ name: 'request', description: 'Session binding and task identity.' }, { name: 'signal', description: 'Cancellation checked before the lifecycle write.' }],
+        returns: 'The paused view or a bounded lookup/ended result.',
+      },
+      {
+        signature: '@Remote(\'resume\') async resume(request: ScheduleLifecycleRequest, signal?: AbortSignal): Promise<ScheduleResumeValue>',
+        description: 'Resume one paused routine without changing its committed target.\n\nA repeated resume is idempotent. A recurring task whose target is already overdue is picked up by the normal Host runtime after it is re-armed.',
+        parameters: [{ name: 'request', description: 'Session binding and task identity.' }, { name: 'signal', description: 'Cancellation checked before the lifecycle write.' }],
+        returns: 'The active view or a bounded lookup/ended result.',
+      },
+      {
         signature: '@Remote(\'delete\') async delete(request: ScheduleDeleteRequest, signal?: AbortSignal): Promise<ScheduleDeleteResult>',
         description: 'Delete one task belonging to the selected Session, leaving queued messages intact.\n\nThe row is removed: the task no longer schedules, leaves `list` and `catalog`, and its saved delivery records go with it. A task bound to a Session a delegated child owns stays deletable even though creation and timing edits refuse that binding, so a task stored before that rule existed remains removable.',
         parameters: [{ name: 'request', description: 'Session and exact task identity.' }, { name: 'signal', description: 'Optional cancellation checked before persistence begins, including after FIFO waits.' }],
@@ -2426,7 +2456,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'update\') async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>',
-        description: 'Update the name, instruction, and timing of an active task within the original Session binding without activating the Session or changing saved deliveries.\n\nEach supplied field replaces its stored value; an omitted field keeps it. A name or instruction change alone does not reset the committed target. A Session a delegated child owns returns the non-mutating `subagent_session` result, so an edit cannot re-arm a task bound to a Session delivery can never reach, and the Web editor can explain the refusal through the ordinary result it already renders.',
+        description: 'Update the name, instruction, and timing of an active or paused task within the original Session binding without activating the Session or changing saved deliveries.\n\nEach supplied field replaces its stored value; an omitted field keeps it. A name or instruction change alone does not reset the committed target. A Session a delegated child owns returns the non-mutating `subagent_session` result, so an edit cannot re-arm a task bound to a Session delivery can never reach, and the Web editor can explain the refusal through the ordinary result it already renders.',
         parameters: [{ name: 'request', description: 'Task binding, complete observed record, and any combination of timing, name, and instruction.' }, { name: 'signal', description: 'Cancellation checked after domain readiness and FIFO waits, before persistence begins.' }],
         returns: 'The committed record, unchanged record for a no-op, or a non-mutating input/lookup/conflict/refusal result. Storage and lifecycle failures reject; cancellation after a write starts does not roll it back.',
       },
@@ -5619,6 +5649,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotCreateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotEventRoutine',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
+  },
+  {
+    name: 'BotEventRoutineAdmissionTombstone',
+    declaration: 'export interface BotEventRoutineAdmissionTombstone {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n}',
+  },
+  {
+    name: 'BotEventRoutineDelivery',
+    declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly messageId: MessageId;\n    readonly chainId?: string | undefined;\n    readonly depth?: number | undefined;\n    readonly status: \'pending\' | \'delivered\';\n    readonly dispatchStartedAt?: string | undefined;\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventRoutineResult',
+    declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\' | \'other\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventSource',
+    declaration: 'export type BotEventSource = typeof BOT_EVENT_SOURCES[number];',
+  },
+  {
+    name: 'BotEventTrigger',
+    declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
+  },
+  {
     name: 'BotGroupCreateRequest',
     declaration: 'export interface BotGroupCreateRequest {\n    readonly id?: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
   },
@@ -5792,7 +5846,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5924,7 +5978,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',
@@ -7944,11 +7998,23 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScheduleCatalogEntry',
-    declaration: 'export type ScheduleCatalogEntry = ScheduleRecord & {\n    readonly sessionId: SessionId;\n    readonly status: \'active\' | \'inactive\';\n    readonly lastDelivery?: ScheduleDeliveryReceipt;\n};',
+    declaration: 'export type ScheduleCatalogEntry = ScheduleRecord & {\n    readonly sessionId: SessionId;\n    readonly status: \'active\' | \'paused\' | \'inactive\';\n    readonly lastDelivery?: ScheduleDeliveryReceipt;\n};',
+  },
+  {
+    name: 'ScheduleCreateOptions',
+    declaration: 'export interface ScheduleCreateOptions {\n    readonly idempotencyKey?: string;\n}',
   },
   {
     name: 'ScheduleCreateRequest',
     declaration: 'export interface ScheduleCreateRequest {\n    prompt: string;\n    title: string;\n    after_seconds?: number;\n    at?: AtInput;\n    every_seconds?: number;\n    daily?: DailyInput;\n    weekly?: WeeklyInput;\n    cron?: CronInput;\n}',
+  },
+  {
+    name: 'ScheduleCreateReservation',
+    declaration: 'export type ScheduleCreateReservation = {\n    readonly status: \'reserved\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
+  },
+  {
+    name: 'ScheduleCreateResolution',
+    declaration: 'export type ScheduleCreateResolution = {\n    readonly status: \'unknown\';\n} | {\n    readonly status: \'absent\';\n} | {\n    readonly status: \'committed\';\n    readonly record: ScheduleRecord;\n};',
   },
   {
     name: 'ScheduleDeleteRequest',
@@ -7965,6 +8031,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleDeliveryHistoryResult',
     declaration: 'export type ScheduleDeliveryHistoryResult = {\n    readonly id: ScheduleId;\n    readonly records: ScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: DeliveryRetentionBounds;\n    readonly nextBefore?: MessageId;\n} | {\n    readonly id: ScheduleId;\n    readonly code: \'schedule_not_found\' | \'delivery_cursor_not_found\';\n};',
+  },
+  {
+    name: 'ScheduleDeliveryMode',
+    declaration: 'export type ScheduleDeliveryMode = \'host\';',
   },
   {
     name: 'ScheduleDeliveryReceipt',
@@ -7987,12 +8057,32 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ScheduleId = Branded<\'ScheduleId\'>;',
   },
   {
+    name: 'ScheduleLifecycleRequest',
+    declaration: 'export interface ScheduleLifecycleRequest extends ScheduleDeleteRequest {\n}',
+  },
+  {
+    name: 'ScheduleLifecycleView',
+    declaration: 'export type ScheduleLifecycleView = ScheduleView & {\n    readonly status: \'active\' | \'paused\';\n};',
+  },
+  {
     name: 'ScheduleListRequest',
     declaration: 'export interface ScheduleListRequest {\n    sessionId: SessionId;\n}',
   },
   {
+    name: 'SchedulePauseValue',
+    declaration: 'export type SchedulePauseValue = (ScheduleLifecycleView & {\n    readonly paused: true;\n}) | {\n    readonly id: ScheduleId;\n    readonly paused: false;\n    readonly code: \'schedule_not_found\' | \'schedule_ended\';\n} | ScheduleToolError;',
+  },
+  {
     name: 'ScheduleRecord',
     declaration: 'export type ScheduleRecord = OneShotScheduleRecord | RecurringScheduleRecord;',
+  },
+  {
+    name: 'ScheduleResumeValue',
+    declaration: 'export type ScheduleResumeValue = (ScheduleLifecycleView & {\n    readonly resumed: true;\n}) | {\n    readonly id: ScheduleId;\n    readonly resumed: false;\n    readonly code: \'schedule_not_found\' | \'schedule_ended\';\n} | ScheduleToolError;',
+  },
+  {
+    name: 'ScheduleState',
+    declaration: 'export type ScheduleState = \'scheduled\' | \'overdue\';',
   },
   {
     name: 'ScheduleTimingChange',
@@ -8017,6 +8107,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ScheduleUpdateResult',
     declaration: 'export type ScheduleUpdateResult = {\n    readonly id: ScheduleId;\n    readonly updated: boolean;\n    readonly record: ScheduleRecord;\n} | ScheduleUpdateMiss | ScheduleToolError;',
+  },
+  {
+    name: 'ScheduleView',
+    declaration: 'export type ScheduleView = ScheduleRecord & {\n    readonly state: ScheduleState;\n    readonly deliveryMode: ScheduleDeliveryMode;\n};',
   },
   {
     name: 'Scoped',

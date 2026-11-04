@@ -38,6 +38,7 @@
     "@yharness/session-format-catalog": "workspace:*",
     "@yharness/session-format-v3-to-v4": "workspace:*",
     "@yharness/session-format-v4-to-v5": "workspace:*",
+    "@yharness/session-format-v5-to-v6": "workspace:*",
     "@yharness/node-addon-system": "workspace:~",
     "@yharness/schemastery": "workspace:~",
     "koffi": "3.1.1"

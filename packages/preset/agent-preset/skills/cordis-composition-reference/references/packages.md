@@ -350,7 +350,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@yharness/schedule` | yes | Host-wide durable reminders with shared management and original-Session delivery |
-| `@yharness/tool-schedule` | no | Model-facing reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete) over the Host ctx.schedule service |
+| `@yharness/tool-schedule` | no | Model-facing reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete, schedule_pause, schedule_resume, schedule_history) over the Host ctx.schedule service |
 
 ## sdk
 

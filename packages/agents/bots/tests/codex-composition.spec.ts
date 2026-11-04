@@ -8,6 +8,7 @@ import { createUserMessage } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import { SessionId } from '@yharness/session'
 import { renderPrompt } from '@yharness/system-prompt'
+import { scopeOf } from '@yharness/scope'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import Loader, { type ModuleLoaderV2 } from '@yharness/cordis-plugin-loader'
 import Include from '@yharness/cordis-plugin-include'
@@ -23,10 +24,13 @@ import * as ApprovalModule from '@yharness/user-approval'
 import * as Questions from '@yharness/user-questions'
 import * as StorageModule from '@yharness/storage'
 import * as Typert from '@yharness/typert-registry'
+import AgentPresets from '../../../preset/agent-preset-registry/src/index.ts'
+import * as ToolSchedule from '../../../schedule/tool-schedule/src/index.ts'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import BotService from '../src/index.ts'
+import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotId } from '../src/types.ts'
 import { CodexBackendConnection } from '../../../llm/llm-pi-ai/src/codex-backend-connection.ts'
 import type { CodexPeer } from '../../../llm/llm-pi-ai/src/codex-backend.ts'
@@ -150,8 +154,16 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   const pool = new MemoryMediaPool()
   const createdAgents = new Map<SessionId, Agent>()
   const sessionController = {
-    create: vi.fn(async (request: { readonly sessionId: SessionId; readonly cwd: string }) => {
-      const agent = await ctx.agentLoop.create(request.sessionId, { provider: 'codex-backend', model: 'fixture-model' }, { cwd: request.cwd })
+    create: vi.fn(async (request: { readonly sessionId: SessionId; readonly cwd: string; readonly agentPreset?: string }) => {
+      const handle = await ctx.agents.create({
+        sessionId: request.sessionId,
+        agentOptions: { provider: 'codex-backend', model: 'fixture-model' },
+        meta: { cwd: request.cwd, ...(request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset }) },
+        ...(request.agentPreset === undefined ? {} : {
+          setup: async (agentCtx: Context) => { await ctx.agentPresets.mount(agentCtx, request.agentPreset) },
+        }),
+      })
+      const agent = handle.agent
       createdAgents.set(request.sessionId, agent)
       return { sessionId: request.sessionId }
     }),
@@ -163,6 +175,12 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   }
   ctx.provide('sessionController', sessionController as never)
   ctx.provide('attachments', { readImage: vi.fn() } as never)
+  ctx.provide('schedule', {
+    create: vi.fn(async () => { throw new Error('schedule create was not expected in this composition test') }),
+    list: vi.fn(async () => []),
+    update: vi.fn(async () => { throw new Error('schedule update was not expected in this composition test') }),
+    delete: vi.fn(async () => { throw new Error('schedule delete was not expected in this composition test') }),
+  } as never)
   ctx.on('session/flush', () => {})
   const approval = vi.fn(async () => 'allowed-once' as const)
   ctx.on('approval/request', approval)
@@ -191,6 +209,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     ['@yharness/user-questions', Questions], ['@yharness/storage', StorageModule], ['@yharness/typert-registry', Typert],
     ['@yharness/fixture-storage-domain', { default: storageDomainPlugin }],
     ['@yharness/bots', { default: BotService }],
+    ['@yharness/tool-schedule', ToolSchedule],
     ['@yharness/fixture-codex-connection', { default: CodexBackendConnection }],
   ])
   const configPath = join(root, 'cordis.json')
@@ -220,20 +239,58 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ctx.loader.internal = internal
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
+  // The shipped `standard` preset mounts this exact plugin row. Registering
+  // the focused preset here keeps the fixture small while exercising the real
+  // preset scope and the Bot child-scope shadowing it must provide.
+  await ctx.plugin(AgentPresets, { default: 'standard' })
+  await ctx.agentPresets.register({ id: 'standard', plugins: [{ name: '@yharness/tool-schedule' }] })
+  await ctx.agentPresets.register({ id: 'minimal', plugins: [] })
+  expect(ctx.agentPresets.inspectCompositions()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'standard', modules: expect.arrayContaining([
+      expect.objectContaining({ moduleName: expect.stringContaining('tool-schedule') }),
+    ]) }),
+  ]))
   await ctx.codexBackendConnection.getState()
 
-  const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root })
-  const target = await ctx.bots.create({ id: BotId('bot-target'), name: 'Grok bot', cwd: root })
+  const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root, agentPreset: 'standard' })
+  const target = await ctx.bots.create({ id: BotId('bot-target'), name: 'Grok bot', cwd: root, agentPreset: 'standard' })
+  const minimal = await ctx.bots.create({ id: BotId('bot-minimal'), name: 'Minimal bot', cwd: root, agentPreset: 'minimal' })
   expect(ctx.get('codexDynamicTools')).toBeDefined()
   expect(ctx.llm.listProviders()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'codex-backend' })]))
   const senderAgent = createdAgents.get(sender.bot.sessionId)
   const targetAgent = createdAgents.get(target.bot.sessionId)
-  if (senderAgent === undefined || targetAgent === undefined) throw new Error('Bot Session agents were not created')
+  const minimalAgent = createdAgents.get(minimal.bot.sessionId)
+  if (senderAgent === undefined || targetAgent === undefined || minimalAgent === undefined) throw new Error('Bot Session agents were not created')
   const senderPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: senderAgent }))
   expect(senderPrompt).toContain('Your Bot name is "Chief of staff".')
+  const presetLease = await ctx.agentPresets.acquireScope('standard')
+  try {
+    const presetScheduleCreate = ctx.tools.get('schedule_create', presetLease.key)
+    expect(presetScheduleCreate).toBeDefined()
+    expect(ctx.tools.get('schedule_create', senderAgent)).toBe(presetScheduleCreate)
+  } finally {
+    await presetLease[Symbol.asyncDispose]()
+  }
+  expect(ctx.tools.schemas(senderAgent).filter(tool => tool.name === 'schedule_create')).toHaveLength(1)
+  expect(ctx.tools.schemas(senderAgent).map(tool => tool.name)).toEqual(expect.arrayContaining([
+    'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+    'schedule_pause', 'schedule_resume', 'schedule_history',
+  ]))
+  expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
+  expect(scopeOf(senderAgent.ctx)).toBeDefined()
+  expect(ctx.tools.get('schedule_create', minimalAgent)).toBeUndefined()
+  const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
+  expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
+    'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+    'schedule_pause', 'schedule_resume', 'schedule_history',
+  ]))
   expect(senderPrompt).toContain('Your Bot id is "bot-sender".')
 
-  const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation(() => undefined)
+  const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation((message) => {
+    targetAgent.session.append('agent/inbox/spliced', {
+      target: 'next-turn', start: 0, inserted: [message],
+    })
+  })
   senderAgent.session.append('turn/start', { turn: 1 })
   const messages = [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Coordinate with Grok bot.' }] })]
   const chunks: unknown[] = []
@@ -245,10 +302,19 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   if (threadStart === undefined) throw new Error(`Codex stream did not reach turn: ${JSON.stringify(chunks)}`)
   expect(threadStart?.params.dynamicTools, JSON.stringify(peerFixture.requests)).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'list_bots' }), expect.objectContaining({ name: 'inspect_bot' }), expect.objectContaining({ name: 'send_bot_message' }),
+    expect.objectContaining({ name: 'schedule_create' }), expect.objectContaining({ name: 'schedule_list' }),
+    expect.objectContaining({ name: 'schedule_update' }), expect.objectContaining({ name: 'schedule_delete' }),
+    expect.objectContaining({ name: 'schedule_pause' }), expect.objectContaining({ name: 'schedule_resume' }),
+    expect.objectContaining({ name: 'schedule_history' }),
   ]))
   if (peerFixture.toolResults.length !== 3) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })
-  expect(JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)).toEqual([expect.objectContaining({ id: 'bot-target', name: 'Grok bot' })])
+  const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)
+  expect(listedBots).toHaveLength(2)
+  expect(listedBots).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: 'bot-target', name: 'Grok bot' }),
+    expect.objectContaining({ id: 'bot-minimal', name: 'Minimal bot' }),
+  ]))
   expect(output(peerFixture.toolResults[1]?.result)).toMatchObject({ success: true })
   expect(output(peerFixture.toolResults[2]?.result), JSON.stringify(peerFixture.toolResults[2])).toMatchObject({ success: true })
   expect(JSON.parse(output(peerFixture.toolResults[2]?.result).contentItems[0]!.text)).toMatchObject({ status: 'accepted', sender: { id: 'bot-sender' }, target: { id: 'bot-target' } })

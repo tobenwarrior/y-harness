@@ -1,5 +1,5 @@
 ---
-description: "Preset-scoped reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete) over the Host ctx.schedule service, for deployments choosing which agents may keep durable reminders."
+description: "Preset-scoped reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete, schedule_pause, schedule_resume, schedule_history) over the Host ctx.schedule service, for deployments choosing which agents may keep durable reminders."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use `dsh-tool-schedule` to let an agent create, list, edit, and delete durable Host reminders through `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete`. The package registers the four tools in the preset or Agent scope that mounts it, so the composition decides which agents receive them; `minimal` keeps none. Each call acts on the calling Agent's Session and only manages stored reminders — the Host `@yharness/schedule` service owns storage, scheduling, and delivery. Failures return one structured error code instead of storage details.
+Use `dsh-tool-schedule` to let an agent create, list, edit, delete, pause, resume, and inspect delivery history for durable Host reminders through the seven `schedule_*` tools. The package registers the tools in the preset or Agent scope that mounts it, so the composition decides which agents receive them; `minimal` keeps none. Each call acts on the calling Agent's Session and only manages stored reminders — the Host `@yharness/schedule` service owns storage, scheduling, and delivery. Failures return one structured error code instead of storage details.
 
 ## Table of Contents
 
@@ -29,12 +29,15 @@ Add the row below to a preset's plugin list when that preset's agents should man
 
 Choose it for any preset whose agents need to schedule future work in their own Session, and load `@yharness/schedule` in the same process: this package is only the model-facing consumer of that service. A preset that should stay capability-poor — `minimal` is the shipped example — omits the row, and its agents see no reminder tool at all.
 
-### The four tools
+### The seven tools
 
 - `schedule_create(prompt, title, <one selector>)` — Create one reminder. Supply a non-empty prompt, a title of at most 120 characters, and exactly one of `after_seconds`, `at`, `every_seconds`, `daily`, `weekly`, or `cron`. Returns the canonical reminder view.
 - `schedule_list()` — List every active reminder of the calling Session with its id, title, UTC target, state, and delivery mode.
 - `schedule_update(id, <title|prompt|one selector>)` — Replace the name, instruction, or timing in place, or a combination of them. An unknown or ended reminder returns `updated: false` with the reason code; `after_seconds` is create-only.
 - `schedule_delete(id)` — Remove one retained reminder, active or ended. Unknown or already-deleted ids return `deleted: false`.
+- `schedule_pause(id)` — Pause one active reminder without deleting its timing or saved delivery history. Repeated pauses are idempotent; an ended reminder is not re-armed.
+- `schedule_resume(id)` — Resume one paused reminder with its existing timing target. Repeated resumes are idempotent; an ended reminder is not re-armed.
+- `schedule_history(id, <limit|before>)` — Read retained delivery receipts newest-first. These receipts confirm inbox persistence, not model execution completion.
 
 ### Minimal configuration
 
@@ -42,7 +45,7 @@ Choose it for any preset whose agents need to schedule future work in their own 
 - name: '@yharness/tool-schedule'
 ```
 
-The package declares no `Config` fields. It injects `ctx.tools` and registers the four tools once the scope resolves the Host `ctx.schedule` service, so a composition that keeps that service off mounts no reminder tool. Each call acts on the Session of the Agent that dispatched it.
+The package declares no `Config` fields. It injects `ctx.tools` and registers the seven tools once the scope resolves the Host `ctx.schedule` service, so a composition that keeps that service off mounts no reminder tool. Each call acts on the Session of the Agent that dispatched it.
 
 -----
 
@@ -52,13 +55,15 @@ The package declares no `Config` fields. It injects `ctx.tools` and registers th
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The plugin registers four `defineTool` definitions through the context that loads it, so a preset mount decides visibility and Cordis effect ownership disposes them with the mount. Execution reads `exec.agent` for the Session binding and the injected `ctx.schedule` service for storage; the delegation-depth guard runs before selector and identity checks, all before the service call, and any failure the service raises that is not a `ScheduleInputError` collapses to `internal_error` so storage details never reach the model. Model content is the canonical JSON of the returned value, and the Host service owns persistence, scheduling, Session restoration, and delivery.
+The plugin registers seven `defineTool` definitions through the context that loads it, so a preset mount decides visibility and Cordis effect ownership disposes them with the mount. Execution reads `exec.agent` for the Session binding and the injected `ctx.schedule` service for storage; the delegation-depth guard runs before selector and identity checks, all before the service call, and any failure the service raises that is not a `ScheduleInputError` collapses to `internal_error` so storage details never reach the model. Model content is the canonical JSON of the returned value, and the Host service owns persistence, scheduling, Session restoration, and delivery.
+
+`registerScheduleTools(ctx)` is also exported for an Agent-owned scope that already resolved both `tools` and `schedule`; this reuses the same definitions while the caller layers a scope-specific policy, such as Bot routine approval.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: the four registrations, selector validation, and the render/present helpers |
+| [`src/index.ts`](src/index.ts) | Plugin entry: the seven registrations, selector validation, and the render/present helpers |
 
 </details>
 
@@ -69,7 +74,7 @@ The plugin registers four `defineTool` definitions through the context that load
 
 - [Schedule service](../schedule/README.md) — the Host task store, runtime, and delivery behavior these tools manage.
 - [Schedule group map](../README.md) — the sibling packages in this group.
-- [Generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-schedule) — the exact four schemas the model receives.
+- [Generated tool catalog](../../../docs/tool-catalog.md#yharnesstool-schedule) — the exact seven schemas the model receives.
 - [Schedule subsystem](../../../docs/subsystems/schedule.md) — the `ctx.schedule` Cordis surface and stored types.
 - [Schedule user guide](../../../docs/user/guide/schedule.md) — the user-facing reminder workflow.
 
@@ -82,7 +87,7 @@ The plugin registers four `defineTool` definitions through the context that load
 
 #### What the model sees
 
-The generated [`schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` schemas](../../../docs/tool-catalog.md#yharnesstool-schedule) whenever this package is visible in the calling Agent's scope.
+The generated [`schedule_create`, `schedule_list`, `schedule_update`, `schedule_delete`, `schedule_pause`, `schedule_resume`, and `schedule_history` schemas](../../../docs/tool-catalog.md#yharnesstool-schedule) whenever this package is visible in the calling Agent's scope.
 
 #### Token effect
 
@@ -96,7 +101,7 @@ Prefix-stable while tool definitions and visibility are unchanged. Mounting, dis
 
 #### What the model sees
 
-One lossless JSON text block per call: a reminder view for `schedule_create`, an array of views for `schedule_list`, `{ id, deleted }` for `schedule_delete`, and a reminder view or `{ id, updated: false, code }` for `schedule_update`. A rejected call returns `{ code, message }` carrying one published error code.
+One lossless JSON text block per call: a reminder view for `schedule_create`, an array of active views for `schedule_list`, `{ id, deleted }` for `schedule_delete`, a reminder view or `{ id, updated: false, code }` for `schedule_update`, a lifecycle view or bounded miss for `schedule_pause` and `schedule_resume`, and a retained delivery-history page for `schedule_history`. A rejected call returns `{ code, message }` carrying one published error code.
 
 #### Token effect
 
@@ -110,12 +115,12 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **No tools without the Host service** — a composition that mounts this package without `ctx.schedule` leaves the plugin pending, so none of the four tools register.
+- **No tools without the Host service** — a composition that mounts this package without `ctx.schedule` leaves the plugin pending, so none of the seven tools register.
 - **Every call needs a calling Agent** — a call dispatched without one returns `internal_error` rather than guessing a Session.
 - **Deletion does not retract a queued message** — a reminder the Host already delivered stays in the Session inbox after `schedule_delete`.
 - **Reminder timing belongs to the Host** — the tools expose no target-time correction, clock source, or delivery retry; those limits are the service's.
-- **Every tool refuses a delegated caller** — each of `schedule_create`, `schedule_list`, `schedule_update`, and `schedule_delete` reads the calling Agent's delegation depth before dispatch and returns `{ code: 'subagent_session', message: 'A delegated subagent cannot use reminders.' }` when that depth is above zero. The guard lives in this package and reads `delegationDepthOf` from `@yharness/subagent`, the same accounting the delegation cap enforces, so it holds under any preset that mounts the tools.
-- **A preset's delegation rows remove the four tools from a child's prompt** — the `standard`, `cordis`, and `ptc` presets declare `toolFilter.deny` for `schedule_create`, `schedule_delete`, `schedule_list`, and `schedule_update` on both the `tool-subagent` and `tool-subagent-fork` rows. The provider applies that filter through `ctx.tools.restrict()` in the child scope, so the four tools leave a delegated child's prompt; delegating further on that chain intersects the same restriction.
+- **Every tool refuses a delegated caller** — each of the seven tools reads the calling Agent's delegation depth before dispatch and returns `{ code: 'subagent_session', message: 'A delegated subagent cannot use reminders.' }` when that depth is above zero. The guard lives in this package and reads `delegationDepthOf` from `@yharness/subagent`, the same accounting the delegation cap enforces, so it holds under any preset that mounts the tools.
+- **A preset's delegation rows remove the seven tools from a child's prompt** — the `standard`, `cordis`, and `ptc` presets declare `toolFilter.deny` for all seven `schedule_*` names on both the `tool-subagent` and `tool-subagent-fork` rows. The provider applies that filter through `ctx.tools.restrict()` in the child scope, so the tools leave a delegated child's prompt; delegating further on that chain intersects the same restriction.
 - **A Session a delegated child owns cannot arm a reminder** — `ScheduleService.create` throws `ScheduleInputError` with code `subagent_session`, and `ScheduleService.update` returns the non-mutating `subagent_session` result, when the Session's Agent has a delegation depth above zero. The delegation depth is the accounting the delegation cap itself reads, and the persisted session header carries it across a cold resume. The rule sits in the service, not in these tools, so other in-process consumers reach it too: the Automation surface included. `schedule_list` and `schedule_delete` still serve that Session, so a reminder stored before this rule stays removable.
 
 <a id="dev-note"></a>

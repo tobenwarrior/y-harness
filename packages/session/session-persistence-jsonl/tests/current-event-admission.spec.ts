@@ -50,7 +50,7 @@ describe('current event admission at EOF', () => {
   it.each([{ surfaceOp: 'append' }, { sourceEventSeqs: [] }])('refuses unknown required metadata %j without truncating a provider append', async (metadata) => {
     const event = { type: 'future/required', seq: 0, time: 1, data: {}, ...metadata }
     const bytes = Buffer.from([header, event].map(row => JSON.stringify(row)).join('\n') + '\n')
-    expect(() => scanLog(bytes)).toThrow('format v5 contains unknown event type')
+    expect(() => scanLog(bytes)).toThrow('format v6 contains unknown event type')
     expect(() => scanLog(bytes)).toThrow(SessionFormatUnsupportedError)
     const path = await store(bytes)
     const sourceStat = await stat(path)
@@ -64,7 +64,7 @@ describe('current event admission at EOF', () => {
           await handle.close()
         }
       }
-      await expect(operation()).rejects.toThrow('format v5 contains unknown event type')
+      await expect(operation()).rejects.toThrow('format v6 contains unknown event type')
       expect(await readFile(path)).toEqual(bytes)
       expect(await stat(path)).toMatchObject({ dev: sourceStat.dev, ino: sourceStat.ino })
     }

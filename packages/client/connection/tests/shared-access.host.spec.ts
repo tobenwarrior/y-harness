@@ -130,7 +130,7 @@ function fakeResponse(): { response: ServerResponse; state: { status?: number; h
   return { response, state }
 }
 
-async function mounted(config?: ConnectionConfig): Promise<{
+async function mounted(config?: ConnectionConfig, options: { webServer?: boolean } = {}): Promise<{
   ctx: Context
   credentials: CredentialProvider
   routes: WebRoute[]
@@ -142,7 +142,9 @@ async function mounted(config?: ConnectionConfig): Promise<{
   const routes: WebRoute[] = []
   const upgrades: WebUpgradeRoute[] = []
   const credentials = new KeyedCredentials(ctx)
-  ctx.provide('webServer', fakeHttpServer(routes, upgrades) as WebServer)
+  if (options.webServer !== false) {
+    ctx.provide('webServer', fakeHttpServer(routes, upgrades) as WebServer)
+  }
   const fiber = ctx.plugin({ inject: [...inject], apply }, config)
   await fiber.await()
   return {
@@ -897,6 +899,50 @@ describe('self-hosted shared-bot access', () => {
       await authority?.dispose()
       await credentialsContext.fiber.dispose()
       await host.dispose()
+    }
+  })
+
+  it('mounts shared routes from a child owner without requiring webServer injection', async () => {
+    const { ctx, routes, dispose } = await mounted()
+    let child: ReturnType<Context['plugin']> | undefined
+    try {
+      child = ctx.plugin({
+        inject: ['credentials'],
+        apply(owner) {
+          const connection = owner.get('connection')
+          if (connection === undefined) throw new Error('connection service is unavailable')
+          connection.sharedRpc.enroll(SHARED_BOTS_PATH, async () => ({ ok: true, value: null }))
+        },
+      })
+      await child.await()
+      expect(routes.some(route => route.path === `${SHARED_BOTS_PATH}/bots/share/enroll`)).toBe(true)
+    } finally {
+      await child?.dispose()
+      await dispose()
+    }
+  })
+
+  it('keeps shared route registration optional for headless Connection users', async () => {
+    const { ctx, routes, upgrades, dispose } = await mounted(undefined, { webServer: false })
+    let child: ReturnType<Context['plugin']> | undefined
+    try {
+      child = ctx.plugin({
+        apply(owner) {
+          const connection = owner.get('connection')
+          if (connection === undefined) throw new Error('connection service is unavailable')
+          connection.sharedRpc.enroll(SHARED_BOTS_PATH, async () => ({ ok: true, value: null }))
+        },
+      })
+      await child.await()
+      expect(ctx.get('connection')).toBeDefined()
+      expect(routes).toHaveLength(0)
+      ctx.provide('webServer', fakeHttpServer(routes, upgrades) as WebServer)
+      await vi.waitFor(() => {
+        expect(routes.some(route => route.path === `${SHARED_BOTS_PATH}/bots/share/enroll`)).toBe(true)
+      })
+    } finally {
+      await child?.dispose()
+      await dispose()
     }
   })
 })

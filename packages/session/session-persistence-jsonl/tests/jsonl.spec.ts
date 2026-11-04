@@ -650,7 +650,7 @@ describe('JsonlSessionPersistence: stored-format refusals', () => {
     }
   })
 
-  it('rejects a stored v5 log containing a legacy request/header-delta event', async () => {
+  it('rejects a stored v6 log containing a legacy request/header-delta event', async () => {
     const m = meta('legacy-header-delta', '/legacy')
     const path = rawLogPath(root, m.cwd, m.id)
     await mkdir(sessionDir(root, m.cwd, m.id), { recursive: true })
@@ -663,7 +663,7 @@ describe('JsonlSessionPersistence: stored-format refusals', () => {
     ].join('\n'))
 
     await expect(readAll(ctx.sessionPersistence, m.id))
-      .rejects.toThrow(/format v5 contains unknown event type "request\/header-delta" at seq 1/)
+      .rejects.toThrow(/format v6 contains unknown event type "request\/header-delta" at seq 1/)
   })
 
   it('rejects a stored full header carrying the legacy fallback reason', async () => {

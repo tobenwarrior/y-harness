@@ -584,7 +584,12 @@ describe('connection node half', () => {
     await route.handler(fakePost(harnessHeaders, '/rpc/fail', {
       type: 'client-request', rpcId: 'rpc-fail', method: 'fail', payload: {},
     }), failed.response)
-    expect(failed.state).toMatchObject({ status: 500, body: 'handler failure: Error: handler broke' })
+    expect(failed.state.status).toBe(200)
+    expect(JSON.parse(String(failed.state.body))).toMatchObject({
+      type: 'server-response', rpcId: 'rpc-fail',
+      result: { ok: false, error: { code: 'gateway/internal', message: 'Connection handler failed' } },
+    })
+    expect(String(failed.state.body)).not.toContain('handler broke')
 
     expect(() => connection.rpc.handle('/api', async () => ({ ok: true, value: null })))
       .toThrow('invalid or reserved RPC channel')

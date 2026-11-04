@@ -319,9 +319,17 @@ describe('Bot roster and detail', () => {
   })
 
   it('keeps the shared-Bot join action reachable in the collapsed rail', async () => {
-    const sharedClient = {
-      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [] } }),
-    } as SharedBotsClient
+    const sharedClient: SharedBotsClient = {
+      enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+      list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
+      readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
+      readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
+      readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
+      chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
+      writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
+      createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
+      revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
+    }
     const expandSidebar = vi.fn()
     render(<BotRoster
       bots={bots}

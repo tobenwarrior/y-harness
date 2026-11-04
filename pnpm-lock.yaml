@@ -1197,6 +1197,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/schedule':
+        specifier: workspace:*
+        version: link:../../schedule/schedule
       '@yharness/storage':
         specifier: workspace:*
         version: link:../../storage/storage
@@ -1212,6 +1215,9 @@ importers:
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
+      '@yharness/tool-schedule':
+        specifier: workspace:*
+        version: link:../../schedule/tool-schedule
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
@@ -11783,6 +11789,9 @@ importers:
       '@yharness/session-format-v4-to-v5':
         specifier: workspace:*
         version: link:../session-format-v4-to-v5
+      '@yharness/session-format-v5-to-v6':
+        specifier: workspace:*
+        version: link:../session-format-v5-to-v6
     devDependencies:
       '@yharness/cordis':
         specifier: workspace:~
@@ -11866,6 +11875,19 @@ importers:
       '@yharness/session-format-v3-to-v4':
         specifier: workspace:*
         version: link:../session-format-v3-to-v4
+    devDependencies:
+      '@yharness/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+
+  packages/session/session-format-v5-to-v6:
+    dependencies:
+      '@yharness/session-format':
+        specifier: workspace:*
+        version: link:../session-format
+      '@yharness/session-format-v4-to-v5':
+        specifier: workspace:*
+        version: link:../session-format-v4-to-v5
     devDependencies:
       '@yharness/cordis':
         specifier: workspace:~
@@ -11965,6 +11987,9 @@ importers:
       '@yharness/session-format-v4-to-v5':
         specifier: workspace:*
         version: link:../session-format-v4-to-v5
+      '@yharness/session-format-v5-to-v6':
+        specifier: workspace:*
+        version: link:../session-format-v5-to-v6
       koffi:
         specifier: 3.1.1
         version: 3.1.1

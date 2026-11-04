@@ -70,6 +70,7 @@ The catalog contains all supported historical readers directly. A profile cannot
 - [Released V2 to V3 specification](../session-format-v2-to-v3/README.md#v2-to-v3-specification) — transformations, preservation, and refusal.
 - [V3 to V4 specification](../session-format-v3-to-v4/README.md#v3-to-v4-specification) — conversion, reference remapping, and delivery-generation validation.
 - [V4 to V5 migration](../session-format-v4-to-v5/README.md#use-this-package) — identity preservation and replay-aware Bot source validation.
+- [V5 to V6 migration](../session-format-v5-to-v6/README.md#use-this-package) — identity preservation and durable Bot event-routine source validation.
 - [JSONL persistence](../session-persistence-jsonl/README.md) — immutable generation naming and exclusive publication.
 
 -----

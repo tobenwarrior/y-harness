@@ -115,13 +115,338 @@ describe('Bot collaboration seam', () => {
     const inspected = await gamma.inspect(BotId('bot-beta'))
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Shared secret')
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta shared reply')
+    expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Gamma may see this private request.')
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta private reply')
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Compacted shared secret')
     expect(inspected.recent.map(entry => entry.text).join('\n')).not.toContain('Beta compacted shared reply')
-    expect(inspected.recent).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'user', text: expect.stringContaining('A later private request.') }),
-      expect.objectContaining({ role: 'assistant', text: expect.stringContaining('Beta later private reply.') }),
-    ]))
+    expect(inspected.recent.some(entry => entry.role === 'user' && entry.text.includes('A later private request.'))).toBe(true)
+    expect(inspected.recent.some(entry => entry.role === 'assistant' && entry.text.includes('Beta later private reply.'))).toBe(true)
+  })
+
+  it('does not leak event-routine prompts or results through generic peer inspection', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: '[BOT EVENT ROUTINE]\nPrivate routine prompt.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'bot-event-routine-private', triggerEventSeq: 3,
+      },
+    }), 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Private request in the routine turn.' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('Private routine result.', 3))
+
+    const client = await h.client
+    const inspected = await client.inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Private routine prompt.')
+    expect(text).not.toContain('Private request in the routine turn.')
+    expect(text).not.toContain('Private routine result.')
+  })
+
+  it('hides private entries associated with legacy group and routine turns without turn markers', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Legacy group request.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-legacy'), messageId: BotGroupMessageId('bot-group-legacy-message') },
+    }), 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Legacy group turn private request.' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('Legacy group reply.', 3, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Legacy routine request.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'legacy-routine', triggerEventSeq: 4,
+      },
+    }), 4))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Legacy routine turn private request.' }], source: { kind: 'user' },
+    }), 5))
+    targetEvents.push(assistantEvent('Legacy routine reply.', 6, 2))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Standalone legacy request.' }], source: { kind: 'user' },
+    }), 7))
+    targetEvents.push(assistantEvent('Standalone legacy reply.', 8, 3))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Legacy group turn private request.')
+    expect(text).not.toContain('Legacy routine turn private request.')
+    expect(text).not.toContain('Legacy group reply.')
+    expect(text).not.toContain('Legacy routine reply.')
+    expect(inspected.recent.some(entry => entry.role === 'user' && entry.text.includes('Standalone legacy request.'))).toBe(true)
+    expect(inspected.recent.some(entry => entry.role === 'assistant' && entry.text.includes('Standalone legacy reply.'))).toBe(true)
+  })
+
+  it('hides markerless continuations, incomplete segments, and tainted compaction descendants', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless group source.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-markerless'), messageId: BotGroupMessageId('bot-group-markerless-message') },
+    }), 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless first private request.' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('Markerless first group reply.', 3, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless continuation private request.' }], source: { kind: 'user' },
+    }), 4))
+    targetEvents.push(assistantEvent('Markerless continuation group reply.', 5, 1))
+    const assistantDescendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Compaction descendant of tainted assistant.' }], source: { kind: 'user' },
+    }), 6)
+    targetEvents.push({ ...assistantDescendant, sourceEventSeqs: [SessionSeq(5)] })
+
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete markerless group source.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-incomplete'), messageId: BotGroupMessageId('bot-group-incomplete-message') },
+    }), 7))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete markerless group private request.' }], source: { kind: 'user' },
+    }), 8))
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(9), time: 9, data: { turn: 2 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Safe request after incomplete segment.' }], source: { kind: 'user' },
+    }), 10))
+    targetEvents.push(assistantEvent('Safe reply after incomplete segment.', 11, 2))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Markerless first private request.')
+    expect(text).not.toContain('Markerless continuation private request.')
+    expect(text).not.toContain('Markerless continuation group reply.')
+    expect(text).not.toContain('Compaction descendant of tainted assistant.')
+    expect(text).not.toContain('Incomplete markerless group private request.')
+    expect(text).toContain('Safe request after incomplete segment.')
+    expect(text).toContain('Safe reply after incomplete segment.')
+  })
+
+  it('applies markerless privacy and assistant-descendant filtering to routine turns', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless routine source.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-markerless', triggerEventSeq: 1,
+      },
+    }), 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless routine private request.' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('Markerless routine reply.', 3, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless routine continuation private request.' }], source: { kind: 'user' },
+    }), 4))
+    targetEvents.push(assistantEvent('Markerless routine continuation reply.', 5, 1))
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Markerless routine assistant descendant.' }], source: { kind: 'user' },
+    }), 6)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(5)] })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete markerless routine source.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-incomplete-markerless', triggerEventSeq: 7,
+      },
+    }), 7))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete markerless routine private request.' }], source: { kind: 'user' },
+    }), 8))
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(9), time: 9, data: { turn: 2 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Safe request after incomplete routine segment.' }], source: { kind: 'user' },
+    }), 10))
+    targetEvents.push(assistantEvent('Safe routine boundary reply.', 11, 2))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Markerless routine private request.')
+    expect(text).not.toContain('Markerless routine continuation private request.')
+    expect(text).not.toContain('Markerless routine continuation reply.')
+    expect(text).not.toContain('Markerless routine assistant descendant.')
+    expect(text).not.toContain('Incomplete markerless routine private request.')
+    expect(text).toContain('Safe request after incomplete routine segment.')
+    expect(text).toContain('Safe routine boundary reply.')
+  })
+
+  it('hides compaction descendants of ordinary messages in tainted explicit turns', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Explicit group source.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-descendant'), messageId: BotGroupMessageId('bot-group-descendant-message') },
+    }), 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ordinary group-turn request.' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('Explicit group reply.', 3, 1))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(4), time: 4, data: { turn: 1, reason: { kind: 'completed' } } })
+    const groupDescendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ordinary group-turn descendant.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...groupDescendant, sourceEventSeqs: [SessionSeq(2)] })
+
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(6), time: 6, data: { turn: 2 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Explicit routine source.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-descendant', triggerEventSeq: 6,
+      },
+    }), 7))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ordinary routine-turn request.' }], source: { kind: 'user' },
+    }), 8))
+    targetEvents.push(assistantEvent('Explicit routine reply.', 9, 2))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(10), time: 10, data: { turn: 2, reason: { kind: 'completed' } } })
+    const routineDescendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ordinary routine-turn descendant.' }], source: { kind: 'user' },
+    }), 11)
+    targetEvents.push({ ...routineDescendant, sourceEventSeqs: [SessionSeq(8)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Ordinary group-turn descendant.')
+    expect(text).not.toContain('Ordinary routine-turn descendant.')
+  })
+
+  it('retroactively taints earlier surface entries before a later group source', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
+    targetEvents.push(assistantEvent('Earlier private assistant surface.', 1, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Later group source in the same turn.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-retroactive'), messageId: BotGroupMessageId('bot-group-retroactive-message') },
+    }), 2))
+    targetEvents.push(assistantEvent('Later group reply.', 3, 1))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(4), time: 4, data: { turn: 1, reason: { kind: 'completed' } } })
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Descendant of earlier private assistant surface.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(1)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Earlier private assistant surface.')
+    expect(text).not.toContain('Descendant of earlier private assistant surface.')
+  })
+
+  it('retroactively taints a closed markerless segment sharing a later group turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Earlier markerless private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Earlier markerless private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Later markerless group source.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-later'), messageId: BotGroupMessageId('bot-group-later-message') },
+    }), 3))
+    targetEvents.push(assistantEvent('Later markerless group reply.', 4, 1))
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Descendant of earlier markerless private request.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(1)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Earlier markerless private request.')
+    expect(text).not.toContain('Earlier markerless private reply.')
+    expect(text).not.toContain('Descendant of earlier markerless private request.')
+  })
+
+  it('retroactively taints a closed markerless segment sharing a later routine turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Earlier markerless routine private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Earlier markerless routine private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Later markerless routine source.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-later', triggerEventSeq: 3,
+      },
+    }), 3))
+    targetEvents.push(assistantEvent('Later markerless routine reply.', 4, 1))
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Descendant of earlier markerless routine request.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(1)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Earlier markerless routine private request.')
+    expect(text).not.toContain('Earlier markerless routine private reply.')
+    expect(text).not.toContain('Descendant of earlier markerless routine request.')
+  })
+
+  it('fails closed when an incomplete markerless group follows a legacy turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ambiguous earlier private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Ambiguous earlier private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete group source after legacy turn.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-incomplete-after'), messageId: BotGroupMessageId('bot-group-incomplete-after-message') },
+    }), 3))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete group private request.' }], source: { kind: 'user' },
+    }), 4))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Ambiguous earlier private request.')
+    expect(text).not.toContain('Ambiguous earlier private reply.')
+    expect(text).not.toContain('Incomplete group private request.')
+  })
+
+  it('fails closed when an incomplete markerless routine follows a legacy turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Ambiguous earlier routine request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Ambiguous earlier routine reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete routine source after legacy turn.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-incomplete-after', triggerEventSeq: 3,
+      },
+    }), 3))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Incomplete routine private request.' }], source: { kind: 'user' },
+    }), 4))
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Ambiguous earlier routine request.')
+    expect(text).not.toContain('Ambiguous earlier routine reply.')
+    expect(text).not.toContain('Incomplete routine private request.')
   })
 
   it('delivers to the target Session with durable sender identity and is idempotent', async () => {
@@ -144,6 +469,74 @@ describe('Bot collaboration seam', () => {
       text: 'Please check the release queue.', messageId,
     })).resolves.toMatchObject({ status: 'duplicate', messageId })
     expect(followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not acknowledge a peer message canceled during the durability flush', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async sessionId => ({ events: events.get(String(sessionId)) ?? [] }),
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => {
+        const message = followup.mock.calls[0]?.[0]
+        if (message === undefined) throw new Error('peer message was not admitted before flush')
+        events.get('bot-session-beta')!.push({
+          type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+          data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+        })
+      }),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This must not be acknowledged.', messageId: BotMessageId('peer-canceled-after-flush'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(host.flushSession).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a peer message canceled after the first receipt check', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    let targetInspections = 0
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async (sessionId) => {
+        const targetEvents = events.get(String(sessionId)) ?? []
+        if (String(sessionId) === 'bot-session-beta') {
+          targetInspections += 1
+          if (targetInspections === 2) {
+            queueMicrotask(() => {
+              targetEvents.push({
+                type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+                data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' },
+              })
+            })
+          }
+        }
+        return { events: [...targetEvents] }
+      },
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: vi.fn(async () => undefined),
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('bot-session-alpha') })
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'This late cancellation must be rejected.', messageId: BotMessageId('peer-late-cancel'),
+    })).rejects.toMatchObject({ code: 'durability-failed' })
+    expect(followup).toHaveBeenCalledOnce()
+    expect(targetInspections).toBe(3)
   })
 
   it('checks cancellation after target resume and before followup', async () => {
@@ -221,6 +614,78 @@ describe('Bot collaboration seam', () => {
     expect(delivery).toHaveBeenCalledTimes(2)
     expect(h.followups.get('bot-session-beta')).toBeUndefined()
     expect(h.events.get('bot-session-beta')).toHaveLength(1)
+  })
+
+  it('recognizes a claimed inbox receipt before the target surface event', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-claimed')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const claimed = followup.mock.calls[0]?.[0]
+    if (claimed === undefined) throw new Error('expected a claimed message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [claimed] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Keep this claimed.', messageId,
+    })).resolves.toMatchObject({ status: 'duplicate', messageId })
+    expect(followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes a claimed group inbox receipt before the target surface event', async () => {
+    const bots = [bot('bot-alpha', 'bot-session-alpha', 'Alpha'), bot('bot-beta', 'bot-session-beta', 'Beta')]
+    const events = new Map<string, SessionEvent[]>(bots.map(entry => [String(entry.sessionId), []]))
+    const followup = vi.fn<(message: UserMessage) => void>((message) => {
+      events.get('bot-session-beta')!.push({
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message] },
+      })
+    })
+    const host: BotCollaborationHost = {
+      listBots: async () => bots,
+      inspectSession: async sessionId => ({ events: events.get(String(sessionId)) ?? [] }),
+      resolveAgent: async sessionId => ({ agent: { id: sessionId, followup } }),
+      flushSession: async () => undefined,
+    }
+    const service = new BotCollaborationService(host)
+    const request = {
+      targetBotId: BotId('bot-beta'), groupId: BotGroupId('bot-group-claimed'), groupName: 'Claimed room',
+      text: 'Do not duplicate this group message.', messageId: BotMessageId('bot-group-message-claimed'),
+    }
+
+    await expect(service.sendExternal(request)).resolves.toBe('accepted')
+    events.get('bot-session-beta')!.push({
+      type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+      data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [] },
+    })
+    await expect(service.sendExternal(request)).resolves.toBe('duplicate')
+    expect(followup).toHaveBeenCalledOnce()
+  })
+
+  it('retries a canceled inbox delivery with the same message id', async () => {
+    const h = harness()
+    const client = await h.client
+    const messageId = BotMessageId('bot-message-canceled')
+    await client.send({ targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId })
+    const followup = h.followups.get('bot-session-beta')!
+    const canceled = followup.mock.calls[0]?.[0]
+    if (canceled === undefined) throw new Error('expected a canceled message')
+    const targetEvents = h.events.get('bot-session-beta')!
+    targetEvents.splice(0, targetEvents.length,
+      { type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [canceled] } },
+      { type: 'agent/inbox/spliced', seq: SessionSeq(2), time: 2,
+        data: { target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled' } },
+    )
+    await expect(client.send({
+      targetBotId: BotId('bot-beta'), text: 'Retry this canceled message.', messageId,
+    })).resolves.toMatchObject({ status: 'accepted', messageId })
+    expect(followup).toHaveBeenCalledTimes(2)
   })
 
   it('rejects unbounded message identities before touching the target Session', async () => {

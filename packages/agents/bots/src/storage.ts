@@ -3,9 +3,10 @@
 import { SessionId } from '@yharness/session'
 import { brandString } from '@yharness/brand'
 import type { AttachmentId, ImageAttachmentRef } from '@yharness/attachment'
+import { MessageId } from '@yharness/llm/brand'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
-import { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
+import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
 import type { BotRecord } from './types.ts'
 import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 import { BOT_SHARE_ROLES, BotPrincipalId } from './sharing.ts'
@@ -60,8 +61,49 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
   message: 'Text values must be trimmed',
 })
 
+const instant = z.iso.datetime({ precision: 3 })
+
+/** Durable message-trigger routine value validated inside each Bot row. */
+export const botEventRoutineSchema = z.object({
+  id: z.string().regex(/^bot-event-routine-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  title: boundedText(120),
+  prompt: boundedText(16_000),
+  trigger: z.object({
+    type: z.literal('message'),
+    source: z.enum(BOT_EVENT_SOURCES),
+  }).strict(),
+  status: z.enum(['active', 'paused']),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+  deliveries: z.array(z.object({
+    triggerEventSeq: z.number().int().nonnegative(),
+    triggerMessageId: z.string().min(1).transform(MessageId).optional(),
+    messageId: z.string().min(1).transform(MessageId),
+    chainId: z.string().min(1).optional(),
+    depth: z.number().int().nonnegative().optional(),
+    status: z.enum(['pending', 'delivered']),
+    dispatchStartedAt: instant.optional(),
+    createdAt: instant,
+    deliveredAt: instant.optional(),
+  }).strict()).max(200),
+  admissionWatermark: z.number().int().nonnegative().optional(),
+  admissionTombstones: z.array(z.object({
+    triggerEventSeq: z.number().int().nonnegative(),
+    triggerMessageId: z.string().min(1).transform(MessageId).optional(),
+  }).strict()).max(200).optional(),
+  results: z.array(z.object({
+    messageId: z.string().min(1).transform(MessageId),
+    status: z.enum(['completed', 'error', 'aborted', 'blocked', 'max-tokens', 'interrupted', 'forked', 'other']),
+    completedAt: instant,
+    output: z.string().max(8_000).optional(),
+    error: z.string().max(4_000).optional(),
+  }).strict()).max(200),
+}).strict().refine(record => record.updatedAt >= record.createdAt, {
+  message: 'event routine updatedAt must not be earlier than createdAt',
+})
 const capability = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)
-const pendingMemoryUpdateSchema = z.object({
+/** Durable memory edit marker copied through the cross-process profile fence. */
+export const botPendingMemoryUpdateSchema = z.object({
   memoryId: z.string().regex(/^memory-[A-Za-z0-9][A-Za-z0-9-]*$/).max(256),
   text: boundedText(BOT_MEMORY_TEXT_LIMIT),
 }).strict()
@@ -78,6 +120,7 @@ export const botRecordSchema = z.object({
   identity: z.enum(BOT_IDENTITIES),
   accent: z.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
+  eventRoutines: z.array(botEventRoutineSchema).max(100).optional(),
   persona: z.string().max(4000).refine(value => value.trim() === value, {
     message: 'Personas must be trimmed',
   }).optional(),
@@ -104,7 +147,7 @@ export const botRecordSchema = z.object({
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),
-  pendingMemoryUpdate: pendingMemoryUpdateSchema.optional(),
+  pendingMemoryUpdate: botPendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',
 }).refine(record => String(record.id) !== String(record.sessionId), {

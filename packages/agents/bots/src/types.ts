@@ -2,6 +2,7 @@
 
 import { brandString, type Branded } from '@yharness/brand'
 import type { ImageAttachmentRef } from '@yharness/attachment'
+import type { MessageId } from '@yharness/llm/brand'
 import type { SessionId } from '@yharness/session/types'
 import type { BotPrincipalId, BotShareRole } from './sharing.ts'
 
@@ -220,6 +221,100 @@ export type BotAvailability = 'running' | 'idle' | 'offline'
 /** Persisted generated avatar reference owned by one Bot row. */
 export type BotAvatar = ImageAttachmentRef
 
+/** Event sources admitted by Bot-owned routines. */
+export const BOT_EVENT_SOURCES = ['bot', 'user'] as const
+
+/** Source of a message that can fire a Bot-owned routine. */
+export type BotEventSource = typeof BOT_EVENT_SOURCES[number]
+
+/** Message event selector for one Bot-owned routine. */
+export interface BotEventTrigger {
+  /** Trigger family; message is the only supported event family. */
+  readonly type: 'message'
+  /** Whether a peer Bot or the human user must author the message. */
+  readonly source: BotEventSource
+}
+
+/** One durably admitted event-trigger delivery. */
+export interface BotEventRoutineDelivery {
+  /** Session event sequence that caused this delivery. */
+  readonly triggerEventSeq: number
+  /** Stable source message identity used to deduplicate inbox and surface events. */
+  readonly triggerMessageId?: MessageId | undefined
+  /** Stable message id used for retrying delivery after a restart. */
+  readonly messageId: MessageId
+  /** Cross-Bot routine chain identity, when this delivery came from a peer Bot. */
+  readonly chainId?: string | undefined
+  /** Number of Bot-to-Bot hops already traversed by this delivery. */
+  readonly depth?: number | undefined
+  /** Whether the follow-up was persisted in the Bot Session. */
+  readonly status: 'pending' | 'delivered'
+  /** Time the Host durably recorded an invocation of Agent.followup. */
+  readonly dispatchStartedAt?: string | undefined
+  /** Time the event was admitted to this routine. */
+  readonly createdAt: string
+  /** Time Session persistence acknowledged the follow-up. */
+  readonly deliveredAt?: string | undefined
+}
+
+/** Durable identity retained after an old routine delivery is pruned. */
+export interface BotEventRoutineAdmissionTombstone {
+  /** Session event sequence that was already considered for this routine. */
+  readonly triggerEventSeq: number
+  /** Stable source message identity when the source event provided one. */
+  readonly triggerMessageId?: MessageId | undefined
+}
+
+/** Completed model result associated with one event-trigger delivery. */
+export interface BotEventRoutineResult {
+  /** Event-trigger message whose turn produced this result. */
+  readonly messageId: MessageId
+  /** Turn-ending reason, excluding private model reasoning. */
+  readonly status: 'completed' | 'error' | 'aborted' | 'blocked' | 'max-tokens' | 'interrupted' | 'forked' | 'other'
+  /** Durable event time of the turn boundary. */
+  readonly completedAt: string
+  /** Visible assistant text produced by the turn, when any. */
+  readonly output?: string | undefined
+  /** Safe provider failure text when the turn ended with an error. */
+  readonly error?: string | undefined
+}
+
+/** Durable Bot routine that runs when its selected message event arrives. */
+export interface BotEventRoutine {
+  /** Stable routine identity. */
+  readonly id: string
+  /** User-facing routine name. */
+  readonly title: string
+  /** Prompt delivered to the Bot when the event arrives. */
+  readonly prompt: string
+  /** Supported event selector. */
+  readonly trigger: BotEventTrigger
+  /** Whether future matching events are admitted. */
+  readonly status: 'active' | 'paused'
+  /** Creation time in Unix milliseconds. */
+  readonly createdAt: number
+  /** Last durable routine mutation in Unix milliseconds. */
+  readonly updatedAt: number
+  /** Bounded delivery records, oldest first. */
+  readonly deliveries: readonly BotEventRoutineDelivery[]
+  /** Highest source event sequence durably considered for this routine. */
+  readonly admissionWatermark?: number | undefined
+  /** Source identities retained when delivery records are pruned. */
+  readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined
+  /** Bounded completed model results, oldest first. */
+  readonly results: readonly BotEventRoutineResult[]
+}
+
+/** Browser/native view of one Bot event routine. */
+export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results'> & {
+  /** Common routine discriminator used alongside timed Schedule records. */
+  readonly kind: 'event'
+  /** Event routines wait for a matching message instead of a wall-clock target. */
+  readonly state: 'waiting'
+  /** Delivery remains in the Bot's original Session. */
+  readonly deliveryMode: 'host'
+}
+
 /** Authoritative durable row: one Bot maps to exactly one ordinary Session. */
 export interface BotRecord {
   /** Stable roster identity. */
@@ -238,6 +333,8 @@ export interface BotRecord {
   readonly accent: BotAccent
   /** Optional generated avatar selected by the user. */
   readonly avatar?: BotAvatar | undefined
+  /** Bot-scoped message routines; absent on rows written before event routines existed. */
+  readonly eventRoutines?: readonly BotEventRoutine[] | undefined
   /** Optional model-facing persona text. */
   readonly persona?: string | undefined
   /** Safe capability declarations retained by the Bot. */
@@ -264,8 +361,8 @@ export interface BotRecord {
   readonly updatedAt: number
 }
 
-/** Browser-facing Bot row enriched with live availability. */
-export type BotView = Omit<BotRecord, 'ownerId'> & {
+/** Browser-facing roster row enriched with live availability and no private fields. */
+export type BotView = Omit<BotRecord, 'ownerId' | 'eventRoutines'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
   /** Whether the Bot is kept at the top of its roster view. */

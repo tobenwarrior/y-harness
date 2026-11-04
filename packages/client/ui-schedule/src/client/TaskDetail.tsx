@@ -835,7 +835,7 @@ export function TaskDetail({
                   local stamp as well. */}
               <span className={css.nextRunRelative}>{nextRun.relative}</span>
             </p>
-            : <p>{t('status.inactive')}</p>}
+            : <p>{t(task.status === 'paused' ? 'status.paused' : 'status.inactive')}</p>}
         </div>}
         <div role="tabpanel" id={`${id}-rule-panel`} aria-labelledby={`${id}-rule-tab`}
           hidden={tab !== 'rule' || deleted} tabIndex={0}>

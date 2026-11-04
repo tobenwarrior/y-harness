@@ -6,6 +6,7 @@ import type { AgentMessageSource } from '@yharness/subagent'
 import { freezeMessage, MessageId } from '@yharness/llm'
 import type { ContentBlock, MessageSourceMap, UserMessage } from '@yharness/llm'
 import type { SessionEvent, SessionId } from '@yharness/session'
+import { botInboxMessageState } from './inbox.ts'
 import type { BotMemoryClient } from './memory.ts'
 import { BotGroupMessageId } from './group-chat.ts'
 import type { BotGroupId } from './group-chat.ts'
@@ -26,12 +27,47 @@ export function BotMessageId(value: string): BotMessageId {
 /** Durable source attached to every peer message in the target Session log. */
 export type BotMessageSource = AgentMessageSource
 
+/** Durable lifecycle status for one peer-Bot message in the target Session. */
+export interface BotCollaborationDeliveryEvent {
+  /** Stable peer message identity. */
+  readonly messageId: BotMessageId
+  /** Bot Session that authored the peer message. */
+  readonly senderSessionId: SessionId
+  /** Receipt status at the time of this lifecycle record. */
+  readonly status: 'accepted' | 'canceled'
+}
+
+/** Durable context used to stop event-routine relays from forming an unbounded Bot loop. */
+export interface BotEventRelayContext {
+  /** Stable identity for one chain of routine-triggered peer messages. */
+  readonly chainId: string
+  /** Number of peer-Bot relay hops already made in this chain. */
+  readonly depth: number
+}
+
+declare module '@yharness/subagent' {
+  interface AgentMessageSource {
+    /** Bot-owned relay metadata used by event-routine loop protection. */
+    readonly botEventRoutine?: BotEventRelayContext
+  }
+}
+
 // Bot-to-Bot messages reuse the released `agent-message` relay vocabulary.
 // The stable Bot identity is the sender Session id; the Bot roster resolves it
 // to the current Bot row and the message id is the UserMessage id.
 declare module '@yharness/llm' {
   interface MessageSourceMap {
     'agent-message': AgentMessageSource
+    /** A Bot-owned event routine follow-up; not a peer relay and never a trigger source itself. */
+    'bot-event-routine': {
+      kind: 'bot-event-routine'
+      form: 'notice'
+      summary: string
+      routineId: string
+      triggerEventSeq: number
+      chainId?: string
+      depth?: number
+    }
     'bot-group-message': BotGroupMessageSource
   }
 }
@@ -70,6 +106,13 @@ export interface BotCollaborationHost {
     message: UserMessage,
     signal?: AbortSignal,
   ) => Promise<'accepted' | 'duplicate'>
+  /** Persist peer-message acceptance or a later cancellation in the target Session. */
+  readonly recordDelivery?: (
+    sessionId: SessionId,
+    event: BotCollaborationDeliveryEvent,
+  ) => Promise<'accepted' | 'canceled'>
+  /** Return the active event-routine relay context for one Bot turn, when any. */
+  readonly eventRoutineContext?: (sessionId: SessionId) => BotEventRelayContext | undefined
 }
 
 /** Result payload retained for one native Bot action lifecycle record. */
@@ -98,6 +141,8 @@ declare module '@yharness/session/types' {
   interface SessionEventMap {
     /** Native Bot collaboration action lifecycle; log-only but required for native replay. */
     'bot/dynamic-tool': BotDynamicToolEvent
+    /** Peer-Bot delivery lifecycle; accepted messages may later be canceled durably. */
+    'bot/collaboration': BotCollaborationDeliveryEvent
   }
 }
 
@@ -230,47 +275,157 @@ function textFromContent(content: readonly ContentBlock[]): string {
 }
 
 function transcript(events: readonly SessionEvent[]): BotCollaborationTranscriptEntry[] {
-  // Group messages are model-visible user messages, so filtering one message
-  // at a time is insufficient: a steering/private message can follow the
-  // group input in the same turn and the assistant may answer both. Build the
-  // set of affected turns first, including compaction replacements that cite
-  // an earlier group message.
+  // Group and routine messages are model-visible user messages, so filtering
+  // one message at a time is insufficient: a steering/private message can
+  // follow either input in the same turn and the assistant may answer both.
+  // Build the affected sets first, including compaction replacements that
+  // cite an earlier private message. Older logs may omit turn markers, so
+  // retain each markerless segment until its assistant closes the turn and
+  // index every event in a tainted turn for retroactive descendants.
   const groupSourceSeqs = new Set<string>()
-  const groupTurns = new Set<number>()
+  const routineSourceSeqs = new Set<string>()
+  const taintedTurns = new Set<number>()
+  const taintedEventSeqs = new Set<string>()
+  const eventSeqsByTurn = new Map<number, Set<string>>()
+  const markerlessEventSeqsByTurn = new Map<number, Set<string>>()
+  const legacyEventSeqs = new Set<string>()
   let currentTurn: number | undefined
-  let groupWithoutTurn = false
+  let lastLegacyAssistantTurn: number | undefined
+  let legacySegmentTainted = false
+
+  const markTaintedEvents = (seqs: Iterable<string>): void => {
+    for (const seq of seqs) taintedEventSeqs.add(seq)
+  }
+
+  const markTurnEvents = (turn: number): void => {
+    markTaintedEvents(eventSeqsByTurn.get(turn) ?? [])
+    markTaintedEvents(markerlessEventSeqsByTurn.get(turn) ?? [])
+  }
+
+  const taintTurn = (turn: number): void => {
+    taintedTurns.add(turn)
+    markTurnEvents(turn)
+  }
+
+  const taintAmbiguousLegacyTurn = (): void => {
+    if (lastLegacyAssistantTurn !== undefined) taintTurn(lastLegacyAssistantTurn)
+  }
+
+  const closeLegacySegment = (failClosedForTaintedTurn: boolean): void => {
+    if (legacySegmentTainted) taintAmbiguousLegacyTurn()
+    if (legacySegmentTainted
+      || (failClosedForTaintedTurn
+        && lastLegacyAssistantTurn !== undefined
+        && taintedTurns.has(lastLegacyAssistantTurn))) {
+      markTaintedEvents(legacyEventSeqs)
+    }
+    legacyEventSeqs.clear()
+    legacySegmentTainted = false
+  }
   for (const event of events) {
     if (event.type === 'turn/start') {
+      closeLegacySegment(true)
       currentTurn = event.data.turn
+      const turnSeqs = eventSeqsByTurn.get(currentTurn) ?? new Set<string>()
+      turnSeqs.add(String(event.seq))
+      eventSeqsByTurn.set(currentTurn, turnSeqs)
+      lastLegacyAssistantTurn = undefined
       continue
     }
     if (event.type === 'turn/end') {
-      if (currentTurn === event.data.turn) currentTurn = undefined
-      continue
-    }
-    if (event.type === 'assistant/message') {
-      if (groupWithoutTurn) {
-        groupTurns.add(event.data.turn)
-        groupWithoutTurn = false
+      if (currentTurn === event.data.turn) {
+        const turnSeqs = eventSeqsByTurn.get(event.data.turn) ?? new Set<string>()
+        turnSeqs.add(String(event.seq))
+        eventSeqsByTurn.set(event.data.turn, turnSeqs)
+        currentTurn = undefined
+        lastLegacyAssistantTurn = undefined
+        closeLegacySegment(true)
+      } else if (currentTurn === undefined) {
+        legacyEventSeqs.add(String(event.seq))
+        closeLegacySegment(true)
+        lastLegacyAssistantTurn = undefined
       }
       continue
     }
+    const eventSeq = String(event.seq)
+    if (currentTurn === undefined) legacyEventSeqs.add(eventSeq)
+    else {
+      const turnSeqs = eventSeqsByTurn.get(currentTurn) ?? new Set<string>()
+      turnSeqs.add(eventSeq)
+      eventSeqsByTurn.set(currentTurn, turnSeqs)
+    }
+    if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([eventSeq])
+    if (currentTurn === undefined && legacySegmentTainted) markTaintedEvents([eventSeq])
+    if (event.type === 'assistant/message') {
+      const sameTaintedLegacyTurn = currentTurn === undefined
+        && lastLegacyAssistantTurn === event.data.turn
+        && taintedTurns.has(event.data.turn)
+      if (currentTurn === undefined) {
+        const segmentSeqs = markerlessEventSeqsByTurn.get(event.data.turn) ?? new Set<string>()
+        for (const seq of legacyEventSeqs) segmentSeqs.add(seq)
+        markerlessEventSeqsByTurn.set(event.data.turn, segmentSeqs)
+      }
+      if (currentTurn === undefined && (legacySegmentTainted || sameTaintedLegacyTurn)) {
+        taintTurn(event.data.turn)
+      }
+      legacyEventSeqs.clear()
+      legacySegmentTainted = false
+      lastLegacyAssistantTurn = currentTurn === undefined ? event.data.turn : undefined
+      if (taintedTurns.has(event.data.turn)) markTaintedEvents([eventSeq])
+      continue
+    }
     if (event.type !== 'user/message') continue
+    const seq = eventSeq
     const citesGroup = event.data.source.kind === 'bot-group-message'
       || event.sourceEventSeqs?.some(seq => groupSourceSeqs.has(String(seq))) === true
-    if (!citesGroup) continue
-    groupSourceSeqs.add(String(event.seq))
-    if (currentTurn === undefined) groupWithoutTurn = true
-    else groupTurns.add(currentTurn)
+    if (citesGroup) {
+      groupSourceSeqs.add(seq)
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
+      else {
+        taintTurn(currentTurn)
+      }
+    }
+    const citesRoutine = event.data.source.kind === 'bot-event-routine'
+      || event.sourceEventSeqs?.some(seq => routineSourceSeqs.has(String(seq))) === true
+    if (citesRoutine) {
+      routineSourceSeqs.add(seq)
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
+      else {
+        taintTurn(currentTurn)
+      }
+    }
+    const citesTainted = event.sourceEventSeqs?.some((sourceSeq) => {
+      const source = String(sourceSeq)
+      return taintedEventSeqs.has(source)
+    }) === true
+    if (citesTainted) {
+      if (currentTurn === undefined) {
+        legacySegmentTainted = true
+        taintAmbiguousLegacyTurn()
+      }
+      else {
+        taintTurn(currentTurn)
+      }
+    }
+    if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([seq])
+    if (currentTurn === undefined && legacySegmentTainted) markTaintedEvents(legacyEventSeqs)
   }
+  closeLegacySegment(true)
   const entries = events.flatMap((event): BotCollaborationTranscriptEntry[] => {
     if (event.type === 'user/message') {
+      const seq = String(event.seq)
       const text = textFromContent(event.data.content)
-      if (groupSourceSeqs.has(String(event.seq))) return []
+      if (taintedEventSeqs.has(seq)) return []
       return text === '' ? [] : [{ role: 'user', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }
     if (event.type === 'assistant/message') {
-      if (groupTurns.has(event.data.turn)) return []
+      if (taintedEventSeqs.has(String(event.seq)) || taintedTurns.has(event.data.turn)) return []
       const text = textFromContent(event.data.message.content)
       return text === '' ? [] : [{ role: 'assistant', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }
@@ -302,12 +457,16 @@ function pendingInboxMessages(events: readonly SessionEvent[]): UserMessage[] {
 function hasMessage(
   events: readonly SessionEvent[],
   messageId: BotMessageId,
-  sourceKind: 'agent-message' | 'bot-group-message',
+  sourceKind: 'agent-message' | 'bot-group-message' = 'agent-message',
 ): boolean {
-  return events.some(event => event.type === 'user/message'
+  if (events.some(event => event.type === 'user/message'
     && event.data.id === messageId
-    && event.data.source.kind === sourceKind)
-    || pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === sourceKind)
+    && event.data.source.kind === sourceKind)) return true
+  const inbox = botInboxMessageState(events, messageId)
+  if ((inbox?.disposition === 'pending' || inbox?.disposition === 'claimed')
+    && inbox.message.source.kind === sourceKind) return true
+  return sourceKind === 'bot-group-message'
+    && pendingInboxMessages(events).some(message => message.id === messageId && message.source.kind === sourceKind)
 }
 
 /**
@@ -388,6 +547,12 @@ export class BotCollaborationService {
       throwIfCancelled(request.signal)
       if (hasMessage(before.events, request.messageId, 'bot-group-message')) {
         await this.flushTarget(target.sessionId, target.name)
+        await this.confirmMessageReceipt(
+          target.sessionId,
+          request.messageId,
+          `Bot "${target.name}" no longer has the group message receipt`,
+          'bot-group-message',
+        )
         return 'duplicate' as const
       }
       const resolved = await this.host.resolveAgent(target.sessionId)
@@ -404,6 +569,12 @@ export class BotCollaborationService {
         source: { kind: 'bot-group-message', groupId: request.groupId, messageId: BotGroupMessageId(String(request.messageId)) },
       }))
       await this.flushTarget(target.sessionId, target.name)
+      await this.confirmMessageReceipt(
+        target.sessionId,
+        request.messageId,
+        `Bot "${target.name}" did not retain the group message receipt`,
+        'bot-group-message',
+      )
       return 'accepted' as const
     })
     const tail = run.then(() => undefined, () => undefined)
@@ -447,6 +618,57 @@ export class BotCollaborationService {
     }
   }
 
+  /** Confirm a target receipt again after one event-loop turn for late cancellation races. */
+  private async confirmMessageReceipt(
+    sessionId: SessionId,
+    messageId: BotMessageId,
+    failure: string,
+    sourceKind: 'agent-message' | 'bot-group-message' = 'agent-message',
+  ): Promise<void> {
+    const first = await this.host.inspectSession(sessionId)
+    if (!hasMessage(first.events, messageId, sourceKind)) {
+      throw new BotCollaborationError('durability-failed', failure)
+    }
+    await Promise.resolve()
+    const confirmed = await this.host.inspectSession(sessionId)
+    if (!hasMessage(confirmed.events, messageId, sourceKind)) {
+      throw new BotCollaborationError('durability-failed', failure)
+    }
+  }
+
+  /** Persist the peer receipt status when the Host owns a durable lifecycle log. */
+  private async recordDelivery(
+    sessionId: SessionId,
+    targetName: string,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<'accepted' | 'canceled'> {
+    if (this.host.recordDelivery === undefined) return event.status
+    try {
+      return await this.host.recordDelivery(sessionId, event)
+    } catch (error: unknown) {
+      throw new BotCollaborationError(
+        'durability-failed',
+        `Bot "${targetName}" receipt status was not durably recorded`,
+        { cause: error },
+      )
+    }
+  }
+
+  /** Record an accepted receipt and reject if cancellation won before that record. */
+  private async acknowledgeDelivery(
+    sessionId: SessionId,
+    targetName: string,
+    event: BotCollaborationDeliveryEvent,
+  ): Promise<void> {
+    const status = await this.recordDelivery(sessionId, targetName, event)
+    if (status === 'canceled') {
+      throw new BotCollaborationError(
+        'durability-failed',
+        `Bot "${targetName}" canceled the message before acknowledgment`,
+      )
+    }
+  }
+
   /**
    * Admit one explicit message to a target Bot's next turn.
    *
@@ -472,8 +694,10 @@ export class BotCollaborationService {
     if (target === undefined) throw new BotCollaborationError('target-not-found', `Bot "${request.targetBotId}" was not found`)
     if (sender.id === target.id) throw new BotCollaborationError('self-message', 'A Bot cannot send a message to itself')
     const messageId = request.messageId ?? BotMessageId(`bot-message-${randomUUID()}`)
+    const relayContext = this.host.eventRoutineContext?.(senderSessionId)
     const source: MessageSourceMap['agent-message'] = {
       kind: 'agent-message', form: 'relay', senderSessionId: sender.sessionId,
+      ...(relayContext === undefined ? {} : { botEventRoutine: relayContext }),
     }
     const message = freezeMessage({
       id: messageId,
@@ -486,6 +710,9 @@ export class BotCollaborationService {
       try {
         const status = await this.host.deliverMessage(target, message, request.signal)
         throwIfCancelled(request.signal)
+        await this.acknowledgeDelivery(target.sessionId, target.name, {
+          messageId, senderSessionId: sender.sessionId, status: 'accepted',
+        })
         return { messageId, status, sender: rosterEntry(sender), target: rosterEntry(target) }
       } catch (error: unknown) {
         if (error instanceof BotCollaborationError) throw error
@@ -502,6 +729,16 @@ export class BotCollaborationService {
         // durability barrier. Re-run the barrier before acknowledging the
         // retry as a duplicate.
         await this.flushTarget(target.sessionId, target.name)
+        await this.confirmMessageReceipt(
+          target.sessionId,
+          messageId,
+          `Bot "${target.name}" no longer has the message receipt`,
+        )
+        await this.acknowledgeDelivery(target.sessionId, target.name, {
+          messageId,
+          senderSessionId: sender.sessionId,
+          status: 'accepted',
+        })
         return { messageId, status: 'duplicate' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
       }
       const resolved = await this.host.resolveAgent(target.sessionId)
@@ -512,6 +749,16 @@ export class BotCollaborationService {
       throwIfCancelled(request.signal)
       resolved.agent.followup(message)
       await this.flushTarget(target.sessionId, target.name)
+      await this.confirmMessageReceipt(
+        target.sessionId,
+        messageId,
+        `Bot "${target.name}" did not retain the message receipt`,
+      )
+      await this.acknowledgeDelivery(target.sessionId, target.name, {
+        messageId,
+        senderSessionId: sender.sessionId,
+        status: 'accepted',
+      })
       return { messageId, status: 'accepted' as const, sender: rosterEntry(sender), target: rosterEntry(target) }
     })
     const tail = run.then(() => undefined, () => undefined)

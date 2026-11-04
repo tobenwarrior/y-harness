@@ -1,6 +1,6 @@
 {
   "name": "@yharness/tool-schedule",
-  "description": "Model-facing reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete) over the Host ctx.schedule service",
+  "description": "Model-facing reminder management tools (schedule_create, schedule_list, schedule_update, schedule_delete, schedule_pause, schedule_resume, schedule_history) over the Host ctx.schedule service",
   "version": "0.2.1-rc.2",
   "publishConfig": {
     "access": "public"

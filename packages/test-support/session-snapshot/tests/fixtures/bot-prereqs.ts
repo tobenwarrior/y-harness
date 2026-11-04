@@ -8,6 +8,7 @@ import type {} from '../../../../agents/bots/src/collaboration.ts'
 import type { SessionEvent } from '@yharness/session'
 import type {} from '@yharness/storage-domain'
 import { SessionId } from '@yharness/session'
+import { registerScheduleTools } from '../../../../schedule/tool-schedule/src/index.ts'
 import { BotMemoryId } from '../../../../agents/bots/src/memory.ts'
 import { BotGroupId, BotGroupMessageId } from '../../../../agents/bots/src/group-chat.ts'
 import { BotId } from '../../../../agents/bots/src/types.ts'
@@ -23,6 +24,15 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain
  */
 export async function apply(ctx: Context): Promise<void> {
   const cwd = process.cwd()
+  // The snapshot exercises the Bot-scoped routine policy without pulling the
+  // live Host scheduler into the headless profile. Mount the same model-facing
+  // definitions that the standard preset contributes; no routine is executed.
+  ctx.provide('schedule', {
+    create: async () => { throw new Error('schedule create is not used by this snapshot') },
+    list: async () => [],
+    update: async () => { throw new Error('schedule update is not used by this snapshot') },
+    delete: async () => { throw new Error('schedule delete is not used by this snapshot') },
+  } as never)
   const selection = ctx.agentDefaultModel.currentSelection()
   const handles: AgentHandle[] = []
   for (const sessionId of ['bot-session-sender', 'bot-session-target']) {
@@ -32,6 +42,17 @@ export async function apply(ctx: Context): Promise<void> {
       agentOptions: { provider: selection.provider, model: selection.model },
     }))
   }
+  await Promise.all(handles.map(handle => handle.agent.ctx.inject(
+    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+  )))
+  // The headless runner later adopts these persisted Sessions and creates new
+  // Agent scopes. Keep the same Schedule tool composition on those scopes so
+  // the replay header reflects the standard Bot capability set as well.
+  ctx.on('agent/created', async ({ agent }) => {
+    await agent.ctx.inject(
+      ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+    )
+  })
   const domain = await ctx.storageDomain.open(botDomain)
   const bots = domain.table('bots')
   const records = [

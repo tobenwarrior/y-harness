@@ -13,7 +13,11 @@ afterEach(async () => {
   await Promise.all(tests.splice(0).map(test => test.ctx.fiber.dispose()))
   vi.useRealTimers()
 })
-async function setup() { const test = await harness(); tests.push(test); return test }
+async function setup(options: Parameters<typeof harness>[0] = {}) {
+  const test = await harness(options)
+  tests.push(test)
+  return test
+}
 /** Build one seeded historical Schedule event, including deliberately unreadable payloads. */
 function scheduleEvent(data: unknown, seq: number): SessionEvent {
   return { type: 'schedule/change', seq: SessionSeq(seq), time: Date.now(), data } as SessionEvent
@@ -27,6 +31,201 @@ describe('shared Schedule management', () => {
     expect(pool.media.get('schedule')!.tables.get('tasks')!.get(record.id)).toEqual({
       record, sessionId, status: 'active', deliveryHistory: { records: [], earlierRecordsUnavailable: false },
     })
+  })
+
+  it('reuses a Host idempotency key across native retries and restart', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const options = { idempotencyKey: 'bot-routine-create-key' }
+    const first = await test.service.create(sessionId, request, undefined, options)
+    const retry = await test.service.create(sessionId, request, undefined, options)
+    expect(retry).toEqual(first)
+    expect(await test.service.list({ sessionId })).toEqual([first])
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    const afterRestart = await restarted.service.create(sessionId, request, undefined, options)
+    expect(afterRestart).toEqual(first)
+    expect(await restarted.service.list({ sessionId })).toEqual([first])
+    expect(await restarted.service.catalog()).toHaveLength(1)
+  })
+
+  it('allows identical intentional creates and rejects key/request conflicts', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-intent')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const first = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-one' })
+    const second = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-two' })
+    expect(second.id).not.toBe(first.id)
+    await expect(test.service.create(sessionId, {
+      prompt: ' Check the build ', title: ' Build check ', after_seconds: 60,
+    }, undefined, { idempotencyKey: 'operation-one' })).resolves.toEqual(first)
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    expect(tasks.get(first.id)).toMatchObject({
+      idempotencyKey: 'operation-one', requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    })
+    await tasks.put(first.id, { ...tasks.get(first.id)!, status: 'inactive' })
+    const recreated = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-three' })
+    expect(recreated.id).not.toBe(first.id)
+    await expect(test.service.create(sessionId, { ...request, title: 'Different task' }, undefined, {
+      idempotencyKey: 'operation-one',
+    })).rejects.toMatchObject({ code: 'invalid_rule' })
+    expect(await test.service.catalog()).toHaveLength(3)
+  })
+
+  it('honors cancellation after an idempotent task read', async () => {
+    const test = await setup()
+    const sessionId = SessionId('idempotent-read-cancel')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const options = { idempotencyKey: 'cancel-after-read' }
+    await test.service.create(sessionId, request, undefined, options)
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    const entries = tasks.entries.bind(tasks)
+    const controller = new AbortController()
+    vi.spyOn(tasks, 'entries').mockImplementation(() => {
+      controller.abort()
+      return entries()
+    })
+    await expect(test.service.create(sessionId, request, controller.signal, options)).rejects.toThrow()
+    expect(await test.service.list({ sessionId })).toHaveLength(1)
+  })
+
+  it('serializes reconciliation, listing, and catalog behind an in-flight create', async () => {
+    vi.useRealTimers()
+    const pool = new MemoryMediaPool()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    let gated = false
+    const backend = gatedScheduleBackend(pool, {
+      putRecord: async (table) => {
+        if (table !== 'tasks' || gated) return
+        gated = true
+        entered.resolve(undefined)
+        await release.promise
+      },
+    })
+    const test = await setup({ pool, backend })
+    const sessionId = SessionId('serialized-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const creating = test.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
+    await entered.promise
+    const resolving = test.service.reconcileCreate(sessionId, request, 'lost-create')
+    const listing = test.service.list({ sessionId })
+    const cataloging = test.service.catalog()
+    let resolutionSettled = false
+    let listingSettled = false
+    let catalogSettled = false
+    void resolving.then(() => { resolutionSettled = true })
+    void listing.then(() => { listingSettled = true })
+    void cataloging.then(() => { catalogSettled = true })
+    await Promise.resolve()
+    expect(resolutionSettled).toBe(false)
+    expect(listingSettled).toBe(false)
+    expect(catalogSettled).toBe(false)
+    release.resolve(undefined)
+    const created = await creating
+    await expect(resolving).resolves.toEqual({ status: 'committed', record: created })
+    await expect(listing).resolves.toEqual([created])
+    await expect(cataloging).resolves.toEqual([{ ...created, sessionId, status: 'active' }])
+  })
+
+  it('does not retire an operation that has not reached Schedule yet', async () => {
+    const test = await setup()
+    const sessionId = SessionId('approval-pending')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.reconcileCreate(sessionId, request, 'approval-pending'))
+      .resolves.toEqual({ status: 'unknown' })
+    expect([...test.ctx.storageDomain.get('schedule')!.table('create_operations').entries()]).toEqual([])
+  })
+
+  it('reserves approval operations and retires abandoned reservations after restart', async () => {
+    const test = await setup()
+    const sessionId = SessionId('reserved-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.reserveCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'reserved' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'unknown' })
+    await expect(test.service.releaseCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    await expect(test.service.reserveCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'reserved' })
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.reconcileCreate(sessionId, request, 'reserved-key'))
+      .resolves.toEqual({ status: 'absent' })
+    const record = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'reserved-key' })
+    expect(await restarted.service.list({ sessionId })).toEqual([record])
+  })
+
+  it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
+    const test = await setup()
+    const sessionId = SessionId('structured-at')
+    const first = await test.service.create(sessionId, {
+      prompt: 'Check the build', title: 'Build check',
+      at: { date: '2099-05-01', time: '09:00:00', time_zone: 'US/Eastern' },
+    }, undefined, { idempotencyKey: 'structured-at-key' })
+    const retry = await test.service.create(sessionId, {
+      prompt: ' Check the build ', title: ' Build check ',
+      at: { date: '2099-05-01', time: '09:00:00.000', time_zone: 'America/New_York' },
+    }, undefined, { idempotencyKey: 'structured-at-key' })
+    expect(retry).toEqual(first)
+    expect(await test.service.list({ sessionId })).toEqual([first])
+  })
+
+  it('durably retires an absent operation so later identical requests can repeat', async () => {
+    const test = await setup()
+    const sessionId = SessionId('retired-create')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const seeded = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    const tasks = domain.table('tasks')
+    const operations = domain.table('create_operations')
+    const operationEntry = [...operations.entries()].find(([, operation]) =>
+      scheduleDomain.tables.create_operations.valueSchema.parse(operation).idempotencyKey === 'lost-create')
+    if (operationEntry === undefined) throw new Error('Create operation was not recorded')
+    const [operationKey, storedOperation] = operationEntry
+    const operation = scheduleDomain.tables.create_operations.valueSchema.parse(storedOperation)
+    const { record: _record, ...pending } = operation
+    await tasks.delete(seeded.id)
+    await operations.put(operationKey, { ...pending, status: 'pending' })
+    await expect(test.service.reconcileCreate(sessionId, request, 'lost-create'))
+      .resolves.toEqual({ status: 'absent' })
+    expect([...domain.table('create_operations').entries()]).toHaveLength(1)
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.reconcileCreate(sessionId, request, 'lost-create'))
+      .resolves.toEqual({ status: 'absent' })
+    const retriedSameOperation = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'lost-create' })
+    expect(retriedSameOperation.id).toMatch(/^schedule-/)
+    const first = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'repeat-one' })
+    const second = await restarted.service.create(sessionId, request, undefined, { idempotencyKey: 'repeat-two' })
+    expect(second.id).not.toBe(first.id)
+    expect(first.id).not.toBe(retriedSameOperation.id)
+  })
+
+  it('keeps a committed retry receipt when release follows task deletion', async () => {
+    const test = await setup()
+    const sessionId = SessionId('release-committed')
+    const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    const record = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'committed-key' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    await domain.table('tasks').delete(record.id)
+    await expect(test.service.releaseCreate(sessionId, request, 'committed-key'))
+      .resolves.toEqual({ status: 'committed', record })
+    await expect(test.service.reconcileCreate(sessionId, request, 'committed-key'))
+      .resolves.toEqual({ status: 'committed', record })
   })
 
   it('returns an empty catalog when the Host has no active reminders', async () => {
@@ -481,7 +680,10 @@ describe('Schedule activation and shutdown', () => {
     const child = agentFor(test.ctx, 'owned-child')
     test.ctx.effect(() => test.ctx.agents.enter(child, parent))
     expect(test.ctx.agents.roots()).toEqual([parent])
-    for (const name of ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete']) {
+    for (const name of [
+      'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
+      'schedule_pause', 'schedule_resume', 'schedule_history',
+    ]) {
       expect(test.ctx.tools.get(name, parent)).toBeUndefined()
       expect(test.ctx.tools.get(name, child)).toBeUndefined()
       expect(test.ctx.tools.get(name)).toBeUndefined()
@@ -505,6 +707,46 @@ describe('Schedule activation and shutdown', () => {
     await expect(test.service.create(SessionId('caller'), {
       prompt: 'Conflicting selectors', title: 'Conflicting selectors', after_seconds: 60, at: new Date(Date.now() + 60_000).toISOString(),
     })).rejects.toMatchObject({ code: 'invalid_selector', message: 'Exactly one reminder selector is required.' })
+  })
+
+  it('pauses and resumes one Bot-owned routine durably without deleting its history', async () => {
+    const test = await setup()
+    const sessionId = SessionId('routine-lifecycle')
+    const record = await test.service.create(sessionId, { prompt: 'Check', every_seconds: 300, title: 'Check' })
+
+    await expect(test.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', paused: true, status: 'paused',
+    })
+    expect(await test.service.list({ sessionId })).toEqual([])
+    expect(await test.service.catalog()).toEqual([{ ...record, sessionId, status: 'paused' }])
+    await expect(test.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', paused: true, status: 'paused',
+    })
+
+    await expect(test.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', resumed: true, status: 'active',
+    })
+    expect(await test.service.list({ sessionId })).toEqual([record])
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    await expect(restarted.service.pause({ sessionId, id: record.id })).resolves.toMatchObject({ status: 'paused' })
+    await expect(restarted.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({ status: 'active' })
+  })
+
+  it('reports missing and ended routine lifecycle transitions without mutating storage', async () => {
+    const test = await setup()
+    const sessionId = SessionId('routine-lifecycle-errors')
+    await expect(test.service.pause({ sessionId, id: ScheduleId('missing') })).resolves.toEqual({
+      id: ScheduleId('missing'), paused: false, code: 'schedule_not_found',
+    })
+    const record = await test.service.create(sessionId, { prompt: 'Once', after_seconds: 60, title: 'Once' })
+    const domain = test.ctx.storageDomain.get('schedule')
+    if (domain === undefined) throw new Error('Schedule domain not initialized')
+    await domain.table('tasks').put(record.id, { ...domain.table('tasks').get(record.id)!, status: 'inactive' })
+    await expect(test.service.resume({ sessionId, id: record.id })).resolves.toEqual({
+      id: record.id, resumed: false, code: 'schedule_ended',
+    })
   })
 
   it('warns for loaded active legacy reminders but not completed history', async () => {

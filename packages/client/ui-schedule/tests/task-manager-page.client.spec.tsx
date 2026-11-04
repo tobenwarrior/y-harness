@@ -88,6 +88,7 @@ const delivery: NonNullable<ScheduleCatalogEntry['lastDelivery']> = {
   messageId: 'message-release-delivery' as NonNullable<ScheduleCatalogEntry['lastDelivery']>['messageId'],
 }
 const ended: ScheduleCatalogEntry = { ...at, status: 'inactive', lastDelivery: delivery }
+const paused: ScheduleCatalogEntry = { ...every, id: 'task-paused' as ScheduleId, status: 'paused', title: 'Paused metrics' }
 const records = [at, every, after]
 const sessions: SessionListState = {
   ids: [...records, daily, weekly].map(record => record.sessionId),
@@ -664,7 +665,7 @@ describe('Task manager catalog', () => {
     expect(screen.queryByText('session-gamma')).toBeNull()
     expect(screen.getAllByText('Once')).toHaveLength(2)
     expect(screen.getByText('Every 301 seconds')).toBeDefined()
-    expect(screen.queryByRole('button', { name: /create|new task|pause|resume|edit|run now|history/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /create|new task|resume|edit|run now|history/i })).toBeNull()
     expect(screen.queryByRole('complementary')).toBeNull()
     fireEvent.keyDown(screen.getByRole('searchbox'), { key: 'Escape' })
     expect(taskNames()).toHaveLength(3)
@@ -884,6 +885,19 @@ describe('Task manager catalog', () => {
     fireEvent.click(screen.getByRole('button', { name: en['statusFilter.all'] }))
     expect(taskNames()).toHaveLength(3)
     expect(screen.getByRole('button', { name: en['statusFilter.all'] }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it.each([en, zh])('renders paused tasks as stored and editable without a next-run claim', (dictionary) => {
+    mount({ records: [paused] }, dictionary)
+    const statuses = screen.getByRole('group', { name: dictionary['statusFilter.label'] })
+    fireEvent.click(within(statuses).getByRole('button', { name: dictionary['status.paused'] }))
+    const row = screen.getByRole('button', { name: paused.title })
+    expect(row.textContent).toContain(dictionary['status.paused'])
+    expect(row.textContent).not.toContain(dictionary['list.nextPrefix'])
+    fireEvent.click(row)
+    const detail = screen.getByRole('complementary', { name: dictionary['detail.label'] })
+    expect(within(detail).getByText(dictionary['status.paused'])).toBeDefined()
+    expect(within(detail).getByRole('textbox', { name: dictionary['detail.instruction'] }).tagName).toBe('TEXTAREA')
   })
 
   it('distinguishes an empty catalog, loading, and a failed read', () => {

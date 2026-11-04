@@ -14,8 +14,11 @@ import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
 
 const repository = resolve(import.meta.dirname, '..')
-/** Committed V4-to-V5 source delta, reversed in the temporary checkout without requiring Git history. */
-const V4_FORMAT_REVERSAL = 'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch'
+/** Committed adjacent format deltas, reversed in order without requiring Git history. */
+const FORMAT_REVERSALS = [
+  'scripts/fixtures/migrate-sessions-to-v4/v5-to-v6-format.patch',
+  'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch',
+] as const
 const MIGRATION_TEST_TIMEOUT = 60_000
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
@@ -53,13 +56,20 @@ beforeAll(async () => {
   await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
   await extractTar({ file: archive, cwd: v4Checkout })
   await unlink(archive)
-  const reversal = join(v4Checkout, V4_FORMAT_REVERSAL)
-  await mkdir(dirname(reversal), { recursive: true })
-  await writeFile(reversal, await readFile(join(repository, V4_FORMAT_REVERSAL)))
-  await execa('git', ['apply', '--reverse', '--unidiff-zero', '--whitespace=nowarn', reversal], { cwd: v4Checkout })
-  await unlink(reversal)
+  for (const relativePatch of FORMAT_REVERSALS) {
+    const reversal = join(v4Checkout, relativePatch)
+    await mkdir(dirname(reversal), { recursive: true })
+    await writeFile(reversal, await readFile(join(repository, relativePatch)))
+    await execa('git', ['apply', '--reverse', '--unidiff-zero', '--whitespace=nowarn', reversal], { cwd: v4Checkout })
+    await unlink(reversal)
+  }
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
   await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
+  await symlink(
+    join(repository, 'native/system/packages/entry/node_modules'),
+    join(v4Checkout, 'native/system/packages/entry/node_modules'),
+    linkType,
+  )
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
   v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
 }, MIGRATION_TEST_TIMEOUT)

@@ -83,7 +83,7 @@ describe('Session schedule state', () => {
 })
 
 describe('shared Host catalog projection', () => {
-  it('selects only the given Session active tasks from active and ended rows', () => {
+  it('selects only the given Session active tasks from active, paused, and ended rows', () => {
     const mine = catalogEntry('mine', SESSION, 'active')
     const other = catalogEntry('other', 'other-session', 'active')
     const ended = catalogEntry('ended', SESSION, 'inactive')
