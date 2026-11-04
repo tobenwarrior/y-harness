@@ -6957,31 +6957,40 @@ export class BotService extends TypertRemoteService {
       const token = randomUUID()
       let acquired = false
       if (activeSharedRosterFenceTokens.has(credentials)) return { valid: false as const }
-      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-        let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
-        const hadProfileState = stored !== undefined || legacyProfileState !== undefined || state.pending !== undefined
-        if (state.sharedRosterFence !== undefined) return undefined
-        if (state.pending !== undefined) {
-          await bots.put(state.pending.record.id, state.pending.record)
-          this.blockedProfileTransactions.delete(state.pending.transactionId)
-          state = finishPendingProfile(state)
-        }
-        const current = [...bots.entries()].map(([, record]) => this.view(
-          applyProfileSnapshot(record, state.profiles[String(record.id)]),
-        ))
-        if (!sameSharedBotRoster(expected, current)) {
-          if (!hadProfileState) return undefined
-          return profileRevisionRecordOfState(state)
-        }
-        signal?.throwIfAborted()
-        acquired = true
-        return profileRevisionRecordOfState({
-          ...state,
-          sharedRosterFence: { token },
+      try {
+        await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+          let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+          const hadProfileState = stored !== undefined || legacyProfileState !== undefined || state.pending !== undefined
+          if (state.sharedRosterFence !== undefined) return undefined
+          if (state.pending !== undefined) {
+            await bots.put(state.pending.record.id, state.pending.record)
+            this.blockedProfileTransactions.delete(state.pending.transactionId)
+            state = finishPendingProfile(state)
+          }
+          const current = [...bots.entries()].map(([, record]) => this.view(
+            applyProfileSnapshot(record, state.profiles[String(record.id)]),
+          ))
+          if (!sameSharedBotRoster(expected, current)) {
+            if (!hadProfileState) return undefined
+            return profileRevisionRecordOfState(state)
+          }
+          signal?.throwIfAborted()
+          acquired = true
+          // Mark the local owner before releasing the provider lock so a
+          // direct recovery request cannot clear this live fence in the gap.
+          activeSharedRosterFenceTokens.set(credentials, token)
+          return profileRevisionRecordOfState({
+            ...state,
+            sharedRosterFence: { token },
+          })
         })
-      })
+      } catch (error: unknown) {
+        if (activeSharedRosterFenceTokens.get(credentials) === token) {
+          activeSharedRosterFenceTokens.delete(credentials)
+        }
+        throw error
+      }
       if (!acquired) return { valid: false as const }
-      activeSharedRosterFenceTokens.set(credentials, token)
       try {
         return { valid: true as const, value: await operation() }
       } finally {
@@ -7008,49 +7017,56 @@ export class BotService extends TypertRemoteService {
    * Clear one durable roster fence only when its token still matches the
    * owner's explicit quiescence and race-risk assertions. No liveness or
    * authority outcome is inferred from a PID, timeout, heartbeat, clock, or
-   * an in-memory cache.
+   * an in-memory cache. This path intentionally bypasses the Bot service
+   * queue so a paused local roster operation cannot hide the recovery state.
    * @param request - Exact abandoned fence token and owner assertions.
    * @returns The durable recovery status.
    */
   private async recoverSharedRosterFenceImpl(
     request: BotSharedRosterFenceRecoveryRequest,
   ): Promise<BotSharedRosterFenceRecoveryValue> {
-    return this.serialize(async () => {
-      const credentials = this.credentials ?? this.ctx.get('credentials')
-      if (credentials === undefined) return { status: 'absent' as const }
-      if (activeSharedRosterFenceTokens.has(credentials)) return { status: 'busy' as const }
-      let status: BotSharedRosterFenceRecoveryValue['status'] = 'absent'
-      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-        const state = profileRevisionRecordOf(stored)
-        const fence = state.sharedRosterFence
-        if (fence === undefined) {
-          status = 'absent'
-          return undefined
-        }
-        if (fence.token !== request.token) {
-          status = 'busy'
-          return undefined
-        }
-        const { sharedRosterFence: ignoredFence, ...withoutFence } = state
-        void ignoredFence
-        status = 'released'
-        return profileRevisionRecordOfState(withoutFence)
-      })
-      return { status }
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) return { status: 'absent' as const }
+    if (activeSharedRosterFenceTokens.has(credentials)) return { status: 'busy' as const }
+    let status: BotSharedRosterFenceRecoveryValue['status'] = 'absent'
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+      // The request may have queued behind a local admission that was still
+      // acquiring its provider lock when this method started. Recheck while
+      // holding that lock so recovery cannot clear the newly acquired fence.
+      if (activeSharedRosterFenceTokens.has(credentials)) {
+        status = 'busy'
+        return undefined
+      }
+      const state = profileRevisionRecordOf(stored)
+      const fence = state.sharedRosterFence
+      if (fence === undefined) {
+        status = 'absent'
+        return undefined
+      }
+      if (fence.token !== request.token) {
+        status = 'busy'
+        return undefined
+      }
+      const { sharedRosterFence: ignoredFence, ...withoutFence } = state
+      void ignoredFence
+      status = 'released'
+      return profileRevisionRecordOfState(withoutFence)
     })
+    return { status }
   }
 
-  /** Read the durable fence under the credential provider's current-record lock. */
+  /**
+   * Read the durable fence without waiting for the Bot service queue, which a
+   * paused roster operation may hold while it waits for shared authority.
+   */
   private async inspectSharedRosterFenceImpl(): Promise<BotSharedRosterFenceDiagnosticValue> {
-    return this.serialize(async () => {
-      const credentials = this.credentials ?? this.ctx.get('credentials')
-      if (credentials === undefined) return { status: 'clear' as const }
-      const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async () => undefined)
-      const fence = profileRevisionRecordOf(stored).sharedRosterFence
-      return fence === undefined
-        ? { status: 'clear' as const }
-        : { status: 'held' as const, token: fence.token }
-    })
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) return { status: 'clear' as const }
+    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async () => undefined)
+    const fence = profileRevisionRecordOf(stored).sharedRosterFence
+    return fence === undefined
+      ? { status: 'clear' as const }
+      : { status: 'held' as const, token: fence.token }
   }
 
   private registerSharedGroupSessions(bindings: readonly SharedGroupSessionBinding[]): void {

@@ -1,5 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
@@ -794,6 +796,141 @@ describe('durable Bot roster', () => {
     } finally {
       await authority?.dispose()
       await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps local fence inspection and recovery available while a roster operation is paused', async () => {
+    const h = await harness()
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let operation: Promise<{ readonly valid: true; readonly value: string } | { readonly valid: false }> | undefined
+    try {
+      const host = productionSharedHost(h.service)
+      operation = host.withBotRoster([], undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return 'completed'
+      })
+      await started.promise
+      const diagnostic = await Promise.race([
+        h.service.inspectSharedRosterFence(),
+        new Promise<'timed-out'>((resolve) => { setTimeout(() => { resolve('timed-out') }, 250).unref() }),
+      ])
+      if (diagnostic === 'timed-out') throw new Error('local fence inspection waited for the paused roster operation')
+      expect(diagnostic.status).toBe('held')
+      if (diagnostic.token === undefined) throw new Error('local shared roster fence token is missing')
+      await expect(h.service.recoverSharedRosterFence({
+        token: diagnostic.token,
+        confirmQuiescent: true,
+        acceptRaceRisk: true,
+      })).resolves.toEqual({ status: 'busy' })
+    } finally {
+      release.resolve(true)
+      await operation?.catch(() => undefined)
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a fence left by a crashed separate Host process', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-process-'))
+    const credentialsPath = join(root, 'credentials.yaml')
+    const token = 'crashed-host-roster-fence'
+    const worker = join(process.cwd(), 'packages/agents/bots/tests/shared-roster-fence-process-worker.ts')
+    const child = spawn(process.execPath, [
+      '--import', 'tsx/esm', worker, credentialsPath, token,
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += String(chunk) })
+    child.stderr.on('data', (chunk) => { stderr += String(chunk) })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`roster-fence worker did not become ready: ${stdout}\n${stderr}`))
+        }, 3_000)
+        const onData = (): void => {
+          if (stdout.includes('FENCE_READY')) {
+            child.stdout.off('data', onData)
+            clearTimeout(timer)
+            resolve()
+          }
+        }
+        timer.unref()
+        child.stdout.on('data', onData)
+        child.once('error', reject)
+        child.once('close', (code, signal) => {
+          reject(new Error(`roster-fence worker exited before readiness (${String(code)}, ${String(signal)}): ${stdout}\n${stderr}`))
+        })
+      })
+      child.kill('SIGKILL')
+      const [exitCode, signal] = await once(child, 'close') as [number | null, NodeJS.Signals | null]
+      expect(exitCode).toBeNull()
+      expect(signal).toBe('SIGKILL')
+
+      const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath: credentialsPath })
+      try {
+        await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'held', token })
+        await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true }))
+          .resolves.toEqual({ status: 'released' })
+        await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await child.stdin?.destroy()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves an ambiguous cross-Host recovery failure after a local operation pauses', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-ambiguous-process-'))
+    const credentialPath = join(root, 'credentials.yaml')
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    let first: Awaited<ReturnType<typeof harness>> | undefined
+    let second: Awaited<ReturnType<typeof harness>> | undefined
+    let operation: Promise<{ readonly valid: true; readonly value: string } | { readonly valid: false }> | undefined
+    try {
+      first = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath })
+      second = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath })
+      operation = productionSharedHost(first.service).withBotRoster([], undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return 'completed'
+      })
+      await started.promise
+      const diagnostic = await second.service.inspectSharedRosterFence()
+      if (diagnostic.token === undefined) throw new Error('ambiguous recovery fence token is missing')
+      const originalModify = second.credentials.modifyRecord.bind(second.credentials)
+      let throwAfterClear = true
+      second.credentials.modifyRecord = async (key, mutate) => {
+        const result = await originalModify(key, mutate)
+        if (key === revisionKey && throwAfterClear) {
+          throwAfterClear = false
+          throw new Error('ambiguous recovery lock failure')
+        }
+        return result
+      }
+      await expect(second.service.recoverSharedRosterFence({
+        token: diagnostic.token,
+        confirmQuiescent: true,
+        acceptRaceRisk: true,
+      })).rejects.toThrow('ambiguous recovery lock failure')
+      await expect(second.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+      release.resolve(true)
+      await expect(operation).rejects.toThrow('shared Bot roster fence changed before release')
+    } finally {
+      release.resolve(true)
+      await operation?.catch(() => undefined)
+      if (second !== undefined) await close(second.ctx)
+      if (first !== undefined) await close(first.ctx)
       await rm(root, { recursive: true, force: true })
     }
   })
