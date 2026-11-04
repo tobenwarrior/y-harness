@@ -117,4 +117,24 @@ describe('shared Bot client capabilities', () => {
     await expect(older).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-older' } })
     expect(client.retryScope).toBe('principal-newer')
   })
+
+  it('clears the retry scope when an authenticated operation is rejected', async () => {
+    let enrolled = false
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') {
+          enrolled = true
+          return { ok: true as const, value: { principalId: 'principal-member', expiresAt: 3_000 } }
+        }
+        expect(enrolled).toBe(true)
+        return { ok: false as const, error: { code: 'gateway/unauthorized', message: 'expired', details: {} } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    await expect(client.enroll('invite-code')).resolves.toMatchObject({ ok: true })
+    expect(client.retryScope).toBe('principal-member')
+
+    await expect(client.list()).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+    expect(client.retryScope).toBeUndefined()
+  })
 })

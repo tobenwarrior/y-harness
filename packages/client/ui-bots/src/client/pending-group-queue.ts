@@ -190,10 +190,6 @@ function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: st
   return `${scopePrefix(scope)}.${kind}.${operationHash}`
 }
 
-function lockKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
-  return `${LOCK_PREFIX}.${encodeScope(scope)}.${kind}.${operationHash}`
-}
-
 function catalogLockKey(scope: string): string {
   return `${LOCK_PREFIX}.${encodeScope(scope)}.catalog`
 }
@@ -303,8 +299,9 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     for (const key of keys) {
       const record = read(key)
       if (record === undefined) {
-        remove(key)
+        if (read(key) === undefined) remove(key)
       } else if (record.status === 'pending' && record.expiresAt <= now) {
+        if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
         if (record.kind === 'creation') {
           write(key, { ...record, status: 'expired' })
         } else {
@@ -344,7 +341,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     reserveCreation: async (operationKey, name, botIds) => {
       const hash = await operationHash(operationKey)
       const canonicalBotIds = [...botIds].sort()
-      return withLock(lockKey(scope, 'creation', hash), async () => {
+      return withLock(catalogLockKey(scope), async () => {
         await prune()
         const key = recordKey(scope, 'creation', hash)
         const current = read(key)
@@ -370,14 +367,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withLock(lockKey(scope, 'creation', hash), async () => {
+    removeCreation: (hash, id) => withLock(catalogLockKey(scope), async () => {
       const key = recordKey(scope, 'creation', hash)
       const current = read(key)
       if (current?.kind === 'creation' && current.id === id) remove(key)
     }),
     reserveMessage: async (operationKey, groupId, text) => {
       const hash = await operationHash(operationKey)
-      return withLock(lockKey(scope, 'message', hash), async () => {
+      return withLock(catalogLockKey(scope), async () => {
         await prune()
         const key = recordKey(scope, 'message', hash)
         const current = read(key)
@@ -402,7 +399,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withLock(lockKey(scope, 'message', hash), async () => {
+    removeMessage: (hash, id) => withLock(catalogLockKey(scope), async () => {
       const key = recordKey(scope, 'message', hash)
       const current = read(key)
       if (current?.kind === 'message' && current.id === id) remove(key)

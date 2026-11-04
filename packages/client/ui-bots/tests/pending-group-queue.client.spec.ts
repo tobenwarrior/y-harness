@@ -127,4 +127,46 @@ describe('shared-group browser retry queue', () => {
       vi.useRealTimers()
     }
   })
+
+  it('does not let another tab prune a freshly recreated record', async () => {
+    const firstTab = createSharedGroupPendingQueue('principal-prune-race')
+    const secondTab = createSharedGroupPendingQueue('principal-prune-race')
+    const original = await secondTab.reserveMessage('old-message', 'bot-group-room', 'old draft')
+    const targetKey = `yharness.client-ui-bots.shared-group-pending.principal-prune-race.message.${original.operationHash}`
+
+    vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
+    try {
+      await firstTab.listMessages()
+      const originalGetItem = Storage.prototype.getItem
+      let recreated = false
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+        const raw = originalGetItem.call(this, key)
+        if (!recreated && key === targetKey && raw !== null) {
+          recreated = true
+          const oldRecord = JSON.parse(raw) as Record<string, unknown>
+          localStorage.setItem(key, JSON.stringify({
+            ...oldRecord,
+            status: 'pending',
+            text: 'fresh draft from second tab',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 24 * 60 * 60 * 1_000,
+          }))
+          return raw
+        }
+        return raw
+      })
+
+      await firstTab.reserveMessage('different-message', 'bot-group-room', 'different draft')
+      expect(recreated).toBe(true)
+      const records = await secondTab.listMessages()
+      expect(records).toEqual(expect.arrayContaining([expect.objectContaining({
+        id: original.id,
+        text: 'fresh draft from second tab',
+        expired: false,
+      })]))
+    } finally {
+      vi.restoreAllMocks()
+      vi.useRealTimers()
+    }
+  })
 })

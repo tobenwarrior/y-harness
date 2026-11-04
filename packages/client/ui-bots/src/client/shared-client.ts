@@ -195,7 +195,13 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     } catch (error: unknown) {
       return { ok: false, error: { code: 'gateway/transport', message: error instanceof Error ? error.message : 'Shared Bot transport failed', details: {} } }
     }
-    if (!result.ok) return result
+    if (!result.ok) {
+      if (result.error.code === 'gateway/unauthorized') {
+        retryScopeRequestGeneration += 1
+        retryScope = undefined
+      }
+      return result
+    }
     const value = parse(result.value)
     if (value === undefined) {
       return { ok: false, error: { code: 'gateway/invalid-response', message: 'Shared Bot returned an invalid response', details: {} } }
