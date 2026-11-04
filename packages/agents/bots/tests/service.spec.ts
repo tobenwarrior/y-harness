@@ -844,6 +844,7 @@ describe('durable Bot roster', () => {
       env: { ...process.env, NODE_NO_WARNINGS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const closePromise = once(child, 'close') as Promise<[number | null, NodeJS.Signals | null]>
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (chunk) => { stdout += String(chunk) })
@@ -868,9 +869,16 @@ describe('durable Bot roster', () => {
         })
       })
       child.kill('SIGKILL')
-      const [exitCode, signal] = await once(child, 'close') as [number | null, NodeJS.Signals | null]
-      expect(exitCode).toBeNull()
-      expect(signal).toBe('SIGKILL')
+      const [exitCode, signal] = await closePromise
+      // Windows terminates through taskkill and reports an exit code instead
+      // of the POSIX signal; both forms prove the child was stopped.
+      if (process.platform === 'win32') {
+        expect(exitCode).not.toBeNull()
+        expect(signal).toBeNull()
+      } else {
+        expect(exitCode).toBeNull()
+        expect(signal).toBe('SIGKILL')
+      }
 
       const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath: credentialsPath })
       try {
@@ -884,6 +892,7 @@ describe('durable Bot roster', () => {
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       await child.stdin?.destroy()
+      await closePromise
       await rm(root, { recursive: true, force: true })
     }
   })
