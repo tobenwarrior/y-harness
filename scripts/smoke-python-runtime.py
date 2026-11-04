@@ -226,6 +226,11 @@ RESTART_SECOND_PROMPT = "Complete the second isolated Python SDK process turn."
 RESTART_SECOND_TEXT = "PROCESS_TWO_OK"
 RESTART_FIRST_SESSION_ID = "process-one"
 RESTART_SECOND_SESSION_ID = "process-two"
+MAINTENANCE_FOLLOWUP_FIRST_PROMPT = "Reply with exactly PYTHON_ONE and nothing else."
+MAINTENANCE_FOLLOWUP_FIRST_TEXT = "PYTHON_ONE"
+MAINTENANCE_FOLLOWUP_SECOND_PROMPT = "Reply with exactly PYTHON_THREE and nothing else."
+MAINTENANCE_FOLLOWUP_SECOND_TEXT = "PYTHON_THREE"
+MAINTENANCE_FOLLOWUP_SESSION_ID = "maintenance-followup"
 RECOVERY_PROMPT = "Run three todo updates; the scheduler will reject the second call."
 RECOVERY_CONTINUE_PROMPT = "Continue after the scheduler failure without repeating any tools."
 RECOVERY_TEXT = "SCHEDULER_RECOVERY_OK"
@@ -275,6 +280,10 @@ RECOVERY_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "scheduler-recovery"
 )
 RECOVERY_SNAPSHOT_FILENAMES = ("result.json", "requests.json", "session.v4.jsonl")
+MAINTENANCE_FOLLOWUP_SNAPSHOT_DIRECTORY = (
+    Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "maintenance-followup"
+)
+MAINTENANCE_FOLLOWUP_SNAPSHOT_FILENAMES = ("result.json", "requests.json", "session.v6.jsonl")
 MCP_SERVER_SCRIPT = """\
 import json
 import os
@@ -559,6 +568,8 @@ def completion_chunks(body: dict[str, object]) -> list[dict[str, object]]:
         DYNAMIC_TOOLS_PROMPT,
         NATIVE_ITEM_PROJECTION_PROMPT,
         CODING_SESSION_PROJECTION_PROMPT,
+        MAINTENANCE_FOLLOWUP_FIRST_PROMPT,
+        MAINTENANCE_FOLLOWUP_SECOND_PROMPT,
     }
     prompt = next(
         (candidate for candidate in user_prompts if candidate in scenario_prompts),
@@ -596,6 +607,10 @@ def completion_chunks(body: dict[str, object]) -> list[dict[str, object]]:
         ):
             raise AssertionError("second isolated process inherited the first process history")
         return text_chunks(RESTART_SECOND_TEXT)
+    if prompt == MAINTENANCE_FOLLOWUP_FIRST_PROMPT:
+        return text_chunks(MAINTENANCE_FOLLOWUP_FIRST_TEXT)
+    if prompt == MAINTENANCE_FOLLOWUP_SECOND_PROMPT:
+        return text_chunks(MAINTENANCE_FOLLOWUP_SECOND_TEXT)
     if prompt == CODE_PROMPT:
         assert_advertised_tool(body, "run_code")
         return tool_call_chunks(
@@ -912,7 +927,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--scenario",
-        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
+        choices=("all", "sdk-default", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-mcp", "sdk-snapshot", "sdk-maintenance-followup", "sdk-recovery", "sdk-restart", "sdk-profile-plugin", "sdk-office", "sdk-authoring", "sdk-live", "runner", "direct"),
         default="all",
     )
     parser.add_argument("--exe", type=Path)
@@ -931,10 +946,10 @@ def main() -> None:
         parser.error("--scenario sdk-profile-plugin requires --installed-wheel")
     if args.installed_wheel:
         args.exe = assert_installed_wheel_environment()
-    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
-        parser.error("--exe is required for custom, minimal, dynamic-tools, native-item-projection, coding-session-projection, fs-search, spawn-node, snapshot, recovery, restart, office, runner, and direct scenarios")
-    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-snapshot", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
-        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, native-item-projection, coding-session-projection, sdk-snapshot, sdk-recovery, sdk-restart, sdk-authoring, or all")
+    if args.scenario in {"all", "sdk-custom", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-fs-search", "sdk-spawn-node", "sdk-snapshot", "sdk-maintenance-followup", "sdk-recovery", "sdk-restart", "sdk-office", "sdk-authoring", "runner", "direct"} and args.exe is None:
+        parser.error("--exe is required for custom, minimal, dynamic-tools, native-item-projection, coding-session-projection, fs-search, spawn-node, snapshot, maintenance-followup, recovery, restart, office, runner, and direct scenarios")
+    if args.update_snapshots and args.scenario not in {"all", "sdk-minimal", "sdk-minimal-in-history", "sdk-dynamic-tools", "native-item-projection", "coding-session-projection", "sdk-snapshot", "sdk-maintenance-followup", "sdk-recovery", "sdk-restart", "sdk-authoring"}:
+        parser.error("--update-snapshots requires --scenario sdk-minimal, sdk-minimal-in-history, sdk-dynamic-tools, native-item-projection, coding-session-projection, sdk-snapshot, sdk-maintenance-followup, sdk-recovery, sdk-restart, sdk-authoring, or all")
     if args.exe is not None and not args.exe.is_file():
         parser.error(f"runtime executable does not exist: {args.exe}")
 
@@ -992,6 +1007,9 @@ def main() -> None:
         if args.scenario in {"all", "sdk-snapshot"}:
             assert args.exe is not None
             smoke_sdk_snapshot(model.url, args.exe.resolve(), args.update_snapshots)
+        if args.scenario in {"all", "sdk-maintenance-followup"}:
+            assert args.exe is not None
+            smoke_sdk_maintenance_followup(model.url, args.exe.resolve(), args.update_snapshots)
         if args.scenario in {"all", "sdk-snapshot", "sdk-recovery"}:
             assert args.exe is not None
             smoke_sdk_scheduler_recovery(model.url, args.exe.resolve(), args.update_snapshots)
@@ -1857,6 +1875,86 @@ def smoke_sdk_snapshot(base_url: str, executable: Path, update_snapshots: bool) 
         files = build_snapshot_files(result, logs, child_ids, root)
         compare_snapshot_files(
             files, update_snapshots, ADVANCED_SNAPSHOT_DIRECTORY, ADVANCED_SNAPSHOT_FILENAMES,
+            native_writer_output=True,
+        )
+
+
+def smoke_sdk_maintenance_followup(base_url: str, executable: Path, update_snapshots: bool) -> None:
+    """Keep a maintenance-only turn ahead of the next Python SDK follow-up."""
+    from yharness import YHarness
+
+    first_request = len(MockModelHandler.requests)
+    with tempfile.TemporaryDirectory(prefix="dsh-sdk-maintenance-followup-") as temporary:
+        root = Path(temporary).resolve()
+        dsh_home = root / "home"
+        sessions = dsh_home / "sessions"
+        patch = write_advanced_profile_patch(root, "maintenance-followup.patch.yml", sessions)
+        fixture = Path(__file__).resolve().parent / "fixtures/python-sdk-maintenance-followup.mjs"
+        maintenance_patch = write_profile_patch(root, "maintenance-followup-fixture.patch.yml", sessions, [
+            {"insert": [{"id": "python-sdk-maintenance-followup", "name": fixture.as_uri()}]},
+        ])
+        with YHarness(
+            provider="deepseek-official",
+            model="smoke-model",
+            cwd=str(root),
+            yh_bin=str(executable),
+            yh_home=str(dsh_home),
+            patches=(str(patch), str(maintenance_patch)),
+            env={
+                "DSH_PERMISSION_MODE": "danger-full-access",
+                "DSH_TELEMETRY_DISABLED": "1",
+            },
+            api_key="sk-keyless-smoke",
+            base_url=base_url,
+            request_timeout_seconds=60,
+        ) as harness:
+            first = harness.run(
+                MAINTENANCE_FOLLOWUP_FIRST_PROMPT,
+                session_id=MAINTENANCE_FOLLOWUP_SESSION_ID,
+            )
+            second = harness.run(
+                MAINTENANCE_FOLLOWUP_SECOND_PROMPT,
+                session_id=MAINTENANCE_FOLLOWUP_SESSION_ID,
+            )
+
+        assert first.final_response == MAINTENANCE_FOLLOWUP_FIRST_TEXT, first.final_response
+        assert second.final_response == MAINTENANCE_FOLLOWUP_SECOND_TEXT, second.final_response
+        requests = MockModelHandler.requests[first_request:]
+        if len(requests) != 2:
+            raise AssertionError(f"maintenance follow-up expected two model requests: {requests}")
+        logs = read_session_logs(sessions)
+        records = logs.get(MAINTENANCE_FOLLOWUP_SESSION_ID)
+        if records is None:
+            raise AssertionError(f"maintenance follow-up has no durable session: {sorted(logs)}")
+        turn_starts = [
+            record["data"]["turn"]
+            for record in records
+            if record.get("type") == "turn/start" and isinstance(record.get("data"), dict)
+        ]
+        turn_ends = [
+            record["data"]["turn"]
+            for record in records
+            if record.get("type") == "turn/end" and isinstance(record.get("data"), dict)
+        ]
+        assistant_turns = [
+            record["data"]["turn"]
+            for record in records
+            if record.get("type") == "assistant/message" and isinstance(record.get("data"), dict)
+        ]
+        if turn_starts != [1, 2, 3] or turn_ends != [1, 2, 3] or assistant_turns != [1, 3]:
+            raise AssertionError(
+                "maintenance follow-up durable lifecycle differs: "
+                f"starts={turn_starts}, ends={turn_ends}, assistant={assistant_turns}"
+            )
+
+        files = build_maintenance_followup_snapshot_files(
+            first, second, requests, records, root,
+        )
+        compare_snapshot_files(
+            files,
+            update_snapshots,
+            MAINTENANCE_FOLLOWUP_SNAPSHOT_DIRECTORY,
+            MAINTENANCE_FOLLOWUP_SNAPSHOT_FILENAMES,
             native_writer_output=True,
         )
 
@@ -2967,6 +3065,50 @@ def build_restart_snapshot_files(
         snapshot_session_filename(
             2, session_header_version(second_content, "restart Session 2"),
         ): second_content,
+    }
+
+
+def build_maintenance_followup_snapshot_files(
+    first: "RunResult",
+    second: "RunResult",
+    requests: list[dict[str, object]],
+    records: list[dict[str, object]],
+    cwd: Path,
+) -> dict[str, str]:
+    """Render the two SDK results and their shared maintenance-reconciled log."""
+    replacements = [(str(cwd), "{{cwd}}"), (MAINTENANCE_FOLLOWUP_SESSION_ID, "{{session}}")]
+    result_value = [
+        {
+            "session_id": result.session_id,
+            "final_response": result.final_response,
+            "eventTypes": [event.get("type") for event in result.events],
+            "notificationMethods": [notification.method for notification in result.notifications],
+        }
+        for result in (first, second)
+    ]
+    request_value = [
+        {
+            "model": request.get("model"),
+            "system": "{{system}}" if request.get("system") else None,
+            "messages": restart_request_messages(request),
+            "toolNames": sorted(advertised_tool_names(request)),
+        }
+        for request in requests
+    ]
+    session_records = project_session_snapshot([
+        normalize_snapshot_value(record, replacements) for record in records
+    ])
+    session_content = render_jsonl(session_records)
+    return {
+        "result.json": json.dumps(
+            normalize_snapshot_value(result_value, replacements), indent=2, ensure_ascii=False,
+        ) + "\n",
+        "requests.json": json.dumps(
+            normalize_snapshot_value(request_value, replacements), indent=2, ensure_ascii=False,
+        ) + "\n",
+        snapshot_session_filename(
+            0, session_header_version(session_content, "maintenance follow-up Session"),
+        ): session_content,
     }
 
 

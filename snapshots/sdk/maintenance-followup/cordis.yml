@@ -1,0 +1,52 @@
+# Keep the maintenance-only boundary in the live and replayed SDK sessions.
+- id: skill-filesystem
+  name: '@yharness/skill-filesystem'
+  config:
+    includeDefaultRoots: false
+
+- id: permission
+  name: '@yharness/permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+- id: skill-compound
+  disabled: true
+
+- id: tool-skill
+  name: '@yharness/tool-skill'
+  config:
+    catalogMode: all
+
+- id: llm-deepseek
+  name: '@yharness/llm-deepseek-api-key'
+  config:
+    thinking: enabled
+    reasoningEffort: max
+
+- id: session-persistence-jsonl
+  name: '@yharness/session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: !!js "process.env.DSH_SNAPSHOT === undefined ? 'zstd' : 'none'"
+
+- id: tool-subagent
+  name: '@yharness/tool-subagent'
+  config:
+    provider: spawn
+    toolName: subagent
+    backgroundMode: one-shot
+    enableRunInBackground: false
+    maxDepth: 1
+
+- insert:
+    - id: maintenance-followup
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/maintenance-followup.ts'

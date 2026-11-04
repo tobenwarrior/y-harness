@@ -1,0 +1,78 @@
+[
+  {
+    "model": "smoke-model",
+    "system": "{{system}}",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly PYTHON_ONE and nothing else."
+          },
+          {
+            "type": "text",
+            "text": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: \"{{cwd}}\". Some platform temporary areas may also be writable.\n\nApproval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`)."
+          }
+        ]
+      }
+    ],
+    "toolNames": [
+      "cordis_inspect_list",
+      "cordis_inspect_query",
+      "job_kill",
+      "job_list",
+      "job_output",
+      "run_code",
+      "subagent",
+      "workflow"
+    ]
+  },
+  {
+    "model": "smoke-model",
+    "system": "{{system}}",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly PYTHON_ONE and nothing else."
+          },
+          {
+            "type": "text",
+            "text": "Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: \"{{cwd}}\". Some platform temporary areas may also be writable.\n\nApproval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`)."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "PYTHON_ONE"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly PYTHON_THREE and nothing else."
+          }
+        ]
+      }
+    ],
+    "toolNames": [
+      "cordis_inspect_list",
+      "cordis_inspect_query",
+      "job_kill",
+      "job_list",
+      "job_output",
+      "run_code",
+      "subagent",
+      "workflow"
+    ]
+  }
+]

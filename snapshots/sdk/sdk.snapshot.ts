@@ -995,6 +995,19 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
         ])
         expect(events.filter(event => event.type === 'todo/write')).toHaveLength(1)
       }
+      if (scenario.name === 'maintenance-followup') {
+        expect(results).toHaveLength(2)
+        expect(results.at(-1)?.finalResponse).toBe('THREE')
+        expect(results.flatMap(result => result.events)
+          .filter(event => event.type === 'turn/start')
+          .map(event => event.data['turn'])).toEqual([1, 2, 3])
+        expect(results.flatMap(result => result.events)
+          .filter(event => event.type === 'assistant/message')
+          .map(event => event.data['turn'])).toEqual([1, 3])
+        expect(records(ordered[0]!.content)
+          .filter(event => event.type === 'turn/end')
+          .map(event => event.data['turn'])).toEqual([1, 2, 3])
+      }
       if (scenario.name === 'subagent-activation-limit') {
         expect(ordered).toHaveLength(2)
         const denied = records(ordered[0]!.content).find(record => record.type === 'tool/result'

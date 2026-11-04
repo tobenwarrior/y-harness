@@ -1,0 +1,8 @@
+version: 1
+scenario: maintenance-followup
+profile: sdk
+composition: sdk-maintenance-followup
+recording: live
+header:
+  class: default
+  pin: true
