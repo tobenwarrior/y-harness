@@ -901,12 +901,20 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   const [profileError, setProfileError] = useState<'conflict' | 'failed' | null>(null)
   const [profileRevision, setProfileRevision] = useState<number | undefined>()
   const [profileSaving, setProfileSaving] = useState(false)
+  const profileOperationGeneration = useRef(0)
+  const profileBotIdRef = useRef<string | undefined>(bot?.id)
+  profileBotIdRef.current = bot?.id
+  const isCurrentProfileOperation = (target: string, generation: number): boolean => (
+    profileBotIdRef.current === target && profileOperationGeneration.current === generation
+  )
   const [memoryOpen, setMemoryOpen] = useState(false)
   useEffect(() => {
     if (profileTarget !== null && profileTarget !== bot?.id) {
+      profileOperationGeneration.current += 1
       setProfileTarget(null)
       setProfileRevision(undefined)
       setProfileError(null)
+      setProfileSaving(false)
     }
   }, [bot?.id, profileTarget])
   if (bot === undefined) {
@@ -942,6 +950,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
             <Tooltip label={t('editBotProfile')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('editBotProfile')} icon={<IconEditOutlineRegular size={14} />}
                 onClick={() => {
+                  profileOperationGeneration.current += 1
                   setProfileName(bot.name)
                   setProfileDescription(bot.description ?? '')
                   setProfilePersona(bot.persona ?? '')
@@ -1000,6 +1009,8 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
               disabled={profileSaving || profileName.trim() === ''}
               onClick={() => {
                 if (profileTarget === null || profileTarget !== bot.id) return
+                const target = profileTarget
+                const operationGeneration = ++profileOperationGeneration.current
                 setProfileSaving(true)
                 setProfileError(null)
                 const profile: BotProfileUpdate = {
@@ -1009,13 +1020,17 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
                   persona: profilePersona.trim(),
                   capabilities: profileCapabilityList(profileCapabilities),
                 }
-                void onUpdateProfile(profileTarget, profile).then(() => {
+                void onUpdateProfile(target, profile).then(() => {
+                  if (!isCurrentProfileOperation(target, operationGeneration)) return
                   setProfileTarget(null)
                   setProfileRevision(undefined)
                 }, (cause: unknown) => {
+                  if (!isCurrentProfileOperation(target, operationGeneration)) return
                   setProfileError(cause instanceof Error && cause.name === 'BotProfileConflictError' ? 'conflict' : 'failed')
                 })
-                  .finally(() => { setProfileSaving(false) })
+                  .finally(() => {
+                    if (isCurrentProfileOperation(target, operationGeneration)) setProfileSaving(false)
+                  })
               }}
             >{t(profileSaving ? 'savingProfile' : 'saveProfile')}</Button>
           </>

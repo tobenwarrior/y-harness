@@ -13,4 +13,4 @@ The Bot service now stores profile-revision snapshots containing persona and spe
 
 1. Stop every Host using the Bot store before deploying the profile-editing build.
 2. Start the upgraded Host once and confirm that its Bot roster loads; this creates the v2 successor without deleting the v1 record.
-3. Keep upgraded Hosts together for future Bot edits. Do not roll back to a released Host after v2 profile fields have been written unless the store is restored from a backup taken before the migration.
+3. Keep upgraded Hosts together for future Bot edits. Do not roll back to a released Host after the v2 successor is created, even before v2-only fields are written; restore a backup taken before migration before using the released Host.

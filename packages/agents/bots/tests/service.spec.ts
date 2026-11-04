@@ -4338,6 +4338,61 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('repairs a pending released v1 profile record while migrating its successor', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending profile', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered pending profile',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v1-profile', record: pendingRecord },
+      },
+    }
+    records.delete(currentKey)
+    records.set(legacyKey, legacy)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered pending profile' }],
+      })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 2 },
+      })
+      expect(records.get(currentKey)?.payload).not.toHaveProperty('pending')
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
   it('rejects a stale profile edit without overwriting a newer Bot revision', async () => {
     const h = await harness()
     try {
