@@ -6781,6 +6781,106 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains newer persona and capability edits when a stale Host renames the Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Cross-process instructions',
+      persona: 'Use the original instructions.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(first.service.updateProfile({
+        botId: created.bot.id,
+        persona: 'Use the newer instructions.',
+        capabilities: ['chat', 'research'],
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          persona: 'Use the newer instructions.',
+          capabilities: ['chat', 'research'],
+        },
+      })
+
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Renamed by stale Host' })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          name: 'Renamed by stale Host',
+          persona: 'Use the newer instructions.',
+          capabilities: ['chat', 'research'],
+        },
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('applies explicit persona and capability clears when a stale Host renames the Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Cross-process reset',
+      persona: 'Remove this instruction.',
+      capabilities: ['chat', 'research'],
+      cwd: '/tmp',
+    })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(first.service.updateProfile({
+        botId: created.bot.id,
+        persona: null,
+        capabilities: null,
+      })).resolves.toMatchObject({ bot: { id: created.bot.id } })
+
+      const renamed = await second.service.rename({ botId: created.bot.id, name: 'Reset by stale Host' })
+      expect(renamed.bot).toMatchObject({ id: created.bot.id, name: 'Reset by stale Host' })
+      expect(renamed.bot).not.toHaveProperty('persona')
+      expect(renamed.bot).not.toHaveProperty('capabilities')
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('refreshes persona and capability edits in shared prompts and removes them after reset', async () => {
+    const sharedSessionId = SessionId('shared-session-profile-propagation')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({
+        name: 'Shared profile owner',
+        persona: 'Use the shared persona.',
+        capabilities: ['chat'],
+        cwd: '/tmp',
+      })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-profile-propagation', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared profile Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      await h.service.updateProfile({
+        botId: created.bot.id,
+        persona: 'Use the updated shared persona.',
+        capabilities: ['chat', 'research'],
+      })
+      let prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('Your persona is: Use the updated shared persona.')
+      expect(prompt).toContain('Declared capabilities: chat, research.')
+
+      await h.service.updateProfile({ botId: created.bot.id, persona: null, capabilities: null })
+      prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).not.toContain('Your persona is:')
+      expect(prompt).not.toContain('Declared capabilities:')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('does not publish a profile update when the Bot row write fails before touching storage', async () => {
     const pool = new MemoryMediaPool()
     const h = await harness(pool)

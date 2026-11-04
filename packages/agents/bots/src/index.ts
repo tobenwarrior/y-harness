@@ -563,9 +563,18 @@ const botEventRoutineSnapshotSchema = zod.custom<readonly BotEventRoutine[]>(
     && value.every(candidate => botEventRoutineSchema.safeParse(candidate).success),
   { message: 'Bot event routines are invalid' },
 )
+const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const botCapabilitySnapshotSchema = zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).refine(
+  values => new Set(values).size === values.length,
+  { message: 'Bot capabilities must be unique' },
+).readonly()
 const botProfileSnapshotSchema = zod.object({
   name: zod.string().min(1).max(80),
   description: zod.string().max(240).optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
+  persona: zod.string().max(4000).nullable().optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
   identity: zod.enum(BOT_IDENTITIES),
   accent: zod.enum(BOT_ACCENTS),
   avatar: imageAttachmentRefSchema.optional(),
@@ -646,7 +655,6 @@ function isSyntheticGroupContext(message: UserMessage): boolean {
   return SYNTHETIC_GROUP_CONTEXT_SOURCES.has(message.source.kind)
 }
 const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
-const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
 const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 function badRequest(message: string): never {
@@ -928,6 +936,8 @@ function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfile
   return {
     name: record.name,
     ...(record.description === undefined ? {} : { description: record.description }),
+    persona: record.persona ?? null,
+    capabilities: record.capabilities ?? null,
     identity: record.identity,
     accent: record.accent,
     ...(record.avatar === undefined ? {} : { avatar: record.avatar }),
@@ -946,17 +956,27 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
   if (profile === undefined) return record
   const {
     description: ignoredDescription,
+    persona: currentPersona,
+    capabilities: currentCapabilities,
     avatar: ignoredAvatar,
     group: currentGroup,
     pendingMemoryUpdate: currentPendingMemoryUpdate,
     ...withoutOptionalProfile
   } = record
   void ignoredDescription
+  void currentPersona
+  void currentCapabilities
   void ignoredAvatar
   return {
     ...withoutOptionalProfile,
     name: profile.name,
     ...(profile.description === undefined ? {} : { description: profile.description }),
+    ...(profile.persona === undefined
+      ? currentPersona === undefined ? {} : { persona: currentPersona }
+      : profile.persona === null ? {} : { persona: profile.persona }),
+    ...(profile.capabilities === undefined
+      ? currentCapabilities === undefined ? {} : { capabilities: currentCapabilities }
+      : profile.capabilities === null ? {} : { capabilities: profile.capabilities }),
     identity: profile.identity,
     accent: profile.accent,
     ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
@@ -2309,8 +2329,8 @@ export class BotService extends TypertRemoteService {
    * the write-ahead recovery record. Credential-backed processes observe the
    * durable revision before writing, so an optimistic Bot update cannot
    * overwrite a newer update from another Host process. The durable snapshot
-   * includes organization and event-routine fields because those fields are
-   * also durable Bot edits.
+   * includes user-authored profile fields, organization, and event-routine
+   * fields because those fields are also durable Bot edits.
    * @param botId - Bot row being changed.
    * @param mutation - Build the next row from the row visible to this process.
    * @param expectedUpdatedAt - Optional caller-observed row revision.
@@ -6160,7 +6180,19 @@ export class BotService extends TypertRemoteService {
 
   private refreshSharedRecords(bot: BotRecord): void {
     for (const [key, current] of this.sharedRecordsBySession) {
-      if (current.id === bot.id) this.sharedRecordsBySession.set(key, { ...current, ...bot, sessionId: current.sessionId })
+      if (current.id !== bot.id) continue
+      let next: BotRecord = { ...current, ...bot, sessionId: current.sessionId }
+      if (bot.persona === undefined) {
+        const { persona: ignoredPersona, ...withoutPersona } = next
+        void ignoredPersona
+        next = withoutPersona
+      }
+      if (bot.capabilities === undefined) {
+        const { capabilities: ignoredCapabilities, ...withoutCapabilities } = next
+        void ignoredCapabilities
+        next = withoutCapabilities
+      }
+      this.sharedRecordsBySession.set(key, next)
     }
   }
 
