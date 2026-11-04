@@ -4633,7 +4633,7 @@ export class BotService extends TypertRemoteService {
 
   private async sharedGroupDeliveryBusy(
     request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
-  ): Promise<{ readonly kind: 'busy'; readonly retryAt: number; readonly recovery?: 'operator-required' } | undefined> {
+  ): Promise<'duplicate' | { readonly kind: 'busy'; readonly retryAt: number; readonly recovery?: 'operator-required' } | undefined> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) throw new Error('Shared Bot group delivery requires durable credentials')
     request.signal?.throwIfAborted()
@@ -4644,6 +4644,7 @@ export class BotService extends TypertRemoteService {
     const current = sharedGroupMessageDeliveryStateOf(stored).messages.find(entry => entry.targetSessionId === String(request.sessionId)
       && entry.messageId === String(request.messageId))
     const now = Date.now()
+    if (current?.status === 'accepted') return 'duplicate'
     if (current?.status === 'pending' && current.admissionToken !== undefined) {
       const reconciliation = await this.recoverSharedGroupDeliveryAdmission(
         request,

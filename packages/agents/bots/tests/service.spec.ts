@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
-import { SharedAccessAuthority } from '@yharness/client-connection'
+import { SharedAccessAuthority, sharedPrincipalOf } from '@yharness/client-connection'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
@@ -56,6 +57,7 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
+import { SharedBotService } from '../src/shared-service.ts'
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
@@ -3956,6 +3958,144 @@ describe('durable Bot roster', () => {
       await close(right.ctx)
       await close(left.ctx)
       vi.useRealTimers()
+    }
+  })
+
+  it('keeps a pending group delivery accepted when restart sees an accepted recipient ledger during transient inspection', async () => {
+    const pool = new MemoryMediaPool()
+    const recipientSessionId = SessionId('shared-session-group-restart-accepted-ledger')
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(recipientSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    let authority: SharedAccessAuthority | undefined
+    let shared: SharedBotService | undefined
+    let reloaded: SharedBotService | undefined
+    try {
+      const first = await h.service.create({ name: 'Restart accepted first', cwd: '/tmp' })
+      const second = await h.service.create({ name: 'Restart accepted second', cwd: '/tmp' })
+      const host = productionSharedHost(h.service)
+      authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      shared = await SharedBotService.create(h.ctx, h.ctx.storageDomain, authority, host)
+      const headers = { host: '127.0.0.1:3080' }
+      const firstEnrollment = await shared.enroll(
+        (await shared.createInvite(first.bot.id, 'owner')).code,
+        { headers },
+      )
+      const cookie = firstEnrollment.setCookie.split(';', 1)[0]
+      await shared.enroll(
+        (await shared.createInvite(second.bot.id, 'owner')).code,
+        { headers: { ...headers, cookie } },
+      )
+      const admitted = await authority.admit({ headers: { ...headers, cookie } })
+      if (!('peer' in admitted)) throw new Error('restart accepted-ledger principal was not admitted')
+      const principal = sharedPrincipalOf(admitted.peer)
+      if (principal === undefined) throw new Error('restart accepted-ledger principal was missing')
+
+      const groupId = BotGroupId('bot-group-restart-accepted-ledger')
+      const messageId = BotGroupMessageId('bot-group-message-restart-accepted-ledger')
+      const deliveryId = `delivery-${createHash('sha256').update(`${String(messageId)}:${String(first.bot.id)}`).digest('hex')}`
+      const groups = sharedGroupSnapshotSchema.parse({
+        version: 1,
+        revision: 1,
+        groups: [{
+          id: groupId,
+          name: 'Restart accepted-ledger group',
+          botIds: [first.bot.id, second.bot.id],
+          createdAt: 1,
+          updatedAt: 1,
+          ownerPrincipalId: BotPrincipalId(String(principal)),
+          memberPrincipalIds: [BotPrincipalId(String(principal))],
+          revision: 1,
+        }],
+        messages: [{
+          id: messageId,
+          groupId,
+          sender: { kind: 'user', principalId: BotPrincipalId(String(principal)) },
+          text: 'Already accepted before restart.',
+          targetBotIds: [first.bot.id],
+          createdAt: 1,
+        }],
+        deliveries: [{
+          id: deliveryId,
+          groupId,
+          messageId,
+          botId: first.bot.id,
+          status: 'pending',
+          authorizationRevision: 1,
+          senderPrincipalId: BotPrincipalId(String(principal)),
+          dispatchToken: 'restart-dispatch-token',
+          dispatchLeaseUntil: 0,
+          updatedAt: 1,
+        }],
+        sessions: [{
+          groupId,
+          botId: first.bot.id,
+          sessionId: recipientSessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        invites: [],
+        responseReservations: [deliveryId],
+      })
+      await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: { ...membership, sharedGroups: groups },
+        }
+      })
+      host.registerSharedGroupSessions?.(groups.sessions)
+      const recipient = h.agents.find(agent => agent.id === recipientSessionId)
+      if (recipient === undefined) throw new Error('restart accepted-ledger recipient Agent was not created')
+      recipient.session.append('user/message', freezeMessage({
+        id: MessageId(String(messageId)),
+        role: 'user',
+        content: [{ type: 'text', text: 'Already accepted before restart.' }],
+        source: { kind: 'bot-group-message', groupId, messageId },
+      }), { surfaceOp: 'append' })
+      h.records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+        kind: 'grant',
+        payload: {
+          version: 1,
+          messages: [{
+            targetSessionId: String(recipientSessionId),
+            messageId: String(messageId),
+            status: 'accepted',
+          }],
+        },
+      })
+
+      await shared.dispose()
+      shared = undefined
+      h.inspect.mockClear()
+      h.inspect.mockRejectedValueOnce(new Error('temporary restart Session inspection outage'))
+      reloaded = await SharedBotService.create(h.ctx, h.ctx.storageDomain, authority, host)
+      await reloaded.recoverSharedGroupDeliveries()
+
+      expect(h.inspect).not.toHaveBeenCalled()
+      const stored = await authority.readExtension('agent-bots/shared-memberships')
+      const membership = sharedMembershipSnapshotSchema.parse(stored.value)
+      const persisted = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      const delivery = persisted.deliveries.find(candidate => candidate.id === deliveryId)
+      expect(delivery).toMatchObject({ status: 'accepted' })
+      expect(persisted.responseReservations).toContain(deliveryId)
+    } finally {
+      await reloaded?.dispose()
+      await shared?.dispose()
+      await authority?.dispose()
+      await close(h.ctx)
     }
   })
 
