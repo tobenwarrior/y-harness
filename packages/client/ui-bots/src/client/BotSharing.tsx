@@ -1525,7 +1525,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
 
   const confirmDiscard = async (): Promise<void> => {
     const target = discardTarget
-    if (target === null || discardWorking) return
+    if (target === null || discardWorking || !pendingCatalogReady) return
     setDiscardWorking(true)
     try {
       const succeeded = target.kind === 'creation'
@@ -1654,11 +1654,6 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (auth === undefined || send === undefined || !openRef.current || groupId === null || draft === '' || working !== null
       || !pendingCatalogReady
       || groupWorking !== null || pendingMessageBusy || hasPendingChat || hasPendingMemory) return
-    const recoverable = pendingMessages.find(message => message.groupId === groupId && message.text === draft)
-    if (recoverable !== undefined) {
-      await recoverPendingMessage(recoverable)
-      return
-    }
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
     const pendingMessageKey = sharedGroupMessageKey(randomUUID(), submittedGroupId, draft)
@@ -1848,7 +1843,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={groupWorking !== null || pendingMessageBusy || discardTarget !== null}
+                        disabled={!pendingCatalogReady || groupWorking !== null || pendingMessageBusy || discardTarget !== null}
                         onClick={() => { void recoverPendingMessage(pending) }}
                       >
                         {working ? t('sharedGroupSending') : t('sharedGroupRecover')}
@@ -1856,7 +1851,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={groupWorking !== null || pendingMessageBusy || discardTarget !== null}
+                        disabled={!pendingCatalogReady || groupWorking !== null || pendingMessageBusy || discardTarget !== null}
                         onClick={() => { requestDiscardMessage(pending) }}
                       >
                         {t('sharedGroupDiscardRecovery')}
@@ -1991,7 +1986,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         closeLabel={t('cancel')}
         confirmLabel={t('sharedGroupDiscardConfirm')}
         acknowledged={discardAcknowledged}
-        disabled={discardWorking || recoveryWorking !== null || groupWorking !== null || pendingMessageBusy}
+        disabled={!pendingCatalogReady || discardWorking || recoveryWorking !== null || groupWorking !== null || pendingMessageBusy}
         onAcknowledgedChange={setDiscardAcknowledged}
         onCancel={() => { setDiscardTarget(null); setDiscardAcknowledged(false) }}
         onConfirm={() => { void confirmDiscard() }}
