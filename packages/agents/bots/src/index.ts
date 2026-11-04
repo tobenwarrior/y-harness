@@ -6418,28 +6418,57 @@ export class BotService extends TypertRemoteService {
     bots: KvTable<BotRecord['id'], BotRecord>,
     reconcilePending = false,
   ): Promise<BotProfileRevisionState> {
+    return this.withProfileRevisionState(bots, state => state, reconcilePending)
+  }
+
+  /**
+   * Run one profile-backed read while holding the V3 credential-record fence.
+   * The Bot table projection must happen inside this callback: a profile read
+   * followed by a separate row read can otherwise combine two revisions from
+   * a concurrent mutation.
+   * @param bots - Durable Bot table used for identity and revision checks.
+   * @param read - Projection to evaluate against the fenced profile state.
+   * @param reconcilePending - Whether a blocked local pending transaction may retry.
+   * @returns The projection produced from one fenced profile and Bot-table view.
+   */
+  private async withProfileRevisionState<T>(
+    bots: KvTable<BotRecord['id'], BotRecord>,
+    read: (state: BotProfileRevisionState) => T | PromiseLike<T>,
+    reconcilePending = false,
+  ): Promise<T> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) {
       await this.reconcileNoCredentialIntents(bots, reconcilePending)
-      return emptyProfileRevisionState()
+      return read(emptyProfileRevisionState())
     }
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
-    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
+    let projection: { readonly value: T } | undefined
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
       const currentState = record === undefined ? undefined : profileRevisionRecordOf(record)
       const merged = mergeProfileRevisionStates(
         currentState,
         legacyProfileState,
       )
-      const state = merged.state
+      let state = merged.state
+      let changed = merged.changed
       assertProfileRosterMatchesDurableBots(state, bots)
-      if (state.pending === undefined) return merged.changed ? profileRevisionRecordOfState(state) : undefined
+      if (state.pending !== undefined) {
+        if (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)) {
+          const pendingTransactionId = state.pending.transactionId
+          state = await this.recoverPendingProfile(state, bots)
+          this.blockedProfileTransactions.delete(pendingTransactionId)
+          changed = true
+        }
+      }
+      projection = { value: await read(state) }
+      if (state.pending === undefined) return changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
-      const pendingTransactionId = state.pending.transactionId
-      const recovered = await this.recoverPendingProfile(state, bots)
-      this.blockedProfileTransactions.delete(pendingTransactionId)
-      return profileRevisionRecordOfState(recovered)
+      return profileRevisionRecordOfState(state)
     })
-    return profileRevisionRecordOf(stored)
+    if (projection === undefined) {
+      throw new Error('Bot profile read did not run inside its credential fence')
+    }
+    return projection.value
   }
 
   /** Read the released profile-record generation without mutating or deleting it. */
@@ -6486,15 +6515,21 @@ export class BotService extends TypertRemoteService {
   /** Read one owner-scoped Bot through the authoritative V3 profile fence. */
   private async readOwnedBot(botId: BotRecord['id']): Promise<BotStoredRecord> {
     const bots = (await this.getDomain()).table('bots')
-    const profileState = await this.readProfileRevisionState(bots)
-    const stored = bots.get(botId)
-    if (stored === undefined) {
-      throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
-    }
-    const current = applyProfileSnapshot(stored, profileState.profiles[String(botId)])
-    if (current.ownerId !== this.ownerId) {
-      throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
-    }
+    const current = await this.withProfileRevisionState(bots, (state) => {
+      const stored = bots.get(botId)
+      if (stored === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      const projected = applyProfileSnapshot(stored, state.profiles[String(botId)])
+      const durableRevision = state.revisions[String(botId)]
+      if (durableRevision !== undefined && durableRevision !== projected.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed in another process', { botId })
+      }
+      if (projected.ownerId !== this.ownerId) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      return projected
+    })
     this.recordsBySession.set(String(current.sessionId), current)
     this.refreshSharedRecords(current)
     return current

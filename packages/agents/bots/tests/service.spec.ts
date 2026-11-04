@@ -6594,6 +6594,58 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('does not combine a pre-write profile snapshot with a concurrent event-routine row', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Routine read race', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const profileKey = credentialKey('agent-bots', 'profile-revisions-v3')
+    const profileReadStarted = Promise.withResolvers<undefined>()
+    const releaseProfileRead = Promise.withResolvers<undefined>()
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const createRoutine = tools.find(tool => tool.name === 'schedule_create')
+      if (createRoutine === undefined) throw new Error('routine create tool was not mounted')
+
+      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+      let paused = false
+      const wrappedModifyRecord: typeof h.credentials.modifyRecord = (key, mutate) => {
+        const result = originalModifyRecord(key, mutate)
+        if (paused || key !== profileKey) return result
+        paused = true
+        return result.then(async (value) => {
+          profileReadStarted.resolve(undefined)
+          await releaseProfileRead.promise
+          return value
+        })
+      }
+      h.credentials.modifyRecord = wrappedModifyRecord
+
+      const listing = h.service.listRoutines({ botId: created.bot.id })
+      await profileReadStarted.promise
+      const createdRoutine = await createRoutine.execute({
+        title: 'Concurrent event routine',
+        prompt: 'Run after the read barrier.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'routine-read-race-create', threadId: 'routine-read-race-thread', turnId: 'routine-read-race-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      })
+      expect(createdRoutine.success).toBe(true)
+      releaseProfileRead.resolve(undefined)
+
+      await expect(listing).resolves.toEqual({ routines: [] })
+    } finally {
+      releaseProfileRead.resolve(undefined)
+      await close(h.ctx)
+    }
+  })
+
   it('creates a Bot message-triggered routine and records its model result', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
