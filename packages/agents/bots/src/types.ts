@@ -192,6 +192,14 @@ export interface BotSharedRosterFenceRecoveryValue {
   readonly status: 'released' | 'busy' | 'absent'
 }
 
+/** Owner-only view of the durable shared-roster admission fence. */
+export interface BotSharedRosterFenceDiagnosticValue {
+  /** Whether an admission fence is currently retained. */
+  readonly status: 'clear' | 'held'
+  /** Exact opaque token required for a matching recovery request. */
+  readonly token?: string
+}
+
 /** Safe Bot profile returned through the collaborator-only route. */
 export interface BotShareProfile {
   /** Stable Bot identity. */

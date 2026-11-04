@@ -62,6 +62,9 @@ import type {
   BotShareMemberRevokeValue,
   BotShareMembersRequest,
   BotShareMembersValue,
+  BotSharedRosterFenceDiagnosticValue,
+  BotSharedRosterFenceRecoveryRequest,
+  BotSharedRosterFenceRecoveryValue,
   BotPrincipalId as BotPrincipalIdType,
 } from '@yharness/bots/client'
 import type {
@@ -115,6 +118,8 @@ export interface BotWorkspaceRemote {
   revokeShareMember?: (request: BotShareMemberRevokeRequest) => Promise<RemoteResult<BotShareMemberRevokeValue>>
   getShareMemoryPolicy?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
   setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+  inspectSharedRosterFence?: () => Promise<RemoteResult<BotSharedRosterFenceDiagnosticValue>>
+  recoverSharedRosterFence?: (request: BotSharedRosterFenceRecoveryRequest) => Promise<RemoteResult<BotSharedRosterFenceRecoveryValue>>
   listConnectedApps?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotConnectedAppsValue>>
   setConnectedAppAccess?: (request: BotConnectedAppAccessRequest) => Promise<RemoteResult<BotConnectedAppAccessValue>>
 }
@@ -131,6 +136,10 @@ export interface BotShareActions {
   readonly getMemoryPolicy?: (botId: string) => Promise<BotShareMemoryPolicyValue>
   /** Change the explicit shared-context policy for one owned Bot. */
   readonly setMemoryPolicy?: (botId: string, enabled: boolean) => Promise<BotShareMemoryPolicyValue>
+  /** Inspect the owner-only shared-roster recovery fence. */
+  readonly inspectRosterFence?: () => Promise<BotSharedRosterFenceDiagnosticValue>
+  /** Recover one abandoned shared-roster fence after explicit quiescence confirmation. */
+  readonly recoverRosterFence?: (token: string) => Promise<BotSharedRosterFenceRecoveryValue>
 }
 
 /** Avatar generation namespace mounted by the API remotes assembly. */
@@ -1510,6 +1519,8 @@ export class BotWorkspaceController {
     const revokeMember = this.remote.revokeShareMember
     const getMemoryPolicy = this.remote.getShareMemoryPolicy
     const setMemoryPolicy = this.remote.setShareMemoryPolicy
+    const inspectRosterFence = this.remote.inspectSharedRosterFence
+    const recoverRosterFence = this.remote.recoverSharedRosterFence
     if (listMembers === undefined || createInvite === undefined || revokeMember === undefined) return undefined
     return {
       listMembers: async (botId) => {
@@ -1540,6 +1551,20 @@ export class BotWorkspaceController {
       ...(setMemoryPolicy === undefined ? {} : {
         setMemoryPolicy: async (botId: string, enabled: boolean) => {
           const result = await setMemoryPolicy({ botId: brandString<BotIdType>(botId), enabled })
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(inspectRosterFence === undefined ? {} : {
+        inspectRosterFence: async () => {
+          const result = await inspectRosterFence()
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(recoverRosterFence === undefined ? {} : {
+        recoverRosterFence: async (token: string) => {
+          const result = await recoverRosterFence({ token, confirmQuiescent: true })
           if (!result.ok) throw new Error(result.error.message)
           return result.value
         },

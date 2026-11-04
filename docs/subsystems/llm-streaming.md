@@ -908,6 +908,25 @@ declare abstract class LlmAdapter {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxauxiliarysessionadmission--auxiliarysessionadmission"></a>
+
+### `ctx.auxiliarySessionAdmission` — `AuxiliarySessionAdmission`
+
+Process-local admission capability for a trusted producer's bounded auxiliary request. The operation remains inside the capability's async context while it awaits the model stream; the capability is never serialized into GenerateOptions or Session data.
+
+```ts cordis-catalog
+/**
+ * Run one producer-owned operation with exact Session and purpose attribution.
+ * @param sessionId - Session identity the operation may request.
+ * @param purpose - bounded auxiliary generation purpose.
+ * @param operation - producer operation that performs and awaits the LLM stream.
+ * @returns the operation result.
+ */
+run<T>(sessionId: string, purpose: AuxiliarySessionPurpose, operation: () => T): T
+```
+
+Source: [`packages/llm/llm/src/index.ts`](../../packages/llm/llm/src/index.ts)
+
 <a id="ctxcodexbackendconnection--codexbackendconnection"></a>
 
 ### `ctx.codexBackendConnection` — `CodexBackendConnection`

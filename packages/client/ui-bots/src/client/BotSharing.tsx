@@ -29,6 +29,7 @@ import type {
   BotShareRole,
   BotShareRosterEntry,
   BotShareTranscriptEntry,
+  BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
@@ -76,6 +77,10 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   const [memoryTarget, setMemoryTarget] = useState<boolean | null>(null)
   const [memoryAcknowledged, setMemoryAcknowledged] = useState(false)
   const [memoryWorking, setMemoryWorking] = useState(false)
+  const [rosterFence, setRosterFence] = useState<BotSharedRosterFenceDiagnosticValue | null>(null)
+  const [rosterFenceConfirmOpen, setRosterFenceConfirmOpen] = useState(false)
+  const [rosterFenceAcknowledged, setRosterFenceAcknowledged] = useState(false)
+  const [rosterFenceWorking, setRosterFenceWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [stateBotId, setStateBotId] = useState<string | null>(open ? bot.id : null)
@@ -118,6 +123,11 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         if (!isCurrentLoad()) return
         setMemoryPolicy(policy)
       }
+      if (actions.inspectRosterFence !== undefined) {
+        const fence = await actions.inspectRosterFence()
+        if (!isCurrentLoad()) return
+        setRosterFence(fence)
+      }
     } catch (cause: unknown) {
       if (isCurrentLoad()) setError(cause instanceof Error ? cause.message : t('shareError'))
     } finally {
@@ -138,6 +148,10 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
       setMemoryWorking(false)
       setMemoryTarget(null)
       setMemoryAcknowledged(false)
+      setRosterFence(null)
+      setRosterFenceConfirmOpen(false)
+      setRosterFenceAcknowledged(false)
+      setRosterFenceWorking(false)
       return
     }
     setStateBotId(bot.id)
@@ -148,12 +162,55 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     setMemoryPolicy(null)
     setMemoryTarget(null)
     setMemoryAcknowledged(false)
+    setRosterFence(null)
+    setRosterFenceConfirmOpen(false)
+    setRosterFenceAcknowledged(false)
+    setRosterFenceWorking(false)
     setError(null)
     void load(bot.id, viewGeneration)
   }, [bot.id, open])
 
+  const recoverRosterFence = async (): Promise<void> => {
+    const token = rosterFence?.status === 'held' ? rosterFence.token : undefined
+    if (!stateMatchesBot || token === undefined || actions.recoverRosterFence === undefined
+      || rosterFenceWorking || working !== null || memoryWorking) return
+    const requestedBotId = bot.id
+    const viewGeneration = viewGenerationRef.current
+    setRosterFenceWorking(true)
+    setError(null)
+    try {
+      const result = await actions.recoverRosterFence(token)
+      if (!isCurrentView(requestedBotId, viewGeneration)) return
+      if (result.status === 'released' || result.status === 'absent') {
+        setRosterFence({ status: 'clear' })
+        setRosterFenceConfirmOpen(false)
+        setRosterFenceAcknowledged(false)
+        return
+      }
+      setRosterFenceAcknowledged(false)
+      setError(t('sharedRosterFenceBusy'))
+      if (actions.inspectRosterFence !== undefined) {
+        try {
+          const current = await actions.inspectRosterFence()
+          if (isCurrentView(requestedBotId, viewGeneration)) setRosterFence(current)
+        } catch (refreshError: unknown) {
+          if (isCurrentView(requestedBotId, viewGeneration)) {
+            setError(refreshError instanceof Error ? refreshError.message : t('sharedRosterFenceRecoveryFailed'))
+          }
+        }
+      }
+    } catch (cause: unknown) {
+      if (isCurrentView(requestedBotId, viewGeneration)) {
+        setRosterFenceAcknowledged(false)
+        setError(cause instanceof Error ? cause.message : t('sharedRosterFenceRecoveryFailed'))
+      }
+    } finally {
+      if (isCurrentView(requestedBotId, viewGeneration)) setRosterFenceWorking(false)
+    }
+  }
+
   const createInvite = async (): Promise<void> => {
-    if (!stateMatchesBot || working !== null || memoryWorking) return
+    if (!stateMatchesBot || working !== null || memoryWorking || rosterFenceWorking) return
     const requestedBotId = bot.id
     const viewGeneration = viewGenerationRef.current
     const workingGeneration = workingGenerationRef.current + 1
@@ -180,7 +237,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   }
 
   const revoke = async (member: BotShareMember): Promise<void> => {
-    if (member.role === 'owner' || working !== null || memoryWorking) return
+    if (member.role === 'owner' || working !== null || memoryWorking || rosterFenceWorking) return
     const requestedBotId = bot.id
     const viewGeneration = viewGenerationRef.current
     const workingGeneration = workingGenerationRef.current + 1
@@ -203,7 +260,8 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   }
 
   const confirmMemoryPolicy = async (): Promise<void> => {
-    if (!openRef.current || !stateMatchesBot || memoryTarget === null || actions.setMemoryPolicy === undefined || memoryWorking) return
+    if (!openRef.current || !stateMatchesBot || memoryTarget === null || actions.setMemoryPolicy === undefined
+      || memoryWorking || rosterFenceWorking) return
     const requestedBotId = bot.id
     const viewGeneration = viewGenerationRef.current
     const operationGeneration = memoryOperationGenerationRef.current + 1
@@ -225,6 +283,8 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
       if (isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) setMemoryWorking(false)
     }
   }
+
+  const rosterFenceToken = rosterFence?.status === 'held' ? rosterFence.token : undefined
 
   return (
     <>
@@ -255,7 +315,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           />
         </div>
         <div className={css.shareInviteRow}>
-          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null || memoryWorking} icon={<IconLinkOutlineRegular size={14} />}>
+          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null || memoryWorking || rosterFenceWorking} icon={<IconLinkOutlineRegular size={14} />}>
             {stateMatchesBot && working === 'invite' ? t('creatingInvite') : t('createInvite')}
           </Button>
           {stateMatchesBot && invite !== null && (
@@ -296,11 +356,44 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
               </div>
               <Switch
                 checked={memoryPolicy.enabled}
-                disabled={memoryWorking || working !== null}
+                disabled={memoryWorking || working !== null || rosterFenceWorking}
                 label={t('sharedMemoryToggle')}
                 onChange={(next) => { setMemoryTarget(next); setMemoryAcknowledged(false) }}
               />
             </div>
+          </section>
+        )}
+        {stateMatchesBot && actions.inspectRosterFence !== undefined && (
+          <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-roster-fence-heading">
+            <div className={css.sharedMemoryHeader}>
+              <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
+              <div>
+                <div className={css.shareSectionHeading} id="yharness-shared-roster-fence-heading">{t('sharedRosterFenceLabel')}</div>
+                <p className={css.sharedMemoryDescription}>
+                  {rosterFence === null
+                    ? t('sharedRosterFenceLoading')
+                    : rosterFence.status === 'held'
+                      ? t('sharedRosterFenceHeld')
+                      : t('sharedRosterFenceClear')}
+                </p>
+              </div>
+            </div>
+            {rosterFenceToken !== undefined && (
+              <div className={css.shareInviteRow}>
+                <div className={css.inviteCode}>
+                  <code aria-label={t('sharedRosterFenceTokenLabel')}>{rosterFenceToken}</code>
+                </div>
+                {actions.recoverRosterFence !== undefined && (
+                  <Button
+                    variant="outline"
+                    disabled={working !== null || memoryWorking || rosterFenceWorking}
+                    onClick={() => { setRosterFenceAcknowledged(false); setRosterFenceConfirmOpen(true) }}
+                  >
+                    {rosterFenceWorking ? t('recoveringSharedRoster') : t('recoverSharedRoster')}
+                  </Button>
+                )}
+              </div>
+            )}
           </section>
         )}
         <div className={css.shareMembers}>
@@ -318,7 +411,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                 ? <span className={css.shareMemberHint}>{t('revokeOwnerDisabled')}</span>
                 : (
                   <Tooltip label={t('revokeMember')} side="top" portal>
-                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking} onClick={() => { void revoke(member) }} />
+                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking || rosterFenceWorking} onClick={() => { void revoke(member) }} />
                   </Tooltip>
                 )}
             </div>
@@ -334,10 +427,24 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         closeLabel={t('cancel')}
         confirmLabel={memoryTarget === true ? t('enableSharedMemory') : t('disableSharedMemory')}
         acknowledged={memoryAcknowledged}
-        disabled={!stateMatchesBot || memoryWorking}
+        disabled={!stateMatchesBot || memoryWorking || rosterFenceWorking}
         onAcknowledgedChange={setMemoryAcknowledged}
         onCancel={() => { setMemoryTarget(null); setMemoryAcknowledged(false) }}
         onConfirm={() => { void confirmMemoryPolicy() }}
+      />
+      <RiskConfirmation
+        open={stateMatchesBot && rosterFenceConfirmOpen && rosterFenceToken !== undefined}
+        title={t('recoverSharedRosterTitle')}
+        description={t('recoverSharedRosterDescription', { token: rosterFenceToken ?? '' })}
+        acknowledgeLabel={t('recoverSharedRosterAcknowledge')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('cancel')}
+        confirmLabel={t('recoverRoster')}
+        acknowledged={rosterFenceAcknowledged}
+        disabled={!stateMatchesBot || rosterFenceWorking}
+        onAcknowledgedChange={setRosterFenceAcknowledged}
+        onCancel={() => { setRosterFenceConfirmOpen(false); setRosterFenceAcknowledged(false) }}
+        onConfirm={() => { void recoverRosterFence() }}
       />
     </>
   )

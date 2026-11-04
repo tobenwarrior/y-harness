@@ -141,6 +141,7 @@ import type {
   BotShareInviteValue,
   BotShareMemoryPolicyRequest,
   BotShareMemoryPolicyValue,
+  BotSharedRosterFenceDiagnosticValue,
   BotSharedRosterFenceRecoveryRequest,
   BotSharedRosterFenceRecoveryValue,
   BotView,
@@ -595,6 +596,8 @@ const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_ATTEMPTS = 8
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY = 8
 const SHARED_GROUP_DELIVERY_LOCK_PREFIX = '.delivery-'
+const SHARED_ROSTER_FENCE_HEARTBEAT_INTERVAL_MS = 1_000
+const SHARED_ROSTER_FENCE_LIVE_WINDOW_MS = SHARED_ROSTER_FENCE_HEARTBEAT_INTERVAL_MS * 3
 const activeSharedRosterFenceTokens = new WeakMap<CredentialProvider, string>()
 /**
  * Version-one write-ahead Bot rows for hosts that do not mount credentials.
@@ -669,6 +672,7 @@ const botProfilePendingSchema = zod.object({
 }).strict()
 const botProfileRosterFenceSchema = zod.object({
   token: zod.string().min(1).max(128),
+  heartbeatAt: zod.number().int().nonnegative().optional(),
 }).strict()
 const botProfileRevisionRecordV1Schema = zod.object({
   version: zod.literal(1),
@@ -5266,6 +5270,16 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Read the owner-local shared-roster fence needed for explicit recovery.
+   * This method is not part of the collaborator endpoint allowlist.
+   * @returns The current fence status and, when held, its opaque recovery token.
+   */
+  @Remote('inspectSharedRosterFence')
+  async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue> {
+    return this.inspectSharedRosterFenceImpl()
+  }
+
+  /**
    * List active memories for a Bot without accepting a model-supplied Session id.
    * @param request - Durable Bot id whose private projection should be read.
    * @returns active memory rows owned by that Bot.
@@ -6961,14 +6975,16 @@ export class BotService extends TypertRemoteService {
         acquired = true
         return profileRevisionRecordOfState({
           ...state,
-          sharedRosterFence: { token },
+          sharedRosterFence: { token, heartbeatAt: Date.now() },
         })
       })
       if (!acquired) return { valid: false as const }
       activeSharedRosterFenceTokens.set(credentials, token)
+      const stopHeartbeat = this.startSharedRosterFenceHeartbeat(credentials, token)
       try {
         return { valid: true as const, value: await operation() }
       } finally {
+        stopHeartbeat()
         try {
           await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
             const state = profileRevisionRecordOf(stored)
@@ -7014,12 +7030,54 @@ export class BotService extends TypertRemoteService {
           status = 'busy'
           return undefined
         }
+        if (fence.heartbeatAt !== undefined
+          && Math.max(0, Date.now() - fence.heartbeatAt) < SHARED_ROSTER_FENCE_LIVE_WINDOW_MS) {
+          status = 'busy'
+          return undefined
+        }
         const { sharedRosterFence: ignoredFence, ...withoutFence } = state
         void ignoredFence
         status = 'released'
         return profileRevisionRecordOfState(withoutFence)
       })
       return { status }
+    })
+  }
+
+  /** Keep a durable owner heartbeat so another Host can distinguish a live fence from a crash. */
+  private startSharedRosterFenceHeartbeat(credentials: CredentialProvider, token: string): () => void {
+    let inFlight: Promise<void> | undefined
+    const timer = setInterval(() => {
+      if (inFlight !== undefined) return
+      inFlight = credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+        const state = profileRevisionRecordOf(stored)
+        const fence = state.sharedRosterFence
+        if (fence === undefined || fence.token !== token) return undefined
+        return profileRevisionRecordOfState({
+          ...state,
+          sharedRosterFence: { ...fence, heartbeatAt: Date.now() },
+        })
+      }).then(() => undefined, (error: unknown) => {
+        this.ctx.logger.warn(`bots: shared roster fence heartbeat failed: ${String(error)}`)
+      }).finally(() => { inFlight = undefined })
+    }, SHARED_ROSTER_FENCE_HEARTBEAT_INTERVAL_MS)
+    timer.unref?.()
+    return () => {
+      clearInterval(timer)
+      void inFlight
+    }
+  }
+
+  /** Read the durable fence under the credential provider's current-record lock. */
+  private async inspectSharedRosterFenceImpl(): Promise<BotSharedRosterFenceDiagnosticValue> {
+    return this.serialize(async () => {
+      const credentials = this.credentials ?? this.ctx.get('credentials')
+      if (credentials === undefined) return { status: 'clear' as const }
+      const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async () => undefined)
+      const fence = profileRevisionRecordOf(stored).sharedRosterFence
+      return fence === undefined
+        ? { status: 'clear' as const }
+        : { status: 'held' as const, token: fence.token }
     })
   }
 

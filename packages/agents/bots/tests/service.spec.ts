@@ -50,6 +50,7 @@ import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
   botDomain,
   botRecordSchema,
+  SHARED_BOT_ENDPOINTS,
   SHARED_BOT_AGENT_PRESET,
   sharedBotDomain,
   sharedPrivateSessionSchema,
@@ -822,6 +823,13 @@ describe('durable Bot roster', () => {
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
       }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      const agedPayload = z.object({
+        sharedRosterFence: z.object({ token: z.string() }),
+      }).passthrough().parse(storedFence.payload)
+      h.records.set(revisionKey, {
+        kind: 'grant',
+        payload: { ...agedPayload, sharedRosterFence: { token: fenceToken, heartbeatAt: 0 } },
+      })
 
       type SharedRosterRecoveryService = {
         recoverSharedRosterFence: (request: { readonly confirmQuiescent: true }) => Promise<{
@@ -881,6 +889,13 @@ describe('durable Bot roster', () => {
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
       }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      const agedPayload = z.object({
+        sharedRosterFence: z.object({ token: z.string() }),
+      }).passthrough().parse(storedFence.payload)
+      h.records.set(revisionKey, {
+        kind: 'grant',
+        payload: { ...agedPayload, sharedRosterFence: { token: fenceToken, heartbeatAt: 0 } },
+      })
 
       await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true }))
         .resolves.toEqual({ status: 'released' })
@@ -926,6 +941,79 @@ describe('durable Bot roster', () => {
     } finally {
       await close(second.ctx)
       await close(first.ctx)
+    }
+  })
+
+  it('reports a live shared roster fence as busy to another Host', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-live-'))
+    const credentialPath = join(root, 'credentials.yaml')
+    const pool = new MemoryMediaPool()
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let operation: Promise<{ readonly valid: true; readonly value: string } | { readonly valid: false }> | undefined
+    let first: Awaited<ReturnType<typeof harness>> | undefined
+    let second: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      first = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath })
+      second = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { credentialPath })
+      const host = productionSharedHost(first.service)
+      expect(SHARED_BOT_ENDPOINTS).not.toContain('inspectSharedRosterFence')
+      expect(SHARED_BOT_ENDPOINTS).not.toContain('recoverSharedRosterFence')
+      operation = host.withBotRoster([], undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return 'completed'
+      })
+      await started.promise
+      const diagnostic = await second.service.inspectSharedRosterFence()
+      expect(diagnostic.status).toBe('held')
+      if (diagnostic.token === undefined) throw new Error('live shared roster fence token is missing')
+      await expect(second.service.recoverSharedRosterFence({ token: diagnostic.token, confirmQuiescent: true }))
+        .resolves.toEqual({ status: 'busy' })
+      release.resolve(true)
+      await expect(operation).resolves.toEqual({ valid: true, value: 'completed' })
+      await expect(second.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+    } finally {
+      release.resolve(true)
+      await operation?.catch(() => undefined)
+      if (second !== undefined) await close(second.ctx)
+      if (first !== undefined) await close(first.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('allows an ambiguous recovery write to be retried after the durable clear commits', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const token = 'ambiguous-recovery-fence'
+    records.set(revisionKey, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: {},
+        profiles: {},
+        sharedRosterFence: { token, heartbeatAt: 0 },
+      },
+    })
+    const originalModify = h.credentials.modifyRecord.bind(h.credentials)
+    let throwAfterClear = true
+    h.credentials.modifyRecord = async (key, mutate) => {
+      const result = await originalModify(key, mutate)
+      if (key === revisionKey && throwAfterClear) {
+        throwAfterClear = false
+        throw new Error('ambiguous recovery write')
+      }
+      return result
+    }
+    try {
+      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true }))
+        .rejects.toThrow('ambiguous recovery write')
+      await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true }))
+        .resolves.toEqual({ status: 'absent' })
+    } finally {
+      await close(h.ctx)
     }
   })
 

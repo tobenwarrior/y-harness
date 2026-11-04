@@ -561,6 +561,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'auxiliarySessionAdmission',
+    summary: 'Process-local admission capability for a trusted producer\'s bounded auxiliary request.',
+    description: 'Process-local admission capability for a trusted producer\'s bounded auxiliary request. The operation remains inside the capability\'s async context while it awaits the model stream; the capability is never serialized into GenerateOptions or Session data.',
+    methods: [
+      {
+        signature: 'run<T>(sessionId: string, purpose: AuxiliarySessionPurpose, operation: () => T): T',
+        description: 'Run one producer-owned operation with exact Session and purpose attribution.',
+        parameters: [{ name: 'sessionId', description: 'Session identity the operation may request.' }, { name: 'purpose', description: 'bounded auxiliary generation purpose.' }, { name: 'operation', description: 'producer operation that performs and awaits the LLM stream.' }],
+        returns: 'the operation result.',
+      },
+    ],
+  },
+  {
     key: 'avatarGeneration',
     summary: 'Host service that discovers the configured OpenAI credential per operation.',
     description: 'Host service that discovers the configured OpenAI credential per operation.',
@@ -717,6 +730,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Reconcile one isolated shared-group recipient fence after an explicit owner confirmation that every Host able to own the Session is quiesced.',
         parameters: [{ name: 'request', description: 'Exact group, Bot, Session, and message identities.' }],
         returns: 'The durable recovery status for the recipient fence.',
+      },
+      {
+        signature: '@Remote(\'recoverSharedRosterFence\') async recoverSharedRosterFence( request: BotSharedRosterFenceRecoveryRequest, ): Promise<BotSharedRosterFenceRecoveryValue>',
+        description: 'Release one abandoned shared-roster admission after every possible Host has been stopped and the exact durable fence token was inspected.',
+        parameters: [{ name: 'request', description: 'Exact fence token plus the unverified quiescence assertion.' }],
+        returns: 'The durable recovery status.',
+      },
+      {
+        signature: '@Remote(\'inspectSharedRosterFence\') async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue>',
+        description: 'Read the owner-local shared-roster fence needed for explicit recovery. This method is not part of the collaborator endpoint allowlist.',
+        parameters: [],
+        returns: 'The current fence status and, when held, its opaque recovery token.',
       },
       {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
@@ -5539,6 +5564,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
   },
   {
+    name: 'AuxiliarySessionPurpose',
+    declaration: 'export type AuxiliarySessionPurpose = Extract<GenerateOptions[\'purpose\'], \'session-title\' | \'skill-learning\'>;',
+  },
+  {
     name: 'AvatarGenerationCommitRequest',
     declaration: 'export interface AvatarGenerationCommitRequest {\n    readonly data: string;\n    readonly mediaType: \'image/png\';\n}',
   },
@@ -5869,6 +5898,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotRenameValue',
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceDiagnosticValue',
+    declaration: 'export interface BotSharedRosterFenceDiagnosticValue {\n    readonly status: \'clear\' | \'held\';\n    readonly token?: string;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceRecoveryRequest',
+    declaration: 'export interface BotSharedRosterFenceRecoveryRequest {\n    readonly token: string;\n    readonly confirmQuiescent: true;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceRecoveryValue',
+    declaration: 'export interface BotSharedRosterFenceRecoveryValue {\n    readonly status: \'released\' | \'busy\' | \'absent\';\n}',
   },
   {
     name: 'BotShareInviteRequest',
