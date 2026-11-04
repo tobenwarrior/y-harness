@@ -3183,7 +3183,7 @@ export class BotService extends TypertRemoteService {
     const profileState = await this.readProfileRevisionState(bots, true)
     for (const [, stored] of bots.entries()) {
       const record = applyProfileSnapshot(stored, profileState.profiles[String(stored.id)])
-      this.recordsBySession.set(String(record.sessionId), record)
+      this.cacheBotRecord(record)
       if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
     }
   }
@@ -3455,8 +3455,7 @@ export class BotService extends TypertRemoteService {
       ? undefined
       : applyProfileSnapshot(storedCurrent, profileState.profiles[String(id)])
     if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-    this.recordsBySession.set(String(current.sessionId), current)
-    this.refreshSharedRecords(current)
+    this.cacheBotRecord(current)
     return { bot: this.view(current), apps: this.connectedAppsFor(current) }
   }
 
@@ -3726,9 +3725,7 @@ export class BotService extends TypertRemoteService {
     const profileState = await this.readProfileRevisionState(bots)
     const current = applyProfileSnapshot(stored, profileState.profiles[String(mapped.id)])
     if (current.updatedAt >= mapped.updatedAt) {
-      this.recordsBySession.set(String(current.sessionId), current)
-      this.refreshSharedRecords(current)
-      return current
+      return this.cacheBotRecord(current)
     }
     return mapped
   }
@@ -4890,8 +4887,7 @@ export class BotService extends TypertRemoteService {
     const profileState = await this.readProfileRevisionState(bots)
     const rows = [...bots.entries()].map(([, record]) => {
       const current = applyProfileSnapshot(record, profileState.profiles[String(record.id)])
-      this.recordsBySession.set(String(current.sessionId), current)
-      this.refreshSharedRecords(current)
+      this.cacheBotRecord(current)
       return this.view(current)
     })
     const activeBotIds = new Set(rows.map(bot => String(bot.id)))
@@ -6498,11 +6494,11 @@ export class BotService extends TypertRemoteService {
     }
     const current = applyProfileSnapshot(stored, profileState.profiles[String(cached.id)])
     if (this.recordsBySession.has(sessionKey)) {
-      this.recordsBySession.set(sessionKey, current)
-      this.refreshSharedRecords(current)
-      return current
+      return this.cacheBotRecord(current)
     }
     const shared = { ...current, sessionId: cached.sessionId }
+    const currentShared = this.sharedRecordsBySession.get(sessionKey)
+    if (currentShared !== undefined && currentShared.updatedAt > shared.updatedAt) return currentShared
     this.sharedRecordsBySession.set(sessionKey, shared)
     return shared
   }
@@ -6513,12 +6509,13 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Cache a Bot projection without regressing a newer local revision. */
-  private cacheBotRecord(record: BotStoredRecord): void {
+  private cacheBotRecord(record: BotStoredRecord): BotStoredRecord {
     const sessionKey = String(record.sessionId)
     const cached = this.recordsBySession.get(sessionKey)
-    if (cached !== undefined && cached.updatedAt > record.updatedAt) return
+    if (cached !== undefined && cached.updatedAt > record.updatedAt) return cached
     this.recordsBySession.set(sessionKey, record)
     this.refreshSharedRecords(record)
+    return record
   }
 
   /** Read one owner-scoped Bot through the authoritative V3 profile fence. */
@@ -6906,7 +6903,7 @@ export class BotService extends TypertRemoteService {
 
   private refreshSharedRecords(bot: BotRecord): void {
     for (const [key, current] of this.sharedRecordsBySession) {
-      if (current.id !== bot.id) continue
+      if (current.id !== bot.id || current.updatedAt > bot.updatedAt) continue
       let next: BotRecord = { ...current, ...bot, sessionId: current.sessionId }
       if (bot.persona === undefined) {
         const { persona: ignoredPersona, ...withoutPersona } = next

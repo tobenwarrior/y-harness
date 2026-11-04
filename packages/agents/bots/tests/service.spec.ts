@@ -183,6 +183,28 @@ class SharedProfileCredentials extends CredentialProvider {
   }
 }
 
+function pauseFirstProfileRevisionRead(credentials: CredentialProvider, key: CredentialKey): {
+  readonly profileReadStarted: Promise<undefined>
+  readonly releaseProfileRead: PromiseWithResolvers<undefined>
+} {
+  const profileReadStarted = Promise.withResolvers<undefined>()
+  const releaseProfileRead = Promise.withResolvers<undefined>()
+  const originalModifyRecord = credentials.modifyRecord.bind(credentials)
+  let paused = false
+  const wrappedModifyRecord: typeof credentials.modifyRecord = (currentKey, mutate) => {
+    const result = originalModifyRecord(currentKey, mutate)
+    if (paused || currentKey !== key) return result
+    paused = true
+    return result.then(async (value) => {
+      profileReadStarted.resolve(undefined)
+      await releaseProfileRead.promise
+      return value
+    })
+  }
+  credentials.modifyRecord = wrappedModifyRecord
+  return { profileReadStarted: profileReadStarted.promise, releaseProfileRead }
+}
+
 interface HarnessOptions {
   readonly connection?: object
   readonly beforeService?: (ctx: Context) => void
@@ -6602,31 +6624,18 @@ describe('durable Bot roster', () => {
 
     const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
     const profileKey = credentialKey('agent-bots', 'profile-revisions-v3')
-    const profileReadStarted = Promise.withResolvers<undefined>()
-    const releaseProfileRead = Promise.withResolvers<undefined>()
+    let releaseProfileRead: PromiseWithResolvers<undefined> | undefined
     try {
       const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       if (provider === undefined) throw new Error('native Bot provider was not mounted')
       const tools = await provider.resolve({ sessionId: created.bot.sessionId })
       const createRoutine = tools.find(tool => tool.name === 'schedule_create')
       if (createRoutine === undefined) throw new Error('routine create tool was not mounted')
-
-      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
-      let paused = false
-      const wrappedModifyRecord: typeof h.credentials.modifyRecord = (key, mutate) => {
-        const result = originalModifyRecord(key, mutate)
-        if (paused || key !== profileKey) return result
-        paused = true
-        return result.then(async (value) => {
-          profileReadStarted.resolve(undefined)
-          await releaseProfileRead.promise
-          return value
-        })
-      }
-      h.credentials.modifyRecord = wrappedModifyRecord
+      const barrier = pauseFirstProfileRevisionRead(h.credentials, profileKey)
+      releaseProfileRead = barrier.releaseProfileRead
 
       const listing = h.service.listRoutines({ botId: created.bot.id })
-      await profileReadStarted.promise
+      await barrier.profileReadStarted
       const createdRoutine = await createRoutine.execute({
         title: 'Concurrent event routine',
         prompt: 'Run after the read barrier.',
@@ -6652,7 +6661,59 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
     } finally {
+      releaseProfileRead?.resolve(undefined)
+      await close(h.ctx)
+    }
+  })
+
+  it('does not regress a newer event-routine cache after native schedule refresh', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Native routine read race', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const profileKey = credentialKey('agent-bots', 'profile-revisions-v3')
+    let releaseProfileRead: PromiseWithResolvers<undefined> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const listRoutines = tools.find(tool => tool.name === 'schedule_list')
+      const createRoutine = tools.find(tool => tool.name === 'schedule_create')
+      if (listRoutines === undefined || createRoutine === undefined) throw new Error('native routine tools were not mounted')
+      const barrier = pauseFirstProfileRevisionRead(h.credentials, profileKey)
+      releaseProfileRead = barrier.releaseProfileRead
+
+      const context = {
+        callId: 'native-refresh-race-list', threadId: 'native-refresh-race-thread', turnId: 'native-refresh-race-list-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const listing = listRoutines.execute({}, context)
+      await barrier.profileReadStarted
+      const createdRoutine = await createRoutine.execute({
+        title: 'Native refresh event routine',
+        prompt: 'Run after the native refresh barrier.',
+        event: { type: 'message', source: 'user' },
+      }, { ...context, callId: 'native-refresh-race-create', turnId: 'native-refresh-race-create-turn' })
+      expect(createdRoutine.success).toBe(true)
       releaseProfileRead.resolve(undefined)
+
+      await expect(listing).resolves.toMatchObject({ success: true })
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('native routine read race Agent was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger after native schedule_list refresh.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+    } finally {
+      releaseProfileRead?.resolve(undefined)
       await close(h.ctx)
     }
   })
