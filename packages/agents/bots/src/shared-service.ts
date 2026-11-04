@@ -155,6 +155,8 @@ export interface SharedBotHost extends SharedGroupHost {
   } | { readonly error: Error }>
   /** Inspect one private Session's durable events. */
   readonly inspectPrivateSession: (sessionId: SessionId, signal: AbortSignal) => Promise<BotCollaborationInspection>
+  /** Validate the private Session header before any transcript read or resume. */
+  readonly validatePrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
   /** Wait until a private Session's latest message is durably stored. */
   readonly flushPrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
 }
@@ -969,6 +971,7 @@ export class SharedBotService {
       }
       let inspection: BotCollaborationInspection
       try {
+        await this.host.validatePrivateSession(binding.sessionId, signal)
         inspection = await this.host.inspectPrivateSession(binding.sessionId, signal)
       } catch (error: unknown) {
         if (!isMissingPrivateSessionError(error)) throw error

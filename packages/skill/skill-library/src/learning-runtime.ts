@@ -284,17 +284,22 @@ async function generateDrafts(
     if (!await track(sessions.flush(session))) throw new Error('skill-learning: auxiliary request is not durable')
     deadline.signal.throwIfAborted()
     const assembler = new BlockAssembler(); let bytes = 0; let chunks = 0
-    for await (const chunk of prepared.stream(options)) {
-      deadline.signal.throwIfAborted()
-      bytes += chunkBytes(chunk)
-      chunks++
-      if (chunks > bounds.maxOutputChunks || bytes > bounds.maxOutputBytes * 2 || chunk.type === 'tool-call-delta'
-        || chunk.type === 'block-start' && chunk.blockType === 'tool-call'
-        || chunk.type === 'block-end'
-        && chunk.block.type !== 'text'
-        && chunk.block.type !== 'reasoning') throw new Error('skill-learning: output exceeds bounds or invokes a tool')
-      assembler.push(chunk)
+    const consume = async (): Promise<void> => {
+      for await (const chunk of prepared.stream(options)) {
+        deadline.signal.throwIfAborted()
+        bytes += chunkBytes(chunk)
+        chunks++
+        if (chunks > bounds.maxOutputChunks || bytes > bounds.maxOutputBytes * 2 || chunk.type === 'tool-call-delta'
+          || chunk.type === 'block-start' && chunk.blockType === 'tool-call'
+          || chunk.type === 'block-end'
+          && chunk.block.type !== 'text'
+          && chunk.block.type !== 'reasoning') throw new Error('skill-learning: output exceeds bounds or invokes a tool')
+        assembler.push(chunk)
+      }
     }
+    const admission = ctx.get('auxiliarySessionAdmission')
+    if (admission === undefined) await consume()
+    else await admission.run(String(session.id), 'skill-learning', consume)
     deadline.signal.throwIfAborted()
     if (assembler.finish.kind !== 'stop') throw new Error('skill-learning: generation did not finish normally')
     const blocks = assembler.blocks()

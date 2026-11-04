@@ -31,6 +31,8 @@ Any composition that calls a model provider — an agent loop, a session-title g
 
 Skill learning captures the task request header's provider, model, reasoning effort and processing tier, including absent controls. Selected evidence must retain matching captured routes; missing historical routes or conflicting controls make generation unavailable. It rejects preparation that introduces defaults or changes those controls, while setting an explicit bounded background output cap. After the exact auxiliary input is logged and flushed, it dispatches through the prepared handle with `purpose: skill-learning`, retaining that adapter registration across log flushing and HMR. Auxiliary records do not enter the foreground conversation.
 
+The Bot service may provide `ctx.auxiliarySessionAdmission` to trusted session-title and skill-learning producers. This process-local, effect-scoped capability binds the producer's exact Session and purpose while it awaits its stream; it is not serialized in `GenerateOptions` or Session data, and a hand-built request cannot manufacture the admission.
+
 ### When to choose it
 
 Choose this package whenever a plugin or composition needs to call a model: it is the only supported path into provider adapters, and it keeps one vocabulary across the loop, the session log, and every consumer. Do not reach for it when you need provider-specific wire behavior (that belongs in an adapter such as `dsh-llm-deepseek` or `dsh-llm-pi-ai`) or retry execution (that belongs in `dsh-llm-retry`).

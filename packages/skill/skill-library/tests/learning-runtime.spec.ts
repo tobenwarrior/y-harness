@@ -39,6 +39,13 @@ class ScriptedAdapter extends LlmAdapter {
 async function fixture(options: SkillLearningRuntimeOptions = {}, mode: 'api' | 'native' | 'unknown' = 'api', reply = validReply) {
   const ctx = new Context(); contexts.push(ctx)
   await ctx.plugin(SessionStore); await ctx.plugin(LlmRuntime)
+  const auxiliaryCalls: Array<{ readonly sessionId: string; readonly purpose: 'session-title' | 'skill-learning' }> = []
+  ctx.provide('auxiliarySessionAdmission', {
+    run<T>(sessionId: string, purpose: 'session-title' | 'skill-learning', operation: () => T): T {
+      auxiliaryCalls.push({ sessionId, purpose })
+      return operation()
+    },
+  } as never)
   ctx.provide('workspaceRegistry', { list: () => [{ id: 'p', path: '/test/project', title: 'Project' }] } as never)
   const adapter = new ScriptedAdapter(mode, reply)
   const registration = ctx.llm.registerAdapter(['scripted'], adapter)
@@ -71,7 +78,7 @@ async function fixture(options: SkillLearningRuntimeOptions = {}, mode: 'api' | 
   const session = ctx.sessions.create(SessionId('s'), { meta: { cwd: '/test/project' } })
   return {
     ctx, session, adapter, registration, evidence, proposals, generated, availability,
-    generators, sources, flush, stopFlush, order, dispose,
+    generators, sources, flush, stopFlush, order, auxiliaryCalls, dispose,
   }
 }
 
@@ -180,6 +187,7 @@ describe('proposal-only skill learning runtime', () => {
     expect(JSON.stringify(f.evidence)).not.toMatch(/private-tool-secret|must not persist|All tests passed/)
     expect(f.generated[0]!.uncertainty.join(' ')).toMatch(/review|unverified/i)
     expect(f.adapter.calls[0]).toMatchObject({ provider: 'scripted', model: 'model', purpose: 'skill-learning', tools: [], maxTokens: 1500 })
+    expect(f.auxiliaryCalls).toEqual([{ sessionId: 's', purpose: 'skill-learning' }])
     expect(f.adapter.calls[0]).toMatchObject({ reasoningEffort: 'ultra', serviceTier: 'default' })
     expect(f.session.requestHeader()!.config).toMatchObject({ reasoningEffort: 'ultra', serviceTier: 'default' })
     expect(f.generators.size).toBe(0)

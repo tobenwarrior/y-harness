@@ -41,6 +41,25 @@ import {
 } from './content.ts'
 import type { FileAttachmentRef } from '@yharness/attachment'
 
+/** Auxiliary generation purpose that may run under a Host-owned admission capability. */
+export type AuxiliarySessionPurpose = Extract<GenerateOptions['purpose'], 'session-title' | 'skill-learning'>
+
+/**
+ * Process-local admission capability for a trusted producer's bounded auxiliary request.
+ * The operation remains inside the capability's async context while it awaits the model stream;
+ * the capability is never serialized into GenerateOptions or Session data.
+ */
+export interface AuxiliarySessionAdmission {
+  /**
+   * Run one producer-owned operation with exact Session and purpose attribution.
+   * @param sessionId - Session identity the operation may request.
+   * @param purpose - bounded auxiliary generation purpose.
+   * @param operation - producer operation that performs and awaits the LLM stream.
+   * @returns the operation result.
+   */
+  run<T>(sessionId: string, purpose: AuxiliarySessionPurpose, operation: () => T): T
+}
+
 export * from './attribution.ts'
 export * from './brand.ts'
 export * from './error.ts'
@@ -57,6 +76,8 @@ export type { LlmCallConfig, LlmCallConfigAdapterDefaults } from './call-config.
 declare module '@yharness/cordis' {
   interface Context {
     llm: LlmRuntime
+    /** Effect-scoped capability supplied by BotService for trusted auxiliary producers. */
+    auxiliarySessionAdmission: AuxiliarySessionAdmission
   }
 
   interface Events {

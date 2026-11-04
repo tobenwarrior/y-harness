@@ -240,6 +240,8 @@ class SharedBotHostFixture implements SharedBotHost {
     events: [],
   })
 
+  validatePrivateSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
+
   flushPrivateSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
 
   registerSharedGroupSessions = (bindings: readonly SharedGroupSessionBinding[]): void => {

@@ -278,10 +278,15 @@ export async function generateSessionTitleWithLlm(
   })
   callDeadline.signal.throwIfAborted()
   const assembler = new BlockAssembler()
-  for await (const chunk of ctx.llm.stream(options)) {
-    callDeadline.signal.throwIfAborted()
-    assembler.push(chunk)
+  const consume = async (): Promise<void> => {
+    for await (const chunk of ctx.llm.stream(options)) {
+      callDeadline.signal.throwIfAborted()
+      assembler.push(chunk)
+    }
   }
+  const admission = ctx.get('auxiliarySessionAdmission')
+  if (admission === undefined) await consume()
+  else await admission.run(String(request.session.id), 'session-title', consume)
   callDeadline.signal.throwIfAborted()
   const terminalError = finishError(assembler.finish)
   if (terminalError !== undefined) throw terminalError

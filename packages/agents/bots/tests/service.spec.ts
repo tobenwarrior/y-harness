@@ -62,6 +62,8 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
 import { SharedBotService } from '../src/shared-service.ts'
+import { generateSessionTitleWithLlm } from '../../../session/session-title-llm/src/index.ts'
+import { SessionTitleProviderId } from '../../../session/session-title/src/index.ts'
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
@@ -259,6 +261,7 @@ interface HarnessOptions {
   readonly connection?: object
   readonly beforeService?: (ctx: Context) => void
   readonly inspectSharedSessions?: boolean
+  readonly sessionMeta?: { readonly cwd?: string; readonly agentPreset?: string }
   readonly realAgent?: boolean
   readonly realAgentInitialResponse?: 'hang' | 'text'
   readonly sessionPersistenceRoot?: string
@@ -422,7 +425,16 @@ async function createHarness({
   }
   if (options.realAgent) {
     for (const sessionId of existingSessionIds) {
-      agents.push(await ctx.agentLoop.create(SessionId(sessionId), { provider: 'mock', model: 'mock' }))
+      if (options.sessionMeta === undefined) {
+        agents.push(await ctx.agentLoop.create(SessionId(sessionId), { provider: 'mock', model: 'mock' }))
+      } else {
+        const handle = await ctx.agents.create({
+          sessionId: SessionId(sessionId),
+          meta: options.sessionMeta,
+          agentOptions: { provider: 'mock', model: 'mock' },
+        })
+        agents.push(handle.agent)
+      }
     }
   } else {
     for (const sessionId of existingSessionIds) createAgent(sessionId)
@@ -449,21 +461,26 @@ async function createHarness({
       inspectFailureCount -= 1
       throw new Error('injected inspection failure')
     }
-    const live = agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
+    const liveAgent = agents.find(agent => agent.id === sessionId)
+    const live = liveAgent?.session.snapshotEvents()
+    let meta = liveAgent?.session.header
     const seeded = persistedSessionSeeds.get(String(sessionId)) ?? persistedSessionEvents.get(String(sessionId))
     let events = live ?? seeded
     if (events === undefined && options.sessionPersistenceRoot !== undefined) {
       const handle = await ctx.sessionPersistence.open(sessionId, 'read')
       try {
-        events = (await handle.read()).events
+        const stored = await handle.read()
+        events = stored.events
+        meta = handle.header
       } finally {
         await handle.close()
       }
     }
+    const hasSessionMetadata = meta !== undefined && (meta.cwd !== undefined || meta.agentPreset !== undefined)
     return {
-      ...(options.inspectSharedSessions
+      ...((!hasSessionMetadata && (!options.realAgent || options.inspectSharedSessions))
         ? { meta: { cwd: sharedBotWorkingDirectory(sessionId), agentPreset: SHARED_BOT_AGENT_PRESET } }
-        : {}),
+        : meta === undefined ? {} : { meta }),
       events: events ?? [],
     }
   })
@@ -1076,6 +1093,33 @@ describe('durable Bot roster', () => {
         }
         await expect(directEmptyAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
         expect(h.adapter.requests).toHaveLength(0)
+
+        const titleSource = agent.session.append('user/message', createUserMessage({
+          content: [{ type: 'text', text: 'Generate a shared session title.' }],
+          source: { kind: 'user' },
+        }), { surfaceOp: 'append' })
+        const titleInput = { seq: titleSource.seq, text: 'Generate a shared session title.' }
+        const title = await generateSessionTitleWithLlm(
+          h.ctx,
+          {
+            targetWords: 3,
+            targetCjkCharacters: 3,
+            maxInputBytes: 4096,
+            maxOutputTokens: 64,
+            timeoutMs: 1000,
+            provider: 'mock',
+            model: 'mock',
+          },
+          {
+            session: agent.session,
+            messages: [titleInput],
+            signal: new AbortController().signal,
+          },
+          [titleInput],
+          SessionTitleProviderId('shared-session-title-test'),
+        )
+        expect(title.title).toContain('validation should block this follow-up')
+        expect(h.adapter.requests).toHaveLength(1)
 
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
@@ -1966,6 +2010,7 @@ describe('durable Bot roster', () => {
             ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
           },
           initializeService: false,
+          inspectSharedSessions: true,
           realAgent: true,
           realAgentInitialResponse: 'text',
         },
@@ -2157,6 +2202,10 @@ describe('durable Bot roster', () => {
           inspectSharedSessions: true,
           realAgent: true,
           realAgentInitialResponse: 'text',
+          sessionMeta: {
+            cwd: sharedBotWorkingDirectory(sharedSessionId),
+            agentPreset: SHARED_BOT_AGENT_PRESET,
+          },
           sessionPersistenceRoot: persistenceRoot,
         },
       )
@@ -2229,8 +2278,140 @@ describe('durable Bot roster', () => {
       } finally {
         await close(h.ctx)
       }
+
+      const third = await harness(
+        pool,
+        undefined,
+        undefined,
+        [],
+        new Map(),
+        records,
+        true,
+        'native',
+        true,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          sessionPersistenceRoot: persistenceRoot,
+        },
+      )
+      try {
+        const reopened = await productionSharedHost(third.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        if (!('agent' in reopened)) throw new Error(`third Host did not reopen the migrated Session: ${reopened.error.message}`)
+        const thirdAgent = third.agents.find(agent => agent.id === sharedSessionId)
+        if (thirdAgent === undefined) throw new Error('third Host did not publish the reopened Agent')
+        expect(thirdAgent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(2)
+        expect(thirdAgent.session.deriveMessages()
+          .flatMap(message => message.content)
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')).not.toContain('PRIVATE_COLD_LEGACY_PROMPT')
+        expectCurrentSessionReload(thirdAgent.session)
+      } finally {
+        await close(third.ctx)
+      }
     } finally {
       if (first !== undefined && !firstClosed) await close(first.ctx)
+      await rm(persistenceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a persisted private Session with a wrong JSONL header before native use', async () => {
+    const sharedSessionId = SessionId('shared-session-wrong-private-header')
+    const pool = new MemoryMediaPool()
+    const persistenceRoot = await mkdtemp(join(tmpdir(), 'yh-bot-shared-wrong-header-'))
+    const wrongCwd = join(persistenceRoot, 'operator-private')
+    let first: Awaited<ReturnType<typeof harness>> | undefined
+    let second: Awaited<ReturnType<typeof harness>> | undefined
+    try {
+      first = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        new Map(),
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          sessionMeta: { cwd: wrongCwd, agentPreset: 'operator-private' },
+          sessionPersistenceRoot: persistenceRoot,
+        },
+      )
+      const firstAgent = first.agents[0]
+      if (firstAgent === undefined) throw new Error('wrong-header Agent was not created')
+      expect(firstAgent.session.header.cwd).toBe(wrongCwd)
+      expect(firstAgent.session.header.agentPreset).toBe('operator-private')
+      expect(await first.ctx.sessions.flush(firstAgent.session)).toBe(true)
+      const created = await first.service.create({ name: 'Wrong header owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-wrong-private-header')
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      first = undefined
+
+      second = await harness(
+        pool,
+        undefined,
+        undefined,
+        [],
+        new Map(),
+        records,
+        true,
+        'native',
+        true,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          sessionPersistenceRoot: persistenceRoot,
+        },
+      )
+      const host = productionSharedHost(second.service)
+      await expect(host.inspectPrivateSession(sharedSessionId, new AbortController().signal))
+        .rejects.toThrow(/isolated preset and directory/)
+      const resolved = await host.resolvePrivateAgent(
+        sharedSessionId,
+        new AbortController().signal,
+        created.bot.id,
+      )
+      expect(resolved).toHaveProperty('error')
+      expect(second.resolveAgent).not.toHaveBeenCalled()
+      expect(second.adapter?.requests).toHaveLength(0)
+    } finally {
+      if (first !== undefined) await close(first.ctx)
+      if (second !== undefined) await close(second.ctx)
       await rm(persistenceRoot, { recursive: true, force: true })
     }
   })

@@ -2,6 +2,7 @@
 
 import { mkdir, rm } from 'node:fs/promises'
 import { createHash, randomUUID, type KeyObject } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
@@ -14,7 +15,7 @@ import {
 } from '@yharness/client-connection'
 import { MessageId } from '@yharness/llm/brand'
 import { createSystemMessage, freezeMessage, isAgentLoopRequest } from '@yharness/llm'
-import type { GenerateOptions, StreamChunk } from '@yharness/llm'
+import type { AuxiliarySessionAdmission, AuxiliarySessionPurpose, GenerateOptions, StreamChunk } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {
   PreToolDecision,
@@ -1803,6 +1804,10 @@ export class BotService extends TypertRemoteService {
   private readonly credentials: CredentialProvider | undefined
   private readonly noCredentialIntentReady: Promise<Domain<typeof botMutationIntentDomain> | undefined>
   private readonly sharedConfig: ResolvedBotSharedConfig
+  private readonly auxiliarySessionAdmission = new AsyncLocalStorage<{
+    readonly sessionId: string
+    readonly purpose: AuxiliarySessionPurpose
+  }>()
   private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
@@ -1863,6 +1868,11 @@ export class BotService extends TypertRemoteService {
    */
   constructor(ctx: Context, config: BotServiceConfig = {}) {
     super(ctx, 'bots', { namespace: 'bots' })
+    const auxiliarySessionAdmission: AuxiliarySessionAdmission = Object.freeze({
+      run: <T>(sessionId: string, purpose: AuxiliarySessionPurpose, operation: () => T): T =>
+        this.auxiliarySessionAdmission.run({ sessionId, purpose }, operation),
+    })
+    ctx.provide('auxiliarySessionAdmission', auxiliarySessionAdmission)
     this.ownerId = normalizeOwnerId(config.ownerId)
     this.credentials = ctx.get('credentials')
     this.noCredentialIntentReady = this.credentials === undefined
@@ -1965,12 +1975,17 @@ export class BotService extends TypertRemoteService {
       const sessionKey = sessionId === undefined ? undefined : String(sessionId)
       const initiator = ctx.agents.currentInitiator()
       const initiatorKey = initiator === undefined ? undefined : String(initiator.id)
+      const auxiliaryAdmission = this.auxiliarySessionAdmission.getStore()
+      const admittedAuxiliary = auxiliaryAdmission !== undefined
+        && auxiliaryAdmission.sessionId === sessionKey
+        && auxiliaryAdmission.purpose === options.purpose
       const sharedInitiator = initiatorKey !== undefined
         && (this.sharedSessionIds.has(initiatorKey) || this.sharedSessionFailures.has(initiatorKey))
-      if (sharedInitiator && sessionKey !== initiatorKey) throw new Error(SHARED_BOT_LLM_REJECTION)
+      if (sharedInitiator && sessionKey !== initiatorKey && !admittedAuxiliary) throw new Error(SHARED_BOT_LLM_REJECTION)
       if (sessionKey !== undefined
         && this.sharedSessionIds.has(sessionKey)
-        && initiatorKey !== sessionKey) {
+        && initiatorKey !== sessionKey
+        && !admittedAuxiliary) {
         throw new Error(SHARED_BOT_LLM_REJECTION)
       }
       if (sessionId === undefined) return next()
@@ -6443,7 +6458,8 @@ export class BotService extends TypertRemoteService {
     let removeEnrollment: (() => Promise<void>) | undefined
     let removeShared: (() => Promise<void>) | undefined
     try {
-      service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, this.sharedHost(), {
+      const host = this.sharedHost()
+      service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, host, {
         membershipPollIntervalMs: this.sharedConfig.membershipPollIntervalMs,
       })
       const shared = service
@@ -6458,6 +6474,16 @@ export class BotService extends TypertRemoteService {
           this.ensureSharedScopeFence(agent)
         }
       }
+      const validPrivateSessionKeys = new Set<string>()
+      await Promise.all(bindings.map(async (binding) => {
+        try {
+          await host.validatePrivateSession(binding.sessionId)
+          validPrivateSessionKeys.add(String(binding.sessionId))
+        } catch (error: unknown) {
+          this.sharedSessionFailures.add(String(binding.sessionId))
+          this.ctx.logger.warn(`bots: refusing shared private Session ${String(binding.sessionId)}: ${String(error)}`)
+        }
+      }))
       // Private bindings are fenced synchronously before any other durable
       // discovery can await. Group bindings are fenced as soon as their
       // durable snapshot arrives, before the Bot roster is read.
@@ -6479,6 +6505,7 @@ export class BotService extends TypertRemoteService {
       const bots = (await this.listFromDomain({ includeHidden: true }, domain)).bots
       const botsById = new Map(bots.map(bot => [String(bot.id), bot]))
       for (const binding of bindings) {
+        if (!validPrivateSessionKeys.has(String(binding.sessionId))) continue
         const bot = botsById.get(String(binding.botId))
         if (bot === undefined) {
           this.sharedSessionFailures.add(String(binding.sessionId))
@@ -6670,7 +6697,12 @@ export class BotService extends TypertRemoteService {
       },
       inspectPrivateSession: async (sessionId, signal) => {
         const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+        this.assertSharedPrivateSessionMetadata(sessionId, inspection.meta)
         return { events: inspection.events }
+      },
+      validatePrivateSession: async (sessionId, signal) => {
+        const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+        this.assertSharedPrivateSessionMetadata(sessionId, inspection.meta)
       },
       flushPrivateSession: async (sessionId, signal) => {
         signal?.throwIfAborted()
@@ -6813,6 +6845,17 @@ export class BotService extends TypertRemoteService {
       throw new Error('shared Bot group Session does not use its isolated preset and directory')
     }
     return inspection
+  }
+
+  /** Reject a durable private binding whose Session header is not the isolated shared form. */
+  private assertSharedPrivateSessionMetadata(
+    sessionId: SessionId,
+    meta: { readonly cwd?: string; readonly agentPreset?: string },
+  ): void {
+    const expected = sharedBotSessionRequest(sessionId)
+    if (meta.cwd !== expected.cwd || meta.agentPreset !== expected.agentPreset) {
+      throw new Error('shared Bot private Session does not use its isolated preset and directory')
+    }
   }
 
   private async sharedGroupSessionMetadataIsValid(sessionId: SessionId): Promise<boolean> {
