@@ -2,7 +2,7 @@
 
 import type { Context } from '@yharness/cordis'
 import type { AgentHandle } from '@yharness/agent'
-import { MessageId } from '@yharness/llm'
+import { createUserMessage, freezeMessage, MessageId } from '@yharness/llm'
 import type {} from '@yharness/agent-default-model'
 import type {} from '../../../../agents/bots/src/collaboration.ts'
 import type { SessionEvent } from '@yharness/session'
@@ -89,6 +89,54 @@ export async function apply(ctx: Context): Promise<void> {
       content: [{ type: 'text', text: 'A group message remains queued after restart.' }],
     }],
   })
+  // Keep one tainted turn and one safe turn so peer inspection exercises the
+  // privacy projection on the assembled Bot Session.
+  targetSession.append('turn/start', { turn: 1 })
+  targetSession.append('step/start', { turn: 1, step: 1 })
+  targetSession.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: 'GROUP_ONLY_SECRET' }],
+    source: {
+      kind: 'bot-group-message',
+      groupId: BotGroupId('bot-group-privacy-snapshot'),
+      messageId: BotGroupMessageId('bot-group-privacy-message'),
+    },
+  }), { surfaceOp: 'append' })
+  targetSession.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: 'PRIVATE_SAME_SEGMENT' }],
+    source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  targetSession.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: freezeMessage({
+      id: MessageId('assistant-privacy-group'),
+      role: 'assistant',
+      content: [{ type: 'text', text: 'PRIVATE_GROUP_REPLY' }],
+      source: { kind: 'model', provider: 'snapshot', model: 'snapshot' },
+    }),
+    stream: [],
+  }, { surfaceOp: 'append' })
+  targetSession.append('step/end', { turn: 1, step: 1 })
+  targetSession.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  targetSession.append('turn/start', { turn: 2 })
+  targetSession.append('step/start', { turn: 2, step: 1 })
+  targetSession.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: 'SAFE_LATER_REQUEST' }],
+    source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  targetSession.append('assistant/message', {
+    turn: 2,
+    step: 1,
+    message: freezeMessage({
+      id: MessageId('assistant-privacy-safe'),
+      role: 'assistant',
+      content: [{ type: 'text', text: 'SAFE_LATER_REPLY' }],
+      source: { kind: 'model', provider: 'snapshot', model: 'snapshot' },
+    }),
+    stream: [],
+  }, { surfaceOp: 'append' })
+  targetSession.append('step/end', { turn: 2, step: 1 })
+  targetSession.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
   const sessionEvents = new Map<string, readonly SessionEvent[]>()
   for (const handle of handles) {
     const session = ctx.sessions.get(handle.agent.id)
