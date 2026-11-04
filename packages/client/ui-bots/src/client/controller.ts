@@ -53,6 +53,9 @@ import type {
   BotMemoryListValue,
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
+  BotSkillListValue,
+  BotSkillUpdateRequest,
+  BotSkillUpdateValue,
   BotView,
   BotShareInviteRequest,
   BotShareInviteValue,
@@ -80,7 +83,9 @@ import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
   BotGroupUpdate, BotProfileUpdate,
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
+  BotSkillManagerActions, BotSkillPolicy,
 } from './types.ts'
+import { BotSkillPolicyConflictError } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
 export interface BotWorkspaceRemote {
@@ -117,6 +122,8 @@ export interface BotWorkspaceRemote {
   setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
   listConnectedApps?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotConnectedAppsValue>>
   setConnectedAppAccess?: (request: BotConnectedAppAccessRequest) => Promise<RemoteResult<BotConnectedAppAccessValue>>
+  listSkills?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotSkillListValue>>
+  updateSkills?: (request: BotSkillUpdateRequest) => Promise<RemoteResult<BotSkillUpdateValue>>
 }
 
 /** Owner-facing shared-Bot roster and invite actions. */
@@ -200,6 +207,7 @@ export interface BotWorkspaceFace {
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly memoryManager?: BotMemoryManagerActions
+  readonly skillManager?: BotSkillManagerActions
   readonly retry: () => void
   /** Owner controls for sharing the selected Bot, when the Host mounts them. */
   readonly share?: BotShareActions
@@ -517,6 +525,11 @@ export class BotWorkspaceController {
         && this.remote.updateMemory !== undefined
         && this.remote.forgetMemory !== undefined
           ? { memoryManager: this.memoryManager() }
+          : {}
+      ),
+      ...(
+        this.remote.listSkills !== undefined && this.remote.updateSkills !== undefined
+          ? { skillManager: this.skillManager() }
           : {}
       ),
       retry: () => {
@@ -1593,6 +1606,56 @@ export class BotWorkspaceController {
     }
   }
 
+  private skillManager(): BotSkillManagerActions {
+    const listSkills = this.remote.listSkills
+    const updateSkills = this.remote.updateSkills
+    if (listSkills === undefined || updateSkills === undefined) {
+      throw new Error('Bot skill management is not mounted.')
+    }
+    const valueOf = (value: BotSkillListValue, id: string): {
+      readonly policy: BotSkillPolicy
+      readonly revision: number
+      readonly skills: BotSkillListValue['skills']
+    } => {
+      if (String(value.bot.id) !== id) throw new Error(this.unexpectedResponse())
+      return { policy: value.policy, revision: value.revision, skills: value.skills }
+    }
+    return {
+      list: async (botId) => {
+        const result = await listSkills({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return valueOf(result.value, botId)
+      },
+      update: async (botId, policy, expectedRevision) => {
+        const result = await updateSkills({
+          botId: brandString<BotIdType>(botId),
+          expectedRevision,
+          mode: policy.mode,
+          enabled: policy.enabled,
+          disabled: policy.disabled,
+        })
+        if (!result.ok) {
+          if (result.error.code === 'bot/skill-policy-conflict') {
+            throw new BotSkillPolicyConflictError(result.error.message)
+          }
+          throw new Error(result.error.message)
+        }
+        if (!this.disposed) {
+          const current = this.source.getSnapshot()
+          this.source.set({
+            ...current,
+            bots: current.bots.map(bot => bot.id === botId && bot.updatedAt <= result.value.bot.updatedAt
+              ? result.value.bot
+              : bot),
+            error: null,
+          })
+        }
+        if (String(result.value.bot.id) !== botId) throw new Error(this.unexpectedResponse())
+        return { policy: result.value.policy }
+      },
+    }
+  }
+
   private create(creation: BotCreation): Promise<void> {
     if (this.disposed) return Promise.resolve()
     if (this.pendingCreation !== undefined) return this.retryPendingCreate()
@@ -1716,6 +1779,7 @@ function requestFromBot(bot: BotView): BotCreateRequest {
     ...(bot.persona === undefined ? {} : { persona: bot.persona }),
     ...(bot.capabilities === undefined ? {} : { capabilities: bot.capabilities }),
     ...(bot.agentPreset === undefined ? {} : { agentPreset: bot.agentPreset }),
+    ...(bot.skillPolicy === undefined ? {} : { skillPolicy: bot.skillPolicy }),
   }
 }
 

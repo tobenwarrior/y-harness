@@ -91,6 +91,40 @@ export interface KvUnit {
   loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }>
 
   /**
+   * Read one record from the current medium state.
+   * @param table - Declared table name.
+   * @param key - Record key.
+   * @returns the current record, or `undefined` when absent or foreign.
+   */
+  getRecord?(table: string, key: string): Promise<unknown | undefined>
+
+  /**
+   * Apply one synchronous transform to the current record while holding the
+   * backend's cross-process write exclusion, then durably publish the result.
+   * The callback runs against the medium's current value, not an open-unit
+   * cache; a missing key returns `{ found: false }` without calling it.
+   * @param table - Declared table name.
+   * @param key - Record key.
+   * @param update - Pure transform run against the authoritative current value.
+   * @returns whether the key existed and, when it did, the committed value.
+   */
+  updateRecord?(
+    table: string,
+    key: string,
+    update: (current: unknown) => unknown,
+  ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }>
+
+  /**
+   * Insert one record only when the current medium has no value for the key,
+   * while holding the backend's cross-process write exclusion.
+   * @param table - Declared table name.
+   * @param key - Record key.
+   * @param value - Opaque JSON-serializable record.
+   * @returns `true` when inserted, `false` when another writer already owns the key.
+   */
+  insertRecord?(table: string, key: string, value: unknown): Promise<boolean>
+
+  /**
    * Upsert one record durably. Overwrite semantics: an existing key is replaced.
    * @param table - Declared table name.
    * @param key - Record key. In the `per-record` layout a key becomes a path

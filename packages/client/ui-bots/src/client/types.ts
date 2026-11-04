@@ -3,6 +3,8 @@ import type {
   BotAvatar as SharedBotAvatar,
   BotConnectedAppAccess as SharedBotConnectedAppAccess,
   BotIdentity as SharedBotIdentity,
+  BotSkillAccess as SharedBotSkillAccess,
+  BotSkillPolicy as SharedBotSkillPolicy,
   BotTemplateAvatar,
   BotTemplateCapability,
   BotTemplateLocalPermissions,
@@ -24,6 +26,12 @@ export type BotIdentity = SharedBotIdentity
 
 /** Connected app and the selected Bot's durable access decision. */
 export type BotConnectedAppAccess = SharedBotConnectedAppAccess
+
+/** Host-local skill metadata and the selected Bot's current grant. */
+export type BotSkillSummary = SharedBotSkillAccess
+
+/** Canonical host-local skill policy used by the Bot manager. */
+export type BotSkillPolicy = SharedBotSkillPolicy
 
 /** Live availability mapped from the Bot's retained Session. */
 export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
@@ -260,6 +268,38 @@ export interface BotMemoryManagerActions {
   readonly remove: (botId: string, memoryId: string) => Promise<void>
 }
 
+/** Metadata returned by one Bot's host-local skill catalog. */
+export interface BotSkillManagerValue {
+  /** Canonical policy currently stored for the Bot. */
+  readonly policy: BotSkillPolicy
+  /** Monotonic revision required for the next policy replacement. */
+  readonly revision: number
+  /** Available local skill metadata and the Bot's effective decisions. */
+  readonly skills: readonly BotSkillSummary[]
+}
+
+/** Error returned when another actor changed the selected Bot's skill policy. */
+export class BotSkillPolicyConflictError extends Error {
+  /** Stable discriminator for conflict handling across Client components. */
+  readonly code = 'bot/skill-policy-conflict' as const
+
+  /**
+   * @param message - Host-provided conflict description.
+   */
+  constructor(message: string) {
+    super(message)
+    this.name = 'BotSkillPolicyConflictError'
+  }
+}
+
+/** Bot-scoped host-local skill management actions. */
+export interface BotSkillManagerActions {
+  /** Read skill metadata and the current Bot policy. */
+  readonly list: (botId: string) => Promise<BotSkillManagerValue>
+  /** Replace the complete Bot policy. */
+  readonly update: (botId: string, policy: BotSkillPolicy, expectedRevision: number) => Promise<Pick<BotSkillManagerValue, 'policy'>>
+}
+
 /** Async avatar capabilities owned by the Client composition. */
 export interface BotAvatarEditorActions {
   /** Read whether the configured provider can generate an avatar now. */
@@ -332,4 +372,6 @@ export interface BotWorkspaceProps {
   readonly templates?: BotTemplateState | undefined
   /** Publish, revoke, preview, and import actions for reusable Bot templates. */
   readonly templateActions?: BotTemplateActions | undefined
+  /** Optional host-local skill manager; absent when the owner does not supply both Remote methods. */
+  readonly skillManager?: BotSkillManagerActions | undefined
 }

@@ -111,6 +111,21 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('setConnectedAppAccess') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>
 
 /**
+ * Read host-local skill metadata and one Bot's current discovery policy.
+ * Bodies, paths, provider handles, and credentials never cross this Remote.
+ * @param request - Bot id whose skill view should be projected.
+ * @returns the Bot view, canonical policy, and metadata-only skill rows.
+ */
+@Remote('listSkills') async listSkills(request: BotSkillListRequest): Promise<BotSkillListValue>
+
+/**
+ * Persist a canonical host-local skill policy for one Bot.
+ * @param request - Bot id and complete replacement policy.
+ * @returns the committed Bot view and canonical policy.
+ */
+@Remote('updateSkills') async updateSkills(request: BotSkillUpdateRequest): Promise<BotSkillUpdateValue>
+
+/**
  * List the durable Bot roster without activating cold Sessions.
  * @param request - Optional hidden-row inclusion for the restore surface.
  * @returns visible rows by default, with pinned rows first and creation time as the stable tie-breaker.

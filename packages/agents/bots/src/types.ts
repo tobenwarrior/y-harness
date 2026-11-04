@@ -212,6 +212,16 @@ export interface BotShareTranscriptEntry {
   readonly text: string
 }
 
+/** Per-Bot host-local skill discovery policy. */
+export interface BotSkillPolicy {
+  /** Whether the Bot receives every discovered skill or only the enabled names. */
+  readonly mode: 'all' | 'selected'
+  /** Skill names explicitly enabled when `mode` is `selected`. */
+  readonly enabled: readonly string[]
+  /** Skill names denied in either mode. */
+  readonly disabled: readonly string[]
+}
+
 /** Lifecycle of a durable Bot row while its backing Session is being adopted. */
 export type BotProvisioningState = 'provisioning' | 'active'
 
@@ -353,6 +363,10 @@ export interface BotRecord {
   readonly cwd: string
   /** Optional preset selected when the backing Session is created. */
   readonly agentPreset?: string | undefined
+  /** Optional host-local skill discovery policy; absent means all available skills. */
+  readonly skillPolicy?: BotSkillPolicy | undefined
+  /** Monotonic compare-and-swap revision for host-local skill policy updates. */
+  readonly skillPolicyRevision?: number | undefined
   /** Whether the row has completed Session provisioning. */
   readonly state: BotProvisioningState
   /** Creation time in Unix milliseconds. */
@@ -362,7 +376,7 @@ export interface BotRecord {
 }
 
 /** Browser-facing roster row enriched with live availability and no private fields. */
-export type BotView = Omit<BotRecord, 'ownerId' | 'eventRoutines'> & {
+export type BotView = Omit<BotRecord, 'ownerId' | 'eventRoutines' | 'skillPolicyRevision'> & {
   /** Current live Agent state; `offline` means the Session is cold, not deleted. */
   readonly availability: BotAvailability
   /** Whether the Bot is kept at the top of its roster view. */
@@ -387,6 +401,8 @@ export interface BotCreateRequest {
   readonly cwd?: string
   /** Optional Agent preset passed to Session creation. */
   readonly agentPreset?: string
+  /** Optional host-local skill discovery policy. */
+  readonly skillPolicy?: BotSkillPolicy
   /** Optional model-facing persona text. */
   readonly persona?: string
   /** Safe capability declarations retained as declarations, not permissions. */
@@ -567,6 +583,62 @@ export interface BotConnectedAppAccessValue {
   readonly app: BotConnectedAppAccess
 }
 
+/** One host-local skill visible to a Bot and its current grant decision. */
+export interface BotSkillAccess {
+  /** Stable kebab-case skill name. */
+  readonly name: string
+  /** Short description supplied by the local skill provider. */
+  readonly description: string
+  /** Optional provider guidance for deciding when to use the skill. */
+  readonly whenToUse?: string
+  /** Whether this Bot may discover and load the skill. */
+  readonly enabled: boolean
+  /** Whether the skill is currently available on this Host. */
+  readonly available: boolean
+}
+
+/** Request the host-local skills visible to one Bot. */
+export interface BotSkillListRequest {
+  /** Bot whose skill policy should be returned. */
+  readonly botId: BotId
+}
+
+/** Host-local skill catalog and current per-Bot policy. */
+export interface BotSkillListValue {
+  /** Bot row whose policy was read. */
+  readonly bot: BotView
+  /** Current canonical policy, defaulting to all for legacy rows. */
+  readonly policy: BotSkillPolicy
+  /** Monotonic revision required for the next policy replacement. */
+  readonly revision: number
+  /** Available local skills and their current decisions. */
+  readonly skills: readonly BotSkillAccess[]
+}
+
+/** Replace one Bot's host-local skill policy. */
+export interface BotSkillUpdateRequest {
+  /** Bot whose skill policy should change. */
+  readonly botId: BotId
+  /** Revision returned by the latest list; stale replacements are rejected. */
+  readonly expectedRevision: number
+  /** Whether the Bot receives every skill or only the enabled names. */
+  readonly mode: BotSkillPolicy['mode']
+  /** Skill names explicitly enabled in selected mode. */
+  readonly enabled: readonly string[]
+  /** Skill names denied in either mode. */
+  readonly disabled: readonly string[]
+}
+
+/** Result of a host-local skill policy update. */
+export interface BotSkillUpdateValue {
+  /** Updated Bot row. */
+  readonly bot: BotView
+  /** Canonical policy written for the Bot. */
+  readonly policy: BotSkillPolicy
+  /** Monotonic revision after the policy replacement. */
+  readonly revision: number
+}
+
 /** Browser-safe view of one active memory owned by a Bot. */
 export interface BotMemoryView {
   /** Stable identity used when editing or removing the memory. */
@@ -637,6 +709,14 @@ declare module '@yharness/typert-protocol' {
     'bot/avatar-missing': { readonly botId: BotId }
     /** The requested connected MCP app is not currently available. */
     'bot/app-not-found': { readonly botId: BotId; readonly appId: string }
+    /** The configured storage backend cannot fence Bot profile writers. */
+    'bot/profile-coordination-unavailable': { readonly botId?: BotId; readonly operation: string }
+    /** A Bot skill policy replacement was based on an older revision. */
+    'bot/skill-policy-conflict': {
+      readonly botId: BotId
+      readonly expectedRevision: number
+      readonly actualRevision: number
+    }
   }
 }
 

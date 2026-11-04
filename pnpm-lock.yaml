@@ -1197,6 +1197,9 @@ importers:
       '@yharness/schedule':
         specifier: workspace:*
         version: link:../../schedule/schedule
+      '@yharness/skill':
+        specifier: workspace:*
+        version: link:../../skill/skill
       '@yharness/storage':
         specifier: workspace:*
         version: link:../../storage/storage
@@ -13274,6 +13277,9 @@ importers:
 
   packages/storage/storage-json:
     dependencies:
+      '@yharness/atomic-write':
+        specifier: workspace:*
+        version: link:../../util/atomic-write
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -14542,6 +14548,13 @@ importers:
         version: link:../protocol
 
   packages/util/atomic-write:
+    dependencies:
+      '@yharness/node-addon-system':
+        specifier: workspace:~
+        version: link:../../native/system/packages/entry
+      koffi:
+        specifier: 3.1.1
+        version: 3.1.1
     devDependencies:
       '@yharness/cordis':
         specifier: workspace:~

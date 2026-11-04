@@ -43,6 +43,8 @@ export class MemoryMediaPool {
    * untouched after a durability failure.
    */
   failNextWrites = 0
+  /** Cross-backend update chains simulate the medium's writer exclusion. */
+  readonly updateChains = new Map<string, Promise<void>>()
 
   /** Consume one injected failure, throwing in a rejected write's place. */
   consumeInjectedFailure(): void {
@@ -82,6 +84,63 @@ class MemoryKvUnit implements KvUnit {
       tables[table] = Object.fromEntries(this.medium.tables.get(table) ?? [])
     }
     return { tables, global: this.medium.global }
+  }
+
+  async getRecord(table: string, key: string): Promise<unknown | undefined> {
+    this.assertOpen()
+    return this.medium.tables.get(table)?.get(key)
+  }
+
+  async updateRecord(
+    table: string,
+    key: string,
+    update: (current: unknown) => unknown,
+  ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
+    this.assertOpen()
+    const lockKey = `${this.descriptor.name}\0${table}\0${key}`
+    const previous = this.pool.updateChains.get(lockKey)
+    let release!: () => void
+    const current = new Promise<void>((resolve) => { release = resolve })
+    this.pool.updateChains.set(lockKey, current)
+    if (previous !== undefined) await previous
+    try {
+      const records = this.medium.tables.get(table)
+      const prior = records?.get(key)
+      if (prior === undefined) return { found: false }
+      const next = update(prior)
+      this.pool.consumeInjectedFailure()
+      records?.set(key, next)
+      this.promoteVersion()
+      return { found: true, value: next }
+    } finally {
+      release()
+      if (this.pool.updateChains.get(lockKey) === current) this.pool.updateChains.delete(lockKey)
+    }
+  }
+
+  async insertRecord(table: string, key: string, value: unknown): Promise<boolean> {
+    this.assertOpen()
+    const lockKey = `${this.descriptor.name}\0${table}\0${key}`
+    const previous = this.pool.updateChains.get(lockKey)
+    let release!: () => void
+    const current = new Promise<void>((resolve) => { release = resolve })
+    this.pool.updateChains.set(lockKey, current)
+    if (previous !== undefined) await previous
+    try {
+      let records = this.medium.tables.get(table)
+      if (records?.has(key)) return false
+      this.pool.consumeInjectedFailure()
+      if (records === undefined) {
+        records = new Map()
+        this.medium.tables.set(table, records)
+      }
+      records.set(key, value)
+      this.promoteVersion()
+      return true
+    } finally {
+      release()
+      if (this.pool.updateChains.get(lockKey) === current) this.pool.updateChains.delete(lockKey)
+    }
   }
 
   async putRecord(table: string, key: string, value: unknown): Promise<void> {

@@ -40,12 +40,23 @@ export interface DomainGlobal<G> {
  * be mutated in place — replace via `put`/`update`.
  */
 export interface KvTable<K extends string, V> {
+  /** Whether fresh reads, atomic updates, and atomic inserts are available. */
+  readonly supportsDurableCoordination: boolean
+
   /**
    * Read one record, synchronously from memory.
    * @param key - Record key.
    * @returns the record, or `undefined` when absent.
    */
   get(key: K): V | undefined
+
+  /**
+   * Read one record from the current durable medium state and parse it through
+   * the declaring table schema.
+   * @param key - Record key.
+   * @returns the current record, or `undefined` when absent.
+   */
+  getFresh(key: K): Promise<V | undefined>
 
   /**
    * Snapshot iterator over `[key, record]` pairs. A snapshot, not a live
@@ -81,12 +92,22 @@ export interface KvTable<K extends string, V> {
 
   /**
    * Atomic read-modify-write on the domain's write chain: `fn` sees the
-   * value current at its queue slot, so concurrent updates never interleave.
+   * schema-parsed value current at its queue slot, and its result is parsed
+   * before publication, so concurrent updates never interleave.
    * @param key - Record key; a missing key rejects with `missing-key`.
    * @param fn - Synchronous pure transform from current to next record.
    * @returns the stored next record.
    */
   update(key: K, fn: (current: V) => V): Promise<V>
+
+  /**
+   * Insert one record only when the key is absent at the backend's current
+   * medium state. The operation is queued and emits a put only when inserted.
+   * @param key - Record key.
+   * @param value - Full record to insert.
+   * @returns `true` when inserted, `false` when another writer already owns the key.
+   */
+  insert(key: K, value: V): Promise<boolean>
 }
 
 /** Global handle of a spec: typed when declared, `never` (inaccessible) when not. */
@@ -122,6 +143,8 @@ export interface Domain<S extends DomainSpec> {
 interface TableHost {
   readonly domainName: string
   readonly unit: KvUnit
+  /** Parse one durable record through its declaring table schema. */
+  parseRecord(table: string, key: string, value: unknown): unknown
   /** Queue one job on the domain's single write chain. */
   enqueue<T>(job: () => Promise<T>): Promise<T>
   /** Throw `closed` once the domain has fully closed (reads stay valid while draining). */
@@ -177,6 +200,13 @@ export class DomainImpl {
     const host: TableHost = {
       domainName: spec.name,
       unit,
+      parseRecord: (table, key, value) => {
+        const tableSpec = spec.tables[table]
+        if (tableSpec === undefined) {
+          throw new Error(`domain '${spec.name}' declares no table '${table}'`)
+        }
+        return parseTableRecord(spec.name, table, key, () => tableSpec.valueSchema.parse(value))
+      },
       enqueue: job => this.enqueue(job),
       assertReadable: () => { this.assertReadable() },
       emitChanged: (change) => { this.emitChanged(change) },
@@ -284,9 +314,24 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
     private readonly records: Map<string, unknown>,
   ) {}
 
+  get supportsDurableCoordination(): boolean {
+    return typeof this.host.unit.getRecord === 'function'
+      && typeof this.host.unit.updateRecord === 'function'
+      && typeof this.host.unit.insertRecord === 'function'
+  }
+
   get(key: K): V | undefined {
     this.host.assertReadable()
     return this.records.get(key) as V | undefined
+  }
+
+  getFresh(key: K): Promise<V | undefined> {
+    const getRecord = this.host.unit.getRecord
+    return getRecord === undefined
+      ? Promise.resolve(this.get(key))
+      : getRecord.call(this.host.unit, this.tableName, key).then(value => value === undefined
+        ? undefined
+        : this.host.parseRecord(this.tableName, key, value) as V)
   }
 
   entries(): IterableIterator<[K, V]> {
@@ -331,17 +376,52 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
 
   update(key: K, fn: (current: V) => V): Promise<V> {
     return this.host.enqueue(async () => {
-      if (!this.records.has(key)) {
+      const updateRecord = this.host.unit.updateRecord
+      if (updateRecord === undefined) {
+        if (!this.records.has(key)) {
+          throw new DomainError(
+            'missing-key',
+            `domain '${this.host.domainName}' table '${this.tableName}' has no record '${key}' to update`,
+          )
+        }
+        const next = fn(this.records.get(key) as V)
+        await this.host.unit.putRecord(this.tableName, key, next)
+        this.records.set(key, next)
+        this.emitPut(key, next)
+        return next
+      }
+      const result = await updateRecord.call(this.host.unit, this.tableName, key, (current) => {
+        const parsedCurrent = this.host.parseRecord(this.tableName, key, current) as V
+        return this.host.parseRecord(this.tableName, key, fn(parsedCurrent))
+      })
+      if (!result.found) {
         throw new DomainError(
           'missing-key',
           `domain '${this.host.domainName}' table '${this.tableName}' has no record '${key}' to update`,
         )
       }
-      const next = fn(this.records.get(key) as V)
-      await this.host.unit.putRecord(this.tableName, key, next)
+      const next = this.host.parseRecord(this.tableName, key, result.value) as V
       this.records.set(key, next)
       this.emitPut(key, next)
       return next
+    })
+  }
+
+  insert(key: K, value: V): Promise<boolean> {
+    return this.host.enqueue(async () => {
+      const insertRecord = this.host.unit.insertRecord
+      if (insertRecord === undefined) {
+        if (this.records.has(key)) return false
+        await this.host.unit.putRecord(this.tableName, key, value)
+        this.records.set(key, value)
+        this.emitPut(key, value)
+        return true
+      }
+      const inserted = await insertRecord.call(this.host.unit, this.tableName, key, value)
+      if (!inserted) return false
+      this.records.set(key, value)
+      this.emitPut(key, value)
+      return true
     })
   }
 
@@ -353,5 +433,18 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
       operation: 'put',
       value,
     })
+  }
+}
+
+/** Parse one fresh or atomically updated table record with its durable location. */
+function parseTableRecord<T>(domain: string, table: string, key: string, parse: () => T): T {
+  try {
+    return parse()
+  } catch (error) {
+    throw new DomainError(
+      'invalid-record',
+      `domain '${domain}': stored record '${key}' in table '${table}' does not match its schema`,
+      { detail: { table, key }, cause: error },
+    )
   }
 }
