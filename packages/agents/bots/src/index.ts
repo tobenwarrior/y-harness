@@ -903,7 +903,7 @@ function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: B
     const currentValue = current[field]
     const legacyValue = legacy[field]
     if (currentValue !== undefined && legacyValue !== undefined
-      && !(field === 'pendingMemoryUpdate' && currentValue === null)
+      && !((field === 'pendingMemoryUpdate' || field === 'group') && currentValue === null)
       && !profileValuesEqual(currentValue, legacyValue)) {
       throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
     }

@@ -7974,6 +7974,52 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('preserves a same-revision v3 group clear over a predecessor section', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Group clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const base = {
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      updatedAt: created.bot.updatedAt,
+    }
+    records.set(v2Key, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, group: 'Legacy section' } },
+      },
+    })
+    records.set(v3Key, {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, group: null } },
+      },
+    })
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id }] })
+      expect(records.get(v3Key)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 3, profiles: { [id]: { group: null } } },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
   it('preserves timed routines when a partial v3 profile merges a routine-era predecessor', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()
