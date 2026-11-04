@@ -1,13 +1,13 @@
 ---
 kind: upgrade-guide
-description: "Bot profile revision records move to a v2 credential successor when persona or specialty data is persisted."
+description: "Bot profile revision records use a compatible v2 successor for setup data and Bot routine projections."
 ---
 
 # Bot profile revisions use a v2 successor
 
 ## Change
 
-The Bot service now stores profile-revision snapshots containing persona and specialty declarations under `agent-bots/profile-revisions-v2`. A new Host migrates the released `agent-bots/profile-revisions` record on first read and keeps the v1 record unchanged. Released Hosts cannot interpret the v2 snapshot or the new Bot profile fields, so mixed-version access to one Bot store is unsupported after the v2 writer starts.
+The Bot service stores profile-revision snapshots under `agent-bots/profile-revisions-v2`. The v2 snapshot is a compatible superset: it retains the released top-level persona and capability fields, and may add a complete setup roster or a bounded timed-routine projection. A new Host migrates the released `agent-bots/profile-revisions` record on first read and keeps the v1 record unchanged. If a v2 routine projection predates the setup roster, one serialized convergence pass copies only fields that are absent from that incomplete snapshot; a v2 roster and explicit `null` clears remain authoritative. Released Hosts cannot interpret the v2 snapshot or the new Bot profile fields, so mixed-version access to one Bot store is unsupported after the v2 writer starts.
 
 ## Migration
 

@@ -23,7 +23,7 @@ import type {
 } from '@yharness/tools'
 import { PERSONA_PREFIX_SECTION } from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
-import { ScheduleId, ScheduleInputError, scheduleTitle, scheduleView } from '@yharness/schedule'
+import { ScheduleId, ScheduleInputError, decodeScheduleRecord, scheduleTitle, scheduleView } from '@yharness/schedule'
 import { snapshotJsonValue, type JsonValue } from '@yharness/util-values'
 import type {
   AtInput,
@@ -534,6 +534,8 @@ const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
 const BOT_PROFILE_REVISION_RECORD_V1_KEY = credentialKey('agent-bots', 'profile-revisions')
 const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
+const BOT_PROFILE_REVISION_RECORD_VERSION = 2 as const
+const MAX_BOT_TIMED_ROUTINES = 256
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
 const MAX_BOT_MESSAGE_DELIVERIES = 4_096
@@ -565,6 +567,39 @@ const botEventRoutineSnapshotSchema = zod.custom<readonly BotEventRoutine[]>(
   { message: 'Bot event routines are invalid' },
 )
 const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const botProfileRosterSchema = zod.object({
+  id: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  sessionId: zod.string().regex(/^bot-session-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  ownerId: zod.string().min(1).max(128).refine(value => value.trim() === value),
+  persona: zod.string().max(4000).refine(value => value.trim() === value).optional(),
+  capabilities: zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).readonly().optional(),
+  cwd: zod.string().min(1).refine(value => value.trim() === value),
+  agentPreset: zod.string().min(1).refine(value => value.trim() === value).optional(),
+  state: zod.enum(['provisioning', 'active']),
+  createdAt: zod.number().int().nonnegative(),
+}).strict()
+const botScheduleRecordSnapshotSchema = zod.custom<ScheduleRecord>(
+  (value) => {
+    try {
+      decodeScheduleRecord(value)
+      return true
+    } catch {
+      return false
+    }
+  },
+  { message: 'Timed routine record is invalid' },
+)
+const botScheduleDeliverySnapshotSchema = zod.object({
+  scheduledAt: zod.string().min(1),
+  deliveredAt: zod.string().min(1),
+  messageId: zod.string().min(1).transform(MessageId),
+}).strict()
+const botTimedRoutineSnapshotSchema = zod.object({
+  record: botScheduleRecordSnapshotSchema,
+  sessionId: zod.string().min(1),
+  status: zod.enum(['active', 'paused', 'inactive']),
+  lastDelivery: botScheduleDeliverySnapshotSchema.optional(),
+}).strict()
 const botCapabilitySnapshotSchema = zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).refine(
   values => new Set(values).size === values.length,
   { message: 'Bot capabilities must be unique' },
@@ -599,10 +634,14 @@ const botProfileSnapshotV1Schema = zod.object({
 }).strict()
 const botProfileSnapshotSchema = zod.object({
   ...botProfileSnapshotBaseShape,
+  roster: botProfileRosterSchema.optional(),
   /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
   persona: zod.string().max(4000).nullable().optional(),
   /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
   capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+  timedRoutines: zod.array(botTimedRoutineSnapshotSchema).max(MAX_BOT_TIMED_ROUTINES).readonly().optional(),
+  /** Monotonic fence for passive Schedule catalog reconciliation. */
+  timedRoutinesUpdatedAt: zod.number().int().nonnegative().optional(),
 }).strict()
 const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
@@ -615,7 +654,7 @@ const botProfileRevisionRecordV1Schema = zod.object({
   pending: botProfilePendingSchema.optional(),
 }).strict()
 const botProfileRevisionRecordSchema = zod.object({
-  version: zod.literal(2),
+  version: zod.literal(BOT_PROFILE_REVISION_RECORD_VERSION),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
   pending: botProfilePendingSchema.optional(),
@@ -629,10 +668,139 @@ const botMessageDeliveryRecordSchema = zod.object({
 }).strict()
 
 interface BotProfileRevisionState {
-  readonly version: 2
+  readonly version: typeof BOT_PROFILE_REVISION_RECORD_VERSION
   readonly revisions: Record<string, number>
   readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
   readonly pending?: zod.infer<typeof botProfilePendingSchema>
+}
+
+type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
+
+function profileValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/** Reject two same-generation profile snapshots that make different claims. */
+function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: BotProfileSnapshot): void {
+  const fields: readonly (keyof BotProfileSnapshot)[] = [
+    'name', 'description', 'identity', 'accent', 'avatar', 'connectedAppIds',
+    'connectedAppDenyIds', 'eventRoutines', 'pinned', 'hidden', 'group', 'updatedAt',
+  ]
+  for (const field of fields) {
+    const currentValue = current[field]
+    const legacyValue = legacy[field]
+    if (currentValue !== undefined && legacyValue !== undefined
+      && currentValue !== null && legacyValue !== null
+      && !profileValuesEqual(currentValue, legacyValue)) {
+      throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
+    }
+  }
+  if (current.persona !== undefined && legacy.persona !== undefined
+    && current.persona !== null && legacy.persona !== null && current.persona !== legacy.persona) {
+    throw new Error('Bot profile snapshots disagree on persona')
+  }
+  if (current.capabilities !== undefined && legacy.capabilities !== undefined
+    && current.capabilities !== null && legacy.capabilities !== null
+    && !profileValuesEqual(current.capabilities, legacy.capabilities)) {
+    throw new Error('Bot profile snapshots disagree on capabilities')
+  }
+}
+
+/** Merge an incomplete routine-era snapshot without allowing the predecessor to undo clears. */
+function mergeProfileSnapshots(
+  current: BotProfileSnapshot,
+  legacy: BotProfileSnapshot,
+  rejectConflicts: boolean,
+): { readonly snapshot: BotProfileSnapshot; readonly changed: boolean } {
+  if (rejectConflicts) assertCompatibleProfileSnapshots(current, legacy)
+  const canUseLegacySetupFields = current.roster === undefined
+  const changed = (current.description === undefined && canUseLegacySetupFields && legacy.description !== undefined)
+    || (current.persona === undefined && canUseLegacySetupFields && legacy.persona !== undefined)
+    || (current.capabilities === undefined && canUseLegacySetupFields && legacy.capabilities !== undefined)
+    || (current.avatar === undefined && canUseLegacySetupFields && legacy.avatar !== undefined)
+    || (current.connectedAppIds === undefined && canUseLegacySetupFields && legacy.connectedAppIds !== undefined)
+    || (current.connectedAppDenyIds === undefined && canUseLegacySetupFields && legacy.connectedAppDenyIds !== undefined)
+    || (current.eventRoutines === undefined && canUseLegacySetupFields && legacy.eventRoutines !== undefined)
+    || (current.pendingMemoryUpdate === undefined && canUseLegacySetupFields && legacy.pendingMemoryUpdate !== undefined)
+    || (current.pinned === undefined && canUseLegacySetupFields && legacy.pinned !== undefined)
+    || (current.hidden === undefined && canUseLegacySetupFields && legacy.hidden !== undefined)
+    || (current.group === undefined && canUseLegacySetupFields && legacy.group !== undefined)
+  return {
+    snapshot: {
+      ...legacy,
+      ...current,
+      ...(current.description === undefined && canUseLegacySetupFields && legacy.description !== undefined
+        ? { description: legacy.description } : {}),
+      ...(current.persona === undefined && canUseLegacySetupFields && legacy.persona !== undefined ? { persona: legacy.persona } : {}),
+      ...(current.capabilities === undefined && canUseLegacySetupFields && legacy.capabilities !== undefined
+        ? { capabilities: legacy.capabilities } : {}),
+      ...(current.avatar === undefined && canUseLegacySetupFields && legacy.avatar !== undefined
+        ? { avatar: legacy.avatar } : {}),
+      ...(current.connectedAppIds === undefined && canUseLegacySetupFields && legacy.connectedAppIds !== undefined
+        ? { connectedAppIds: legacy.connectedAppIds } : {}),
+      ...(current.connectedAppDenyIds === undefined && canUseLegacySetupFields && legacy.connectedAppDenyIds !== undefined
+        ? { connectedAppDenyIds: legacy.connectedAppDenyIds } : {}),
+      ...(current.eventRoutines === undefined && canUseLegacySetupFields && legacy.eventRoutines !== undefined
+        ? { eventRoutines: legacy.eventRoutines } : {}),
+      ...(current.pendingMemoryUpdate === undefined && canUseLegacySetupFields && legacy.pendingMemoryUpdate !== undefined
+        ? { pendingMemoryUpdate: legacy.pendingMemoryUpdate } : {}),
+      ...(current.pinned === undefined && canUseLegacySetupFields && legacy.pinned !== undefined
+        ? { pinned: legacy.pinned } : {}),
+      ...(current.hidden === undefined && canUseLegacySetupFields && legacy.hidden !== undefined
+        ? { hidden: legacy.hidden } : {}),
+      ...(current.group === undefined && canUseLegacySetupFields && legacy.group !== undefined
+        ? { group: legacy.group } : {}),
+    },
+    changed,
+  }
+}
+
+/** Converge the immutable released state into an incomplete v2 record exactly once. */
+function mergeProfileRevisionStates(
+  current: BotProfileRevisionState | undefined,
+  legacy: BotProfileRevisionState | undefined,
+): { readonly state: BotProfileRevisionState; readonly changed: boolean } {
+  if (current === undefined) {
+    return { state: legacy ?? emptyProfileRevisionState(), changed: legacy !== undefined }
+  }
+  if (legacy === undefined) return { state: current, changed: false }
+  let changed = false
+  const revisions = { ...current.revisions }
+  for (const [id, revision] of Object.entries(legacy.revisions)) {
+    if (revisions[id] === undefined) {
+      revisions[id] = revision
+      changed = true
+    }
+  }
+  const profiles = { ...current.profiles }
+  for (const [id, legacyProfile] of Object.entries(legacy.profiles)) {
+    const currentProfile = profiles[id]
+    if (currentProfile === undefined) {
+      profiles[id] = legacyProfile
+      changed = true
+      continue
+    }
+    const merged = mergeProfileSnapshots(
+      currentProfile,
+      legacyProfile,
+      current.revisions[id] !== undefined && current.revisions[id] === legacy.revisions[id],
+    )
+    if (merged.changed) profiles[id] = merged.snapshot
+    changed ||= merged.changed
+  }
+  const pending = current.pending
+  if (pending !== undefined && legacy.pending !== undefined && !profileValuesEqual(pending, legacy.pending)) {
+    throw new Error('Bot profile revision records contain conflicting pending transactions')
+  }
+  return {
+    state: {
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
+      revisions,
+      profiles,
+      ...(pending === undefined ? {} : { pending }),
+    },
+    changed,
+  }
 }
 
 interface BotMessageDeliveryState {
@@ -932,7 +1100,7 @@ function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRev
   const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
@@ -945,7 +1113,7 @@ function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfi
   const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
@@ -956,7 +1124,7 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
   return {
     kind: 'grant',
     payload: {
-      version: 2,
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
       revisions: state.revisions,
       ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
       ...(state.pending === undefined ? {} : { pending: state.pending }),
@@ -966,6 +1134,17 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
 
 function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfileSnapshotSchema> {
   return {
+    roster: {
+      id: String(record.id),
+      sessionId: String(record.sessionId),
+      ownerId: record.ownerId,
+      ...(record.persona === undefined ? {} : { persona: record.persona }),
+      ...(record.capabilities === undefined ? {} : { capabilities: record.capabilities }),
+      cwd: record.cwd,
+      ...(record.agentPreset === undefined ? {} : { agentPreset: record.agentPreset }),
+      state: record.state,
+      createdAt: record.createdAt,
+    },
     name: record.name,
     ...(record.description === undefined ? {} : { description: record.description }),
     persona: record.persona ?? null,
@@ -999,16 +1178,25 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
   void currentPersona
   void currentCapabilities
   void ignoredAvatar
+  const profilePersona = profile.persona === undefined
+    ? profile.roster === undefined ? currentPersona : profile.roster.persona
+    : profile.persona
+  const profileCapabilities = profile.capabilities === undefined
+    ? profile.roster === undefined ? currentCapabilities : profile.roster.capabilities
+    : profile.capabilities
   return {
     ...withoutOptionalProfile,
+    ...(profile.roster === undefined ? {} : {
+      ownerId: profile.roster.ownerId,
+      cwd: profile.roster.cwd,
+      agentPreset: profile.roster.agentPreset,
+      state: profile.roster.state,
+      createdAt: profile.roster.createdAt,
+    }),
     name: profile.name,
     ...(profile.description === undefined ? {} : { description: profile.description }),
-    ...(profile.persona === undefined
-      ? currentPersona === undefined ? {} : { persona: currentPersona }
-      : profile.persona === null ? {} : { persona: profile.persona }),
-    ...(profile.capabilities === undefined
-      ? currentCapabilities === undefined ? {} : { capabilities: currentCapabilities }
-      : profile.capabilities === null ? {} : { capabilities: profile.capabilities }),
+    ...(profilePersona === undefined || profilePersona === null ? {} : { persona: profilePersona }),
+    ...(profileCapabilities === undefined || profileCapabilities === null ? {} : { capabilities: profileCapabilities }),
     identity: profile.identity,
     accent: profile.accent,
     ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
@@ -1028,10 +1216,20 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
 }
 
 function commitProfileState(state: BotProfileRevisionState, record: BotRecord): BotProfileRevisionState {
+  const previous = state.profiles[String(record.id)]
+  const snapshot = profileSnapshotOf(record)
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...state.revisions, [String(record.id)]: record.updatedAt },
-    profiles: { ...state.profiles, [String(record.id)]: profileSnapshotOf(record) },
+    profiles: {
+      ...state.profiles,
+      [String(record.id)]: {
+        ...snapshot,
+        ...(previous?.timedRoutines === undefined ? {} : { timedRoutines: previous.timedRoutines }),
+        ...(previous?.timedRoutinesUpdatedAt === undefined
+          ? {} : { timedRoutinesUpdatedAt: previous.timedRoutinesUpdatedAt }),
+      },
+    },
   }
 }
 
@@ -2407,7 +2605,11 @@ export class BotService extends TypertRemoteService {
     let nextToCommit: BotStoredRecord | undefined
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+      const merged = mergeProfileRevisionStates(
+        stored === undefined ? undefined : profileRevisionRecordOf(stored),
+        legacyProfileState,
+      )
+      let state = merged.state
       if (state.pending !== undefined) {
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -5817,9 +6019,12 @@ export class BotService extends TypertRemoteService {
     }
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
-      const state = record === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(record)
-      const migrating = record === undefined && legacyProfileState !== undefined
-      if (state.pending === undefined) return migrating ? profileRevisionRecordOfState(state) : undefined
+      const merged = mergeProfileRevisionStates(
+        record === undefined ? undefined : profileRevisionRecordOf(record),
+        legacyProfileState,
+      )
+      const state = merged.state
+      if (state.pending === undefined) return merged.changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
       await bots.put(state.pending.record.id, state.pending.record)
       this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -5830,7 +6035,6 @@ export class BotService extends TypertRemoteService {
 
   /** Read the released profile-record generation without mutating or deleting it. */
   private async readLegacyProfileRevisionState(credentials: CredentialProvider): Promise<BotProfileRevisionState | undefined> {
-    if (await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_KEY) !== undefined) return undefined
     const record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
     return record === undefined ? undefined : profileRevisionStateFromLegacy(record)
   }

@@ -4396,6 +4396,181 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('converges routine and setup fields into the v2 successor without rewriting v1', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Routine migration', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Keep the setup persona.',
+            capabilities: ['research'],
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const routineProjection = {
+      record: {
+        id: 'schedule-migration',
+        kind: 'every',
+        title: 'Migration routine',
+        prompt: 'Check the migration.',
+        everySeconds: 3_600,
+        scheduledAt: '2099-01-01T00:00:00.000Z',
+      },
+      sessionId: String(created.bot.sessionId),
+      status: 'active',
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            timedRoutines: [routineProjection],
+            timedRoutinesUpdatedAt: created.bot.updatedAt,
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          persona: 'Keep the setup persona.',
+          capabilities: ['research'],
+        }],
+      })
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Routine migration renamed' }))
+        .resolves.toMatchObject({ bot: { name: 'Routine migration renamed' } })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 2,
+          profiles: {
+            [id]: {
+              persona: 'Keep the setup persona.',
+              capabilities: ['research'],
+              timedRoutines: [routineProjection],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('keeps explicit v2 clears ahead of legacy and roster fallbacks', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Explicit clear migration',
+      persona: 'Remove this setup persona.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Legacy setup persona.',
+            capabilities: ['research'],
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: null,
+            capabilities: null,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            roster: {
+              id,
+              sessionId: String(created.bot.sessionId),
+              ownerId: 'local-owner',
+              persona: 'Roster fallback persona.',
+              capabilities: ['chat', 'research'],
+              cwd: created.bot.cwd,
+              state: created.bot.state,
+              createdAt: created.bot.createdAt,
+            },
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const listed = await second.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('persona')
+      expect(listed.bots[0]).not.toHaveProperty('capabilities')
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 2, profiles: { [id]: { persona: null, capabilities: null } } },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
   it('rejects a stale profile edit without overwriting a newer Bot revision', async () => {
     const h = await harness()
     try {
