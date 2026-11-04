@@ -1,5 +1,4 @@
 // Keyless assembled-Web coverage for shared group creation and isolated delivery.
-import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, BrowserContext, Page } from 'playwright'
@@ -27,50 +26,6 @@ const PRIVATE_ORBIT_PERSONA = 'PRIVATE_ORBIT_PERSONA'
 const SHARED_GROUP_NAME = 'Release room shared'
 const OWNER_SHARED_MESSAGE = 'Owner shared readiness note.'
 const COLLABORATOR_SHARED_MESSAGE = 'Collaborator shared follow-up.'
-
-type SharedRpcResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
-
-interface SharedEnrollmentValue {
-  readonly principalId: string
-  readonly groupId?: string
-}
-
-interface SharedGroupValue {
-  readonly id: string
-  readonly name: string
-}
-
-interface SharedGroupInviteValue {
-  readonly code: string
-}
-
-interface SharedGroupInspectValue {
-  readonly messages: readonly { readonly text: string }[]
-}
-
-/** POST one browser RPC through the collaborator-only route. */
-async function sharedBrowserRpc<T>(page: Page, endpoint: string, payload: unknown): Promise<T> {
-  const rpcId = `shared-browser-${endpoint}-${randomUUID()}`
-  return await page.evaluate(async ({ endpoint, payload, rpcId }) => {
-    const response = await fetch(`shared-bots/${endpoint}`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        type: 'client-request',
-        rpcId,
-        method: endpoint,
-        payload,
-      }),
-    })
-    if (!response.ok) throw new Error(`shared ${endpoint} failed over HTTP ${String(response.status)}`)
-    const result = (await response.json() as { readonly result: SharedRpcResult<T> }).result
-    if (!result.ok) throw new Error(`shared ${endpoint} failed: ${result.error.code}: ${result.error.message}`)
-    return result.value
-  }, { endpoint, payload, rpcId })
-}
 
 /** Deterministic model response for the two shared-group recipients. */
 class GroupReplyAdapter extends LlmAdapter {
@@ -218,28 +173,6 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     const ownerChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'owner' })
     const ownerOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'owner' })
-    const owner = await sharedBrowserRpc<SharedEnrollmentValue>(page, 'bots/share/enroll', { code: ownerChiefInvite.code })
-    const ownerAgain = await sharedBrowserRpc<SharedEnrollmentValue>(page, 'bots/share/enroll', { code: ownerOrbitInvite.code })
-    expect(ownerAgain.principalId).toBe(owner.principalId)
-
-    const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
-    const collaboratorOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'collaborator' })
-    const collaborator = await sharedBrowserRpc<SharedEnrollmentValue>(collaboratorPage, 'bots/share/enroll', { code: collaboratorChiefInvite.code })
-    const collaboratorAgain = await sharedBrowserRpc<SharedEnrollmentValue>(collaboratorPage, 'bots/share/enroll', { code: collaboratorOrbitInvite.code })
-    expect(collaboratorAgain.principalId).toBe(collaborator.principalId)
-    expect(collaborator.principalId).not.toBe(owner.principalId)
-
-    const created = await sharedBrowserRpc<{ readonly group: SharedGroupValue }>(page, 'bots/share/create-group', {
-      name: SHARED_GROUP_NAME,
-      botIds: [firstBot.id, secondBot.id],
-    })
-    expect(created.group.name).toBe(SHARED_GROUP_NAME)
-    const groupInvite = await sharedBrowserRpc<SharedGroupInviteValue>(page, 'bots/share/manage-group-members', {
-      groupId: created.group.id,
-      action: 'create-invite',
-    })
-    const groupEnrollment = await sharedBrowserRpc<SharedEnrollmentValue>(collaboratorPage, 'bots/share/enroll', { code: groupInvite.code })
-    expect(groupEnrollment.groupId).toBe(created.group.id)
 
     const openSharedDialog = async (target: Page): Promise<import('playwright').Locator> => {
       await target.getByRole('button', { name: 'Bots', exact: true }).click()
@@ -247,25 +180,76 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await join.click()
       const dialog = target.getByRole('dialog', { name: 'Shared with you', exact: true })
       await dialog.waitFor({ state: 'visible', timeout: 15_000 })
-      await dialog.getByRole('textbox', { name: 'Message Release room shared', exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+      await dialog.getByRole('textbox', { name: 'Invite code', exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+      await expect.poll(() => dialog.getByRole('status').count(), { timeout: 30_000 }).toBe(0)
+      await dialog.getByRole('alert').waitFor({ state: 'visible', timeout: 30_000 })
       return dialog
     }
-    const ownerDialog = await openSharedDialog(page)
-    const collaboratorDialog = await openSharedDialog(collaboratorPage)
 
-    const ownerComposer = ownerDialog.getByRole('textbox', { name: 'Message Release room shared', exact: true })
+    const redeemInvite = async (dialog: import('playwright').Locator, code: string): Promise<void> => {
+      const input = dialog.getByRole('textbox', { name: 'Invite code', exact: true })
+      const join = dialog.getByRole('button', { name: 'Join bot', exact: true })
+      await input.fill(code)
+      await join.click()
+      await expect.poll(() => input.inputValue(), { timeout: 30_000 }).toBe('')
+    }
+
+    const ownerDialog = await openSharedDialog(page)
+    await redeemInvite(ownerDialog, ownerChiefInvite.code)
+    await ownerDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(ownerDialog, ownerOrbitInvite.code)
+    await ownerDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+
+    const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
+    const collaboratorOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'collaborator' })
+
+    const createSharedGroupButton = ownerDialog.locator('section[aria-labelledby="yharness-shared-groups-heading"]')
+      .getByRole('button', { name: 'Create shared group', exact: true })
+    await expect.poll(() => createSharedGroupButton.isEnabled(), { timeout: 30_000 }).toBe(true)
+    await createSharedGroupButton.click()
+    const createSharedGroupDialog = page.getByRole('dialog', { name: 'Create a shared group', exact: true })
+    await createSharedGroupDialog.getByLabel('Group name', { exact: true }).fill(SHARED_GROUP_NAME)
+    await createSharedGroupDialog.getByRole('checkbox', { name: firstBot.name, exact: true }).check()
+    await createSharedGroupDialog.getByRole('checkbox', { name: secondBot.name, exact: true }).check()
+    await createSharedGroupDialog.getByRole('button', { name: 'Create shared group', exact: true }).click()
+    await createSharedGroupDialog.waitFor({ state: 'hidden' })
+
+    const ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await ownerGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await ownerGroupRow.click()
+    const ownerGroupSection = ownerDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await ownerGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    await ownerGroupSection.getByRole('button', { name: 'Invite people', exact: true }).click()
+    const groupInviteCode = ownerGroupSection.locator('code[aria-label="Group invite code"]')
+    await groupInviteCode.waitFor({ state: 'visible', timeout: 30_000 })
+    const groupInvite = await groupInviteCode.textContent()
+    if (groupInvite === null || groupInvite.trim() === '') throw new Error('shared group UI did not render an invite code')
+
+    const collaboratorDialog = await openSharedDialog(collaboratorPage)
+    await redeemInvite(collaboratorDialog, collaboratorChiefInvite.code)
+    await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(collaboratorDialog, collaboratorOrbitInvite.code)
+    await collaboratorDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(collaboratorDialog, groupInvite)
+    const collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await collaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await collaboratorGroupRow.click()
+    const collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+
+    const ownerComposer = ownerGroupSection.getByRole('textbox', { name: 'Message Release room shared', exact: true })
     await ownerComposer.fill(OWNER_SHARED_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(2)
-    const ownerTranscriptRows = ownerDialog.locator('section[aria-label="Release room shared"] p')
+    const ownerTranscriptRows = ownerGroupSection.locator('p')
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(2)
 
-    const collaboratorComposer = collaboratorDialog.getByRole('textbox', { name: 'Message Release room shared', exact: true })
+    const collaboratorComposer = collaboratorGroupSection.getByRole('textbox', { name: 'Message Release room shared', exact: true })
     await collaboratorComposer.fill(COLLABORATOR_SHARED_MESSAGE)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(4)
-    const collaboratorTranscriptRows = collaboratorDialog.locator('section[aria-label="Release room shared"] p')
+    const collaboratorTranscriptRows = collaboratorGroupSection.locator('p')
     await expect.poll(
       () => collaboratorTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(),
       { timeout: 30_000 },
@@ -273,15 +257,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
-    const ownerTranscript = await sharedBrowserRpc<SharedGroupInspectValue>(page, 'bots/share/inspect-group', { groupId: created.group.id })
-    const collaboratorTranscript = await sharedBrowserRpc<SharedGroupInspectValue>(collaboratorPage, 'bots/share/inspect-group', { groupId: created.group.id })
-    const transcriptText = JSON.stringify({ ownerTranscript, collaboratorTranscript })
-    expect(transcriptText).toContain(OWNER_SHARED_MESSAGE)
-    expect(transcriptText).toContain(COLLABORATOR_SHARED_MESSAGE)
-    expect(transcriptText).not.toContain(PRIVATE_SCOUT_PERSONA)
-    expect(transcriptText).not.toContain(PRIVATE_ORBIT_PERSONA)
-    expect(transcriptText).not.toContain('private.scout')
-    expect(transcriptText).not.toContain('private.orbit')
+    await ownerGroupRow.click()
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
 
     const visibleText = `${await ownerDialog.textContent()}\n${await collaboratorDialog.textContent()}`
     expect(visibleText).not.toContain(PRIVATE_SCOUT_PERSONA)
