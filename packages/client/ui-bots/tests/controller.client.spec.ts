@@ -1443,9 +1443,10 @@ describe('BotWorkspaceController', () => {
     }
     const remote = remoteFixture([first, second])
     remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
-    remote.inspectGroup = vi.fn(async () => remote.inspectGroup!.mock.calls.length === 1
+    const inspectGroup = vi.fn(async () => inspectGroup.mock.calls.length === 1
       ? { ok: true as const, value: initial }
       : { ok: true as const, value: committed })
+    remote.inspectGroup = inspectGroup
     remote.sendGroupMessage = vi.fn(async request => ({ ok: true as const, value: {
       messageId: request.messageId!, status: 'partial' as const,
       deliveries: [{ botId: first.id, status: 'accepted' as const }, { botId: second.id, status: 'failed' as const, error: 'offline' }],

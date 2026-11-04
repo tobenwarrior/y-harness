@@ -14,7 +14,9 @@ import type { BotSummary } from '../src/client/types.ts'
 afterEach(cleanup)
 
 const t = makeTranslate(en)
-const bot: BotSummary = {
+type CompleteBotSummary = BotSummary & Required<Pick<BotSummary, 'identity' | 'accent'>>
+
+const bot: CompleteBotSummary = {
   id: 'bot-chief',
   name: 'Chief of staff',
   description: 'Coordinates the work',
@@ -23,7 +25,7 @@ const bot: BotSummary = {
   identity: 'agent',
   accent: 'amber',
 }
-const analystBot: BotSummary = {
+const analystBot: CompleteBotSummary = {
   ...bot,
   id: 'bot-analyst',
   name: 'Analyst',
