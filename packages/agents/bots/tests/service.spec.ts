@@ -4046,7 +4046,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('keeps a crash-before-flush recipient fence busy when no durable Session receipt exists', async () => {
+  it('recovers a crash-before-flush fence from a fresh Host after explicit quiescence', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
     const created = await seed.service.create({ name: 'Recipient crash before flush', cwd: '/tmp' })
@@ -4112,12 +4112,37 @@ describe('durable Bot roster', () => {
       expect(records.get(deliveryKey)).toMatchObject({
         payload: { messages: [{ status: 'pending', admissionToken: token }] },
       })
+      await expect(h.service.recoverSharedGroupDelivery({
+        groupId,
+        botId: created.bot.id,
+        sessionId: String(sessionId),
+        messageId,
+        confirmQuiescent: false,
+      } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: created.bot.id,
+        sessionId,
+        messageId,
+      })).resolves.toBe('released')
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient crash before flush',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Retry after explicit operator recovery.',
+        messageId,
+      })).resolves.toBe('accepted')
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(records.get(deliveryKey)).toMatchObject({
+        payload: { messages: [{ status: 'accepted' }] },
+      })
     } finally {
       await close(h.ctx)
     }
   })
 
-  it('releases and retries a crash-before-flush fence after a new Host proves the old process exited', async () => {
+  it('does not use PID evidence for automatic recovery and supports explicit stale-lock recovery', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
     const created = await seed.service.create({ name: 'Recipient dead-owner recovery', cwd: '/tmp' })
@@ -4184,6 +4209,21 @@ describe('durable Bot roster', () => {
         targetBotId: created.bot.id,
         sessionId,
         text: 'Retry after the old Host exited before flush.',
+        messageId,
+      })).resolves.toMatchObject({ kind: 'busy', recovery: 'operator-required' })
+      expect(processKill).not.toHaveBeenCalledWith(deadPid, 0)
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: created.bot.id,
+        sessionId,
+        messageId,
+      })).resolves.toBe('released')
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient dead-owner recovery',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Retry after explicit stale-lock recovery.',
         messageId,
       })).resolves.toBe('accepted')
       expect(h.followups[0]).toHaveBeenCalledTimes(1)
@@ -4395,6 +4435,16 @@ describe('durable Bot roster', () => {
         false,
         { connection, inspectSharedSessions: true },
       )
+      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+        payload: { messages: [{ status: 'pending', admissionToken: token }] },
+      })
+      await expect(second.service.recoverSharedGroupDelivery({
+        groupId,
+        botId: firstBot.bot.id,
+        sessionId: String(sessionId),
+        messageId,
+        confirmQuiescent: true,
+      })).resolves.toMatchObject({ status: 'released' })
       expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
         payload: { messages: [] },
       })

@@ -7,6 +7,8 @@ export type {
   BotGroupCreateValue,
   BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
+  BotGroupDeliveryRecoveryRequest,
+  BotGroupDeliveryRecoveryValue,
   BotGroupId,
   BotGroupInspectRequest,
   BotGroupInspectValue,

@@ -239,6 +239,32 @@ export interface BotGroupSendRemoteRequest {
   readonly targetBotIds?: readonly BotId[]
 }
 
+/** Explicit owner-local recovery request for one isolated shared-group recipient fence. */
+export interface BotGroupDeliveryRecoveryRequest {
+  /** Shared group containing the delivery. */
+  readonly groupId: BotGroupId
+  /** Recipient Bot whose isolated Session owns the fence. */
+  readonly botId: BotId
+  /** Exact durable isolated Session id recorded by the operator. */
+  readonly sessionId: string
+  /** Source group message whose recipient fence is being reconciled. */
+  readonly messageId: BotGroupMessageId
+  /** Explicit operator assertion that every Host able to own the Session is quiesced. */
+  readonly confirmQuiescent: true
+}
+
+/** Result of explicit owner-local shared-group recipient recovery. */
+export interface BotGroupDeliveryRecoveryValue {
+  /** Recipient Bot whose fence was inspected. */
+  readonly botId: BotId
+  /** Source message whose fence was inspected. */
+  readonly messageId: BotGroupMessageId
+  /** Durable recovery result. */
+  readonly status: 'accepted' | 'released' | 'busy' | 'operator-required'
+  /** Retry hint when another Host still owns the fresh lock. */
+  readonly retryAt?: number
+}
+
 /** One recipient's group delivery outcome. */
 export interface BotGroupDeliveryView {
   /** Recipient Bot id. */

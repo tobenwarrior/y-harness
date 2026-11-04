@@ -26,6 +26,8 @@ import type {
   BotGroupCreateValue,
   BotGroupDeliveryClaim,
   BotGroupDeliveryClaimInput,
+  BotGroupDeliveryRecoveryRequest,
+  BotGroupDeliveryRecoveryValue,
   BotGroupDeliveryRecord,
   BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
@@ -308,6 +310,13 @@ export type SharedGroupSnapshot = z.infer<typeof sharedGroupSnapshotSchema>
 /** Durable shared-group Session binding projected to the Host. */
 export type SharedGroupSessionBinding = z.infer<typeof sharedGroupSessionSchema>
 
+/** Result returned by the isolated Host's explicit recipient-fence recovery. */
+export type SharedGroupDeliveryRecoveryResult =
+  | 'accepted'
+  | 'released'
+  | { readonly kind: 'busy'; readonly retryAt: number; readonly recovery: 'operator-required' }
+  | { readonly kind: 'operator-required' }
+
 /** Shared delivery record with the authorization revision and dispatch lease that admitted it. */
 export type SharedGroupDeliveryRecord = Omit<BotGroupDeliveryRecord, 'updatedAt'> & {
   readonly authorizationRevision: number
@@ -361,6 +370,19 @@ export interface SharedGroupHost {
     readonly retryAt: number
     readonly recovery?: 'operator-required'
   }>
+  /**
+   * Reconcile one recipient admission after an operator has quiesced every
+   * Host that could own the isolated Session. The operation must re-inspect
+   * the Session while holding a fresh lock; it never infers quiescence from a
+   * PID record.
+   */
+  readonly recoverSharedGroupDelivery?: (request: {
+    readonly groupId: ReturnType<typeof BotGroupId>
+    readonly targetBotId: BotId
+    readonly sessionId: SessionId
+    readonly messageId: ReturnType<typeof BotGroupMessageId>
+    readonly signal?: AbortSignal
+  }) => Promise<SharedGroupDeliveryRecoveryResult>
 }
 
 /** Stable error category returned by shared-group endpoint operations. */
@@ -427,6 +449,54 @@ export class SharedBotGroupService {
       this.authority.readExtension('agent-bots/shared-memberships'),
     )
     return parseGroups(parseMembershipExtension(extension.value).sharedGroups).sessions
+  }
+
+  /**
+   * Reconcile one recipient admission after an owner has quiesced every Host
+   * that could own the isolated Session. The exact Session id is required so
+   * a retired binding cannot be mistaken for a newer recipient Session.
+   * @param request - Exact group, Bot, Session, and message identities plus the operator assertion.
+   * @param signal - Cancellation for the bounded authority and Host operations.
+   * @returns The durable recovery status for the recipient fence.
+   */
+  async recoverDelivery(
+    request: BotGroupDeliveryRecoveryRequest,
+    signal = this.recoveryController.signal,
+  ): Promise<BotGroupDeliveryRecoveryValue> {
+    this.requireIsolatedHost()
+    if (request === null || typeof request !== 'object' || request.confirmQuiescent !== true) {
+      throw new SharedGroupError('gateway/bad-request', 'explicit shared Bot delivery recovery requires confirmQuiescent=true')
+    }
+    const groupId = normalizeGroupId(request.groupId)
+    const botId = normalizeSharedGroupBotId(request.botId)
+    const messageId = normalizeMessageId(request.messageId)
+    const parsedSessionId = sharedGroupSessionIdSchema.safeParse(request.sessionId)
+    if (!parsedSessionId.success) throw new SharedGroupError('gateway/bad-request', 'invalid shared Bot group Session id')
+    const sessionId = parsedSessionId.data
+    signal.throwIfAborted()
+    const extension = await withSharedGroupAuthorityTimeout(
+      this.authority.readExtension('agent-bots/shared-memberships'),
+      signal,
+    )
+    const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
+    findGroup(snapshot, groupId)
+    const binding = snapshot.sessions.find(candidate => candidate.groupId === groupId
+      && candidate.botId === botId && candidate.sessionId === sessionId)
+    if (binding === undefined) throw new SharedGroupError('gateway/not-found', 'shared Bot group Session binding was not found')
+    const recover = this.host.recoverSharedGroupDelivery
+    if (recover === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot delivery recovery is unavailable on this Host')
+    signal.throwIfAborted()
+    const result = await recover({
+      groupId,
+      targetBotId: botId,
+      sessionId,
+      messageId,
+      signal,
+    })
+    if (result === 'accepted') return { botId, messageId, status: 'accepted' }
+    if (result === 'released') return { botId, messageId, status: 'released' }
+    if (result.kind === 'busy') return { botId, messageId, status: 'busy', retryAt: result.retryAt }
+    return { botId, messageId, status: 'operator-required' }
   }
 
   /** Replay durable pending deliveries after a Host restart or crash. */
@@ -1212,9 +1282,11 @@ export class SharedBotGroupService {
       })
       if (typeof deliveryResult !== 'string') {
         if (deliveryResult.recovery === 'operator-required') {
+          const error = 'Shared Bot recipient admission needs operator recovery before retrying this message'
+          await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', error, dispatchSignal)
           return {
             kind: 'failed',
-            error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+            error,
             recovery: 'operator-required',
           }
         }
@@ -1698,6 +1770,13 @@ function normalizeBotIds(botIds: readonly BotId[]): BotId[] {
   if (botIds.length < 2 || botIds.length > MAX_GROUP_MEMBERS) throw new SharedGroupError('gateway/bad-request', `a shared Bot group must contain 2-${String(MAX_GROUP_MEMBERS)} Bots`)
   if (new Set(botIds.map(String)).size !== botIds.length) throw new SharedGroupError('gateway/bad-request', 'shared Bot group members must be unique')
   return [...botIds]
+}
+
+function normalizeSharedGroupBotId(value: BotId): BotId {
+  if (typeof value !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)) {
+    throw new SharedGroupError('gateway/bad-request', 'invalid shared Bot id')
+  }
+  return BotId(value)
 }
 
 function pruneExpiredInvites(

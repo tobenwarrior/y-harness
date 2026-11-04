@@ -1232,8 +1232,32 @@ describe('shared Bot service', () => {
         },
       })
       expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
+      const stored = await value.authority.readExtension('agent-bots/shared-memberships')
+      const membership = sharedMembershipSnapshotSchema.parse(stored.value)
+      const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      expect(groups.deliveries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          messageId: BotGroupMessageId('bot-group-message-operator-recovery'),
+          botId: BotId('bot-chief'),
+          status: 'failed',
+          error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+        }),
+      ]))
       await vi.advanceTimersByTimeAsync(60_000)
       expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
+      value.host.deliverSharedGroup.mockImplementation(async () => 'accepted')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Show the recovery status.',
+        messageId: BotGroupMessageId('bot-group-message-operator-recovery'),
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'accepted',
+          deliveries: [{ status: 'accepted' }],
+        },
+      })
     } finally {
       await value.close()
       vi.useRealTimers()

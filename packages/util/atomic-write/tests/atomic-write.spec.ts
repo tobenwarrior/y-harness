@@ -277,6 +277,18 @@ describe('withFileLock', () => {
     expect(await readdir(dir)).toEqual([])
   })
 
+  it('can require operator-controlled recovery instead of PID takeover', async () => {
+    probeExited()
+    const dir = await scratch()
+    const target = join(dir, 'document')
+    const lockPath = `${target}.lock`
+    await writeFile(lockPath, record(EXITED_PID))
+
+    await expect(withFileLock(target, async () => 'acquired', { waitMs: 0, takeOverExited: false }))
+      .rejects.toThrow(/timed out waiting for the writer lock/)
+    expect(await readFile(lockPath, 'utf8')).toBe(record(EXITED_PID))
+  })
+
   // Windows reissues an exited PID almost at once, so the real probe runs on POSIX only.
   it.skipIf(process.platform === 'win32')('takes over the lock of a process that really exited', async () => {
     const dir = await scratch()

@@ -195,6 +195,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 
 /**
+ * Reconcile one isolated shared-group recipient fence after an explicit
+ * owner confirmation that every Host able to own the Session is quiesced.
+ * @param request - Exact group, Bot, Session, and message identities.
+ * @returns The durable recovery status for the recipient fence.
+ */
+@Remote('recoverSharedGroupDelivery') async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue>
+
+/**
  * List active memories for a Bot without accepting a model-supplied Session id.
  * @param request - Durable Bot id whose private projection should be read.
  * @returns active memory rows owned by that Bot.

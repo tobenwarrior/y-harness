@@ -206,6 +206,12 @@ export interface FileLockOptions {
    * contender that acquires the lock afterwards re-reads the committed state.
    */
   waitMs?: number
+  /**
+   * Remove a lock whose recorded PID is absent before retrying. Disable this
+   * when PID evidence is not authoritative for the shared filesystem.
+   * Defaults to `true` for compatibility with existing callers.
+   */
+  takeOverExited?: boolean
 }
 
 /**
@@ -226,7 +232,9 @@ export interface FileLockOptions {
  * writers must stop them with it or leave its successor a way to find them.
  * PIDs are compared on the contender's host, so writers on other hosts or in
  * other PID namespaces sharing the file are unsupported and could both hold
- * the lock. The parent directory must exist.
+ * the lock. Set `options.takeOverExited` to `false` when an operator must
+ * resolve an uncertain lock instead of using that PID evidence. The parent
+ * directory must exist.
  * @param filename - the file whose writers this lock serializes.
  * @param operation - the read-render-commit cycle to run while holding the lock.
  * @param options - acquisition options; omitted waits {@link DEFAULT_LOCK_WAIT_MS}.
@@ -252,7 +260,7 @@ export async function withFileLock<T>(
           || (error as NodeJS.ErrnoException | null)?.code !== 'EPERM'
           || retriedUnconfirmedPermissionError) throw error
         retriedUnconfirmedPermissionError = true
-      } else if (await takeOverExitedLock(lockPath)) continue
+      } else if (options?.takeOverExited !== false && await takeOverExitedLock(lockPath)) continue
     }
     if (Date.now() >= deadline) {
       throw new Error(`atomic-write: timed out waiting for the writer lock at ${lockPath}`)

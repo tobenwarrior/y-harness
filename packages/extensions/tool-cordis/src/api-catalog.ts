@@ -713,6 +713,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'recoverSharedGroupDelivery\') async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue>',
+        description: 'Reconcile one isolated shared-group recipient fence after an explicit owner confirmation that every Host able to own the Session is quiesced.',
+        parameters: [{ name: 'request', description: 'Exact group, Bot, Session, and message identities.' }],
+        returns: 'The durable recovery status for the recipient fence.',
+      },
+      {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
         description: 'List active memories for a Bot without accepting a model-supplied Session id.',
         parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
@@ -5629,6 +5635,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotGroupDeliveryRecord {\n    readonly id: string;\n    readonly groupId: BotGroupId;\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: \'pending\' | \'accepted\' | \'responded\' | \'failed\';\n    readonly responseMessageId?: BotGroupMessageId;\n    readonly error?: string;\n    readonly claim?: BotGroupDeliveryClaim;\n    readonly updatedAt: number;\n}',
   },
   {
+    name: 'BotGroupDeliveryRecoveryRequest',
+    declaration: 'export interface BotGroupDeliveryRecoveryRequest {\n    readonly groupId: BotGroupId;\n    readonly botId: BotId;\n    readonly sessionId: string;\n    readonly messageId: BotGroupMessageId;\n    readonly confirmQuiescent: true;\n}',
+  },
+  {
+    name: 'BotGroupDeliveryRecoveryValue',
+    declaration: 'export interface BotGroupDeliveryRecoveryValue {\n    readonly botId: BotId;\n    readonly messageId: BotGroupMessageId;\n    readonly status: \'accepted\' | \'released\' | \'busy\' | \'operator-required\';\n    readonly retryAt?: number;\n}',
+  },
+  {
     name: 'BotGroupDeliveryStatusView',
     declaration: 'export interface BotGroupDeliveryStatusView {\n    readonly messageId: BotGroupMessageId;\n    readonly botId: BotId;\n    readonly status: BotGroupDeliveryRecord[\'status\'];\n    readonly error?: string;\n}',
   },
@@ -5666,7 +5680,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupMessageSenderView',
-    declaration: 'export type BotGroupMessageSenderView = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'bot\';\n    readonly botId: BotId;\n    readonly name: string;\n};',
+    declaration: 'export type BotGroupMessageSenderView = {\n    readonly kind: \'user\';\n    readonly principalId?: BotPrincipalIdType;\n} | {\n    readonly kind: \'bot\';\n    readonly botId: BotId;\n    readonly name: string;\n};',
   },
   {
     name: 'BotGroupMessageView',

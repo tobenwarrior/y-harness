@@ -41,7 +41,12 @@ import {
   type BotView,
 } from './types.ts'
 import { BotGroupId, BotGroupMessageId } from './group-chat.ts'
-import type { BotGroupCreateRequest, BotGroupSendRemoteRequest } from './group-chat.ts'
+import type {
+  BotGroupCreateRequest,
+  BotGroupDeliveryRecoveryRequest,
+  BotGroupDeliveryRecoveryValue,
+  BotGroupSendRemoteRequest,
+} from './group-chat.ts'
 import {
   sharedBotDomain,
   SHARED_MEMORY_MAX_ENTRIES,
@@ -634,6 +639,16 @@ export class SharedBotService {
   /** Replay durable shared-group deliveries after a Host restart. */
   async recoverSharedGroupDeliveries(signal?: AbortSignal): Promise<void> {
     await this.groups.recoverPendingDeliveries(signal)
+  }
+
+  /**
+   * Reconcile one isolated shared-group recipient admission after explicit
+   * owner confirmation that every possible Session Host is quiesced.
+   * @param request - Exact group, Bot, Session, and message identities.
+   * @returns The durable recovery status for the recipient fence.
+   */
+  async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue> {
+    return this.groups.recoverDelivery(request)
   }
 
   /** Record one shared-group Session's exact model claim. */
