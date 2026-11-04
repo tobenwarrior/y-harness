@@ -356,6 +356,48 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByText('collaborator')).toBeNull()
   })
 
+  it('creates a shared group through the shared route and lets its owner make an invite', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-launch'),
+      name: 'Launch room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const createGroup = vi.fn().mockResolvedValue({ ok: true, value: { group } })
+    const createGroupInvite = vi.fn().mockResolvedValue({ ok: true, value: { code: 'group-invite', expiresAt: 2_000 } })
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      createGroup,
+      createGroupInvite,
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+
+    await waitFor(() => {
+      expect(createGroup).toHaveBeenCalledWith({ name: 'Launch room', botIds: [BotId(bot.id), BotId(analystBot.id)] })
+      expect(screen.getByRole('button', { name: 'Invite people' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite people' }))
+    await waitFor(() => {
+      expect(createGroupInvite).toHaveBeenCalledWith(group.id)
+      expect(screen.getByLabelText('Group invite code').textContent).toContain('group-invite')
+    })
+  })
+
   it('shows and sends a collaborator group without mixing private transcript data', async () => {
     const group = {
       id: brandString<BotGroupId>('bot-group-release'),

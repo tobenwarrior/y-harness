@@ -317,8 +317,8 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    expect(screen.queryByRole('heading', { name: 'Shared groups' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'New group' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Bot groups' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New bot group' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Release room' })).toBeNull()
   })
 
@@ -866,7 +866,7 @@ describe('Bot roster and detail', () => {
     />)
 
     expect(screen.getByRole('complementary', { name: 'Bot workspace' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Shared groups' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Bot groups' })).toBeTruthy()
     const row = screen.getByRole('button', { name: /Release room/ })
     expect(row.getAttribute('aria-current')).toBe('page')
     fireEvent.click(row)
@@ -874,7 +874,7 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByRole('complementary', { name: /Group/ })).toBeNull()
   })
 
-  it('creates a shared group from two existing Bots', async () => {
+  it('creates a local Bot group from two existing Bots', async () => {
     const onCreateGroup = vi.fn().mockResolvedValue(undefined)
     render(<BotRoster
       bots={bots}
@@ -888,15 +888,15 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'New group' }))
-    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.click(screen.getByRole('button', { name: 'New bot group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a bot group' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Research partner' }))
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Release captain' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create group' }))
 
     await waitFor(() => { expect(onCreateGroup).toHaveBeenCalledWith({ name: 'Launch room', botIds: ['research', 'release'] }) })
-    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull() })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a bot group' })).toBeNull() })
   })
 
   it('renders the persistent group transcript, sends with Enter, and keeps a failed draft', async () => {

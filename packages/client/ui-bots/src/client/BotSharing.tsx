@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import clsx from 'clsx'
 import { brandString } from '@yharness/brand'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
@@ -19,6 +20,7 @@ import {
   writeClipboard,
 } from '@yharness/client-ui-primitives'
 import type {
+  BotGroupCreateRequest,
   BotGroupMessageView,
   BotGroupView,
   BotGroupId as BotGroupIdType,
@@ -34,7 +36,7 @@ import { BotAvatar } from './BotAvatar.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotShareActions } from './controller.ts'
 import type { BotSummary } from './types.ts'
-import type { SharedBotsClient } from './shared-client.ts'
+import type { SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
@@ -343,6 +345,118 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   )
 }
 /** Collaborator discovery, enrollment, and private chat surface. */
+function SharedGroupCreateDialog({ open, onClose, onCreate, bots, error, t }: {
+  readonly open: boolean
+  readonly onClose: () => void
+  readonly onCreate: (request: BotGroupCreateRequest) => Promise<void>
+  readonly bots: readonly BotShareRosterEntry[]
+  readonly error: string | null
+  readonly t: Translate
+}) {
+  const [name, setName] = useState('')
+  const [selected, setSelected] = useState<readonly string[]>([])
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setName('')
+    setSelected([])
+    setSubmitting(false)
+  }, [open])
+
+  const toggle = (id: string, checked: boolean): void => {
+    setSelected(current => checked ? [...current, id] : current.filter(value => value !== id))
+  }
+
+  const submit = async (): Promise<void> => {
+    const trimmed = name.trim()
+    const botIds = selected.flatMap((id) => {
+      const bot = bots.find(candidate => String(candidate.id) === id)
+      return bot === undefined ? [] : [bot.id]
+    })
+    if (trimmed === '' || botIds.length < 2 || botIds.length > 6 || submitting) return
+    setSubmitting(true)
+    try {
+      await onCreate({ name: trimmed, botIds })
+      onClose()
+    } catch {
+      // Keep the selection and draft in place so the owner can retry.
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('sharedGroupCreateTitle')}
+      description={t('sharedGroupCreateDescription')}
+      closeLabel={t('cancel')}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>
+          <Button
+            variant="primary"
+            onClick={() => { void submit() }}
+            disabled={name.trim() === '' || selected.length < 2 || selected.length > 6 || submitting}
+          >
+            {submitting ? t('sharedGroupCreating') : t('sharedGroupCreate')}
+          </Button>
+        </>
+      )}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      <div className={css.dialogField} aria-busy={submitting}>
+        <label className={css.dialogLabel} htmlFor="yharness-shared-group-name">{t('groupName')}</label>
+        <Input
+          id="yharness-shared-group-name"
+          data-modal-autofocus
+          value={name}
+          placeholder={t('groupNamePlaceholder')}
+          disabled={submitting}
+          onChange={(event) => { setName(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              void submit()
+            }
+          }}
+        />
+      </div>
+      <div className={css.dialogField}>
+        <div className={css.dialogLabel}>{t('groupMembers')} · {t('groupMemberCount', { count: selected.length })}</div>
+        {bots.length === 0
+          ? <div className={css.groupNoBots}>{t('noSharedBots')}</div>
+          : <div className={css.groupMemberChoices}>
+            {bots.map((bot) => {
+              const id = String(bot.id)
+              const checked = selected.includes(id)
+              const disabled = !checked && selected.length >= 6
+              return (
+                <label className={clsx(css.groupMemberChoice, checked && css.groupMemberChoiceSelected)} key={id}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={disabled || submitting}
+                    aria-label={bot.name}
+                    onChange={(event) => { toggle(id, event.currentTarget.checked) }}
+                  />
+                  <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} />
+                  <span className={css.groupMemberCopy}>
+                    <span className={css.groupMemberName}>{bot.name}</span>
+                    {bot.description !== undefined && <span className={css.groupMemberDescription}>{bot.description}</span>}
+                  </span>
+                </label>
+              )
+            })}
+          </div>}
+        {bots.length > 0 && selected.length < 2 && <span className={css.groupHelper}>{t('groupMinMembers')}</span>}
+      </div>
+    </Modal>
+  )
+}
+
 export function SharedBotsDialog({ client, open, onClose, t }: {
   readonly client: SharedBotsClient
   readonly open: boolean
@@ -362,7 +476,12 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
   const [groupDraft, setGroupDraft] = useState('')
-  const [groupWorking, setGroupWorking] = useState<'load' | 'send' | null>(null)
+  const [groupWorking, setGroupWorking] = useState<'load' | 'create' | 'send' | null>(null)
+  const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  const [createGroupError, setCreateGroupError] = useState<string | null>(null)
+  const [groupInvite, setGroupInvite] = useState<SharedBotGroupInviteValue | null>(null)
+  const [groupInviteWorking, setGroupInviteWorking] = useState(false)
+  const [groupInviteCopied, setGroupInviteCopied] = useState(false)
   const [working, setWorking] = useState<'list' | 'enroll' | null>(null)
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
@@ -382,6 +501,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const groupReadGenerationRef = useRef(0)
   const groupOperationGenerationRef = useRef(0)
   const groupDraftRevisionRef = useRef(0)
+  const groupInviteGenerationRef = useRef(0)
   const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
   const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
   const hasPendingChat = chatWorkingBotIds.size > 0
@@ -412,8 +532,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (selectedGroupIdRef.current !== groupId) {
       groupOperationGenerationRef.current += 1
       groupDraftRevisionRef.current += 1
+      groupInviteGenerationRef.current += 1
       setGroupDraft('')
       setGroupWorking(null)
+      setGroupInvite(null)
+      setGroupInviteCopied(false)
     }
     selectedGroupIdRef.current = groupId
     setSelectedGroupId(groupId)
@@ -547,6 +670,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setMemoryAcknowledged(false)
       setGroupSelection(null)
       setGroupMessages([])
+      setCreateGroupOpen(false)
+      setCreateGroupError(null)
+      setGroupInvite(null)
+      setGroupInviteCopied(false)
+      setGroupInviteWorking(false)
       return
     }
     setError(null)
@@ -656,6 +784,62 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
   }
 
+  const createSharedGroup = async (request: BotGroupCreateRequest): Promise<void> => {
+    const create = client.createGroup
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    if (create === undefined || !isCurrentLifecycle(lifecycleGeneration)) return
+    setCreateGroupError(null)
+    setGroupWorking('create')
+    try {
+      const result = await create(request)
+      if (!isCurrentLifecycle(lifecycleGeneration)) return
+      if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+      const created = result.value.group
+      setGroups(current => [
+        ...current.filter(group => String(group.id) !== String(created.id)),
+        created,
+      ])
+      setGroupSelection(String(created.id))
+      await readGroup(String(created.id))
+    } catch (cause: unknown) {
+      if (isCurrentLifecycle(lifecycleGeneration)) {
+        const error = cause instanceof Error ? cause : new Error(t('sharedGroupCreateFailed'))
+        setCreateGroupError(error.message || t('sharedGroupCreateFailed'))
+      }
+      throw cause
+    } finally {
+      if (isCurrentLifecycle(lifecycleGeneration)) setGroupWorking(current => current === 'create' ? null : current)
+    }
+  }
+
+  const createSharedGroupInvite = async (): Promise<void> => {
+    const createInvite = client.createGroupInvite
+    const groupId = selectedGroupIdRef.current
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    if (createInvite === undefined || groupId === null || !isCurrentLifecycle(lifecycleGeneration) || groupInviteWorking) return
+    const inviteGeneration = groupInviteGenerationRef.current + 1
+    groupInviteGenerationRef.current = inviteGeneration
+    const isCurrentInvite = (): boolean => (
+      isCurrentLifecycle(lifecycleGeneration)
+      && selectedGroupIdRef.current === groupId
+      && groupInviteGenerationRef.current === inviteGeneration
+    )
+    setGroupInviteWorking(true)
+    setGroupInvite(null)
+    setGroupInviteCopied(false)
+    setError(null)
+    try {
+      const result = await createInvite(groupId)
+      if (!isCurrentInvite()) return
+      if (result.ok) setGroupInvite(result.value)
+      else setError(result.error.message || t('sharedGroupInviteFailed'))
+    } catch (cause: unknown) {
+      if (isCurrentInvite()) setError(cause instanceof Error ? cause.message : t('sharedGroupInviteFailed'))
+    } finally {
+      if (isCurrentInvite()) setGroupInviteWorking(false)
+    }
+  }
+
   const sendGroup = async (): Promise<void> => {
     const send = client.sendGroupMessage
     const groupId = selectedGroupIdRef.current
@@ -713,6 +897,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { codeRevisionRef.current += 1; setCode(event.currentTarget.value) }} />
           <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || hasPendingChat || hasPendingMemory || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
         </div>
+        <p className={css.sharedMemoryDescription}>{t('sharedInviteCodeHelp')}</p>
         {working === 'list' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
         {working !== 'list' && bots.length === 0 && <div className={css.shareEmpty}>{t('noSharedBots')}</div>}
         {working !== 'list' && bots.length > 0 && (
@@ -799,6 +984,16 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                 <p className={css.sharedMemoryDescription}>{t('sharedGroupsDescription')}</p>
               </div>
               {groupWorking === 'load' && <span role="status" aria-label={t('sharedGroupLoading')}><StateDot state="ongoing" size={12} /></span>}
+              {client.createGroup !== undefined && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setCreateGroupError(null); setCreateGroupOpen(true) }}
+                  disabled={groupWorking !== null || bots.length < 2}
+                >
+                  {t('sharedGroupCreate')}
+                </Button>
+              )}
             </div>
             {groupWorking !== 'load' && groups.length === 0 && <div className={css.shareEmpty}>{t('sharedGroupsEmpty')}</div>}
             {groupWorking !== 'load' && groups.length > 0 && (
@@ -820,7 +1015,39 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
               <section className={css.sharedConversation} aria-label={selectedGroup.name}>
                 <header className={css.sharedConversationHeader}>
                   <div><strong>{selectedGroup.name}</strong><small>{selectedGroup.bots.map(bot => bot.name).join(', ')}</small></div>
+                  {client.createGroupInvite !== undefined && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { void createSharedGroupInvite() }}
+                      disabled={groupInviteWorking || groupWorking !== null}
+                    >
+                      {groupInviteWorking ? t('sharedGroupInviteCreating') : t('sharedGroupInvite')}
+                    </Button>
+                  )}
                 </header>
+                {groupInvite !== null && (
+                  <div className={css.inviteCode}>
+                    <code aria-label={t('sharedGroupInviteCodeLabel')}>{groupInvite.code}</code>
+                    <Tooltip label={groupInviteCopied ? t('sharedGroupInviteCopied') : t('sharedGroupInviteCopy')} side="bottom" portal>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={groupInviteCopied ? t('sharedGroupInviteCopied') : t('sharedGroupInviteCopy')}
+                        icon={<IconCopyOutlineRegular size={14} />}
+                        onClick={() => {
+                          const inviteCode = groupInvite.code
+                          const inviteGeneration = groupInviteGenerationRef.current
+                          setGroupInviteCopied(false)
+                          void writeClipboard(inviteCode).then((success) => {
+                            if (success && openRef.current && selectedGroupIdRef.current === String(selectedGroup.id)
+                              && groupInviteGenerationRef.current === inviteGeneration) setGroupInviteCopied(true)
+                          })
+                        }}
+                      />
+                    </Tooltip>
+                  </div>
+                )}
                 <div className={css.sharedTranscript}>
                   <div className={css.sharedContextLabel}>{t('sharedGroupsTitle')}</div>
                   {groupMessages.length === 0 && <span className={css.shareEmpty}>{t('sharedGroupTranscriptEmpty')}</span>}
@@ -854,6 +1081,16 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           </section>
         )}
       </Modal>
+      {client.createGroup !== undefined && (
+        <SharedGroupCreateDialog
+          open={open && createGroupOpen}
+          onClose={() => { setCreateGroupOpen(false) }}
+          onCreate={createSharedGroup}
+          bots={bots}
+          error={createGroupError}
+          t={t}
+        />
+      )}
       <RiskConfirmation
         open={open && memoryConfirmOpen && selected !== undefined}
         title={t('publishSharedContextTitle')}

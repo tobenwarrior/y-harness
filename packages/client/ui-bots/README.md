@@ -23,7 +23,7 @@ Add a Bot workspace to the Web client with a roster, persistent conversations, o
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount the Client export alongside the Bot Remote, Session UI, conversation UI, locale, layout, sidebar, renderer, and Connection packages. The owner supplies plain roster rows and callbacks; the panel selects a Bot and renders the owner's persistent Session in its conversation slot. When Connection is mounted, the same Bot mode includes an invite and shared-context policy dialog for owner-side membership management and a collaborator dialog that redeems an invite, discovers shared Bots, chats through a private per-person Session, and publishes explicitly acknowledged notes to a separate shared context.
+Mount the Client export alongside the Bot Remote, Session UI, conversation UI, locale, layout, sidebar, renderer, and Connection packages. The owner supplies plain roster rows and callbacks; the panel selects a Bot and renders the owner's persistent Session in its conversation slot. When Connection is mounted, the same Bot mode includes an invite and shared-context policy dialog for owner-side membership management and a shared workspace where an owner can create a group from accessible Bots and issue a group invite. Collaborators redeem either invite type, discover shared Bots and groups, chat through a private per-person Session, and publish explicitly acknowledged notes to a separate shared context.
 
 ### When to choose it
 
