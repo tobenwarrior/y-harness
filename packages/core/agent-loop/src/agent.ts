@@ -195,7 +195,16 @@ export class ReactLoopAgent implements Agent {
       try {
         return await job(maintenance.abort.signal)
       } finally {
-        this.setPhase({ kind: 'idle', lastTurn: maintenance.lastTurn })
+        // Maintenance jobs may append lifecycle events (for example, a
+        // durable prompt migration). Reconcile the next live turn with the
+        // session projection instead of reusing the pre-maintenance number.
+        const projectedLastTurn = this.loopCtx.sessionProjections.stateOf(this.session, 'turnBoundary')?.lastTurn
+        this.setPhase({
+          kind: 'idle',
+          lastTurn: projectedLastTurn === undefined
+            ? maintenance.lastTurn
+            : Math.max(maintenance.lastTurn, projectedLastTurn),
+        })
         const cause = abortedCancelCause(maintenance.abort.signal)
         if (cause?.kind !== 'disposed' && maintenance.wakeRequested && this.inbox.hasPending) this.wakeDriver()
         done.resolve()

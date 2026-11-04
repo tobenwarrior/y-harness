@@ -14,7 +14,7 @@ import {
 } from '@yharness/client-connection'
 import { MessageId } from '@yharness/llm/brand'
 import { createSystemMessage, freezeMessage, isAgentLoopRequest } from '@yharness/llm'
-import type { GenerateOptions } from '@yharness/llm'
+import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {
   PreToolDecision,
@@ -42,7 +42,7 @@ import type {} from '@yharness/mcp-resources'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
 import type { UserMessage } from '@yharness/llm'
-import { SessionId, SessionSeq } from '@yharness/session'
+import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
 import type { SessionCreateRequest } from '@yharness/api-session-controller'
@@ -1640,12 +1640,12 @@ const SHARED_BOT_LLM_REJECTION = 'Shared Bot Session LLM calls require an admitt
 /** Accept only bounded auxiliary envelopes whose model input is independently framed and attributed. */
 function isAuditedSharedAuxiliaryRequest(options: GenerateOptions): boolean {
   if (options.toolHistory !== undefined
-    || options.tools !== undefined
+    || (options.tools !== undefined && options.tools.length > 0)
     || options.messages.length !== 1
     || options.system === undefined) return false
   const [message] = options.messages
-  if (message?.role !== 'user' || !('id' in message)) return false
-  const sourceKind = message.source.kind
+  if (message?.role !== 'user' || !('id' in message) || message.source === undefined) return false
+  const sourceKind = String(message.source.kind)
   switch (options.purpose) {
     case 'session-title':
       return sourceKind === 'dsh-session-title-llm'
@@ -1833,7 +1833,7 @@ export class BotService extends TypertRemoteService {
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
   private readonly sharedScopeAgents = new WeakSet<Agent>()
   private readonly sharedPromptMigrations = new WeakSet<Agent>()
-  private readonly sharedPromptMigrationsPendingFlush = new WeakSet<Agent>()
+  private readonly sharedPromptMigrationsPending = new WeakSet<Agent>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
@@ -1953,39 +1953,62 @@ export class BotService extends TypertRemoteService {
       }),
       changed: () => this.emitChanged(),
     }))
-    ctx.on('agent/pre-step', ({ agent }, next) => this.sharedScopeFences.has(agent)
-      ? Promise.resolve({ kind: 'reject' as const })
-      : next(), { prepend: true })
+    ctx.on('agent/pre-step', async ({ agent }, next) => {
+      if (this.sharedScopeFences.has(agent)) return { kind: 'reject' as const }
+      const decision = await next()
+      return decision.kind === 'enter' && this.sharedPromptMigrationsPending.has(agent)
+        ? { ...decision, startsRequestSeries: true }
+        : decision
+    }, { prepend: true })
     ctx.on('llm/stream', (options, next) => {
-      const sessionKey = options.sessionId === undefined ? undefined : String(options.sessionId)
+      const sessionId = options.sessionId
+      const sessionKey = sessionId === undefined ? undefined : String(sessionId)
       const initiator = ctx.agents.currentInitiator()
       const initiatorKey = initiator === undefined ? undefined : String(initiator.id)
       const sharedInitiator = initiatorKey !== undefined
         && (this.sharedSessionIds.has(initiatorKey) || this.sharedSessionFailures.has(initiatorKey))
-      if (sharedInitiator && sessionKey !== initiatorKey) {
-        if (sessionKey === undefined && isAuditedSharedAuxiliaryRequest(options)) {
-          if (!this.sharedScopeAgents.has(initiator)
-            || this.sharedScopeInstallations.has(initiator)
-            || this.sharedScopeFences.has(initiator)) {
-            throw new Error(SHARED_BOT_LLM_REJECTION)
+      if (sharedInitiator) {
+        if (initiator === undefined) throw new Error(SHARED_BOT_LLM_REJECTION)
+        if (sessionKey !== initiatorKey) {
+          if (sessionKey === undefined && isAuditedSharedAuxiliaryRequest(options)) {
+            if (!this.sharedScopeAgents.has(initiator)
+              || this.sharedScopeInstallations.has(initiator)
+              || this.sharedScopeFences.has(initiator)) {
+              throw new Error(SHARED_BOT_LLM_REJECTION)
+            }
+            return next()
           }
-          return next()
+          throw new Error(SHARED_BOT_LLM_REJECTION)
         }
+      }
+      if (sessionKey !== undefined
+        && this.sharedSessionIds.has(sessionKey)
+        && initiator !== undefined
+        && initiatorKey !== sessionKey) {
         throw new Error(SHARED_BOT_LLM_REJECTION)
       }
-      if (sessionKey === undefined) return next()
-      if (this.sharedSessionFailures.has(sessionKey)) throw new Error(SHARED_BOT_LLM_REJECTION)
-      if (!this.sharedSessionIds.has(sessionKey)) return next()
-      const agent = ctx.agents.get(options.sessionId)
+      if (sessionId === undefined) return next()
+      const currentSessionKey = String(sessionId)
+      if (this.sharedSessionFailures.has(currentSessionKey)) throw new Error(SHARED_BOT_LLM_REJECTION)
+      if (!this.sharedSessionIds.has(currentSessionKey)) return next()
+      const agent = ctx.agents.get(sessionId)
       if (agent === undefined
         || !this.sharedScopeAgents.has(agent)
         || this.sharedScopeInstallations.has(agent)
         || this.sharedScopeFences.has(agent)) {
         throw new Error(SHARED_BOT_LLM_REJECTION)
       }
+      if (this.sharedPromptMigrationsPending.has(agent)) {
+        if (!isAgentLoopRequest(options) && !isAuditedSharedAuxiliaryRequest(options)) {
+          throw new Error(SHARED_BOT_LLM_REJECTION)
+        }
+        if (isAgentLoopRequest(options)) {
+          return this.flushSharedPromptMigration(agent, next)
+        }
+      }
       if (isAgentLoopRequest(options) || isAuditedSharedAuxiliaryRequest(options)) return next()
       throw new Error(SHARED_BOT_LLM_REJECTION)
-    })
+    }, { prepend: true })
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const agent = context.scope as Agent | undefined
       return agent !== undefined && this.sharedScopeFences.has(agent) && !this.sharedPromptMigrations.has(agent)
@@ -2290,6 +2313,12 @@ export class BotService extends TypertRemoteService {
       },
     }))
     ctx.on('agent/created', async ({ agent }) => {
+      if (agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET) {
+        const sessionKey = String(agent.id)
+        this.sharedSessionIds.add(sessionKey)
+        if (!this.sharedRecordsBySession.has(sessionKey)) this.sharedSessionFailures.add(sessionKey)
+        this.ensureSharedScopeFence(agent)
+      }
       await this.installPrompt(agent)
       void this.reconcileGroupSession(agent).catch((error: unknown) => {
         this.ctx.logger.warn(`bots: group Session reconciliation failed for ${agent.id}: ${String(error)}`)
@@ -4689,7 +4718,21 @@ export class BotService extends TypertRemoteService {
     })
     const activeBotIds = new Set(rows.map(bot => String(bot.id)))
     for (const [sessionKey, record] of this.sharedRecordsBySession) {
-      if (!activeBotIds.has(String(record.id))) this.sharedRecordsBySession.delete(sessionKey)
+      if (!activeBotIds.has(String(record.id))) {
+        this.sharedRecordsBySession.delete(sessionKey)
+        this.sharedSessionFailures.add(sessionKey)
+        this.fenceExistingSharedAgent(SessionId(sessionKey))
+      }
+    }
+    for (const sessionKey of this.sharedSessionIds) {
+      if (this.recordsBySession.has(sessionKey)) continue
+      const groupBinding = this.sharedGroupSessionsBySession.get(sessionKey)
+      if (groupBinding !== undefined && activeBotIds.has(String(groupBinding.botId))) continue
+      const sharedRecord = this.sharedRecordsBySession.get(sessionKey)
+      if (sharedRecord === undefined || !activeBotIds.has(String(sharedRecord.id))) {
+        this.sharedSessionFailures.add(sessionKey)
+        this.fenceExistingSharedAgent(SessionId(sessionKey))
+      }
     }
     return {
       bots: rows
@@ -5544,7 +5587,11 @@ export class BotService extends TypertRemoteService {
     return active
   }
 
-  /** Replace legacy private system-prompt surface nodes before shared LLM access. */
+  /**
+   * Detect legacy private system-prompt surface nodes before shared LLM access.
+   * The first real Agent step performs the replacements under an open step;
+   * using a maintenance turn here would leave a blank turn in the transcript.
+   */
   private async sanitizeSharedPromptSurface(agent: Agent): Promise<void> {
     this.sharedPromptMigrations.add(agent)
     let rendered: string
@@ -5554,18 +5601,8 @@ export class BotService extends TypertRemoteService {
     } finally {
       this.sharedPromptMigrations.delete(agent)
     }
-    if (this.sharedPromptMigrationsPendingFlush.has(agent)) {
-      if (!await this.ctx.sessions.flush(agent.session)) {
-        throw new Error('shared Bot Session prompt migration has no durable persistence listener')
-      }
-      this.sharedPromptMigrationsPendingFlush.delete(agent)
-      return
-    }
-    const events: SessionEvent[] = []
-    for (let sequence = 0; sequence < Number(agent.session.seq); sequence += 1) {
-      const event = agent.session.eventAt(SessionSeq(sequence))
-      if (event !== undefined) events.push(event)
-    }
+    if (this.sharedPromptMigrationsPending.has(agent)) return
+    const events = agent.session.snapshotEvents()
     const eventsBySequence = new Map(events.map(event => [event.seq, event]))
     const nodes = agent.session.surface.nodes.flatMap((seq) => {
       const event = eventsBySequence.get(seq)
@@ -5595,62 +5632,19 @@ export class BotService extends TypertRemoteService {
       })
     }
     if (replacements.length === 0) return
-    let openTurn: number | undefined
-    let openStep: number | undefined
-    let nextTurn = 1
-    let nextStep = 1
-    for (const event of events) {
-      switch (event.type) {
-        case 'turn/start':
-          openTurn = event.data.turn
-          openStep = undefined
-          nextTurn = Math.max(nextTurn, event.data.turn + 1)
-          nextStep = 1
-          break
-        case 'step/start':
-          if (openTurn === event.data.turn) {
-            openStep = event.data.step
-            nextStep = event.data.step + 1
-          }
-          break
-        case 'step/end':
-          if (openTurn === event.data.turn && openStep === event.data.step) {
-            openStep = undefined
-            nextStep = event.data.step + 1
-          }
-          break
-        case 'turn/end':
-          if (openTurn === event.data.turn) {
-            openTurn = undefined
-            openStep = undefined
-            nextTurn = Math.max(nextTurn, event.data.turn + 1)
-            nextStep = 1
-          }
-          break
-        default:
-          break
-      }
-    }
-    const migrationTurn = openTurn ?? nextTurn
-    const migrationStep = openStep ?? nextStep
-    const openedTurn = openTurn === undefined
-    const openedStep = openStep === undefined
-    if (openedTurn) agent.session.append('turn/start', { turn: migrationTurn })
-    if (openedStep) agent.session.append('step/start', { turn: migrationTurn, step: migrationStep })
-    this.sharedPromptMigrationsPendingFlush.add(agent)
-    for (const replacement of replacements) {
-      agent.session.append('system/message', {
-        turn: migrationTurn,
-        step: migrationStep,
-        message: replacement.message,
-      }, replacement.intent)
-    }
-    if (openedStep) agent.session.append('step/end', { turn: migrationTurn, step: migrationStep })
-    if (openedTurn) agent.session.append('turn/end', { turn: migrationTurn, reason: { kind: 'completed' } })
+    this.sharedPromptMigrationsPending.add(agent)
+  }
+
+  /** Flush the first real shared Agent step before allowing its model request. */
+  private async *flushSharedPromptMigration(
+    agent: Agent,
+    next: () => AsyncIterable<StreamChunk>,
+  ): AsyncGenerator<StreamChunk> {
     if (!await this.ctx.sessions.flush(agent.session)) {
-      throw new Error('shared Bot Session prompt migration has no durable persistence listener')
+      throw new Error('Shared Bot Session prompt migration has no durable persistence listener')
     }
-    this.sharedPromptMigrationsPendingFlush.delete(agent)
+    this.sharedPromptMigrationsPending.delete(agent)
+    yield* next()
   }
 
   /** Install the Bot identity in the Agent scope before its first model turn. */
@@ -5860,6 +5854,17 @@ export class BotService extends TypertRemoteService {
     const agent = this.ctx.agents.get(sessionId)
     if (agent === undefined) return
     this.ensureSharedScopeFence(agent)
+  }
+
+  /** Fail closed for live shared-preset Sessions while shared bindings load. */
+  private fenceKnownSharedPresetAgents(): void {
+    for (const agent of this.ctx.agents.list()) {
+      if (agent.session.header.agentPreset !== SHARED_BOT_AGENT_PRESET) continue
+      const sessionKey = String(agent.id)
+      this.sharedSessionIds.add(sessionKey)
+      this.sharedSessionFailures.add(sessionKey)
+      this.ensureSharedScopeFence(agent)
+    }
   }
 
   /** Install shared restrictions while an already-live Agent cannot start a turn. */
@@ -6417,6 +6422,7 @@ export class BotService extends TypertRemoteService {
   }
 
   private async mountSharedAccess(domain: Domain<typeof botDomain>): Promise<() => Promise<void>> {
+    this.fenceKnownSharedPresetAgents()
     if (!this.sharedConfig.enabled) return async () => {}
     const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
     const credentials: CredentialProvider | undefined = this.ctx.get('credentials')
@@ -6439,13 +6445,30 @@ export class BotService extends TypertRemoteService {
       // The shared mount runs from the initialized effect. Reading through
       // list() here would await that same effect and deadlock startup.
       const bindings = shared.privateSessionBindings()
-      const groupBindings = await shared.sharedGroupSessionBindings()
       const existingAgents: Agent[] = []
       for (const binding of bindings) {
         this.sharedSessionIds.add(String(binding.sessionId))
         const agent = this.ctx.agents.get(binding.sessionId)
         if (agent !== undefined) {
           this.ensureSharedScopeFence(agent)
+        }
+      }
+      // Private bindings are fenced synchronously before any other durable
+      // discovery can await. Group bindings are fenced as soon as their
+      // durable snapshot arrives, before the Bot roster is read.
+      const groupBindings = await shared.sharedGroupSessionBindings()
+      const existingGroupAgents = new Map<string, Agent>()
+      for (const binding of groupBindings) {
+        const sessionKey = String(binding.sessionId)
+        const existingAgent = this.ctx.agents.get(binding.sessionId)
+        if (existingAgent !== undefined) {
+          this.ensureSharedScopeFence(existingAgent)
+          existingGroupAgents.set(sessionKey, existingAgent)
+        }
+        try {
+          this.ensureSharedGroupSessionBinding(binding.sessionId, binding.groupId, binding.botId)
+        } catch {
+          this.sharedSessionFailures.add(sessionKey)
         }
       }
       const bots = (await this.listFromDomain({ includeHidden: true }, domain)).bots
@@ -6464,13 +6487,8 @@ export class BotService extends TypertRemoteService {
       for (const binding of groupBindings) {
         const bot = botsById.get(String(binding.botId))
         const sessionKey = String(binding.sessionId)
-        try {
-          this.ensureSharedGroupSessionBinding(binding.sessionId, binding.groupId, binding.botId)
-        } catch {
-          continue
-        }
-        const existingAgent = this.ctx.agents.get(binding.sessionId)
-        if (existingAgent !== undefined) this.ensureSharedScopeFence(existingAgent)
+        const existingAgent = existingGroupAgents.get(sessionKey)
+        if (this.sharedSessionFailures.has(sessionKey)) continue
         if (bot === undefined) {
           this.sharedSessionFailures.add(sessionKey)
           continue
@@ -6762,6 +6780,7 @@ export class BotService extends TypertRemoteService {
       this.sharedSessionFailures.add(key)
       return { error: new Error('shared Bot group Session does not use its isolated preset and directory') }
     }
+    this.sharedSessionFailures.delete(key)
     const resolved = await this.ctx.sessionController.resolveAgent(sessionId, signal)
     signal.throwIfAborted()
     if (!('agent' in resolved)) return { error: resolved.error }

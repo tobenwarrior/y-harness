@@ -175,6 +175,20 @@ function appendClosedLegacySystemMessage(session: Session, text: string): void {
   if (startedTurn) session.append('turn/end', { turn, reason: { kind: 'completed' } })
 }
 
+function expectCurrentSessionReload(session: Session): void {
+  const currentHeader = sessionFormatCatalog.encodeCurrentHeader({
+    version: session.header.version,
+    id: String(session.id),
+    createdAt: session.header.createdAt,
+    isSeeded: session.header.isSeeded,
+    delegationDepth: session.header.delegationDepth ?? 0,
+  }, Number(session.inheritedEventCount))
+  const currentRows = session.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(JSON.parse(JSON.stringify(event))))
+  const reopened = sessionFormatCatalog.createRestore(currentHeader, { recovery: 'strict', validation: 'current' })
+  for (const row of currentRows) reopened.decodeRow(row)
+  expect(() => reopened.finish()).not.toThrow()
+}
+
 function postIntentWriteFailurePool(): {
   pool: MemoryMediaPool
   rows: ThrowAfterSetMap<string, unknown>
@@ -830,7 +844,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('sanitizes legacy prompt history while mounting a shared Session at startup', async () => {
+  it('sanitizes legacy prompt history in the first real shared turn', async () => {
     const sharedSessionId = SessionId('shared-session-legacy-prompt-startup')
     const pool = new MemoryMediaPool()
     const first = await harness(
@@ -905,24 +919,16 @@ describe('durable Bot roster', () => {
       try {
         const agent = h.agents[0]
         if (agent === undefined || h.adapter === undefined) throw new Error('startup legacy prompt Agent was not created')
+        await agent.runMaintenance(async () => {})
+        const startupTurnCount = agent.session.snapshotEvents().filter(event => event.type === 'turn/start').length
         const startupSurfaceText = agent.session.deriveMessages()
           .flatMap(message => message.content)
           .flatMap(block => block.type === 'text' ? [block.text] : [])
           .join('\n')
-        expect(startupSurfaceText).not.toContain('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
-        expect(startupSurfaceText).toContain('Your role is: Public startup role')
+        expect(startupSurfaceText).toContain('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
+        expect(agent.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(startupTurnCount)
 
-        const currentHeader = sessionFormatCatalog.encodeCurrentHeader({
-          version: agent.session.header.version,
-          id: String(agent.session.id),
-          createdAt: agent.session.header.createdAt,
-          isSeeded: agent.session.header.isSeeded,
-          delegationDepth: agent.session.header.delegationDepth ?? 0,
-        }, Number(agent.session.inheritedEventCount))
-        const currentRows = agent.session.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(event))
-        const reopened = sessionFormatCatalog.createRestore(currentHeader, { recovery: 'strict', validation: 'current' })
-        for (const row of currentRows) reopened.decodeRow(row)
-        expect(() => reopened.finish()).not.toThrow()
+        expectCurrentSessionReload(agent.session)
 
         const directCompaction = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1026,12 +1032,30 @@ describe('durable Bot roster', () => {
         await expect(directAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
         expect(h.adapter.requests).toHaveLength(2)
 
+        const directEmptyAuxTools = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            purpose: 'session-title',
+            system: 'title system',
+            messages: [createUserMessage({
+              content: [{ type: 'text', text: 'attributed title input without tools' }],
+              source: { kind: 'dsh-session-title-llm' },
+            })],
+            tools: [],
+          })) { /* Empty tool declarations remain an audited auxiliary envelope. */ }
+        }
+        await expect(directEmptyAuxTools()).resolves.toBeUndefined()
+        expect(h.adapter.requests).toHaveLength(3)
+
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: 'continue after startup resume' }],
           source: { kind: 'user' },
         }))
         await agent.whenIdle()
+        expectCurrentSessionReload(agent.session)
 
         const request = h.adapter.requests.at(-1)
         if (request === undefined) throw new Error('startup legacy prompt request was not sent')
@@ -1052,24 +1076,95 @@ describe('durable Bot roster', () => {
 
   it('keeps shared admission fenced until a failed prompt migration flush is retried durably', async () => {
     const sharedSessionId = SessionId('shared-session-prompt-migration-retry')
-    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)], new Map(), new Map(), true, 'native', false, {
-      inspectSharedSessions: true,
-    })
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        inspectSharedSessions: true,
+        realAgent: true,
+        realAgentInitialResponse: 'text',
+        beforeService: (ctx) => {
+          const agent = ctx.agents.get(sharedSessionId)
+          if (agent === undefined) throw new Error('prompt migration retry Agent was not created')
+          appendClosedLegacySystemMessage(agent.session, 'PRIVATE_PROMPT_MIGRATION_RETRY')
+        },
+      },
+    )
     try {
       const created = await h.service.create({ name: 'Prompt migration retry owner', cwd: '/tmp' })
       const agent = h.agents[0]
-      if (agent === undefined) throw new Error('prompt migration retry Agent was not created')
-      appendClosedLegacySystemMessage(agent.session, 'PRIVATE_PROMPT_MIGRATION_RETRY')
-      const host = productionSharedHost(h.service)
-      h.flush.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true)
-      const resolve = () => host.resolvePrivateAgent(
+      if (agent === undefined || h.adapter === undefined) throw new Error('prompt migration retry Agent was not created')
+      const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
         sharedSessionId,
         new AbortController().signal,
         created.bot.id,
       )
-      await expect(resolve()).resolves.toHaveProperty('error')
-      await expect(resolve()).resolves.toHaveProperty('error')
-      await expect(resolve()).resolves.toHaveProperty('agent', agent)
+      if (!('agent' in resolved)) throw new Error(`prompt migration retry Agent did not resolve: ${resolved.error.message}`)
+      const flush = vi.spyOn(h.ctx.sessions, 'flush').mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'retry the migrated prompt' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+      expect(flush).toHaveBeenCalled()
+      expect(h.adapter.requests).toHaveLength(0)
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'retry the migrated prompt again' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+      expect(h.adapter.requests).toHaveLength(1)
+      const request = h.adapter.requests[0]
+      if (request === undefined) throw new Error('prompt migration retry request was not sent')
+      expect(request.messages.flatMap(message => message.content)
+        .flatMap(block => block.type === 'text' ? [block.text] : [])
+        .join('\n')).not.toContain('PRIVATE_PROMPT_MIGRATION_RETRY')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects a nonshared initiator from an explicit shared Session', async () => {
+    const sharedSessionId = SessionId('shared-session-initiator-mismatch')
+    const ordinarySessionId = SessionId('ordinary-session-initiator-mismatch')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId), String(ordinarySessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true, realAgent: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Initiator mismatch owner', cwd: '/tmp' })
+      const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
+        sharedSessionId,
+        new AbortController().signal,
+        created.bot.id,
+      )
+      if (!('agent' in resolved)) throw new Error(`initiator mismatch shared Agent did not resolve: ${resolved.error.message}`)
+      const ordinary = h.agents.find(agent => agent.id === ordinarySessionId)
+      if (ordinary === undefined) throw new Error('initiator mismatch ordinary Agent was not created')
+      await expect(h.ctx.agents.withInitiator(ordinary, async () => {
+        for await (const _chunk of h.ctx.llm.stream({
+          provider: 'mock',
+          model: 'mock',
+          sessionId: sharedSessionId,
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'mismatched initiator' }] }],
+        })) { /* The shared Session may not be borrowed by another Agent. */ }
+      })).rejects.toThrow(/shared Bot Session.*LLM/i)
+      expect(h.adapter?.requests).toHaveLength(0)
     } finally {
       await close(h.ctx)
     }
@@ -1559,6 +1654,46 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('keeps a live shared-preset Agent fenced when shared credentials are unavailable', async () => {
+    const sharedSessionId = SessionId('shared-session-no-credentials')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      false,
+      'native',
+      false,
+      {
+        beforeService: (ctx) => {
+          const agent = ctx.agents.get(sharedSessionId)
+          if (agent === undefined) throw new Error('no-credentials Agent was not created')
+          Object.defineProperty(agent.session, 'header', {
+            configurable: true,
+            value: { ...agent.session.header, agentPreset: SHARED_BOT_AGENT_PRESET },
+          })
+          ctx.tools.register(plainFixtureTool('bash', async () => 'operator secret'))
+        },
+      },
+    )
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('no-credentials Agent was not created')
+      expect(agent.session.header.agentPreset).toBe(SHARED_BOT_AGENT_PRESET)
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-no-credentials-fence'),
+        name: 'bash',
+        arguments: {},
+        signal: new AbortController().signal,
+        agent,
+      })).resolves.toMatchObject({ isError: true })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('keeps a live Agent fenced while validation metadata is pending or invalid', async () => {
     const sharedSessionId = SessionId('shared-session-admission-invalid-metadata')
     const pool = new MemoryMediaPool()
@@ -1848,6 +1983,87 @@ describe('durable Bot roster', () => {
         expect(h.agents).toHaveLength(1)
       } finally {
         await authority?.dispose()
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('cold-restores a persisted shared Session without adding a migration turn', async () => {
+    const sharedSessionId = SessionId('shared-session-cold-legacy-prompt')
+    const pool = new MemoryMediaPool()
+    const first = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        connection: {
+          sharedRpc: {
+            enroll: vi.fn(() => async () => {}),
+            handle: vi.fn(() => async () => {}),
+          },
+        },
+      },
+    )
+    let firstClosed = false
+    try {
+      const firstAgent = first.agents[0]
+      if (firstAgent === undefined) throw new Error('cold legacy prompt Agent was not created')
+      appendClosedLegacySystemMessage(firstAgent.session, 'PRIVATE_COLD_LEGACY_PROMPT')
+      const persisted = new Map<string, readonly SessionEvent[]>([[String(sharedSessionId), firstAgent.session.snapshotEvents()]])
+      const created = await first.service.create({ name: 'Cold legacy prompt owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-cold-legacy-prompt')
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [],
+        new Map(),
+        records,
+        persisted,
+        'native',
+        true,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+        },
+      )
+      try {
+        const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
+          sharedSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )
+        if (!('agent' in resolved)) throw new Error(`cold legacy prompt Session did not resume: ${resolved.error.message}`)
+        const resumed = h.agents.find(agent => agent.id === sharedSessionId)
+        if (resumed === undefined) throw new Error('cold legacy prompt Agent was not restored')
+        expect(resumed.session.snapshotEvents().filter(event => event.type === 'turn/start')).toHaveLength(1)
+        expectCurrentSessionReload(resumed.session)
+      } finally {
         await close(h.ctx)
       }
     } finally {

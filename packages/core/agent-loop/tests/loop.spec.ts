@@ -346,6 +346,29 @@ describe('agent loop', () => {
     await active
   })
 
+  it('resumes after maintenance at the session turn boundary', async () => {
+    const adapter = new MockAdapter([textResponse('after maintenance')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('maintenance-turn-boundary'), {
+      provider: 'mock',
+      model: 'mock',
+    })
+
+    await agent.runMaintenance(async () => {
+      agent.session.append('turn/start', { turn: 1 })
+      agent.session.append('step/start', { turn: 1, step: 1 })
+      agent.session.append('step/end', { turn: 1, step: 1 })
+      agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    })
+
+    send(agent, 'continue after maintenance')
+    await waitForIdle(ctx, agent)
+    expect(agent.session.snapshotEvents()
+      .filter(event => event.type === 'turn/start')
+      .map(event => event.type === 'turn/start' ? event.data.turn : undefined))
+      .toEqual([1, 2])
+  })
+
   it('cancels queued wakeup work together with an active maintenance task', async () => {
     const adapter = new MockAdapter([textResponse('park reply')])
     const ctx = await harness(adapter)
