@@ -731,7 +731,7 @@ describe('shared Bot collaboration surfaces', () => {
     expect(firstRequest.id).toMatch(/^bot-group-/)
 
     await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /Recover/ }))
     await waitFor(() => {
       expect(createGroup).toHaveBeenCalledTimes(2)
       expect(createGroup.mock.calls[1]?.[0].id).toBe(firstRequest.id)
@@ -1049,16 +1049,20 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
     dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
     await waitFor(() => {
-      const recover = within(dialog).getByRole('button', { name: 'Recover' })
+      const recover = within(dialog).getByRole('button', { name: /Recover/ })
       expect(recover).toBeTruthy()
-      expect((recover as HTMLButtonElement).disabled).toBe(false)
+      expect((recover as HTMLButtonElement).disabled).toBe(true)
+      expect((within(dialog).getByRole('button', { name: 'Create shared group' }) as HTMLButtonElement).disabled).toBe(true)
     })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /Recover/ }))
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
     expect(client.createGroup).toHaveBeenCalledOnce()
 
     createGroup.resolve({ ok: false, error: { code: 'gateway/transport', message: 'settled', details: {} } })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    await waitFor(() => {
+      expect((within(dialog).getByRole('button', { name: 'Recover' }) as HTMLButtonElement).disabled).toBe(false)
+    })
   })
 
   it('reconciles a persisted shared-group create after reopening', async () => {
@@ -1283,6 +1287,48 @@ describe('shared Bot collaboration surfaces', () => {
     const firstRequest = createGroup.mock.calls[0]?.[0] as { readonly id?: string }
     const secondRequest = createGroup.mock.calls[1]?.[0] as { readonly id?: string }
     expect(firstRequest.id).not.toBe(secondRequest.id)
+  })
+
+  it('gates group actions until the pending catalog has loaded', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-catalog-gate'),
+      name: 'Catalog gate room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const catalogStarted = Promise.withResolvers<true>()
+    const catalogRelease = Promise.withResolvers<undefined>()
+    const originalRequest = navigator.locks.request.bind(navigator.locks)
+    vi.spyOn(navigator.locks, 'request').mockImplementation((name, callback) => {
+      if (name.endsWith('.catalog')) {
+        catalogStarted.resolve(true)
+        return catalogRelease.promise.then(callback)
+      }
+      return originalRequest(name, callback)
+    })
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage: vi.fn(),
+      createGroup: vi.fn(),
+    })
+    try {
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      await catalogStarted.promise
+      expect(screen.queryByPlaceholderText('Message Catalog gate room')).toBeNull()
+
+      catalogRelease.resolve(undefined)
+      await waitFor(() => { expect(screen.getByPlaceholderText('Message Catalog gate room')).toBeTruthy() })
+      const input = screen.getByPlaceholderText('Message Catalog gate room')
+      fireEvent.change(input, { target: { value: 'Catalog loaded' } })
+      expect((screen.getByRole('button', { name: 'Send to group' }) as HTMLButtonElement).disabled).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('refuses to resend a recovered message owned by another principal', async () => {
