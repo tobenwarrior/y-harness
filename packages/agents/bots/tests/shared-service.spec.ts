@@ -1193,6 +1193,53 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('surfaces operator-required recipient recovery without scheduling an endless retry', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true, false, { value: 1_000 })
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Operator recovery room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      value.host.deliverSharedGroup.mockImplementation(async () => ({
+        kind: 'busy' as const,
+        retryAt: value.clock.value,
+        recovery: 'operator-required' as const,
+      }))
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Show the recovery status.',
+        messageId: BotGroupMessageId('bot-group-message-operator-recovery'),
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'partial',
+          deliveries: [{
+            status: 'failed',
+            error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+          }],
+        },
+      })
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
+    } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not let scheduled early recovery rows starve later pending rows', async () => {
     vi.useFakeTimers()
     const value = await fixture(10, true)

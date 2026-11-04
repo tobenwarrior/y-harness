@@ -55,6 +55,7 @@
   },
   "peerDependencies": {
     "@yharness/avatar-generation": "workspace:*",
+    "@yharness/atomic-write": "workspace:*",
     "@yharness/client-connection": "workspace:*",
     "@yharness/agent-preset-registry": "workspace:*",
     "@yharness/cordis": "workspace:~",
@@ -82,6 +83,7 @@
   "devDependencies": {
     "@yharness/agent-preset-registry": "workspace:*",
     "@yharness/avatar-generation": "workspace:*",
+    "@yharness/atomic-write": "workspace:*",
     "@yharness/client-connection": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/credentials": "workspace:*",

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
@@ -56,7 +56,8 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { BotNativeToolProvider } from '../src/native-tools.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
-import type { SharedGroupSessionBinding } from '../src/shared-group.ts'
+import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
+import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
 import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import z from 'zod'
@@ -3862,6 +3863,7 @@ describe('durable Bot roster', () => {
       release.resolve(undefined)
       for (let index = 0; index < 6; index += 1) await Promise.resolve()
       await vi.runAllTicks()
+      await vi.runOnlyPendingTimersAsync()
       await vi.advanceTimersByTimeAsync(1)
       expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
         payload: { messages: [] },
@@ -3983,6 +3985,18 @@ describe('durable Bot roster', () => {
         }],
       },
     })
+    await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
+    const deadPid = process.pid + 1_000_002
+    const lockPath = join(
+      sharedBotWorkingDirectory(sessionId),
+      `.delivery-${encodeURIComponent(String(messageId))}.lock`,
+    )
+    await rm(lockPath, { force: true })
+    await writeFile(lockPath, `${deadPid}\n`, { mode: 0o600, flag: 'wx' })
+    const processKill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === deadPid) throw Object.assign(new Error('originating process exited'), { code: 'ESRCH' })
+      return true
+    })
     const h = await harness(
       pool,
       undefined,
@@ -4027,6 +4041,7 @@ describe('durable Bot roster', () => {
         payload: { messages: [{ status: 'accepted' }] },
       })
     } finally {
+      processKill.mockRestore()
       await close(h.ctx)
     }
   })
@@ -4092,11 +4107,91 @@ describe('durable Bot roster', () => {
       if (result === undefined || typeof result === 'string') throw new Error('missing crash-before-flush busy result')
       expect(result.kind).toBe('busy')
       expect(result.retryAt).toBeGreaterThanOrEqual(before)
+      expect(result.recovery).toBe('operator-required')
       expect(h.followups[0]).not.toHaveBeenCalled()
       expect(records.get(deliveryKey)).toMatchObject({
         payload: { messages: [{ status: 'pending', admissionToken: token }] },
       })
     } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('releases and retries a crash-before-flush fence after a new Host proves the old process exited', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient dead-owner recovery', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-dead-owner')
+    const groupId = BotGroupId('bot-group-recipient-dead-owner')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-dead-owner')
+    const token = 'recipient-dead-owner-token'
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    records.set(deliveryKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
+    const deadPid = process.pid + 1_000_000
+    const lockPath = join(
+      sharedBotWorkingDirectory(sessionId),
+      `.delivery-${encodeURIComponent(String(messageId))}.lock`,
+    )
+    await rm(lockPath, { force: true })
+    await writeFile(lockPath, `${deadPid}\n`, { mode: 0o600, flag: 'wx' })
+    const processKill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === deadPid) throw Object.assign(new Error('originating process exited'), { code: 'ESRCH' })
+      return true
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient dead-owner recovery',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Retry after the old Host exited before flush.',
+        messageId,
+      })).resolves.toBe('accepted')
+      expect(h.followups[0]).toHaveBeenCalledTimes(1)
+      expect(records.get(deliveryKey)).toMatchObject({
+        payload: { messages: [{ status: 'accepted' }] },
+      })
+    } finally {
+      processKill.mockRestore()
       await close(h.ctx)
     }
   })
@@ -4127,6 +4222,18 @@ describe('durable Bot roster', () => {
           admissionStartedAt: 1,
         }],
       },
+    })
+    await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
+    const deadPid = process.pid + 1_000_003
+    const lockPath = join(
+      sharedBotWorkingDirectory(sessionId),
+      `.delivery-${encodeURIComponent(String(messageId))}.lock`,
+    )
+    await rm(lockPath, { force: true })
+    await writeFile(lockPath, `${deadPid}\n`, { mode: 0o600, flag: 'wx' })
+    const processKill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+      if (pid === deadPid) throw Object.assign(new Error('originating process exited'), { code: 'ESRCH' })
+      return true
     })
     const h = await harness(
       pool,
@@ -4169,13 +4276,139 @@ describe('durable Bot roster', () => {
         source: { kind: 'bot-group-message', groupId, messageId },
       }), { surfaceOp: 'append' })
       await vi.advanceTimersByTimeAsync(1_000)
-      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+      await vi.waitFor(() => expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
         payload: { messages: [{ status: 'accepted' }] },
-      })
+      }), { timeout: 2_000, interval: 10 })
       expect(h.followups[0]).not.toHaveBeenCalled()
     } finally {
+      processKill.mockRestore()
       await close(h.ctx)
       vi.useRealTimers()
+    }
+  })
+
+  it('reconciles a dead recipient fence for a revoked binding during Host startup', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const connection = {
+      sharedRpc: {
+        enroll: vi.fn(() => async () => {}),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const first = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { connection, inspectSharedSessions: true },
+    )
+    let second: Awaited<ReturnType<typeof harness>> | undefined
+    let processKill: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      const firstBot = await first.service.create({ name: 'Revoked fence first', cwd: '/tmp' })
+      const secondBot = await first.service.create({ name: 'Revoked fence second', cwd: '/tmp' })
+      const sessionId = SessionId('shared-session-group-revoked-fence')
+      const groupId = BotGroupId('bot-group-revoked-fence')
+      const messageId = BotGroupMessageId('bot-group-message-revoked-fence')
+      const token = 'recipient-revoked-fence-token'
+      const groupSnapshot = sharedGroupSnapshotSchema.parse({
+        version: 1,
+        revision: 1,
+        groups: [{
+          id: groupId,
+          name: 'Revoked fence group',
+          botIds: [firstBot.bot.id, secondBot.bot.id],
+          createdAt: 1,
+          updatedAt: 1,
+          ownerPrincipalId: BotPrincipalId('principal-revoked-fence'),
+          memberPrincipalIds: [BotPrincipalId('principal-revoked-fence')],
+          revision: 1,
+        }],
+        messages: [],
+        deliveries: [],
+        sessions: [{
+          groupId,
+          botId: firstBot.bot.id,
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          revokedAt: 2,
+        }],
+        invites: [],
+        responseReservations: [],
+      })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const snapshot = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: { ...snapshot, sharedGroups: groupSnapshot },
+        }
+      })
+      await authority.dispose()
+      records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+        kind: 'grant',
+        payload: {
+          version: 1,
+          messages: [{
+            targetSessionId: String(sessionId),
+            messageId: String(messageId),
+            status: 'pending',
+            claimToken: token,
+            claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+            admissionToken: token,
+            admissionStartedAt: 1,
+          }],
+        },
+      })
+      await close(first.ctx)
+      const deadPid = process.pid + 1_000_001
+      await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
+      const lockPath = join(
+        sharedBotWorkingDirectory(sessionId),
+        `.delivery-${encodeURIComponent(String(messageId))}.lock`,
+      )
+      await rm(lockPath, { force: true })
+      await writeFile(lockPath, `${deadPid}\n`, { mode: 0o600, flag: 'wx' })
+      processKill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
+        if (pid === deadPid) throw Object.assign(new Error('originating process exited'), { code: 'ESRCH' })
+        return true
+      })
+      second = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        { connection, inspectSharedSessions: true },
+      )
+      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+        payload: { messages: [] },
+      })
+      await expect(productionSharedHost(second.service).deliverSharedGroup?.({
+        groupId,
+        groupName: 'Revoked fence group',
+        targetBotId: firstBot.bot.id,
+        sessionId,
+        text: 'A revoked binding must not accept new delivery.',
+        messageId: BotGroupMessageId('bot-group-message-revoked-fence-retry'),
+      })).rejects.toThrow('no longer active')
+    } finally {
+      processKill?.mockRestore()
+      if (second !== undefined) await close(second.ctx)
     }
   })
 

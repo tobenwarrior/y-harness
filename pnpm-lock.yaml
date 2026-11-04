@@ -1170,6 +1170,9 @@ importers:
       '@yharness/avatar-generation':
         specifier: workspace:*
         version: link:../avatar-generation
+      '@yharness/atomic-write':
+        specifier: workspace:*
+        version: link:../../util/atomic-write
       '@yharness/client-connection':
         specifier: workspace:*
         version: link:../../client/connection

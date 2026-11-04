@@ -343,9 +343,10 @@ export interface SharedGroupHost {
   readonly registerSharedGroupSessions?: (bindings: readonly SharedGroupSessionBinding[]) => void
   /**
    * Queue one idempotent message into the exact isolated group Session.
-   * A live admission lease or unresolved durable admission fence returns a
-   * retryable busy result; it is not a duplicate until the recipient Session
-   * log or durable receipt proves the message was accepted.
+   * A live admission lease returns a retryable busy result; it is not a
+   * duplicate until the recipient Session log or durable receipt proves the
+   * message was accepted. A legacy fence without dead-owner evidence returns
+   * `recovery: 'operator-required'` and must not be retried indefinitely.
    */
   readonly deliverSharedGroup?: (request: {
     readonly groupId: ReturnType<typeof BotGroupId>
@@ -355,7 +356,11 @@ export interface SharedGroupHost {
     readonly text: string
     readonly messageId: ReturnType<typeof BotGroupMessageId>
     readonly signal?: AbortSignal
-  }) => Promise<'accepted' | 'duplicate' | { readonly kind: 'busy'; readonly retryAt: number }>
+  }) => Promise<'accepted' | 'duplicate' | {
+    readonly kind: 'busy'
+    readonly retryAt: number
+    readonly recovery?: 'operator-required'
+  }>
 }
 
 /** Stable error category returned by shared-group endpoint operations. */
@@ -1206,6 +1211,13 @@ export class SharedBotGroupService {
         signal: dispatchSignal,
       })
       if (typeof deliveryResult !== 'string') {
+        if (deliveryResult.recovery === 'operator-required') {
+          return {
+            kind: 'failed',
+            error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+            recovery: 'operator-required',
+          }
+        }
         return {
           kind: 'busy',
           error: 'Shared Bot recipient delivery is already in progress',
@@ -1797,7 +1809,7 @@ type SharedGroupDeliveryClaimResult =
 type SharedGroupDeliveryDispatch =
   | { readonly kind: 'accepted'; readonly result: 'accepted' | 'duplicate' }
   | { readonly kind: 'duplicate' }
-  | { readonly kind: 'failed'; readonly error: string }
+  | { readonly kind: 'failed'; readonly error: string; readonly recovery?: 'operator-required' }
   | { readonly kind: 'busy'; readonly error: string; readonly leaseUntil: number }
 
 interface SharedGroupSendPlan {
