@@ -1309,38 +1309,51 @@ export function BotRoster({
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
   const ownerCapabilityProbe = sharedClient?.getOwnerCapability
   const ownerEnrollment = sharedClient?.enrollOwner
+  const ownerCapabilitySubscription = sharedClient?.subscribeOwnerCapability
   useEffect(() => {
     let active = true
     let retryOnFocus = true
     let focusRetryCount = 0
+    let probeGeneration = 0
     if (sharedClient === undefined || ownerCapabilityProbe === undefined || ownerEnrollment === undefined) {
       setSharedOwnerCapability('unknown')
       return () => { active = false }
     }
     setSharedOwnerCapability('unknown')
     const probe = (): void => {
+      const requestGeneration = probeGeneration
       void Promise.resolve().then(ownerCapabilityProbe).then((capability) => {
-        if (!active) return
+        if (!active || requestGeneration !== probeGeneration) return
         retryOnFocus = !capability.ownerBootstrap
         setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
       }).catch(() => {
-        if (!active) return
+        if (!active || requestGeneration !== probeGeneration) return
         retryOnFocus = true
         setSharedOwnerCapability('unavailable')
       })
+    }
+    const onCapabilityInvalidated = (): void => {
+      if (!active) return
+      probeGeneration += 1
+      retryOnFocus = true
+      focusRetryCount = 0
+      setSharedOwnerCapability('unknown')
+      probe()
     }
     const onFocus = (): void => {
       if (!active || !retryOnFocus || focusRetryCount >= MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES) return
       focusRetryCount += 1
       probe()
     }
+    const stopCapabilitySubscription = ownerCapabilitySubscription?.(onCapabilityInvalidated)
     probe()
     window.addEventListener('focus', onFocus)
     return () => {
       active = false
+      stopCapabilitySubscription?.()
       window.removeEventListener('focus', onFocus)
     }
-  }, [ownerCapabilityProbe, ownerEnrollment, sharedClient])
+  }, [ownerCapabilityProbe, ownerCapabilitySubscription, ownerEnrollment, sharedClient])
   const sharedOwnerAvailable = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'available'
   const sharedOwnerUnsupported = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'unavailable'
   const normalizedQuery = query.trim().toLocaleLowerCase()

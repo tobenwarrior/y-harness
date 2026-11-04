@@ -390,6 +390,7 @@ export class BotWorkspaceController {
   /** Stop asynchronous reads and release the selected Session. */
   dispose(): void {
     this.disposed = true
+    this.sharedClient?.dispose?.()
     this.selectionGeneration++
     this.refreshAfterPending = false
     this.selectedReference?.release()

@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
 import { makeTranslate } from '@yharness/client-test-runtime'
+import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
-import type { SharedBotsClient } from '../src/client/shared-client.ts'
+import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary,
   BotTemplateActions, BotTemplateState, BotWorkspaceProps,
@@ -593,6 +594,45 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(4) })
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(4)
+  })
+
+  it('rechecks owner capability when Connection readiness changes while the roster stays mounted', async () => {
+    let onGeneration: (() => void) | undefined
+    let capabilityCalls = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        expect(endpoint).toBe('bots/share/enroll')
+        expect(payload).toEqual({ capability: true })
+        capabilityCalls += 1
+        return { ok: true as const, value: { ownerBootstrap: capabilityCalls > 1 } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc, {
+      subscribeConnectionGeneration: (listener) => {
+        onGeneration = listener
+        return () => { onGeneration = undefined }
+      },
+    })
+    const view = render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={client}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(capabilityCalls).toBe(1) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(true)
+    if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
+    await act(async () => { onGeneration?.() })
+    await waitFor(() => {
+      expect(capabilityCalls).toBe(2)
+      expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    })
+    view.unmount()
+    client.dispose?.()
+    expect(onGeneration).toBeUndefined()
   })
 
   it('renders the selected detail as a standalone main surface', () => {

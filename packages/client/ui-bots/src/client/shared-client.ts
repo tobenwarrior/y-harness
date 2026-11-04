@@ -118,6 +118,12 @@ export interface SharedBotOwnerCapability {
   /** Whether this connection can authenticate the local operator for owner setup. */
   readonly ownerBootstrap: boolean
 }
+
+/** Lifecycle inputs used to invalidate connection-scoped capability probes. */
+export interface SharedBotsClientOptions {
+  /** Subscribe to active Connection generation establishment, replacement, and loss. */
+  readonly subscribeConnectionGeneration?: (listener: () => void) => () => void
+}
 /** Private transcript response for one Bot and the current collaborator. */
 export interface SharedBotPrivateChatValue {
   /** Bot whose private conversation was read. */
@@ -203,6 +209,10 @@ export interface SharedBotsClient {
    * unavailable capability so the UI never offers a request that cannot work.
    */
   readonly getOwnerCapability?: () => Promise<SharedBotOwnerCapability>
+  /** Re-run owner capability discovery when the active Connection generation changes. */
+  readonly subscribeOwnerCapability?: (listener: () => void) => () => void
+  /** Release the Connection-generation listener owned by this client. */
+  readonly dispose?: () => void
   /** Restore the server-authenticated principal scope after a browser reload. */
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
@@ -246,9 +256,10 @@ export interface SharedBotsClient {
 /**
  * Build a typed caller for the collaborator-only route.
  * @param rpc - Connection RPC carrier from the active Client generation.
+ * @param options - Optional Connection-generation lifecycle subscription.
  * @returns shared-Bot operations using the dedicated channel only.
  */
-export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+export function createSharedBotsClient(rpc: ClientConnectionRpc, options: SharedBotsClientOptions = {}): SharedBotsClient {
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
@@ -257,6 +268,14 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let authTransitionTail: Promise<void> = Promise.resolve()
   let authChannel: SharedAuthChannel | undefined
   const authListeners = new Set<SharedBotAuthListener>()
+  const ownerCapabilityListeners = new Set<() => void>()
+  let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
+  let disposed = false
+  const invalidateOwnerCapability = (): void => {
+    ownerCapabilityRequest = undefined
+    for (const listener of [...ownerCapabilityListeners]) listener()
+  }
+  let stopConnectionGeneration = options.subscribeConnectionGeneration?.(invalidateOwnerCapability)
   const notifyAuth = (change: SharedBotAuthChange): void => {
     for (const listener of [...authListeners]) listener(change)
   }
@@ -359,8 +378,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
-  let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
   const getOwnerCapability = (): Promise<SharedBotOwnerCapability> => {
+    if (disposed) return Promise.resolve({ ownerBootstrap: false })
     if (ownerCapabilityRequest !== undefined) return ownerCapabilityRequest
     const request = (async () => {
       const result = await call('bots/share/enroll', { capability: true }, parseOwnerCapability, false)
@@ -372,6 +391,19 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
     )
     return request
+  }
+  const subscribeOwnerCapability = (listener: () => void): (() => void) => {
+    if (disposed) return () => {}
+    ownerCapabilityListeners.add(listener)
+    return () => { ownerCapabilityListeners.delete(listener) }
+  }
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    stopConnectionGeneration?.()
+    stopConnectionGeneration = undefined
+    ownerCapabilityRequest = undefined
+    ownerCapabilityListeners.clear()
   }
 
   return {
@@ -392,6 +424,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     enroll,
     enrollOwner,
     getOwnerCapability,
+    subscribeOwnerCapability,
+    dispose,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
