@@ -1,6 +1,7 @@
 /** Authenticated shared-Bot endpoints and durable private-session routing. */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@yharness/cordis'
 import {
   SharedAccessAuthority,
@@ -269,8 +270,10 @@ type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
+const SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY = 'agent-bots/shared-pair-key-migration'
 const SHARED_MEMBERSHIP_RECORD_VERSION = 1 as const
 const SHARED_PRIVATE_SESSIONS_RECORD_VERSION = 1 as const
+const SHARED_PAIR_KEY_MIGRATION_VERSION = 3 as const
 const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
 const MAX_NODE_TIMER_MS = 2_147_483_647
 const SHARED_AGENT_CANCEL_TIMEOUT_MS = 1_000
@@ -400,20 +403,33 @@ export class SharedBotService {
     host: SharedBotHost,
     options: SharedServiceOptions = {},
   ): Promise<SharedBotService> {
-    const domain = await facility.open(sharedBotDomain)
     const credentials = options.credentials ?? owner.get('credentials')
     if (credentials === undefined) {
-      await waitForTracked([domain.close()])
       throw new Error('shared Bot service requires a credential provider')
     }
+    let domain: Domain<typeof sharedBotDomain> | undefined
     try {
-      await migrateSharedPairTable(domain.table('memberships'), 'memberships')
-      await migrateSharedPairTable(domain.table('private_sessions'), 'private_sessions')
+      await authority.mutateExtension(SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY, async (current) => {
+        if (current !== undefined && !sharedPairKeyMigrationSchema.safeParse(current).success) {
+          throw new Error('shared Bot pair-key migration marker is invalid')
+        }
+        // Open the domain while the authority record is locked. A Host that
+        // opened it before this point could retain a stale legacy snapshot and
+        // overwrite a newer successor row after another Host migrated it.
+        domain = await facility.open(sharedBotDomain)
+        await migrateSharedPairTable(domain.table('memberships'), 'memberships')
+        await migrateSharedPairTable(domain.table('private_sessions'), 'private_sessions')
+        return {
+          value: undefined,
+          next: { version: SHARED_PAIR_KEY_MIGRATION_VERSION },
+        }
+      })
+      if (domain === undefined) throw new Error('shared Bot domain did not open during migration')
       const membershipSnapshot = await initializeMembershipSnapshot(authority, credentials, domain.table('memberships'))
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
       return new SharedBotService(owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options)
     } catch (error) {
-      await waitForTracked([domain.close()])
+      if (domain !== undefined) await waitForTracked([domain.close()])
       throw error
     }
   }
@@ -2044,11 +2060,21 @@ function publicProfile(bot: BotView): SharedBotProfile {
   }
 }
 
-// These checks mirror the durable shared id schemas; `_` remains reserved as
-// the pair-key delimiter so the successor is path-safe and unambiguous.
+const sharedPairKeyMigrationSchema = z.object({
+  version: z.literal(SHARED_PAIR_KEY_MIGRATION_VERSION),
+}).strict()
+
+// These checks mirror the durable shared id schemas. The successor stores
+// case-sensitive SHA-256 digests so its length is bounded and its path does
+// not collide on case-insensitive filesystems.
 const SHARED_BOT_ID_KEY_RE = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 const SHARED_PRINCIPAL_ID_KEY_RE = /^principal-[A-Za-z0-9-]+$/
-const SHARED_KEY_PREFIX = 'shared-v2_'
+const SHARED_KEY_PREFIX = 'shared-v3_'
+const SHARED_PREDECESSOR_KEY_PREFIX = 'shared-v2_'
+
+function sharedIdentityKey(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
+}
 
 function membershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {
   const bot = String(botId)
@@ -2056,14 +2082,23 @@ function membershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipal
   if (!SHARED_BOT_ID_KEY_RE.test(bot) || !SHARED_PRINCIPAL_ID_KEY_RE.test(principal)) {
     throw new Error('shared Bot membership key contains an invalid identity')
   }
-  return `${SHARED_KEY_PREFIX}${bot}_${principal}`
+  return `${SHARED_KEY_PREFIX}${sharedIdentityKey(bot)}_${sharedIdentityKey(principal)}`
+}
+
+function predecessorMembershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {
+  const bot = String(botId)
+  const principal = String(principalId)
+  if (!SHARED_BOT_ID_KEY_RE.test(bot) || !SHARED_PRINCIPAL_ID_KEY_RE.test(principal)) {
+    throw new Error('shared Bot membership key contains an invalid identity')
+  }
+  return `${SHARED_PREDECESSOR_KEY_PREFIX}${bot}_${principal}`
 }
 
 function legacyMembershipKey(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): string {
   return `${encodeURIComponent(String(botId))}:${encodeURIComponent(String(principalId))}`
 }
 
-/** Rewrite old colon-separated pair keys with a path-safe key before service use. */
+/** Rewrite predecessor pair keys with a bounded successor before service use. */
 async function migrateSharedPairTable<T extends {
   readonly botId: BotId
   readonly principalId: ReturnType<typeof BotPrincipalId>
@@ -2071,17 +2106,18 @@ async function migrateSharedPairTable<T extends {
   for (const [storedKey, record] of [...table.entries()]) {
     const canonicalKey = membershipKey(record.botId, record.principalId)
     if (storedKey === canonicalKey) continue
-    if (storedKey !== legacyMembershipKey(record.botId, record.principalId)) {
+    if (storedKey !== predecessorMembershipKey(record.botId, record.principalId)
+      && storedKey !== legacyMembershipKey(record.botId, record.principalId)) {
       throw new Error(`shared Bot ${tableName} has an invalid key '${storedKey}'`)
     }
     const canonical = table.get(canonicalKey)
-    if (canonical !== undefined && JSON.stringify(canonical) !== JSON.stringify(record)) {
+    if (canonical !== undefined && !isDeepStrictEqual(canonical, record)) {
       throw new Error(`shared Bot ${tableName} has conflicting legacy and canonical records`)
     }
     if (canonical === undefined) await table.put(canonicalKey, record)
     const currentLegacy = table.get(storedKey)
     if (currentLegacy === undefined) continue
-    if (JSON.stringify(currentLegacy) !== JSON.stringify(record)) {
+    if (!isDeepStrictEqual(currentLegacy, record)) {
       throw new Error(`shared Bot ${tableName} changed during key migration`)
     }
     await table.delete(storedKey)

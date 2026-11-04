@@ -579,9 +579,10 @@ export class SharedBotGroupService {
     const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
     const botIds = normalizeBotIds(request.botIds)
     const id = request.id === undefined ? BotGroupId(`bot-group-${randomUUID()}`) : normalizeGroupId(request.id)
+    const availableBots = await this.host.listBots(signal)
     const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
       requireBotAccess(memberships, botIds, principalId, 'write-group')
-      const bots = await this.activeBots(botIds, signal)
+      const bots = this.activeBotsFromList(botIds, availableBots)
       const existing = snapshot.groups.find(group => group.id === id)
       if (existing !== undefined) {
         if (existing.ownerPrincipalId !== principalId || existing.name !== name || !sameIdSet(existing.botIds, botIds)) {
@@ -621,8 +622,8 @@ export class SharedBotGroupService {
   /** List only groups for which the principal has both ACL and Bot membership. */
   async list(principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal): Promise<BotGroupListValue> {
     this.requireIsolatedHost()
+    const bots = await this.host.listBots(signal)
     const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
-      const bots = await this.host.listBots(signal)
       const groups: BotGroupView[] = []
       for (const group of snapshot.groups) {
         if (!hasGroupAccess(group, memberships, principalId, 'read-group')) continue
@@ -650,12 +651,13 @@ export class SharedBotGroupService {
     this.requireIsolatedHost()
     const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
     const botIds = normalizeBotIds(request.botIds)
+    const availableBots = await this.host.listBots(signal)
     const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
       const group = findGroup(snapshot, normalizeGroupId(request.groupId))
       requireGroupAccess(group, memberships, principalId, 'write-group')
       if (group.ownerPrincipalId !== principalId) throw new SharedGroupError('gateway/forbidden', 'only the shared group owner may edit its roster')
       requireBotAccess(memberships, botIds, principalId, 'write-group')
-      const bots = await this.activeBots(botIds, signal)
+      const bots = this.activeBotsFromList(botIds, availableBots)
       if (group.name === name && sameIdSet(group.botIds, botIds)) return { snapshot, value: { group: groupView(group, bots) } }
       const now = Math.max(this.now(), group.updatedAt + 1)
       const nextGroup: SharedGroupRecord = {
@@ -729,10 +731,11 @@ export class SharedBotGroupService {
     signal: AbortSignal,
   ): Promise<BotGroupInspectValue> {
     this.requireIsolatedHost()
+    const availableBots = await this.host.listBots(signal)
     const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'read-group')
-      const bots = await this.activeBots(group.botIds, signal)
+      const bots = this.activeBotsFromList(group.botIds, availableBots)
       const messages = snapshot.messages
         .filter(message => message.groupId === group.id)
         .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
@@ -1731,8 +1734,7 @@ export class SharedBotGroupService {
     })
   }
 
-  private async activeBots(botIds: readonly BotId[], signal: AbortSignal): Promise<readonly BotView[]> {
-    const bots = await this.host.listBots(signal)
+  private activeBotsFromList(botIds: readonly BotId[], bots: readonly BotView[]): readonly BotView[] {
     const selected: BotView[] = []
     for (const botId of botIds) {
       const bot = bots.find(candidate => candidate.id === botId)

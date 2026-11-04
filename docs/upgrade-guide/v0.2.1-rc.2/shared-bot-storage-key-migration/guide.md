@@ -1,15 +1,15 @@
 ---
 kind: upgrade-guide
-description: "Shared Bot membership and private-session rows move from colon-separated pair keys to path-safe keys for JSON storage."
+description: "Shared Bot membership and private-session rows move to bounded, case-preserving pair keys across JSON and SQLite storage."
 ---
 
 # Shared Bot storage keys are path-safe
 
 ## Change
 
-`agent_bot_shares` membership and private-session rows previously used percent-encoded `bot-id:principal-id` keys. Those keys cannot be written by the JSON per-record backend. The service now writes `shared-v2_<bot-id>_<principal-id>` keys; the underscore delimiter is excluded by the stored Bot and principal id schemas. On startup, a current Host copies legacy rows to successor keys, verifies duplicate values, and removes the legacy rows. Authority membership snapshots, private-session snapshots, and invite rows are preserved.
+`agent_bot_shares` membership and private-session rows use bounded `shared-v3_<sha256(bot-id)>_<sha256(principal-id)>` keys. The digests preserve case distinctions while avoiding path-length and case-insensitive-filesystem collisions. Startup accepts both the predecessor `shared-v2_<bot-id>_<principal-id>` rows and older percent-encoded `bot-id:principal-id` rows, copies them to the v3 key, verifies duplicate values structurally, and removes the predecessor only after the successor is durable. Authority membership snapshots, private-session snapshots, and invite rows are preserved.
 
-Current Hosts can repeat this migration concurrently and retry it after a failed durable write. A pre-migration binary can still write colon keys while the successor is being migrated, so mixed-version Hosts are unsupported for this store migration.
+Current Hosts serialize this migration through the shared authority credential record, so a second current Host waits for the first Host's copy/delete transaction instead of racing a stale read. Upgrade every Host before opening the shared store and stop every pre-migration writer; older binaries can still write predecessor keys and are not concurrency-safe with this migration. A failed durable write leaves the predecessor row for a later retry.
 
 ## Migration
 

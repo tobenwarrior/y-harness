@@ -1209,6 +1209,9 @@ importers:
       '@yharness/storage-json':
         specifier: workspace:*
         version: link:../../storage/storage-json
+      '@yharness/storage-sqlite':
+        specifier: workspace:*
+        version: link:../../storage/storage-sqlite
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
