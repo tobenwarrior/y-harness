@@ -11,6 +11,7 @@ import {
   sharedPrincipalOf,
   sharedRevocationSignal,
   type SharedAccessEnrollment,
+  type SharedAccessInviteMetadata,
   type SharedAccessStateSnapshot,
 } from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
@@ -192,6 +193,12 @@ interface SharedServiceOptions {
   readonly credentials?: CredentialProvider
   /** Maximum interval before a process notices a membership change in storage. */
   readonly membershipPollIntervalMs?: number
+}
+
+interface PendingBotInvite {
+  readonly botId: BotId
+  readonly role: BotShareRole
+  readonly expiresAt: number
 }
 
 interface SharedMembershipState {
@@ -546,9 +553,10 @@ export class SharedBotService {
         return await this.groups.redeemInvite(code, request)
       }
       const digest = sharedInviteDigest(code)
-      const pending = this.invites.get(digest)
+      const authoritySnapshot = await this.authority.readExtension(SHARED_MEMBERSHIP_EXTENSION_KEY)
+      const pending = pendingBotInvite(digest, authoritySnapshot.state.invites, this.invites.get(digest))
       if (pending === undefined || this.now() >= pending.expiresAt) {
-        if (pending !== undefined) await this.withPairKeyMirrorWrite(() => this.invites.delete(digest))
+        if (this.invites.get(digest) !== undefined) await this.withPairKeyMirrorWrite(() => this.invites.delete(digest))
         throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite is invalid or expired')
       }
       const operation = await this.host.withBot(pending.botId, undefined, async (bot) => {
@@ -1714,6 +1722,9 @@ export class SharedBotService {
           persistedDigest = record.digest
           await this.invites.put(record.digest, record)
           signal?.throwIfAborted()
+        }, {
+          botId: String(botId),
+          role,
         })
       } catch (error) {
         const digest = persistedDigest
@@ -2077,6 +2088,31 @@ async function reconcilePrivateSessionMirror(
     for (const [key, record] of expected) await table.put(key, record)
     return { value: undefined, next: current }
   })
+}
+
+function pendingBotInvite(
+  digest: string,
+  authorityInvites: SharedAccessStateSnapshot['invites'],
+  mirror: SharedInviteRecord | undefined,
+): PendingBotInvite | undefined {
+  const authoritative = authorityInvites?.find(invite => invite.digest === digest)
+  if (authorityInvites !== undefined && authoritative === undefined) return undefined
+  if (authoritative === undefined) return mirror
+  const metadata: SharedAccessInviteMetadata | undefined = authoritative.metadata
+  if (metadata === undefined) {
+    return mirror === undefined ? undefined : { ...mirror, expiresAt: authoritative.expiresAt }
+  }
+  const botId = metadata.botId
+  const role = metadata.role
+  if (botId === undefined || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/u.test(botId)
+    || role === undefined || !BOT_SHARE_ROLES.some(candidate => candidate === role)) {
+    throw new SharedServiceFault('gateway/internal', 'shared Bot invite association is invalid')
+  }
+  return {
+    botId: BotId(botId),
+    role: role as BotShareRole,
+    expiresAt: authoritative.expiresAt,
+  }
 }
 
 function parseMembershipSnapshot(value: unknown): SharedMembershipSnapshot {

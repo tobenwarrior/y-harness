@@ -776,6 +776,24 @@ describe('shared Bot service', () => {
     }
   })
 
+  it.each(['json', 'sqlite'] as const)('refreshes a long-lived Host before redeeming an invite created by another Host in %s storage', async (backend) => {
+    const value = backend === 'json' ? await jsonFixture() : await sqliteFixture()
+    let secondary: SecondaryFixture | undefined
+    try {
+      secondary = await secondaryDiskFixture(value)
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const invite = await value.service.createInvite(BotId('bot-chief'), 'collaborator')
+      await expect(secondary.service.enroll(invite.code, enrollmentRequest()))
+        .resolves.toMatchObject({ botId: BotId('bot-chief'), role: 'collaborator' })
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
   it('does not publish a Bot invite before its mirror row is durable', async () => {
     const value = await fixture()
     try {

@@ -660,6 +660,9 @@ const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
   record: botRecordSchema,
 }).strict()
+const botProfileRosterFenceSchema = zod.object({
+  token: zod.string().min(1).max(128),
+}).strict()
 const botProfileRevisionRecordV1Schema = zod.object({
   version: zod.literal(1),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
@@ -671,6 +674,7 @@ const botProfileRevisionRecordSchema = zod.object({
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
   pending: botProfilePendingSchema.optional(),
+  sharedRosterFence: botProfileRosterFenceSchema.optional(),
 }).strict()
 const botMessageDeliveryRecordSchema = zod.object({
   version: zod.literal(BOT_MESSAGE_DELIVERY_RECORD_VERSION),
@@ -722,6 +726,7 @@ interface BotProfileRevisionState {
   readonly revisions: Record<string, number>
   readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
   readonly pending?: zod.infer<typeof botProfilePendingSchema>
+  readonly sharedRosterFence?: zod.infer<typeof botProfileRosterFenceSchema>
 }
 
 interface BotMessageDeliveryState {
@@ -1065,6 +1070,7 @@ function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfi
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+    ...(parsed.data.sharedRosterFence === undefined ? {} : { sharedRosterFence: parsed.data.sharedRosterFence }),
   }
 }
 
@@ -1076,6 +1082,7 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
       revisions: state.revisions,
       ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
       ...(state.pending === undefined ? {} : { pending: state.pending }),
+      ...(state.sharedRosterFence === undefined ? {} : { sharedRosterFence: state.sharedRosterFence }),
     },
   }
 }
@@ -2764,6 +2771,9 @@ export class BotService extends TypertRemoteService {
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
       let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+      if (state.sharedRosterFence !== undefined) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed while a shared group admission was committing', { botId })
+      }
       if (state.pending !== undefined) {
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -2889,6 +2899,9 @@ export class BotService extends TypertRemoteService {
     const transactionId = randomUUID()
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
       let state = profileRevisionRecordOf(stored)
+      if (state.sharedRosterFence !== undefined) {
+        throw new RemoteError('gateway/conflict', 'Bot roster changed while a shared group admission was committing', { botId: record.id })
+      }
       if (state.pending !== undefined) {
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -6378,6 +6391,7 @@ export class BotService extends TypertRemoteService {
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
       const state = record === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(record)
+      if (state.sharedRosterFence !== undefined) return undefined
       const migrating = record === undefined && legacyProfileState !== undefined
       if (state.pending === undefined) return migrating ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
@@ -6900,9 +6914,12 @@ export class BotService extends TypertRemoteService {
       const domain = await this.getDomain()
       const bots = domain.table('bots')
       const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
-      let result: { readonly valid: true; readonly value: T } | { readonly valid: false } | undefined
+      const token = randomUUID()
+      let acquired = false
       await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
         let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+        const hadProfileState = stored !== undefined || legacyProfileState !== undefined || state.pending !== undefined
+        if (state.sharedRosterFence !== undefined) return undefined
         if (state.pending !== undefined) {
           await bots.put(state.pending.record.id, state.pending.record)
           this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -6912,16 +6929,30 @@ export class BotService extends TypertRemoteService {
           applyProfileSnapshot(record, state.profiles[String(record.id)]),
         ))
         if (!sameSharedBotRoster(expected, current)) {
-          result = { valid: false }
-        } else {
-          signal?.throwIfAborted()
-          result = { valid: true, value: await operation() }
+          if (!hadProfileState) return undefined
+          return profileRevisionRecordOfState(state)
         }
-        if (stored === undefined && legacyProfileState === undefined && state.pending === undefined) return undefined
-        return profileRevisionRecordOfState(state)
+        signal?.throwIfAborted()
+        acquired = true
+        return profileRevisionRecordOfState({
+          ...state,
+          sharedRosterFence: { token },
+        })
       })
-      if (result === undefined) throw new Error('shared Bot roster fence did not produce a result')
-      return result
+      if (!acquired) return { valid: false as const }
+      try {
+        return { valid: true as const, value: await operation() }
+      } finally {
+        await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+          const state = profileRevisionRecordOf(stored)
+          if (state.sharedRosterFence?.token !== token) {
+            throw new Error('shared Bot roster fence changed before release')
+          }
+          const { sharedRosterFence: ignoredFence, ...withoutFence } = state
+          void ignoredFence
+          return profileRevisionRecordOfState(withoutFence)
+        })
+      }
     }, signal)
   }
 
