@@ -62,6 +62,8 @@ export async function apply(ctx: Context): Promise<void> {
       ownerId: 'local-owner',
       name: 'Chief of Staff',
       description: 'Coordinates the work with peer Bots.',
+      persona: 'Keep internal release guidance private to the operator Bot.',
+      capabilities: ['planning', 'coordination'],
       identity: 'agent' as const,
       accent: 'violet' as const,
       cwd,

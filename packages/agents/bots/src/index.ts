@@ -1975,6 +1975,8 @@ export class BotService extends TypertRemoteService {
       const sessionKey = sessionId === undefined ? undefined : String(sessionId)
       const initiator = ctx.agents.currentInitiator()
       const initiatorKey = initiator === undefined ? undefined : String(initiator.id)
+      const liveSessionAgent = sessionId === undefined ? undefined : ctx.agents.get(sessionId)
+      const initiatorIsLiveSession = initiator !== undefined && initiator === liveSessionAgent
       const auxiliaryAdmission = this.auxiliarySessionAdmission.getStore()
       const admittedAuxiliary = auxiliaryAdmission !== undefined
         && auxiliaryAdmission.sessionId === sessionKey
@@ -1984,7 +1986,7 @@ export class BotService extends TypertRemoteService {
       if (sharedInitiator && sessionKey !== initiatorKey && !admittedAuxiliary) throw new Error(SHARED_BOT_LLM_REJECTION)
       if (sessionKey !== undefined
         && this.sharedSessionIds.has(sessionKey)
-        && initiatorKey !== sessionKey
+        && !initiatorIsLiveSession
         && !admittedAuxiliary) {
         throw new Error(SHARED_BOT_LLM_REJECTION)
       }
@@ -1992,7 +1994,7 @@ export class BotService extends TypertRemoteService {
       const currentSessionKey = String(sessionId)
       if (this.sharedSessionFailures.has(currentSessionKey)) throw new Error(SHARED_BOT_LLM_REJECTION)
       if (!this.sharedSessionIds.has(currentSessionKey)) return next()
-      const agent = ctx.agents.get(sessionId)
+      const agent = liveSessionAgent
       if (agent === undefined
         || !this.sharedScopeAgents.has(agent)
         || this.sharedScopeInstallations.has(agent)

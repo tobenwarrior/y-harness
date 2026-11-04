@@ -8,7 +8,7 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
 import { createScope } from '@yharness/scope'
-import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
+import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import SessionProjectionRegistry from '@yharness/session-projection'
@@ -1237,6 +1237,49 @@ describe('durable Bot roster', () => {
         })) { /* The shared Session may not be borrowed by another Agent. */ }
       })).rejects.toThrow(/shared Bot Session.*LLM/i)
       expect(h.adapter?.requests).toHaveLength(0)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects a same-id impostor initiator from an explicit shared Session', async () => {
+    const sharedSessionId = SessionId('shared-session-impostor-initiator')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true, realAgent: true, realAgentInitialResponse: 'text' },
+    )
+    try {
+      const created = await h.service.create({ name: 'Same-id impostor owner', cwd: '/tmp' })
+      const resolved = await productionSharedHost(h.service).resolvePrivateAgent(
+        sharedSessionId,
+        new AbortController().signal,
+        created.bot.id,
+      )
+      if (!('agent' in resolved)) throw new Error(`same-id impostor shared Agent did not resolve: ${resolved.error.message}`)
+      const agent = h.agents.find(candidate => candidate.id === sharedSessionId)
+      if (agent === undefined || h.adapter === undefined) throw new Error('same-id impostor shared Agent was not created')
+      const impostor: Agent = { ...agent }
+      const request = markAgentLoopRequest({
+        provider: 'mock',
+        model: 'mock',
+        sessionId: sharedSessionId,
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: 'same-id impostor must not run' }],
+          source: { kind: 'user' },
+        })],
+      })
+      await expect(h.ctx.agents.withInitiator(impostor, async () => {
+        for await (const _chunk of h.ctx.llm.stream(request)) { /* The live Agent identity must be required. */ }
+      })).rejects.toThrow(/shared Bot Session.*LLM/i)
+      expect(h.adapter.requests).toHaveLength(0)
     } finally {
       await close(h.ctx)
     }
