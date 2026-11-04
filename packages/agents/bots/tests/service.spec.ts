@@ -666,6 +666,54 @@ describe('durable Bot roster', () => {
     expect(sharedBotSessionRequest(sessionId).cwd).not.toBe('/tmp')
   })
 
+  it('keeps operator persona and capabilities out of collaborator prompts after refresh', async () => {
+    const sharedSessionId = SessionId('shared-session-identity-projection')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({
+        name: 'Shared identity owner',
+        description: 'Public collaborator role',
+        persona: 'PRIVATE_OPERATOR_PERSONA_INITIAL',
+        capabilities: ['operator.private'],
+        cwd: '/tmp',
+      })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-shared-identity', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared identity test Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      const initialPrompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(initialPrompt).toContain('Your Bot name is "Shared identity owner".')
+      expect(initialPrompt).toContain('Your role is: Public collaborator role')
+      expect(initialPrompt).not.toContain('PRIVATE_OPERATOR_PERSONA_INITIAL')
+      expect(initialPrompt).not.toContain('Declared capabilities: operator.private.')
+
+      const domain = h.ctx.storageDomain.get('agent_bots')
+      const bots = domain?.table('bots')
+      const stored = bots?.get(String(created.bot.id))
+      if (bots === undefined || stored === undefined) throw new Error('shared identity test Bot row was not stored')
+      await bots.put(String(created.bot.id), {
+        ...stored,
+        persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
+        capabilities: ['operator.refreshed'],
+        updatedAt: stored.updatedAt + 1,
+      })
+      await expect(refreshBotRecord(h.service, agent)).resolves.toMatchObject({
+        persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
+        capabilities: ['operator.refreshed'],
+      })
+
+      const refreshedPrompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(refreshedPrompt).toContain('Your Bot name is "Shared identity owner".')
+      expect(refreshedPrompt).toContain('Your role is: Public collaborator role')
+      expect(refreshedPrompt).not.toContain('PRIVATE_OPERATOR_PERSONA_REFRESHED')
+      expect(refreshedPrompt).not.toContain('Declared capabilities: operator.refreshed.')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails shared-group admission when the Session flush is not durable and retries the same pending message once', async () => {
     const sharedSessionId = SessionId('shared-session-group-flush-regression')
     const h = await harness(

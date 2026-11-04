@@ -1659,6 +1659,17 @@ function botIdentityPrompt(record: BotRecord): string {
   ].join('\n\n')
 }
 
+/** Render only the public identity that a collaborator shared Session may receive. */
+function sharedBotIdentityPrompt(record: Pick<BotRecord, 'id' | 'name' | 'description'>): string {
+  return [
+    'You are a named Bot in Y Harness.',
+    `Your Bot name is ${JSON.stringify(record.name)}.`,
+    `Your Bot id is ${JSON.stringify(record.id)}.`,
+    'When asked who you are or what your name is, identify yourself by that Bot name. Do not answer only with the underlying model or provider name.',
+    ...(record.description === undefined ? [] : [`Your role is: ${record.description}`]),
+  ].join('\n\n')
+}
+
 /** Render durable memory as untrusted reference data. */
 function botMemoryPrompt(memories: readonly BotMemoryRecord[]): string {
   if (memories.length === 0) return ''
@@ -5492,7 +5503,15 @@ export class BotService extends TypertRemoteService {
         order: identityOrder,
         text: () => {
           const current = this.recordsBySession.get(sessionKey) ?? this.sharedRecordsBySession.get(sessionKey)
-          return current === undefined ? '' : botIdentityPrompt(current)
+          if (current === undefined) return ''
+          if (sharedSession && !operatorBot) {
+            return sharedBotIdentityPrompt({
+              id: current.id,
+              name: current.name,
+              ...(current.description === undefined ? {} : { description: current.description }),
+            })
+          }
+          return botIdentityPrompt(current)
         },
         // Bot names and descriptions are user-authored prose, not variables.
         interpolate: false,

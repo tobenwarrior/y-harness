@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
@@ -554,6 +555,52 @@ describe('shared Bot snapshot validation', () => {
         dispatchLeaseUntil: 30_000,
       }],
     })).toThrow()
+  })
+
+  it('restores reservations for a pre-reservation v1 snapshot with an active delivery', () => {
+    const deliveryId = `delivery-${createHash('sha256').update('bot-group-message-legacy-reservations:bot-chief').digest('hex')}`
+    const legacy = {
+      version: 1 as const,
+      revision: 1,
+      groups: [{
+        id: 'bot-group-legacy-reservations',
+        name: 'Legacy reservations room',
+        botIds: ['bot-chief', 'bot-second'],
+        createdAt: 1,
+        updatedAt: 1,
+        ownerPrincipalId: 'principal-owner',
+        memberPrincipalIds: ['principal-owner'],
+        revision: 1,
+      }],
+      messages: [{
+        id: 'bot-group-message-legacy-reservations',
+        groupId: 'bot-group-legacy-reservations',
+        sender: { kind: 'user' as const, principalId: 'principal-owner' },
+        text: 'Legacy active delivery.',
+        targetBotIds: ['bot-chief'],
+        createdAt: 1,
+      }],
+      deliveries: [{
+        id: deliveryId,
+        groupId: 'bot-group-legacy-reservations',
+        messageId: 'bot-group-message-legacy-reservations',
+        botId: 'bot-chief',
+        status: 'pending' as const,
+        authorizationRevision: 1,
+        senderPrincipalId: 'principal-owner',
+        updatedAt: 1,
+      }],
+      sessions: [{
+        groupId: 'bot-group-legacy-reservations',
+        botId: 'bot-chief',
+        sessionId: 'shared-session-group-legacy-reservations',
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+      invites: [],
+    }
+    const parsed = sharedGroupSnapshotSchema.parse(legacy)
+    expect(parsed.responseReservations).toEqual([deliveryId])
   })
 })
 

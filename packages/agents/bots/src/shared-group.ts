@@ -173,8 +173,12 @@ export const sharedGroupSnapshotSchema = z.object({
   deliveries: z.array(sharedGroupDeliverySchema).max(MAX_SHARED_GROUP_DELIVERIES),
   sessions: z.array(sharedGroupSessionSchema).max(MAX_SHARED_GROUP_SESSIONS),
   invites: z.array(sharedGroupInviteSchema).max(MAX_SHARED_GROUP_INVITES),
-  responseReservations: z.array(z.string().min(1).max(256)).max(MAX_SHARED_GROUP_MESSAGES).optional().default([]),
+  // Pre-reservation v1 snapshots omitted this field; the transform restores active rows.
+  responseReservations: z.array(z.string().min(1).max(256)).max(MAX_SHARED_GROUP_MESSAGES).optional(),
 }).strict().superRefine((snapshot, context) => {
+  const responseReservations = snapshot.responseReservations ?? snapshot.deliveries
+    .filter(delivery => delivery.status === 'pending' || delivery.status === 'accepted')
+    .map(delivery => delivery.id)
   const groupIds = new Set<string>()
   for (const group of snapshot.groups) {
     if (groupIds.has(String(group.id))) context.addIssue({ code: 'custom', message: 'shared group ids must be unique', path: ['groups'] })
@@ -205,7 +209,7 @@ export const sharedGroupSnapshotSchema = z.object({
       context.addIssue({ code: 'custom', message: 'non-responded shared group delivery cannot link a response message', path: ['deliveries'] })
     }
     if ((delivery.status === 'pending' || delivery.status === 'accepted')
-      && !snapshot.responseReservations.includes(delivery.id)) {
+      && !responseReservations.includes(delivery.id)) {
       context.addIssue({ code: 'custom', message: 'active shared group delivery must have a response reservation', path: ['deliveries'] })
     }
   }
@@ -293,16 +297,21 @@ export const sharedGroupSnapshotSchema = z.object({
       context.addIssue({ code: 'custom', message: 'shared group invite must target an existing group', path: ['invites'] })
     }
   }
-  if (new Set(snapshot.responseReservations).size !== snapshot.responseReservations.length) {
+  if (new Set(responseReservations).size !== responseReservations.length) {
     context.addIssue({ code: 'custom', message: 'shared group response reservations must be unique', path: ['responseReservations'] })
   }
-  for (const reservation of snapshot.responseReservations) {
+  for (const reservation of responseReservations) {
     const delivery = deliveriesById.get(reservation)
     if (delivery === undefined || (delivery.status !== 'pending' && delivery.status !== 'accepted')) {
       context.addIssue({ code: 'custom', message: 'shared group response reservation must reference an active delivery', path: ['responseReservations'] })
     }
   }
-})
+}).transform(snapshot => ({
+  ...snapshot,
+  responseReservations: snapshot.responseReservations ?? snapshot.deliveries
+    .filter(delivery => delivery.status === 'pending' || delivery.status === 'accepted')
+    .map(delivery => delivery.id),
+}))
 
 /** Parsed shared-group state type. */
 export type SharedGroupSnapshot = z.infer<typeof sharedGroupSnapshotSchema>
