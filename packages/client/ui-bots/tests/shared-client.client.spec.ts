@@ -92,7 +92,7 @@ describe('shared Bot client capabilities', () => {
     expect(client.retryScope).toBeUndefined()
   })
 
-  it('does not let an older scope refresh overwrite a newer one', async () => {
+  it('serializes scope refreshes without letting an older result overwrite a newer one', async () => {
     const first = Promise.withResolvers<{
       readonly ok: true
       readonly value: { readonly principalId: string; readonly expiresAt: number }
@@ -101,20 +101,24 @@ describe('shared Bot client capabilities', () => {
       readonly ok: true
       readonly value: { readonly principalId: string; readonly expiresAt: number }
     }>()
+    const secondStarted = Promise.withResolvers<boolean>()
     let calls = 0
     const rpc: ClientConnectionRpc = {
       call: vi.fn(async () => {
         calls += 1
-        return calls === 1 ? first.promise : second.promise
+        if (calls === 1) return first.promise
+        secondStarted.resolve(true)
+        return second.promise
       }),
     }
     const client = createSharedBotsClient(rpc)
     const older = client.restoreRetryScope()
     const newer = client.restoreRetryScope()
-    second.resolve({ ok: true, value: { principalId: 'principal-newer', expiresAt: 3_000 } })
-    await expect(newer).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-newer' } })
     first.resolve({ ok: true, value: { principalId: 'principal-older', expiresAt: 3_000 } })
     await expect(older).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-older' } })
+    await secondStarted.promise
+    second.resolve({ ok: true, value: { principalId: 'principal-newer', expiresAt: 3_000 } })
+    await expect(newer).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-newer' } })
     expect(client.retryScope).toBe('principal-newer')
   })
 
@@ -245,6 +249,65 @@ describe('shared Bot client capabilities', () => {
       expect(secondChanges).toContain('remote')
       stopFirst?.()
       stopSecond?.()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('broadcasts enrollment auth changes only after the enrollment settles', async () => {
+    const posts: unknown[] = []
+    class FakeBroadcastChannel {
+      constructor(readonly name: string) {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      postMessage(data: unknown): void { posts.push(data) }
+      close(): void {}
+    }
+    const enrollment = Promise.withResolvers<{
+      readonly ok: true
+      readonly value: { readonly principalId: string; readonly expiresAt: number }
+    }>()
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => endpoint === 'bots/share/enroll'
+        ? enrollment.promise
+        : { ok: true as const, value: { bots: [] } }),
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const client = createSharedBotsClient(rpc)
+      const stop = client.subscribeAuth?.(() => {})
+      const pending = client.enroll('delayed-code')
+      expect(posts).toEqual([])
+      enrollment.resolve({ ok: true, value: { principalId: 'principal-member', expiresAt: 3_000 } })
+      await pending
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+      expect(posts).toEqual([{ type: 'auth-invalidated' }])
+      stop?.()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not broadcast a failed enrollment as an ACL invalidation', async () => {
+    const posts: unknown[] = []
+    class FakeBroadcastChannel {
+      constructor(readonly name: string) {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      postMessage(data: unknown): void { posts.push(data) }
+      close(): void {}
+    }
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: false as const, error: { code: 'gateway/unauthorized', message: 'invalid invite', details: {} } })),
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const client = createSharedBotsClient(rpc)
+      const stop = client.subscribeAuth?.(() => {})
+      await expect(client.enroll('invalid-code')).resolves.toMatchObject({ ok: false })
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+      expect(posts).toEqual([])
+      stop?.()
     } finally {
       vi.unstubAllGlobals()
     }

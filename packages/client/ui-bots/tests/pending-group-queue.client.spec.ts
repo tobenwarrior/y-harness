@@ -77,34 +77,44 @@ describe('shared-group browser retry queue', () => {
     }
   })
 
-  it('migrates legacy pending records into a fenced namespace before pruning', async () => {
-    const operationHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  it('keeps a legacy alias while migrating so an active old tab reuses the same id', async () => {
+    const queue = createSharedGroupPendingQueue('principal-legacy')
+    const original = await queue.reserveMessage('legacy-operation', 'bot-group-room', 'legacy text')
+    const operationHash = original.operationHash
+    const currentKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-legacy.message.' + operationHash
     const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy.message.' + operationHash
+    localStorage.removeItem(currentKey)
     localStorage.setItem(legacyKey, JSON.stringify({
       version: 1,
       kind: 'message',
-      status: 'expired',
-      id: 'bot-group-message-legacy',
+      status: 'pending',
+      id: original.id,
       operationHash,
       groupId: 'bot-group-room',
       createdAt: 1,
-      expiresAt: 2,
+      text: 'legacy text',
+      expiresAt: Number.MAX_SAFE_INTEGER,
     }))
 
-    const queue = createSharedGroupPendingQueue('principal-legacy')
     await expect(queue.listMessages()).resolves.toEqual([{
       operationHash,
-      id: 'bot-group-message-legacy',
+      id: original.id,
       groupId: 'bot-group-room',
+      text: 'legacy text',
       createdAt: 1,
-      expiresAt: 2,
-      expired: true,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      expired: false,
     }])
 
+    expect(localStorage.getItem(legacyKey)).not.toBeNull()
+    expect(localStorage.getItem(currentKey)).not.toBeNull()
+    expect(currentKey.startsWith('yharness.client-ui-bots.shared-group-pending.principal-legacy.')).toBe(false)
+
+    const recovered = await queue.reserveMessage('legacy-operation', 'bot-group-room', 'legacy text')
+    expect(recovered.id).toBe(original.id)
+    await queue.removeMessage(operationHash, original.id)
     expect(localStorage.getItem(legacyKey)).toBeNull()
-    const migratedKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-legacy.message.' + operationHash
-    expect(localStorage.getItem(migratedKey)).not.toBeNull()
-    expect(migratedKey.startsWith('yharness.client-ui-bots.shared-group-pending.principal-legacy.')).toBe(false)
+    expect(localStorage.getItem(currentKey)).toBeNull()
   })
 
   it('recovers legacy pending message text before the old queue can prune it', async () => {

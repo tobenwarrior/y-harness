@@ -229,6 +229,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
+  let authTransitionTail: Promise<void> = Promise.resolve()
+  let authChannel: SharedAuthChannel | undefined
   const authListeners = new Set<SharedBotAuthListener>()
   const notifyAuth = (change: SharedBotAuthChange): void => {
     for (const listener of [...authListeners]) listener(change)
@@ -250,10 +252,22 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     retryScopeRequestGeneration += 1
     setRetryScope(undefined, 'remote', false, true)
   }
+  const enqueueAuthTransition = async <T>(work: () => Promise<T>): Promise<T> => {
+    const previous = authTransitionTail
+    let release!: () => void
+    authTransitionTail = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      return await work()
+    } finally {
+      release()
+    }
+  }
   const call = async <T>(
     endpoint: string,
     payload: unknown,
     parse: (value: unknown) => T | undefined,
+    broadcastUnauthorized = true,
   ): Promise<SharedBotClientResult<T>> => {
     const requestGeneration = retryScopeRequestGeneration
     const requestScope = retryScope
@@ -264,7 +278,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       return { ok: false, error: { code: 'gateway/transport', message: error instanceof Error ? error.message : 'Shared Bot transport failed', details: {} } }
     }
     if (!result.ok) {
-      if (result.error.code === 'gateway/unauthorized' && requestGeneration === retryScopeRequestGeneration
+      if (broadcastUnauthorized && result.error.code === 'gateway/unauthorized' && requestGeneration === retryScopeRequestGeneration
         && requestScope === retryScope) {
         retryScopeRequestGeneration += 1
         setRetryScope(undefined, 'local', true, true)
@@ -278,34 +292,37 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     return { ok: true, value }
   }
 
-  const enroll = async (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+  const enroll = (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
-    setRetryScope(undefined, 'local', true, true)
-    const result = await call('bots/share/enroll', { code }, parseEnrollment)
-    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId)
+    setRetryScope(undefined, 'local', false, true)
+    const result = await call('bots/share/enroll', { code }, parseEnrollment, false)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', true, true)
+    }
     return result
-  }
-  const restoreRetryScope = async (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+  })
+  const restoreRetryScope = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
     setRetryScope(undefined)
     const result = await call('bots/share/session', {}, parseEnrollment)
-    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId, 'local', false, true)
     return result
-  }
+  })
 
   return {
     get retryScope(): string | undefined { return retryScope },
     get authGeneration(): number { return authGeneration },
     subscribeAuth: (listener) => {
       authListeners.add(listener)
-      const channel = openSharedAuthChannel(receiveCrossTabAuthChange)
+      if (authChannel === undefined) authChannel = openSharedAuthChannel(receiveCrossTabAuthChange)
       return () => {
         authListeners.delete(listener)
-        if (channel !== undefined) {
-          channel.removeEventListener('message', receiveCrossTabAuthChange)
-          channel.close()
+        if (authListeners.size === 0 && authChannel !== undefined) {
+          authChannel.removeEventListener('message', receiveCrossTabAuthChange)
+          authChannel.close()
+          authChannel = undefined
         }
       }
     },

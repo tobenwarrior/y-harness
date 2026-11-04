@@ -9,6 +9,7 @@ import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
 import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { BotShareActions } from '../src/client/controller.ts'
+import { createSharedBotsClient } from '../src/client/shared-client.ts'
 import type { SharedBotAuthChange, SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
 
@@ -271,6 +272,33 @@ describe('shared Bot collaboration surfaces', () => {
     }
   })
 
+  it('broadcasts a membership invalidation again after revoke commits', async () => {
+    const posts: unknown[] = []
+    class FakeBroadcastChannel {
+      constructor(readonly name: string) {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      postMessage(data: unknown): void { posts.push(data) }
+      close(): void {}
+    }
+    const actions = ownerActions({
+      listMembers: vi.fn().mockResolvedValue({ members: [
+        { botId: BotId(bot.id), principalId: BotPrincipalId('principal-owner'), role: 'owner', grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1 },
+        { botId: BotId(bot.id), principalId: BotPrincipalId('principal-member'), role: 'collaborator', grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1 },
+      ] }),
+    })
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Revoke access: principal-member' })).toBeTruthy() })
+      fireEvent.click(screen.getByRole('button', { name: 'Revoke access: principal-member' }))
+      await waitFor(() => { expect(actions.revokeMember).toHaveBeenCalledWith(bot.id, 'principal-member') })
+      await waitFor(() => { expect(posts).toHaveLength(2) })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('gates owner shared-context policy changes behind explicit acknowledgement', async () => {
     const actions = ownerActions()
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
@@ -370,6 +398,102 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByText('Redeem a Bot invite for every Bot first; a group invite only grants room access.')).toBeTruthy()
     expect(client.readPrivateChat).toHaveBeenCalledWith(bot.id)
     expect(client.readMemory).toHaveBeenCalledWith(bot.id)
+  })
+
+  it('clears private data when the shared dialog closes', async () => {
+    const client = sharedClient()
+    const view = render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    view.rerender(<SharedBotsDialog client={client} open={false} onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByText('Private answer')).toBeNull() })
+  })
+
+  it('clears and revalidates private data after an ACL denial', async () => {
+    const client = sharedClient({
+      chat: vi.fn().mockResolvedValue({ ok: false, error: { code: 'gateway/forbidden', message: 'membership revoked', details: {} } }),
+      readPrivateChat: vi.fn()
+        .mockResolvedValueOnce({ ok: true, value: { botId: bot.id, recent: [{ role: 'assistant', text: 'Private answer' }] } })
+        .mockResolvedValue({ ok: true, value: { botId: bot.id, recent: [] } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'check access' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => { expect(client.chat).toHaveBeenCalledWith(bot.id, 'check access') })
+    await waitFor(() => { expect(client.restoreRetryScope).toHaveBeenCalledTimes(2) })
+    expect(screen.queryByText('Private answer')).toBeNull()
+  })
+
+  it('refreshes after enrollment with a real shared client without self-invalidating the request', async () => {
+    let listCalls = 0
+    const wireBot = (summary: CompleteBotSummary) => ({
+      id: summary.id,
+      name: summary.name,
+      description: summary.description,
+      identity: summary.identity,
+      accent: summary.accent,
+      state: 'active' as const,
+      availability: 'idle' as const,
+    })
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/session' || endpoint === 'bots/share/enroll') {
+          return { ok: true as const, value: { principalId: 'principal-member', expiresAt: 3_000 } }
+        }
+        if (endpoint === 'bots/share/list') {
+          listCalls += 1
+          return { ok: true as const, value: { bots: listCalls === 1 ? [{ ...wireBot(bot), role: 'collaborator' }] : [{ ...wireBot(analystBot), role: 'collaborator' }] } }
+        }
+        if (endpoint === 'bots/share/read-private-chat') {
+          return { ok: true as const, value: { botId: listCalls === 1 ? bot.id : analystBot.id, recent: [{ role: 'assistant', text: listCalls === 1 ? 'Private answer' : 'Post-enrollment answer' }] } }
+        }
+        if (endpoint === 'bots/share/read-memory') {
+          return { ok: true as const, value: { botId: listCalls === 1 ? bot.id : analystBot.id, enabled: true, updatedAt: 1, entries: [] } }
+        }
+        if (endpoint === 'bots/share/list-groups') {
+          return { ok: true as const, value: { groups: [] } }
+        }
+        return { ok: true as const, value: {} }
+      }),
+    }
+    vi.stubGlobal('BroadcastChannel', undefined)
+    try {
+      const client = createSharedBotsClient(rpc)
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+      fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'invite' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+      await waitFor(() => { expect(screen.getByText('Post-enrollment answer')).toBeTruthy() })
+      expect(listCalls).toBe(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('defers focus refreshes until enrollment settles', async () => {
+    const enroll = Promise.withResolvers<Awaited<ReturnType<SharedBotsClient['enroll']>>>()
+    const restoreRetryScope = vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } })
+    const client = sharedClient({ enroll: vi.fn().mockReturnValue(enroll.promise), restoreRetryScope, list })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    const initialRestoreCalls = restoreRetryScope.mock.calls.length
+    fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'invite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+    await waitFor(() => { expect(client.enroll).toHaveBeenCalledWith('invite') })
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      await Promise.resolve()
+    })
+    expect(restoreRetryScope).toHaveBeenCalledTimes(initialRestoreCalls)
+
+    await act(async () => {
+      enroll.resolve({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } })
+      await Promise.resolve()
+    })
+    await waitFor(() => { expect(list.mock.calls.length).toBeGreaterThan(initialRestoreCalls) })
   })
 
   it('localizes the collaborator role in the shared roster', async () => {
@@ -1319,15 +1443,16 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByText('Analyst answer')).toBeTruthy() })
     fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'Analyst follow up' } })
 
-    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false) })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => { expect(client.chat).toHaveBeenCalledWith(analystBot.id, 'Analyst follow up') })
   })
 
   it('does not let a stale chat completion clear a reopened Bot operation', async () => {
     const staleChat = Promise.withResolvers<Awaited<ReturnType<SharedBotsClient['chat']>>>()
+    const currentChat = Promise.withResolvers<Awaited<ReturnType<SharedBotsClient['chat']>>>()
     const client = sharedClient({
-      chat: vi.fn().mockReturnValue(staleChat.promise),
+      chat: vi.fn().mockReturnValueOnce(staleChat.promise).mockReturnValueOnce(currentChat.promise),
     })
     const view = render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
 
@@ -1341,7 +1466,7 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
     fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'Second request' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(client.chat).toHaveBeenCalledTimes(1)
+    await waitFor(() => { expect(client.chat).toHaveBeenCalledTimes(2) })
 
     await act(async () => {
       staleChat.resolve({ ok: true, value: { bot: { ...bot, id: BotId(bot.id), identity: bot.identity ?? 'agent', accent: bot.accent ?? 'amber', state: 'active', availability: 'idle' }, sessionId: 'stale-session', accepted: true } })
@@ -1350,7 +1475,18 @@ describe('shared Bot collaboration surfaces', () => {
     })
 
     expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', 'Second request')
-    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', true)
+
+    await act(async () => {
+      currentChat.resolve({ ok: true, value: { bot: { ...bot, id: BotId(bot.id), identity: bot.identity ?? 'agent', accent: bot.accent ?? 'amber', state: 'active', availability: 'idle' }, sessionId: 'current-session', accepted: true } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toHaveProperty('value', '')
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message this shared bot' }), { target: { value: 'After completion' } })
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Send message' })).toHaveProperty('disabled', false) })
   })
 
   it('keeps another Bot shared-note publishing usable while the first Bot write is pending', async () => {

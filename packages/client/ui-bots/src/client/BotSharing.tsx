@@ -226,6 +226,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     try {
       broadcastSharedAuthChanged()
       await actions.revokeMember(requestedBotId, String(member.principalId))
+      broadcastSharedAuthChanged()
       if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
       setMembers(current => current.filter(candidate => candidate.principalId !== member.principalId))
     } catch (cause: unknown) {
@@ -602,9 +603,12 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const recoveryWorkingRef = useRef<string | null>(null)
   const pendingMessageOperationRef = useRef<{ readonly id: string; readonly token: number } | null>(null)
   const pendingMessageOperationTokenRef = useRef(0)
+  const chatOperationTokensRef = useRef<Record<string, number>>({})
+  const memoryOperationTokensRef = useRef<Record<string, number>>({})
   const pendingGroupQueueRef = useRef<{ readonly scope: string; readonly queue: SharedGroupPendingQueue } | null>(null)
   const enrollmentOperationTokenRef = useRef(0)
   const enrollmentInFlightRef = useRef(false)
+  const deferredRevalidationRef = useRef(false)
   const clientIdentityRef = useRef(client)
   const clientGenerationRef = useRef(0)
   if (clientIdentityRef.current !== client) {
@@ -747,6 +751,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setMessageDrafts({})
     setMemoryDrafts({})
     setGroupDraft('')
+    setCode('')
+    codeRevisionRef.current += 1
+    messageDraftRevisionsRef.current = {}
+    memoryDraftRevisionsRef.current = {}
     setRecent([])
     setMemory(null)
     setMemoryConfirmOpen(false)
@@ -761,6 +769,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setGroupWorking(null)
     setChatWorkingBotIds(new Set())
     setMemoryWorkingBotIds(new Set())
+    recoveryWorkingRef.current = null
     setRecoveryWorking(null)
     setDiscardWorking(false)
     setError(nextError)
@@ -830,6 +839,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       if (!isCurrentAuth(auth) || !openRef.current || generation !== groupReadGenerationRef.current
         || selectedGroupIdRef.current !== groupId) return
       if (result.ok) setGroupMessages(result.value.messages)
+      else if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
       else setError(result.error.message || t('sharedGroupLoadFailed'))
     } catch (cause: unknown) {
       if (isCurrentAuth(auth) && openRef.current && generation === groupReadGenerationRef.current
@@ -866,6 +876,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           if (clientIdentityRef.current.authGeneration === admissionAuthGeneration
             && clientIdentityRef.current.retryScope === admissionScope) {
             clearAuthenticatedState(restored.error.message || t('sharedGroupRetryIdentityUnavailable'))
+          } else if (restored.error.code === 'gateway/forbidden') {
+            requestRevalidation(true, restored.error.message)
           } else {
             syncAuthContext()
           }
@@ -923,12 +935,15 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
             setGroupSelection(nextGroupId)
             if (nextGroupId !== null) await readGroup(nextGroupId)
             void refreshPendingOperations()
+          } else if (groupsResult.error.code === 'gateway/forbidden') {
+            requestRevalidation(true, groupsResult.error.message)
           } else {
             setError(groupsResult.error.message || t('sharedGroupLoadFailed'))
           }
         }
       } else {
         if (result.error.code === 'gateway/unauthorized') clearAuthenticatedState(result.error.message)
+        else if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
         else setError(result.error.message)
       }
     } catch (cause: unknown) {
@@ -942,6 +957,21 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setWorking(current => current === 'list' ? null : current)
       }
     }
+  }
+
+  const requestRevalidation = (immediate: boolean, nextError: string | null = null): void => {
+    if (!openRef.current) return
+    if (enrollmentInFlightRef.current) {
+      deferredRevalidationRef.current = true
+      if (immediate) {
+        authGenerationRef.current += 1
+        clearAuthenticatedState(nextError)
+      }
+      return
+    }
+    authGenerationRef.current += 1
+    clearAuthenticatedState(nextError)
+    void refresh()
   }
 
   const readBot = async (botId: string): Promise<void> => {
@@ -965,6 +995,13 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         auth.client.readMemory(botId),
       ])
       if (!isCurrentAuth(auth) || generation !== readGenerationRef.current || selectedBotIdRef.current !== botId) return
+      const forbiddenError = !privateResult.ok && privateResult.error.code === 'gateway/forbidden'
+        ? privateResult.error
+        : !memoryResult.ok && memoryResult.error.code === 'gateway/forbidden' ? memoryResult.error : undefined
+      if (forbiddenError !== undefined) {
+        requestRevalidation(true, forbiddenError.message)
+        return
+      }
       if (privateResult.ok) setRecent(privateResult.value.recent)
       else setError(privateResult.error.message)
       if (memoryResult.ok) setMemory(memoryResult.value)
@@ -1028,7 +1065,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (!isCurrentAuth(auth)) throw new SharedDialogAuthChangedError()
     const result = await listGroups()
     if (!isCurrentAuth(auth)) throw new SharedDialogAuthChangedError()
-    if (!result.ok) throw new Error(result.error.message || t('sharedGroupRetryUnavailable'))
+    if (!result.ok) {
+      if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+      throw new SharedDialogAuthChangedError()
+    }
     const existing = result.value.groups.find(group => String(group.id) === String(id))
     if (existing === undefined) return undefined
     const existingIds = existing.botIds.map(String).sort()
@@ -1051,7 +1091,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (!isCurrentAuth(auth)) throw new SharedDialogAuthChangedError()
     const result = await inspectGroup(groupId)
     if (!isCurrentAuth(auth)) throw new SharedDialogAuthChangedError()
-    if (!result.ok) throw new Error(result.error.message || t('sharedGroupRetryUnavailable'))
+    if (!result.ok) {
+      if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+      throw new SharedDialogAuthChangedError()
+    }
     const existing = result.value.messages.find(messageRow => String(messageRow.id) === String(messageId))
     if (existing === undefined) return
     const principalId = auth.scope
@@ -1068,25 +1111,12 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     groupReadGenerationRef.current += 1
     operationGenerationRef.current += 1
     if (!open) {
-      createGroupGenerationRef.current += 1
-      setWorking(null)
-      setGroupWorking(null)
-      setMemoryConfirmOpen(false)
-      setMemoryAcknowledged(false)
-      setGroupSelection(null)
-      setGroupMessages([])
-      setCreateGroupOpen(false)
-      setCreateGroupError(null)
-      setGroupInvite(null)
-      setGroupInviteCopied(false)
-      setGroupInviteWorking(false)
-      setGroupInviteUnavailable(false)
-      setRecoveryWorking(null)
-      setPendingCreations([])
-      setPendingMessages([])
-      clearPendingMessageOperation()
-      setDiscardTarget(null)
-      setDiscardAcknowledged(false)
+      deferredRevalidationRef.current = false
+      clearAuthenticatedState()
+      return
+    }
+    if (enrollmentInFlightRef.current) {
+      deferredRevalidationRef.current = true
       return
     }
     setError(null)
@@ -1095,9 +1125,14 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
 
   useEffect(() => {
     const unsubscribe = client.subscribeAuth?.((change?: SharedBotAuthChange) => {
+      if (change?.source === 'local' && enrollmentInFlightRef.current) return
+      if (change?.source === 'local' && change.reason === 'authenticated') return
+      if (change?.source === 'remote') {
+        requestRevalidation(true)
+        return
+      }
       syncAuthContext()
       setAuthRevision(current => current + 1)
-      if (change?.source === 'remote') void refresh()
     })
     return unsubscribe
   }, [client])
@@ -1105,9 +1140,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   useEffect(() => {
     const revalidate = (): void => {
       if (!openRef.current) return
-      authGenerationRef.current += 1
-      clearAuthenticatedState()
-      void refresh()
+      requestRevalidation(false)
     }
     const onVisibilityChange = (): void => {
       if (document.visibilityState === 'visible') revalidate()
@@ -1155,6 +1188,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       if (enrollmentOperationTokenRef.current === enrollmentToken) {
         enrollmentInFlightRef.current = false
         setWorking(current => current === 'enroll' ? null : current)
+        if (deferredRevalidationRef.current) {
+          deferredRevalidationRef.current = false
+          requestRevalidation(true)
+        }
       }
     }
   }
@@ -1166,7 +1203,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const botId = selectedBotId
     const submittedMessageRevision = messageDraftRevisionsRef.current[botId] ?? 0
     const selectionEpoch = selectionEpochRef.current
-    operationGenerationRef.current += 1
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    const chatOperationToken = (chatOperationTokensRef.current[botId] ?? 0) + 1
+    chatOperationTokensRef.current[botId] = chatOperationToken
+    const operationGeneration = operationGenerationRef.current + 1
+    operationGenerationRef.current = operationGeneration
     setChatWorkingBotIds(current => updatePendingBotIds(current, botId, true))
     setError(null)
     try {
@@ -1174,7 +1215,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const result = await auth.client.chat(botId, message.trim())
       const currentSelection = isCurrentAuth(auth) && isCurrentSelection(botId, selectionEpoch)
       if (result.ok) {
-        if ((messageDraftRevisionsRef.current[botId] ?? 0) === submittedMessageRevision) {
+        const canClearDraft = hasCurrentAuth(auth) && lifecycleGenerationRef.current === lifecycleGeneration
+          && (selectedBotIdRef.current !== botId || selectionEpochRef.current === selectionEpoch)
+        if (canClearDraft && (messageDraftRevisionsRef.current[botId] ?? 0) === submittedMessageRevision) {
           setMessageDrafts((current) => {
             if ((messageDraftRevisionsRef.current[botId] ?? 0) !== submittedMessageRevision) return current
             if (!(botId in current)) return current
@@ -1185,6 +1228,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         }
         if (!currentSelection) return
         await readBot(botId)
+      } else if (currentSelection && result.error.code === 'gateway/forbidden') {
+        requestRevalidation(true, result.error.message)
       } else if (currentSelection) {
         setError(result.error.message || t('sharedChatFailed'))
       }
@@ -1193,7 +1238,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setError(cause instanceof Error ? cause.message : t('sharedChatFailed'))
       }
     } finally {
-      if (hasCurrentAuth(auth)) setChatWorkingBotIds(current => updatePendingBotIds(current, botId, false))
+      if (hasCurrentAuth(auth) && chatOperationTokensRef.current[botId] === chatOperationToken) {
+        setChatWorkingBotIds(current => updatePendingBotIds(current, botId, false))
+      }
     }
   }
 
@@ -1205,7 +1252,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const botId = selectedBotId
     const submittedDraftRevision = memoryDraftRevisionsRef.current[botId] ?? 0
     const selectionEpoch = selectionEpochRef.current
-    operationGenerationRef.current += 1
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    const memoryOperationToken = (memoryOperationTokensRef.current[botId] ?? 0) + 1
+    memoryOperationTokensRef.current[botId] = memoryOperationToken
+    const operationGeneration = operationGenerationRef.current + 1
+    operationGenerationRef.current = operationGeneration
     setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, true))
     setError(null)
     try {
@@ -1213,7 +1264,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const result = await auth.client.writeMemory(botId, memoryDraft.trim())
       const currentSelection = isCurrentAuth(auth) && isCurrentSelection(botId, selectionEpoch)
       if (result.ok) {
-        if ((memoryDraftRevisionsRef.current[botId] ?? 0) === submittedDraftRevision) {
+        const canClearDraft = hasCurrentAuth(auth) && lifecycleGenerationRef.current === lifecycleGeneration
+          && (selectedBotIdRef.current !== botId || selectionEpochRef.current === selectionEpoch)
+        if (canClearDraft && (memoryDraftRevisionsRef.current[botId] ?? 0) === submittedDraftRevision) {
           setMemoryDrafts((current) => {
             if ((memoryDraftRevisionsRef.current[botId] ?? 0) !== submittedDraftRevision) return current
             if (!(botId in current)) return current
@@ -1226,6 +1279,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setMemoryAcknowledged(false)
         setMemoryConfirmOpen(false)
         await readBot(botId)
+      } else if (currentSelection && result.error.code === 'gateway/forbidden') {
+        requestRevalidation(true, result.error.message)
       } else if (currentSelection) {
         setError(result.error.message || t('sharedMemoryWriteFailed'))
       }
@@ -1234,7 +1289,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setError(cause instanceof Error ? cause.message : t('sharedMemoryWriteFailed'))
       }
     } finally {
-      if (hasCurrentAuth(auth)) setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, false))
+      if (hasCurrentAuth(auth) && memoryOperationTokensRef.current[botId] === memoryOperationToken) {
+        setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, false))
+      }
     }
   }
 
@@ -1271,7 +1328,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       if (!isCurrentAuth(auth)) return
       const result = await create({ ...request, id, name, botIds: request.botIds })
       if (!isCurrentAuth(auth)) return
-      if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+      if (!result.ok) {
+        if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+        throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+      }
       const created = result.value.group
       if (!isCurrentCreate()) return
       if (!isCurrentAuth(auth)) return
@@ -1328,7 +1388,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           botIds: creation.botIds.map(id => brandString<BotIdType>(id)),
         })
         if (!isCurrentAuth(auth)) return
-        if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+        if (!result.ok) {
+          if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+          throw new Error(result.error.message || t('sharedGroupCreateFailed'))
+        }
         created = result.value.group
       }
       if (!isCurrentAuth(auth)) return
@@ -1527,6 +1590,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setPendingMessages(current => current.filter(candidate => candidate.id !== pending.id))
         if (groupDraftRevisionRef.current === submittedDraftRevision && submittedDraft.trim() === pending.text) setGroupDraft('')
         await readGroup(pending.groupId)
+      } else if (result.error.code === 'gateway/forbidden') {
+        requestRevalidation(true, result.error.message)
       } else {
         setError(result.error.message || t('sharedGroupSendFailed'))
       }
@@ -1576,7 +1641,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         text: draft,
         messageId,
       })
-      if (!isCurrentAuth(auth) || !openRef.current || selectedGroupIdRef.current !== submittedGroupId) return
+      if (!isCurrentAuth(auth) || selectedGroupIdRef.current !== submittedGroupId) return
       if (!isCurrentGroupOperation()) return
       if (result.ok) {
         if (result.value.status === 'partial') {
@@ -1590,6 +1655,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setPendingMessages(current => current.filter(candidate => candidate.id !== reservation.id))
         if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
         await readGroup(submittedGroupId)
+      } else if (result.error.code === 'gateway/forbidden') {
+        requestRevalidation(true, result.error.message)
       } else {
         setError(result.error.message || t('sharedGroupSendFailed'))
         void refreshPendingOperations()

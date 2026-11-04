@@ -302,13 +302,33 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     storage.setItem(key, JSON.stringify(record))
   }
 
+  const writeRecord = (record: PendingRecord): void => {
+    write(recordKey(scope, record.kind, record.operationHash), record)
+    // Keep the v1 alias while older tabs can still recover this reservation.
+    write(legacyRecordKey(scope, record.kind, record.operationHash), record)
+  }
+
+  const ensureLegacyAlias = (record: PendingRecord): void => {
+    const key = legacyRecordKey(scope, record.kind, record.operationHash)
+    const legacy = read(key)
+    if (legacy !== undefined && legacy.id !== record.id) {
+      throw new Error('Shared-group retry record conflict')
+    }
+    if (legacy === undefined || JSON.stringify(legacy) !== JSON.stringify(record)) write(key, record)
+  }
+
   const migrateLegacyRecord = (kind: PendingRecord['kind'], operationHashValue: string): void => {
     const legacyKey = legacyRecordKey(scope, kind, operationHashValue)
     const legacy = read(legacyKey)
     if (legacy === undefined) return
     const currentKey = recordKey(scope, kind, operationHashValue)
-    if (read(currentKey) === undefined) write(currentKey, legacy)
-    remove(legacyKey)
+    const current = read(currentKey)
+    if (current === undefined) {
+      write(currentKey, legacy)
+      return
+    }
+    if (current.id !== legacy.id) throw new Error('Shared-group retry record conflict')
+    ensureLegacyAlias(current)
   }
 
   const migrateLegacyRecords = async (): Promise<void> => {
@@ -326,6 +346,15 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         if (current !== undefined) migrateLegacyRecord(current.kind, current.operationHash)
         return Promise.resolve()
       })
+    }
+    const currentKeys: string[] = []
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key !== null && key.startsWith(`${scopePrefix(scope)}.`)) currentKeys.push(key)
+    }
+    for (const key of currentKeys) {
+      const record = read(key)
+      if (record !== undefined) ensureLegacyAlias(record)
     }
   }
 
@@ -356,10 +385,10 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       } else if (record.status === 'pending' && record.expiresAt <= now) {
         if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
         if (record.kind === 'creation') {
-          write(key, { ...record, status: 'expired' })
+          writeRecord({ ...record, status: 'expired' })
         } else {
           const { text: _text, ...tombstone } = record
-          write(key, { ...tombstone, status: 'expired' })
+          writeRecord({ ...tombstone, status: 'expired' })
         }
       }
     }
@@ -420,7 +449,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           createdAt: now,
           expiresAt: now + PENDING_TTL_MS,
         }
-        write(key, record)
+        writeRecord(record)
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
@@ -457,7 +486,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           createdAt: now,
           expiresAt: now + PENDING_TTL_MS,
         }
-        write(key, record)
+        writeRecord(record)
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
