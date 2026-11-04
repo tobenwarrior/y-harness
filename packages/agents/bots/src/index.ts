@@ -773,10 +773,12 @@ function legacyPendingWasApplied(
     'pinned', 'hidden', 'group', 'updatedAt',
   ]
   const matches = fields.every((field) => {
-    // An omitted field is not evidence for an explicit null clear. Require every
-    // field claimed by the immutable pending row to be present in the v2 snapshot.
-    return !Object.hasOwn(expected, field)
-      || (Object.hasOwn(profile, field) && profileValuesEqual(profile[field], expected[field]))
+    // Preserve omission as data: an optional field present only in v2 can be a
+    // stale value from another generation, not evidence for this pending row.
+    const expectedHasField = Object.hasOwn(expected, field)
+    const profileHasField = Object.hasOwn(profile, field)
+    return expectedHasField === profileHasField
+      && (!expectedHasField || profileValuesEqual(profile[field], expected[field]))
   })
   if (!matches) throw new Error('Bot profile revision cannot acknowledge a conflicting legacy pending transaction')
   return true

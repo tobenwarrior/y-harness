@@ -4625,6 +4625,83 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed when same-revision v2 evidence restores omitted description or avatar', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Pending optional evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-optional-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: pendingRecord.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          description: 'Stale description from an unrelated generation',
+          avatar: {
+            attachmentId: `sha256:${'cd'.repeat(32)}`,
+            mediaType: 'image/png',
+            bytes: 3,
+            width: 1,
+            height: 1,
+          },
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails closed when existing v1 and v2 pending profile transactions conflict', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
