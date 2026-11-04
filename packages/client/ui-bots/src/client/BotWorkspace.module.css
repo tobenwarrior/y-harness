@@ -789,6 +789,237 @@
   opacity: 0.7;
 }
 
+.routineFilters,
+.routineDetailTabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.routineFilter,
+.routineFilterSelected,
+.routineTab,
+.routineTabSelected {
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: var(--yh-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.routineFilter:hover,
+.routineTab:hover {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.routineFilterSelected,
+.routineTabSelected {
+  background: var(--yh-alias-interactive-bg-active);
+  color: var(--yh-alias-label-primary);
+  font-weight: 500;
+}
+
+.routineLayout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 12px;
+}
+
+.routineList,
+.routineHistoryList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.routineRow,
+.routineRowSelected {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.routineRowSelected {
+  border-color: var(--yh-alias-state-business-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--yh-alias-state-business-primary) 30%, transparent);
+}
+
+.routineRowSelect {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--yh-alias-label-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.routineRowIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--yh-alias-label-secondary);
+}
+
+.routineRowCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.routineRowCopy strong,
+.routineRowCopy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routineRowCopy strong {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.routineRowCopy span {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.routineRowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.routineDetail {
+  min-width: 0;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.routineDetailTabs {
+  margin-bottom: 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.routineRule {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.routineRule strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.routineRule p {
+  margin: 0;
+  color: var(--yh-alias-label-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.routineRule span {
+  color: var(--yh-alias-label-tertiary);
+}
+
+.routineHistoryList {
+  gap: 8px;
+}
+
+.routineHistoryContent,
+.routineHistorySection,
+.routineHistoryMeta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routineHistorySection + .routineHistorySection {
+  margin-top: 14px;
+}
+
+.routineHistorySectionTitle {
+  color: var(--yh-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.routineHistoryMeta {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.routineHistoryMeta button {
+  align-self: flex-start;
+}
+
+.routineHistoryRow {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.routineHistoryRow strong {
+  color: var(--yh-alias-label-primary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.routineHistoryRow span {
+  overflow-wrap: anywhere;
+}
+
+.routineHistoryEmpty {
+  margin: 20px 0;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .routineLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .memoryEditorActions {
   justify-content: flex-end;
   gap: 6px;

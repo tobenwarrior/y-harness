@@ -31,6 +31,7 @@ import type {
   DailyInput,
   ScheduleCatalogEntry,
   ScheduleCreateRequest,
+  ScheduleLifecycleView,
   ScheduleRecord,
   ScheduleTimingChange,
   WeeklyInput,
@@ -95,6 +96,7 @@ import type {
   BotEventRoutineDelivery,
   BotEventRoutineResult,
   BotEventRoutineView,
+  BotEventRoutineCatalogView,
   BotEventSource,
   BotEventTrigger,
   BotConnectedAppAccess,
@@ -125,6 +127,16 @@ import type {
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
   BotMemoryView,
+  BotRoutineDeleteValue,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineLifecycleRequest,
+  BotRoutineListRequest,
+  BotRoutineListValue,
+  BotRoutinePauseValue,
+  BotRoutineResumeValue,
+  BotRoutineView,
+  BotScheduleRoutineView,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
@@ -1588,6 +1600,54 @@ function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+}
+
+/** Project one retained timed routine into the Bot-scoped catalog view. */
+function scheduleRoutineView(
+  entry: ScheduleCatalogEntry,
+  botId: BotRecord['id'],
+): BotScheduleRoutineView {
+  const view = scheduleView(routineCatalogRecord(entry), Date.now())
+  return {
+    ...view,
+    kind: 'schedule',
+    scheduleKind: view.kind,
+    botId,
+    sessionId: entry.sessionId,
+    status: entry.status,
+    ...(entry.lastDelivery === undefined ? {} : { lastDelivery: entry.lastDelivery }),
+  }
+}
+
+/** Project one successful timed lifecycle response into the Bot-scoped view. */
+function scheduleLifecycleRoutineView(
+  view: ScheduleLifecycleView,
+  bot: Pick<BotRecord, 'id' | 'sessionId'>,
+): BotScheduleRoutineView {
+  return {
+    ...view,
+    kind: 'schedule',
+    scheduleKind: view.kind,
+    botId: bot.id,
+    sessionId: bot.sessionId,
+    status: view.status,
+  }
+}
+
+/** Project one event routine into the Bot-scoped catalog view. */
+function botEventRoutineView(
+  routine: BotEventRoutine,
+  bot: Pick<BotRecord, 'id' | 'sessionId'>,
+): BotEventRoutineCatalogView {
+  return { ...eventRoutineView(routine), botId: bot.id, sessionId: bot.sessionId }
+}
+
+/** Admit one routine identity at the Bot Remote boundary. */
+function normalizeRoutineId(value: string): string {
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || value.length > 256) {
+    return badRequest('Routine id must be non-empty, trimmed, and at most 256 characters')
+  }
+  return value
 }
 
 /** Clear an uncertain follow-up marker for an explicit or cancellation-driven retry. */
@@ -5241,6 +5301,156 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * List timed and message-triggered routines owned by one Bot.
+   *
+   * This lookup never activates the Bot Session. Timed rows are read from the
+   * Host Schedule catalog and event rows from the Bot record, after checking
+   * the configured owner scope.
+   * @param request - Bot identity whose routine catalog should be returned.
+   * @returns The Bot's active, paused, and ended routine rows.
+   */
+  @Remote('listRoutines')
+  async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const domain = await this.getDomain()
+    const bot = this.requireOwnedBot(domain, botId)
+    const routines: BotRoutineView[] = []
+    const schedule = this.ctx.get('schedule')
+    if (schedule !== undefined) {
+      for (const entry of await schedule.catalog()) {
+        if (entry.sessionId !== bot.sessionId) continue
+        routines.push(scheduleRoutineView(entry, bot.id))
+      }
+    }
+    for (const routine of bot.eventRoutines ?? []) routines.push(botEventRoutineView(routine, bot))
+    return { routines }
+  }
+
+  /**
+   * Pause one routine owned by a Bot without waking its Session.
+   * @param request - Bot and routine identity.
+   * @returns The paused routine or a bounded lookup/ended result.
+   */
+  @Remote('pauseRoutine')
+  async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      await this.pauseEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, paused: false, code: 'routine_not_found' }
+        : { routine: botEventRoutineView(latest, bot), paused: true }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.pause({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    if ('paused' in result) {
+      if (result.paused) return { routine: scheduleLifecycleRoutineView(result, bot), paused: true }
+      return { id: routineId, paused: false, code: result.code === 'schedule_ended' ? 'routine_ended' : 'routine_not_found' }
+    }
+    throw new RemoteError('gateway/internal', result.message, {})
+  }
+
+  /**
+   * Resume one paused routine owned by a Bot without waking its Session.
+   * @param request - Bot and routine identity.
+   * @returns The active routine or a bounded lookup/ended result.
+   */
+  @Remote('resumeRoutine')
+  async resumeRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineResumeValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      await this.resumeEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, resumed: false, code: 'routine_not_found' }
+        : { routine: botEventRoutineView(latest, bot), resumed: true }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.resume({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    if ('resumed' in result) {
+      if (result.resumed) return { routine: scheduleLifecycleRoutineView(result, bot), resumed: true }
+      return { id: routineId, resumed: false, code: result.code === 'schedule_ended' ? 'routine_ended' : 'routine_not_found' }
+    }
+    throw new RemoteError('gateway/internal', result.message, {})
+  }
+
+  /**
+   * Delete one routine owned by a Bot and its bounded run history.
+   * @param request - Bot and routine identity.
+   * @returns A stable deletion marker or a bounded lookup result.
+   */
+  @Remote('deleteRoutine')
+  async deleteRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineDeleteValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    if (bot.eventRoutines?.some(routine => routine.id === routineId)) {
+      await this.deleteEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, deleted: true }
+        : { id: routineId, deleted: false, code: 'routine_not_found' }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.delete({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    return result.deleted ? { id: routineId, deleted: true } : { id: routineId, deleted: false, code: 'routine_not_found' }
+  }
+
+  /**
+   * Read one bounded routine history page without activating the Bot Session.
+   * @param request - Bot, routine, page size, and optional timed-delivery cursor.
+   * @returns Newest-first timed receipts or event deliveries/results.
+   */
+  @Remote('routineHistory')
+  async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+      return badRequest('Routine history limit must be a safe integer from 1 through 100')
+    }
+    if (request.before !== undefined && typeof request.before !== 'string') {
+      return badRequest('Routine history cursor must be a message id string')
+    }
+    const bot = this.requireOwnedBot(await this.getDomain(), botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      if (request.before !== undefined) return badRequest('Event routine history does not support a cursor')
+      return {
+        kind: 'event',
+        id: routineId,
+        deliveries: eventRoutine.deliveries.slice(-request.limit).reverse(),
+        results: eventRoutine.results.slice(-request.limit).reverse(),
+      }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.history({
+      sessionId: bot.sessionId,
+      id: ScheduleId(routineId),
+      limit: request.limit,
+      ...(request.before === undefined ? {} : { before: request.before }),
+    })
+    if ('records' in result) return { kind: 'schedule', ...result }
+    if (result.code === 'schedule_not_found') return { id: routineId, code: 'routine_not_found' }
+    if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
+    return { id: routineId, code: 'routine_not_found' }
+  }
+
+  /**
    * List active memories for a Bot without accepting a model-supplied Session id.
    * @param request - Durable Bot id whose private projection should be read.
    * @returns active memory rows owned by that Bot.
@@ -6272,6 +6482,18 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  /** Read one Bot only when it belongs to this Host owner's scope. */
+  private requireOwnedBot(
+    domain: Domain<typeof botDomain>,
+    botId: BotRecord['id'],
+  ): BotStoredRecord {
+    const record = domain.table('bots').get(botId)
+    if (record === undefined || record.ownerId !== this.ownerId) {
+      throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+    }
+    return record
   }
 
   private async activeTemplate(

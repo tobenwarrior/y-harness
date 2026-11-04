@@ -28,6 +28,7 @@
   - button "Edit bot profile"
   - button "Share bot"
   - button "Manage memories"
+  - button "Manage routines"
   - text: Idle
   - textbox "Message or run a task, / commands, @ files or sessions"
   - button "Add files or run commands"
@@ -146,3 +147,30 @@
   - text: Labels only; they do not enable tools or app access.
   - button "Cancel"
   - button "Create bot"
+- dialog "Bot routines":
+  - heading "Bot routines" [level=2]
+  - button "Close"
+  - paragraph: Review this bot’s timed and message-triggered routines.
+  - img "Scout"
+  - strong: Scout
+  - text: Only routines owned by this bot are shown here.
+  - tablist "Routine filters":
+    - tab "All" [selected]
+    - tab "Enabled"
+    - tab "Paused"
+  - list "Bot routines":
+    - listitem:
+      - button "Morning check-in Timed Enabled" [pressed]:
+        - strong: Morning check-in
+        - text: Timed Enabled
+      - button "Pause Morning check-in"
+      - button "Delete Morning check-in"
+      - button "View results for Morning check-in": Results
+  - region "Routine details":
+    - tablist "Routine detail sections":
+      - tab "Rule" [selected]
+      - tab "Results"
+    - strong: Morning check-in
+    - paragraph: Review the project.
+    - text: Repeats every day
+  - button "Close"

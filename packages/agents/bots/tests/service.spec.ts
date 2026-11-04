@@ -6506,6 +6506,43 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('lists and manages owner-scoped timed routines through the Bot Remote', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Remote routine owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const other = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map(), new Map(), new Map(), { ownerId: 'other-owner' })
+    try {
+      const schedule = h.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(created.bot.sessionId, {
+        title: 'Remote status check', prompt: 'Check status', every_seconds: 300,
+      })
+      const listed = await h.service.listRoutines({ botId: created.bot.id })
+      expect(listed.routines).toEqual([expect.objectContaining({
+        kind: 'schedule', botId: created.bot.id, sessionId: created.bot.sessionId,
+        id: task.id, title: 'Remote status check', status: 'active',
+      })])
+
+      const paused = await h.service.pauseRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(paused).toMatchObject({ paused: true, routine: { id: task.id, kind: 'schedule', status: 'paused' } })
+      const resumed = await h.service.resumeRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(resumed).toMatchObject({ resumed: true, routine: { id: task.id, kind: 'schedule', status: 'active' } })
+      const history = await h.service.routineHistory({ botId: created.bot.id, routineId: String(task.id), limit: 10 })
+      expect(history).toMatchObject({ kind: 'schedule', id: task.id, records: [] })
+
+      await expect(other.service.listRoutines({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+      const removed = await h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(removed).toEqual({ id: task.id, deleted: true })
+      await expect(h.service.listRoutines({ botId: created.bot.id })).resolves.toEqual({ routines: [] })
+    } finally {
+      await close(other.ctx)
+      await close(h.ctx)
+    }
+  })
+
   it('creates a Bot message-triggered routine and records its model result', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -6542,6 +6579,15 @@ describe('durable Bot roster', () => {
       expect(routine).not.toHaveProperty('deliveries')
       expect(routine).not.toHaveProperty('results')
       expect((await h.service.list({})).bots.find(bot => bot.id === created.bot.id)).not.toHaveProperty('eventRoutines')
+      await expect(h.service.listRoutines({ botId: created.bot.id })).resolves.toEqual({
+        routines: [expect.objectContaining({ kind: 'event', id: routine.id, status: 'active', botId: created.bot.id })],
+      })
+      await expect(h.service.pauseRoutine({ botId: created.bot.id, routineId: routine.id })).resolves.toMatchObject({
+        paused: true, routine: { kind: 'event', id: routine.id, status: 'paused' },
+      })
+      await expect(h.service.resumeRoutine({ botId: created.bot.id, routineId: routine.id })).resolves.toMatchObject({
+        resumed: true, routine: { kind: 'event', id: routine.id, status: 'active' },
+      })
       expect(await update.execute({ id: routine.id, title: 'Review peer messages' }, { ...context, callId: 'event-update' })).toMatchObject({ success: true })
       expect(await pause.execute({ id: routine.id }, { ...context, callId: 'event-pause' })).toMatchObject({ success: true })
       expect(await resume.execute({ id: routine.id }, { ...context, callId: 'event-resume' })).toMatchObject({ success: true })
@@ -6605,6 +6651,12 @@ describe('durable Bot roster', () => {
         expect(execution).toMatchObject({ success: true })
         const value = JSON.parse(execution.contentItems[0]!.text) as { results: readonly { status: string; output?: string }[] }
         expect(value.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
+      })
+      await vi.waitFor(async () => {
+        const execution = await h.service.routineHistory({ botId: created.bot.id, routineId: routine.id, limit: 10 })
+        expect(execution).toMatchObject({ kind: 'event', id: routine.id })
+        if (!('kind' in execution) || execution.kind !== 'event') throw new Error('event routine history kind missing')
+        expect(execution.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
       })
       expect(await remove.execute({ id: routine.id }, { ...context, callId: 'event-delete' })).toMatchObject({ success: true })
     } finally {

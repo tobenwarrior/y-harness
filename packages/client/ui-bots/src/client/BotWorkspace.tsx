@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
-  IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular,
+  IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
@@ -17,10 +17,12 @@ import type { BotShareActions } from './controller.ts'
 import type { SharedBotsClient } from './shared-client.ts'
 import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
+import { BotRoutineManager } from './BotRoutineManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
-  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotStatus, BotSummary, BotWorkspaceProps,
+  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotRoutineManagerActions,
+  BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
@@ -877,7 +879,9 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
-export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, loading }: {
+export function BotDetail({
+  bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager, routineRevision = 0, loading,
+}: {
   bot: BotSummary | undefined
   children: ReactNode
   t: BotWorkspaceViewProps['t']
@@ -887,6 +891,8 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
   onUpdateProfile?: ((id: string, profile: BotProfileUpdate) => Promise<void>) | undefined
   share?: BotShareActions | undefined
   memoryManager?: BotMemoryManagerActions | undefined
+  routineManager?: BotRoutineManagerActions | undefined
+  routineRevision?: number
   loading: boolean
 }) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
@@ -917,6 +923,7 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
       setProfileSaving(false)
     }
   }, [bot?.id, profileTarget])
+  const [routineOpen, setRoutineOpen] = useState(false)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -971,6 +978,11 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
           {memoryManager !== undefined && (
             <Tooltip label={t('manageMemories')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('manageMemories')} icon={<IconContextInjectionOutlineRegular size={14} />} onClick={() => { setMemoryOpen(true) }} />
+            </Tooltip>
+          )}
+          {routineManager !== undefined && (
+            <Tooltip label={t('manageRoutines')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('manageRoutines')} icon={<IconClockOutlineRegular size={14} />} onClick={() => { setRoutineOpen(true) }} />
             </Tooltip>
           )}
           {onEditAvatar !== undefined && (
@@ -1075,12 +1087,24 @@ export function BotDetail({ bot, children, t, loadAvatar, onEditAvatar, onRename
       </Modal>}
       {memoryManager !== undefined && (
         <BotMemoryManager
-          key={bot.id}
+          key={`memory-${bot.id}`}
           bot={bot}
           actions={memoryManager}
           loadAvatar={loadAvatar}
           open={memoryOpen}
           onClose={() => { setMemoryOpen(false) }}
+          t={t}
+        />
+      )}
+      {routineManager !== undefined && (
+        <BotRoutineManager
+          key={`routine-${bot.id}`}
+          bot={bot}
+          actions={routineManager}
+          revision={routineRevision}
+          loadAvatar={loadAvatar}
+          open={routineOpen}
+          onClose={() => { setRoutineOpen(false) }}
           t={t}
         />
       )}

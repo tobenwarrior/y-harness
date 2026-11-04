@@ -11,6 +11,6 @@ export type {
 export type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotOrganizationPatch,
   BotProfileUpdate, BotStatus, BotSummary,
-  BotMemoryManagerActions, BotMemorySummary, BotTemplateActions,
+  BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotRoutineManagerActions, BotTemplateActions,
   BotTemplateState, BotTemplateSummary, BotWorkspaceProps,
 } from './types.ts'

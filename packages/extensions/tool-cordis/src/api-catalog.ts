@@ -713,6 +713,36 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'listRoutines\') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>',
+        description: 'List timed and message-triggered routines owned by one Bot.\n\nThis lookup never activates the Bot Session. Timed rows are read from the Host Schedule catalog and event rows from the Bot record, after checking the configured owner scope.',
+        parameters: [{ name: 'request', description: 'Bot identity whose routine catalog should be returned.' }],
+        returns: 'The Bot\'s active, paused, and ended routine rows.',
+      },
+      {
+        signature: '@Remote(\'pauseRoutine\') async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue>',
+        description: 'Pause one routine owned by a Bot without waking its Session.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'The paused routine or a bounded lookup/ended result.',
+      },
+      {
+        signature: '@Remote(\'resumeRoutine\') async resumeRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineResumeValue>',
+        description: 'Resume one paused routine owned by a Bot without waking its Session.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'The active routine or a bounded lookup/ended result.',
+      },
+      {
+        signature: '@Remote(\'deleteRoutine\') async deleteRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineDeleteValue>',
+        description: 'Delete one routine owned by a Bot and its bounded run history.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'A stable deletion marker or a bounded lookup result.',
+      },
+      {
+        signature: '@Remote(\'routineHistory\') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>',
+        description: 'Read one bounded routine history page without activating the Bot Session.',
+        parameters: [{ name: 'request', description: 'Bot, routine, page size, and optional timed-delivery cursor.' }],
+        returns: 'Newest-first timed receipts or event deliveries/results.',
+      },
+      {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
         description: 'List active memories for a Bot without accepting a model-supplied Session id.',
         parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
@@ -5657,12 +5687,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotEventRoutineAdmissionTombstone {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n}',
   },
   {
+    name: 'BotEventRoutineCatalogView',
+    declaration: 'export type BotEventRoutineCatalogView = BotEventRoutineView & {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n};',
+  },
+  {
     name: 'BotEventRoutineDelivery',
     declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly messageId: MessageId;\n    readonly chainId?: string | undefined;\n    readonly depth?: number | undefined;\n    readonly status: \'pending\' | \'delivered\';\n    readonly dispatchStartedAt?: string | undefined;\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
   },
   {
+    name: 'BotEventRoutineHistory',
+    declaration: 'export interface BotEventRoutineHistory {\n    readonly kind: \'event\';\n    readonly id: string;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly results: readonly BotEventRoutineResult[];\n}',
+  },
+  {
     name: 'BotEventRoutineResult',
     declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\' | \'other\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventRoutineView',
+    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
   },
   {
     name: 'BotEventSource',
@@ -5855,6 +5897,54 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotRenameValue',
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotRoutineDeleteValue',
+    declaration: 'export type BotRoutineDeleteValue = {\n    readonly id: string;\n    readonly deleted: true;\n} | {\n    readonly id: string;\n    readonly deleted: false;\n    readonly code: \'routine_not_found\';\n};',
+  },
+  {
+    name: 'BotRoutineHistoryRequest',
+    declaration: 'export interface BotRoutineHistoryRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n    readonly limit: number;\n    readonly before?: MessageId;\n}',
+  },
+  {
+    name: 'BotRoutineHistoryValue',
+    declaration: 'export type BotRoutineHistoryValue = BotScheduleRoutineHistory | BotEventRoutineHistory | BotRoutineLookupFailure;',
+  },
+  {
+    name: 'BotRoutineLifecycleRequest',
+    declaration: 'export interface BotRoutineLifecycleRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n}',
+  },
+  {
+    name: 'BotRoutineListRequest',
+    declaration: 'export interface BotRoutineListRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotRoutineListValue',
+    declaration: 'export interface BotRoutineListValue {\n    readonly routines: readonly BotRoutineView[];\n}',
+  },
+  {
+    name: 'BotRoutineLookupFailure',
+    declaration: 'export type BotRoutineLookupFailure = {\n    readonly id: string;\n    readonly code: \'routine_not_found\' | \'routine_ended\' | \'delivery_cursor_not_found\';\n};',
+  },
+  {
+    name: 'BotRoutinePauseValue',
+    declaration: 'export type BotRoutinePauseValue = {\n    readonly routine: BotRoutineView;\n    readonly paused: true;\n} | {\n    readonly id: string;\n    readonly paused: false;\n    readonly code: \'routine_not_found\' | \'routine_ended\';\n};',
+  },
+  {
+    name: 'BotRoutineResumeValue',
+    declaration: 'export type BotRoutineResumeValue = {\n    readonly routine: BotRoutineView;\n    readonly resumed: true;\n} | {\n    readonly id: string;\n    readonly resumed: false;\n    readonly code: \'routine_not_found\' | \'routine_ended\';\n};',
+  },
+  {
+    name: 'BotRoutineView',
+    declaration: 'export type BotRoutineView = BotScheduleRoutineView | BotEventRoutineCatalogView;',
+  },
+  {
+    name: 'BotScheduleRoutineHistory',
+    declaration: 'export interface BotScheduleRoutineHistory {\n    readonly kind: \'schedule\';\n    readonly id: ScheduleId;\n    readonly records: readonly ScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: {\n        readonly days: number;\n        readonly records: number;\n    };\n    readonly nextBefore?: MessageId;\n}',
+  },
+  {
+    name: 'BotScheduleRoutineView',
+    declaration: 'export type BotScheduleRoutineView = Omit<ScheduleView, \'kind\'> & {\n    readonly kind: \'schedule\';\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly status: ScheduleCatalogEntry[\'status\'];\n    readonly lastDelivery?: ScheduleCatalogEntry[\'lastDelivery\'];\n    readonly scheduleKind: ScheduleView[\'kind\'];\n    readonly afterSeconds?: number;\n    readonly everySeconds?: number;\n    readonly time?: string;\n    readonly timeZone?: string;\n    readonly expression?: string;\n};',
   },
   {
     name: 'BotShareInviteRequest',

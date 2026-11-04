@@ -51,10 +51,15 @@ export function apply(ctx: Context): void {
       locale: 'bots',
       inject: () => controller.face(),
     }, BotsRoster))
-    const disposeChanged = ctx.remote.$on('bots/changed', () => { void controller.load() })
+    const disposeChanged = ctx.remote.$on('bots/changed', () => {
+      controller.bumpRoutineRevision()
+      void controller.load()
+    })
+    const disposeScheduleChanged = ctx.remote.$on('schedule/changed', () => { controller.bumpRoutineRevision() })
     void controller.load()
     return () => {
       disposeChanged()
+      disposeScheduleChanged()
       disposeSidebar()
       disposeConversation()
       disposeMain()
