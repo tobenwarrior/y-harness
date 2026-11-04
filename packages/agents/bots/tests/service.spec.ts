@@ -4466,6 +4466,126 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed when a routine-era v2 roster does not match the durable Bot identity', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Foreign v2 roster', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: 'bot-session-foreign',
+            ownerId: 'foreign-owner',
+            cwd: '/foreign/cwd',
+            state: created.bot.state,
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.delete(v3Key)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    await expect(harness(pool, undefined, undefined, [], new Map(), records)).rejects.toThrow('identity')
+    expect(records.get(v2Key)).toEqual(v2)
+    expect(records.get(v3Key)).toBeUndefined()
+  })
+
+  it('preserves timed routines when a partial v3 profile merges a routine-era predecessor', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Partial v3 routine merge', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const routineProjection = {
+      record: {
+        id: 'schedule-partial-v3-merge',
+        kind: 'every',
+        title: 'Partial merge routine',
+        prompt: 'Keep this routine.',
+        everySeconds: 3_600,
+        scheduledAt: '2099-01-01T00:00:00.000Z',
+      },
+      sessionId: String(created.bot.sessionId),
+      status: 'active',
+    }
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          timedRoutines: [routineProjection],
+          timedRoutinesUpdatedAt: created.bot.updatedAt,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    const v3: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(created.bot.sessionId),
+            ownerId: 'local-owner',
+            cwd: created.bot.cwd,
+            state: created.bot.state,
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.set(v2Key, v2)
+    records.set(v3Key, v3)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: created.bot.name }],
+      })
+      expect(records.get(v3Key)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 3,
+          profiles: {
+            [id]: {
+              timedRoutines: [routineProjection],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
   it('does not revive V1 description or avatar when setup V2 omitted those fields', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()

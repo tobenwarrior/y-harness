@@ -721,6 +721,25 @@ function stableBotIdentityMatches(
     && current.createdAt === expected.createdAt
 }
 
+/** Reject a persisted profile roster that would rebind an existing Bot row. */
+function assertProfileRosterMatchesDurableBots(
+  state: BotProfileRevisionState,
+  bots: KvTable<BotRecord['id'], BotStoredRecord>,
+): void {
+  for (const [id, profile] of Object.entries(state.profiles)) {
+    const roster = profile.roster
+    if (roster === undefined) continue
+    const current = bots.get(BotId(id))
+    if (current !== undefined && !stableBotIdentityMatches(current, roster)) {
+      throw new RemoteError(
+        'gateway/conflict',
+        'Bot profile roster identity does not match the authoritative Bot row',
+        { botId: BotId(id) },
+      )
+    }
+  }
+}
+
 /** Reject two same-generation profile snapshots that make different claims. */
 function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: BotProfileSnapshot): void {
   const fields: readonly (keyof BotProfileSnapshot)[] = [
@@ -758,6 +777,8 @@ function mergeProfileSnapshots(
   const canUseLegacySetupFields = current.roster === undefined
   const canUseLegacyField = (field: keyof BotProfileSnapshot): boolean =>
     canUseLegacySetupFields && !preserveLegacyOmissions.includes(field)
+  const canUseLegacyRoutineField = (field: keyof BotProfileSnapshot): boolean =>
+    !preserveLegacyOmissions.includes(field)
   const changed = (current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined)
     || (current.persona === undefined && canUseLegacyField('persona') && legacy.persona !== undefined)
     || (current.capabilities === undefined && canUseLegacyField('capabilities') && legacy.capabilities !== undefined)
@@ -769,6 +790,10 @@ function mergeProfileSnapshots(
     || (current.pinned === undefined && canUseLegacyField('pinned') && legacy.pinned !== undefined)
     || (current.hidden === undefined && canUseLegacyField('hidden') && legacy.hidden !== undefined)
     || (current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined)
+    || (current.roster === undefined && canUseLegacyRoutineField('roster') && legacy.roster !== undefined)
+    || (current.timedRoutines === undefined && canUseLegacyRoutineField('timedRoutines') && legacy.timedRoutines !== undefined)
+    || (current.timedRoutinesUpdatedAt === undefined
+      && canUseLegacyRoutineField('timedRoutinesUpdatedAt') && legacy.timedRoutinesUpdatedAt !== undefined)
   const legacyWithoutDescription = preserveLegacyOmissions.includes('description') && current.description === undefined
     ? (() => {
       const { description: ignoredDescription, ...withoutDescription } = legacy
@@ -2786,6 +2811,7 @@ export class BotService extends TypertRemoteService {
         legacyProfileState,
       )
       let state = merged.state
+      assertProfileRosterMatchesDurableBots(state, bots)
       if (state.pending !== undefined) {
         const pendingTransactionId = state.pending.transactionId
         state = await this.recoverPendingProfile(state, bots)
@@ -2913,6 +2939,7 @@ export class BotService extends TypertRemoteService {
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
       const currentState = profileRevisionRecordOf(stored)
       let state = mergeProfileRevisionStates(currentState, legacyProfileState).state
+      assertProfileRosterMatchesDurableBots(state, bots)
       if (state.pending !== undefined) {
         const pendingTransactionId = state.pending.transactionId
         state = await this.recoverPendingProfile(state, bots)
@@ -6203,6 +6230,7 @@ export class BotService extends TypertRemoteService {
         legacyProfileState,
       )
       const state = merged.state
+      assertProfileRosterMatchesDurableBots(state, bots)
       if (state.pending === undefined) return merged.changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
       const pendingTransactionId = state.pending.transactionId
