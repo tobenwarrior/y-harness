@@ -9,7 +9,7 @@ import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
 import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { BotShareActions } from '../src/client/controller.ts'
-import type { SharedBotsClient } from '../src/client/shared-client.ts'
+import type { SharedBotAuthChange, SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
 
 afterEach(cleanup)
@@ -1806,6 +1806,128 @@ describe('shared Bot collaboration surfaces', () => {
     })
     expect(screen.queryByText('Private answer')).toBeNull()
     expect(screen.queryByText('Joining…')).toBeNull()
+  })
+
+  it('does not allow a second enrollment while the first request is still settling', async () => {
+    let notify: (() => void) | undefined
+    let scope: string | undefined = 'principal-member'
+    const firstEnroll = Promise.withResolvers<Awaited<ReturnType<SharedBotsClient['enroll']>>>()
+    const client = Object.assign(sharedClient({ enroll: vi.fn().mockReturnValue(firstEnroll.promise) }), {
+      subscribeAuth: (listener: () => void) => {
+        notify = listener
+        return () => { notify = undefined }
+      },
+    })
+    Object.defineProperty(client, 'retryScope', { configurable: true, get: () => scope })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'first-code' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+    await waitFor(() => { expect(client.enroll).toHaveBeenCalledWith('first-code') })
+
+    scope = undefined
+    await act(async () => {
+      notify?.()
+      await Promise.resolve()
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Invite code' }), { target: { value: 'second-code' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+    expect(client.enroll).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      firstEnroll.resolve({ ok: false, error: { code: 'gateway/unauthorized', message: 'expired', details: {} } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  })
+
+  it('closes the shared-group create dialog when the authenticated principal changes', async () => {
+    let notify: (() => void) | undefined
+    let scope: string | undefined = 'principal-member'
+    const client = Object.assign(sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      createGroup: vi.fn(),
+    }), {
+      subscribeAuth: (listener: () => void) => {
+        notify = listener
+        return () => { notify = undefined }
+      },
+    })
+    Object.defineProperty(client, 'retryScope', { configurable: true, get: () => scope })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    expect(screen.getByRole('dialog', { name: 'Create a shared group' })).toBeTruthy()
+    scope = undefined
+    await act(async () => {
+      notify?.()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull()
+  })
+
+  it('revalidates shared content when the browser tab regains focus', async () => {
+    let listCalls = 0
+    const client = sharedClient({
+      list: vi.fn().mockImplementation(async () => {
+        listCalls += 1
+        return listCalls === 1
+          ? { ok: true as const, value: { bots: [{ ...bot, role: 'collaborator' }] } }
+          : { ok: true as const, value: { bots: [] } }
+      }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => { expect(client.restoreRetryScope).toHaveBeenCalledTimes(2) })
+    await waitFor(() => { expect(client.list).toHaveBeenCalledTimes(2) })
+    expect(screen.queryByText('Private answer')).toBeNull()
+  })
+
+  it('refreshes shared content after a remote auth invalidation', async () => {
+    let notify: ((change: SharedBotAuthChange) => void) | undefined
+    let scope: string | undefined = 'principal-member'
+    let listCalls = 0
+    const client = sharedClient({
+      list: vi.fn().mockImplementation(async () => {
+        listCalls += 1
+        return listCalls === 1
+          ? { ok: true as const, value: { bots: [{ ...bot, role: 'collaborator' }] } }
+          : { ok: true as const, value: { bots: [] } }
+      }),
+      restoreRetryScope: vi.fn().mockImplementation(async () => {
+        scope = 'principal-member'
+        return { ok: true as const, value: { principalId: 'principal-member', expiresAt: 2_000 } }
+      }),
+    })
+    Object.defineProperty(client, 'subscribeAuth', {
+      configurable: true,
+      value: (listener: (change?: SharedBotAuthChange) => void) => {
+        notify = listener
+        return () => { notify = undefined }
+      },
+    })
+    Object.defineProperty(client, 'retryScope', { configurable: true, get: () => scope })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+    scope = undefined
+    await act(async () => {
+      notify?.({ source: 'remote', reason: 'invalidated' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => { expect(client.restoreRetryScope).toHaveBeenCalledTimes(2) })
+    await waitFor(() => { expect(client.list).toHaveBeenCalledTimes(2) })
+    expect(screen.queryByText('Private answer')).toBeNull()
   })
 
   it('does not apply a group send after the authenticated principal rotates', async () => {

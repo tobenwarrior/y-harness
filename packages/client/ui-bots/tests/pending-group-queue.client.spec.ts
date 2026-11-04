@@ -77,6 +77,62 @@ describe('shared-group browser retry queue', () => {
     }
   })
 
+  it('migrates legacy pending records into a fenced namespace before pruning', async () => {
+    const operationHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy.message.' + operationHash
+    localStorage.setItem(legacyKey, JSON.stringify({
+      version: 1,
+      kind: 'message',
+      status: 'expired',
+      id: 'bot-group-message-legacy',
+      operationHash,
+      groupId: 'bot-group-room',
+      createdAt: 1,
+      expiresAt: 2,
+    }))
+
+    const queue = createSharedGroupPendingQueue('principal-legacy')
+    await expect(queue.listMessages()).resolves.toEqual([{
+      operationHash,
+      id: 'bot-group-message-legacy',
+      groupId: 'bot-group-room',
+      createdAt: 1,
+      expiresAt: 2,
+      expired: true,
+    }])
+
+    expect(localStorage.getItem(legacyKey)).toBeNull()
+    const migratedKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-legacy.message.' + operationHash
+    expect(localStorage.getItem(migratedKey)).not.toBeNull()
+    expect(migratedKey.startsWith('yharness.client-ui-bots.shared-group-pending.principal-legacy.')).toBe(false)
+  })
+
+  it('recovers legacy pending message text before the old queue can prune it', async () => {
+    const operationHash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const legacyKey = 'yharness.client-ui-bots.shared-group-pending.principal-legacy-pending.message.' + operationHash
+    localStorage.setItem(legacyKey, JSON.stringify({
+      version: 1,
+      kind: 'message',
+      id: 'bot-group-message-legacy-pending',
+      operationHash,
+      groupId: 'bot-group-room',
+      text: 'recover this legacy message',
+      createdAt: 1,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    }))
+
+    const queue = createSharedGroupPendingQueue('principal-legacy-pending')
+    await expect(queue.listMessages()).resolves.toEqual([{
+      operationHash,
+      id: 'bot-group-message-legacy-pending',
+      groupId: 'bot-group-room',
+      text: 'recover this legacy message',
+      createdAt: 1,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      expired: false,
+    }])
+  })
+
   it('partitions retry records by server-issued principal scope and supports explicit discard', async () => {
     const alpha = createSharedGroupPendingQueue('principal-alpha')
     const beta = createSharedGroupPendingQueue('principal-beta')
@@ -152,7 +208,7 @@ describe('shared-group browser retry queue', () => {
     const firstTab = createSharedGroupPendingQueue('principal-prune-race')
     const secondTab = createSharedGroupPendingQueue('principal-prune-race')
     const original = await secondTab.reserveMessage('old-message', 'bot-group-room', 'old draft')
-    const targetKey = `yharness.client-ui-bots.shared-group-pending.principal-prune-race.message.${original.operationHash}`
+    const targetKey = `yharness.client-ui-bots.shared-group-pending.v2.principal-prune-race.message.${original.operationHash}`
 
     vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
     try {

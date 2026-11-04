@@ -1,6 +1,6 @@
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { describe, expect, it, vi } from 'vitest'
-import { createSharedBotsClient } from '../src/client/shared-client.ts'
+import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
 
 describe('shared Bot client capabilities', () => {
   it('advertises isolated shared-group operations when the server route is available', () => {
@@ -189,7 +189,64 @@ describe('shared Bot client capabilities', () => {
     await oldRequest
     unsubscribe?.()
 
-    expect(transitions).toEqual(['principal-old', undefined, 'principal-new'])
+    expect(transitions).toEqual([undefined, 'principal-old', undefined, 'principal-new'])
     expect(client.retryScope).toBe('principal-new')
+  })
+
+  it('propagates an auth invalidation between two shared client tabs', async () => {
+    type MessageListener = (event: { readonly data: unknown }) => void
+    class FakeBroadcastChannel {
+      static readonly peers = new Set<FakeBroadcastChannel>()
+      readonly listeners = new Set<MessageListener>()
+      constructor(readonly name: string) {
+        FakeBroadcastChannel.peers.add(this)
+      }
+      addEventListener(_type: 'message', listener: MessageListener): void {
+        this.listeners.add(listener)
+      }
+      removeEventListener(_type: 'message', listener: MessageListener): void {
+        this.listeners.delete(listener)
+      }
+      postMessage(data: unknown): void {
+        for (const peer of [...FakeBroadcastChannel.peers]) {
+          if (peer === this || peer.name !== this.name) continue
+          queueMicrotask(() => {
+            for (const listener of [...peer.listeners]) listener({ data })
+          })
+        }
+      }
+      close(): void {
+        FakeBroadcastChannel.peers.delete(this)
+        this.listeners.clear()
+      }
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const rpc: ClientConnectionRpc = {
+        call: vi.fn(async (_channel, endpoint) => endpoint === 'bots/share/enroll'
+          ? { ok: true as const, value: { principalId: 'principal-member', expiresAt: 3_000 } }
+          : { ok: true as const, value: { bots: [] } }),
+      }
+      const firstTab = createSharedBotsClient(rpc)
+      const secondTab = createSharedBotsClient(rpc)
+      const firstChanges: string[] = []
+      const secondChanges: string[] = []
+      const stopFirst = firstTab.subscribeAuth?.((change) => { firstChanges.push(change.source) })
+      const stopSecond = secondTab.subscribeAuth?.((change) => { secondChanges.push(change.source) })
+      await firstTab.enroll('first-code')
+      await secondTab.enroll('second-code')
+
+      broadcastSharedAuthChanged()
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+
+      expect(firstTab.retryScope).toBeUndefined()
+      expect(secondTab.retryScope).toBeUndefined()
+      expect(firstChanges).toContain('remote')
+      expect(secondChanges).toContain('remote')
+      stopFirst?.()
+      stopSecond?.()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

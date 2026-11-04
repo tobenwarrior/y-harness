@@ -1,6 +1,7 @@
 import { randomUUID } from '@yharness/util-crypto'
 
-const STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending'
+const LEGACY_STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending'
+const STORAGE_PREFIX = `${LEGACY_STORAGE_PREFIX}.v2`
 const LOCK_PREFIX = 'yharness.client-ui-bots.shared-group-pending-lock'
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TEXT_LENGTH = 16_384
@@ -186,8 +187,16 @@ function scopePrefix(scope: string): string {
   return `${STORAGE_PREFIX}.${encodeScope(scope)}`
 }
 
+function legacyScopePrefix(scope: string): string {
+  return `${LEGACY_STORAGE_PREFIX}.${encodeScope(scope)}`
+}
+
 function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
   return `${scopePrefix(scope)}.${kind}.${operationHash}`
+}
+
+function legacyRecordKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
+  return `${legacyScopePrefix(scope)}.${kind}.${operationHash}`
 }
 
 /** Lock name used by clients released before catalog-wide retry coordination. */
@@ -293,6 +302,33 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     storage.setItem(key, JSON.stringify(record))
   }
 
+  const migrateLegacyRecord = (kind: PendingRecord['kind'], operationHashValue: string): void => {
+    const legacyKey = legacyRecordKey(scope, kind, operationHashValue)
+    const legacy = read(legacyKey)
+    if (legacy === undefined) return
+    const currentKey = recordKey(scope, kind, operationHashValue)
+    if (read(currentKey) === undefined) write(currentKey, legacy)
+    remove(legacyKey)
+  }
+
+  const migrateLegacyRecords = async (): Promise<void> => {
+    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    const keys: string[] = []
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key !== null && key.startsWith(`${legacyScopePrefix(scope)}.`)) keys.push(key)
+    }
+    for (const key of keys) {
+      const record = read(key)
+      if (record === undefined) continue
+      await withLock(legacyLockKey(scope, record.kind, record.operationHash), () => {
+        const current = read(key)
+        if (current !== undefined) migrateLegacyRecord(current.kind, current.operationHash)
+        return Promise.resolve()
+      })
+    }
+  }
+
   const ensureCapacity = (key: string): void => {
     if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
     let count = 0
@@ -305,7 +341,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     }
   }
 
-  const prune = async (): Promise<void> => {
+  const prune = (): Promise<void> => {
     if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
     const now = Date.now()
     const keys: string[] = []
@@ -327,11 +363,13 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         }
       }
     }
+    return Promise.resolve()
   }
 
   return {
     get durable(): boolean { return healthy },
     listCreations: () => withLock(catalogLockKey(scope), async () => {
+      await migrateLegacyRecords()
       await prune()
       if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
       const records: SharedPendingGroupCreation[] = []
@@ -344,6 +382,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       return records.sort((left, right) => left.createdAt - right.createdAt)
     }),
     listMessages: () => withLock(catalogLockKey(scope), async () => {
+      await migrateLegacyRecords()
       await prune()
       if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
       const records: SharedPendingGroupMessage[] = []
@@ -359,6 +398,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       const hash = await operationHash(operationKey)
       const canonicalBotIds = [...botIds].sort()
       return withCatalogAndLegacyLock('creation', hash, async () => {
+        migrateLegacyRecord('creation', hash)
         await prune()
         const key = recordKey(scope, 'creation', hash)
         const current = read(key)
@@ -384,14 +424,19 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withCatalogAndLegacyLock('creation', hash, async () => {
+    removeCreation: (hash, id) => withCatalogAndLegacyLock('creation', hash, () => {
+      migrateLegacyRecord('creation', hash)
       const key = recordKey(scope, 'creation', hash)
       const current = read(key)
       if (current?.kind === 'creation' && current.id === id) remove(key)
+      const legacy = read(legacyRecordKey(scope, 'creation', hash))
+      if (legacy?.kind === 'creation' && legacy.id === id) remove(legacyRecordKey(scope, 'creation', hash))
+      return Promise.resolve()
     }),
     reserveMessage: async (operationKey, groupId, text) => {
       const hash = await operationHash(operationKey)
       return withCatalogAndLegacyLock('message', hash, async () => {
+        migrateLegacyRecord('message', hash)
         await prune()
         const key = recordKey(scope, 'message', hash)
         const current = read(key)
@@ -416,10 +461,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withCatalogAndLegacyLock('message', hash, async () => {
+    removeMessage: (hash, id) => withCatalogAndLegacyLock('message', hash, () => {
+      migrateLegacyRecord('message', hash)
       const key = recordKey(scope, 'message', hash)
       const current = read(key)
       if (current?.kind === 'message' && current.id === id) remove(key)
+      const legacy = read(legacyRecordKey(scope, 'message', hash))
+      if (legacy?.kind === 'message' && legacy.id === id) remove(legacyRecordKey(scope, 'message', hash))
+      return Promise.resolve()
     }),
   }
 }

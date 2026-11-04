@@ -47,7 +47,8 @@ import type {
   SharedPendingGroupCreation,
 } from './pending-group-queue.ts'
 import type { BotSummary } from './types.ts'
-import type { SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
+import { broadcastSharedAuthChanged } from './shared-client.ts'
+import type { SharedBotAuthChange, SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
@@ -223,6 +224,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     setWorking('revoke')
     setError(null)
     try {
+      broadcastSharedAuthChanged()
       await actions.revokeMember(requestedBotId, String(member.principalId))
       if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
       setMembers(current => current.filter(candidate => candidate.principalId !== member.principalId))
@@ -601,6 +603,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const pendingMessageOperationRef = useRef<{ readonly id: string; readonly token: number } | null>(null)
   const pendingMessageOperationTokenRef = useRef(0)
   const pendingGroupQueueRef = useRef<{ readonly scope: string; readonly queue: SharedGroupPendingQueue } | null>(null)
+  const enrollmentOperationTokenRef = useRef(0)
+  const enrollmentInFlightRef = useRef(false)
   const clientIdentityRef = useRef(client)
   const clientGenerationRef = useRef(0)
   if (clientIdentityRef.current !== client) {
@@ -631,7 +635,6 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const clearPendingRetryState = (): void => {
     setPendingCreations([])
     setPendingMessages([])
-    recoveryWorkingRef.current = null
     setRecoveryWorking(null)
     clearPendingMessageOperation()
     setDiscardTarget(null)
@@ -728,6 +731,12 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   }
 
   const clearAuthenticatedState = (nextError: string | null = null): void => {
+    operationGenerationRef.current += 1
+    groupOperationGenerationRef.current += 1
+    createGroupGenerationRef.current += 1
+    groupInviteGenerationRef.current += 1
+    readGenerationRef.current += 1
+    groupReadGenerationRef.current += 1
     pendingGroupQueueRef.current = null
     invalidatePendingRetryState()
     setBots([])
@@ -742,6 +751,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setMemory(null)
     setMemoryConfirmOpen(false)
     setMemoryAcknowledged(false)
+    setCreateGroupOpen(false)
+    setCreateGroupError(null)
     setGroupInvite(null)
     setGroupInviteCopied(false)
     setGroupInviteWorking(false)
@@ -750,6 +761,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setGroupWorking(null)
     setChatWorkingBotIds(new Set())
     setMemoryWorkingBotIds(new Set())
+    setRecoveryWorking(null)
+    setDiscardWorking(false)
     setError(nextError)
   }
 
@@ -1000,7 +1013,6 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     groupReadGenerationRef.current += 1
     setCreateGroupOpen(false)
     setCreateGroupError(null)
-    recoveryWorkingRef.current = null
     setRecoveryWorking(null)
     setGroupWorking(current => current === 'create' ? null : current)
   }
@@ -1069,7 +1081,6 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setGroupInviteCopied(false)
       setGroupInviteWorking(false)
       setGroupInviteUnavailable(false)
-      recoveryWorkingRef.current = null
       setRecoveryWorking(null)
       setPendingCreations([])
       setPendingMessages([])
@@ -1083,21 +1094,44 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   }, [open, client])
 
   useEffect(() => {
-    const unsubscribe = client.subscribeAuth?.(() => {
+    const unsubscribe = client.subscribeAuth?.((change?: SharedBotAuthChange) => {
       syncAuthContext()
       setAuthRevision(current => current + 1)
+      if (change?.source === 'remote') void refresh()
     })
     return unsubscribe
+  }, [client])
+
+  useEffect(() => {
+    const revalidate = (): void => {
+      if (!openRef.current) return
+      authGenerationRef.current += 1
+      clearAuthenticatedState()
+      void refresh()
+    }
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'visible') revalidate()
+    }
+    window.addEventListener('focus', revalidate)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('focus', revalidate)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
   }, [client])
 
   const enroll = async (): Promise<void> => {
     const submittedCode = code
     const trimmed = submittedCode.trim()
-    if (!openRef.current || trimmed === '' || working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory) return
+    if (!openRef.current || trimmed === '' || working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory
+      || enrollmentInFlightRef.current) return
     const submittedCodeRevision = codeRevisionRef.current
     const lifecycleGeneration = lifecycleGenerationRef.current
     const clientContext = { client, clientGeneration: clientGenerationRef.current }
     const operationGeneration = operationGenerationRef.current + 1
+    const enrollmentToken = enrollmentOperationTokenRef.current + 1
+    enrollmentOperationTokenRef.current = enrollmentToken
+    enrollmentInFlightRef.current = true
     operationGenerationRef.current = operationGeneration
     setWorking('enroll')
     setError(null)
@@ -1113,11 +1147,13 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         clearAuthenticatedState(result.error.message || t('sharedEnrollmentFailed'))
       }
     } catch (cause: unknown) {
-      if (isCurrentClient(clientContext) && isCurrentOperation(lifecycleGeneration, operationGeneration)) {
+      if (enrollmentOperationTokenRef.current === enrollmentToken
+        && isCurrentClient(clientContext) && isCurrentOperation(lifecycleGeneration, operationGeneration)) {
         clearAuthenticatedState(cause instanceof Error ? cause.message : t('sharedEnrollmentFailed'))
       }
     } finally {
-      if (isCurrentClient(clientContext) && isCurrentOperation(lifecycleGeneration, operationGeneration)) {
+      if (enrollmentOperationTokenRef.current === enrollmentToken) {
+        enrollmentInFlightRef.current = false
         setWorking(current => current === 'enroll' ? null : current)
       }
     }
@@ -1264,7 +1300,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const create = auth?.client.createGroup
     const lifecycleGeneration = lifecycleGenerationRef.current
     const createGeneration = createGroupGenerationRef.current
-    if (auth === undefined || create === undefined || !isCurrentLifecycle(lifecycleGeneration) || recoveryWorking !== null) return
+    if (auth === undefined || create === undefined || !isCurrentLifecycle(lifecycleGeneration)
+      || recoveryWorking !== null || recoveryWorkingRef.current !== null) return
     const isCurrentRecovery = (): boolean => (
       isCurrentLifecycle(lifecycleGeneration)
       && createGroupGenerationRef.current === createGeneration
@@ -1319,7 +1356,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const auth = syncAuthContext()
     const lifecycleGeneration = lifecycleGenerationRef.current
     const createGeneration = createGroupGenerationRef.current
-    if (auth === undefined || !isCurrentLifecycle(lifecycleGeneration) || recoveryWorking !== null) return false
+    if (auth === undefined || !isCurrentLifecycle(lifecycleGeneration)
+      || recoveryWorking !== null || recoveryWorkingRef.current !== null) return false
     const isCurrentDiscard = (): boolean => (
       isCurrentLifecycle(lifecycleGeneration) && createGroupGenerationRef.current === createGeneration && hasCurrentAuth(auth)
     )
@@ -1583,7 +1621,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
         <div className={css.shareInviteRow}>
           <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { codeRevisionRef.current += 1; setCode(event.currentTarget.value) }} />
-          <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
+          <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory || enrollmentInFlightRef.current || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
         </div>
         <p className={css.sharedMemoryDescription}>{t('sharedInviteCodeHelp')}</p>
         {working === 'list' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
