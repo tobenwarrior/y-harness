@@ -48,6 +48,7 @@ import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-to
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
   botDomain,
+  botRecordSchema,
   SHARED_BOT_AGENT_PRESET,
   sharedBotDomain,
   sharedPrivateSessionSchema,
@@ -803,8 +804,11 @@ describe('durable Bot roster', () => {
 
       const domain = h.ctx.storageDomain.get('agent_bots')
       const bots = domain?.table('bots')
-      const stored = bots?.get(String(created.bot.id))
-      if (bots === undefined || stored === undefined) throw new Error('shared identity test Bot row was not stored')
+      const storedValue = bots?.get(String(created.bot.id))
+      if (bots === undefined || storedValue === undefined || storedValue === null) {
+        throw new Error('shared identity test Bot row was not stored')
+      }
+      const stored = botRecordSchema.parse(storedValue)
       await bots.put(String(created.bot.id), {
         ...stored,
         persona: 'PRIVATE_OPERATOR_PERSONA_REFRESHED',
@@ -844,7 +848,7 @@ describe('durable Bot roster', () => {
         realAgent: true,
         realAgentInitialResponse: 'text',
         beforeService: (ctx) => {
-          ctx.on('session/flush', () => true)
+          ctx.on('session/flush', () => {})
         },
       },
     )
@@ -860,7 +864,9 @@ describe('durable Bot roster', () => {
       if (agent === undefined || h.adapter === undefined) throw new Error('legacy group prompt Agent was not created')
       appendClosedLegacySystemMessage(agent.session, 'PRIVATE_LEGACY_GROUP_SYSTEM_PROMPT')
 
-      const resolved = await productionSharedHost(h.service).resolveSharedGroupAgent(
+      const groupHost = productionSharedHost(h.service)
+      if (groupHost.resolveSharedGroupAgent === undefined) throw new Error('shared group Agent resolver is unavailable')
+      const resolved = await groupHost.resolveSharedGroupAgent(
         sharedSessionId,
         groupId,
         created.bot.id,
@@ -954,7 +960,7 @@ describe('durable Bot roster', () => {
           realAgent: true,
           realAgentInitialResponse: 'text',
           beforeService: (ctx) => {
-            ctx.on('session/flush', () => true)
+            ctx.on('session/flush', () => {})
             const agent = ctx.agents.get(sharedSessionId)
             if (agent === undefined) throw new Error('startup legacy prompt Agent was not created')
             appendClosedLegacySystemMessage(agent.session, 'PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
@@ -2751,7 +2757,7 @@ describe('durable Bot roster', () => {
           inspectSharedSessions: true,
           realAgent: true,
           beforeService: (ctx) => {
-            ctx.on('session/flush', () => true)
+            ctx.on('session/flush', () => {})
           },
         },
       )

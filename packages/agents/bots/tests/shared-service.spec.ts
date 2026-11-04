@@ -157,7 +157,7 @@ class SharedBotHostFixture implements SharedBotHost {
       sessionId: SessionId('bot-session-third'),
       name: 'Third bot',
       description: 'A third shared Bot',
-      identity: 'robot' as const,
+      identity: 'tile' as const,
       accent: 'amber' as const,
       cwd: '/tmp',
       state: 'active' as const,
@@ -497,26 +497,29 @@ describe('shared Bot snapshot validation', () => {
       invites: [],
       responseReservations: ['delivery-02925ba9144d5f4f18db58870af2de23877e6103186ad2471cd4b999518d099c'],
     }
+    const validGroup = valid.groups[0]
+    const validDelivery = valid.deliveries[0]
+    if (validGroup === undefined || validDelivery === undefined) throw new Error('shared snapshot fixture is incomplete')
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
-      deliveries: [{ ...valid.deliveries[0], messageId: 'bot-group-message-missing' }],
+      deliveries: [{ ...validDelivery, messageId: 'bot-group-message-missing' }],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
-      deliveries: [{ ...valid.deliveries[0], groupId: 'bot-group-missing' }],
+      deliveries: [{ ...validDelivery, groupId: 'bot-group-missing' }],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
-      deliveries: [{ ...valid.deliveries[0], botId: 'bot-not-in-group' }],
+      deliveries: [{ ...validDelivery, botId: 'bot-not-in-group' }],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
-      deliveries: [{ ...valid.deliveries[0], id: 'delivery-noncanonical' }],
+      deliveries: [{ ...validDelivery, id: 'delivery-noncanonical' }],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
       deliveries: [{
-        ...valid.deliveries[0],
+        ...validDelivery,
         status: 'responded' as const,
         responseMessageId: 'bot-group-message-missing-response',
       }],
@@ -532,7 +535,7 @@ describe('shared Bot snapshot validation', () => {
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
       sessions: [...valid.sessions, {
-        groupId: valid.groups[0].id,
+        groupId: validGroup.id,
         botId: 'bot-not-in-group',
         sessionId: 'shared-session-group-dangling',
         createdAt: 1,
@@ -541,8 +544,8 @@ describe('shared Bot snapshot validation', () => {
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
-      deliveries: [{ ...valid.deliveries[0], status: 'failed' as const }],
-      responseReservations: [valid.deliveries[0].id],
+      deliveries: [{ ...validDelivery, status: 'failed' as const }],
+      responseReservations: [validDelivery.id],
     })).toThrow()
     expect(() => sharedGroupSnapshotSchema.parse({
       ...valid,
