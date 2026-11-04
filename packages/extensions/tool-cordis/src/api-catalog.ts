@@ -732,6 +732,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The durable recovery status for the recipient fence.',
       },
       {
+        signature: '@Remote(\'recoverSharedRosterFence\') async recoverSharedRosterFence( request: BotSharedRosterFenceRecoveryRequest, ): Promise<BotSharedRosterFenceRecoveryValue>',
+        description: 'Release one abandoned shared-roster admission after every possible Host has been stopped and the exact durable fence token was inspected. The caller must explicitly accept that a paused or partitioned Host cannot be disproven and may race this recovery.',
+        parameters: [{ name: 'request', description: 'Exact fence token plus the unverified quiescence and race-risk assertions.' }],
+        returns: 'The durable recovery status.',
+      },
+      {
+        signature: '@Remote(\'inspectSharedRosterFence\') async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue>',
+        description: 'Read the owner-local shared-roster fence needed for explicit recovery. This method is not part of the collaborator endpoint allowlist.',
+        parameters: [],
+        returns: 'The current fence status and, when held, its opaque recovery token.',
+      },
+      {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
         description: 'List active memories for a Bot without accepting a model-supplied Session id.',
         parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
@@ -5886,6 +5898,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotRenameValue',
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceDiagnosticValue',
+    declaration: 'export interface BotSharedRosterFenceDiagnosticValue {\n    readonly status: \'clear\' | \'held\';\n    readonly token?: string;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceRecoveryRequest',
+    declaration: 'export interface BotSharedRosterFenceRecoveryRequest {\n    readonly token: string;\n    readonly confirmQuiescent: true;\n    readonly acceptRaceRisk: true;\n}',
+  },
+  {
+    name: 'BotSharedRosterFenceRecoveryValue',
+    declaration: 'export interface BotSharedRosterFenceRecoveryValue {\n    readonly status: \'released\' | \'busy\' | \'absent\';\n}',
   },
   {
     name: 'BotShareInviteRequest',

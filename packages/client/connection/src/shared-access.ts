@@ -81,6 +81,7 @@ interface ResolvedOptions {
 interface StoredInvite {
   digest: string
   expiresAt: number
+  metadata?: Readonly<Record<string, string>>
 }
 
 interface StoredPrincipal {
@@ -114,11 +115,24 @@ interface StoredStatePayload {
   readonly extensions?: Readonly<Record<string, unknown>>
 }
 
+/** Bounded non-secret association persisted with an invite by its owner. */
+export type SharedAccessInviteMetadata = Readonly<Record<string, string>>
+
+const MAX_INVITE_METADATA_FIELDS = 8
+const MAX_INVITE_METADATA_KEY_LENGTH = 64
+const MAX_INVITE_METADATA_VALUE_LENGTH = 256
+
 /** Durable authority state exposed to one extension mutation. */
 export interface SharedAccessStateSnapshot {
   readonly principals: readonly {
     readonly id: SharedPrincipalId
     readonly revokedAt?: number
+  }[]
+  /** Pending invite digests used by durable mirror consumers; the code is never exposed. */
+  readonly invites?: readonly {
+    readonly digest: string
+    readonly expiresAt: number
+    readonly metadata?: SharedAccessInviteMetadata
   }[]
 }
 
@@ -240,6 +254,10 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
    * invite. A guard rejection leaves no invite behind.
    * @param authorize - synchronous or asynchronous authority-side guard. The
    *   second argument is private extension data observed in the same mutation.
+   * @param persist - optional mirror write performed before the authority
+   *   records the invite. A rejected mirror leaves the invite unpublished.
+   * @param metadata - optional bounded non-secret association retained in the
+   *   authority state for consumers that must refresh stale mirrors.
    * @returns opaque invite code and its expiry.
    */
   async createInviteIf(
@@ -247,12 +265,20 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
       state: SharedAccessStateSnapshot,
       extensions: Readonly<Record<string, unknown>>,
     ) => void | Promise<void>,
+    persist?: (invite: SharedAccessInvite) => void | Promise<void>,
+    metadata?: SharedAccessInviteMetadata,
   ): Promise<SharedAccessInvite> {
     const expiresAt = expiry(this.options.now(), this.options.inviteMaxAgeMs)
     const code = encodeBase64Url(this.options.randomBytes(SHARED_ACCESS_CODE_BYTES))
+    const normalizedMetadata = metadata === undefined ? undefined : parseInviteMetadata(metadata)
     await this.mutate(async (state) => {
       await authorize(snapshotState(state), { ...state.extensions })
-      state.invites.push({ digest: sharedInviteDigest(code), expiresAt })
+      await persist?.({ code: SharedInviteCode(code), expiresAt })
+      state.invites.push({
+        digest: sharedInviteDigest(code),
+        expiresAt,
+        ...(normalizedMetadata === undefined ? {} : { metadata: normalizedMetadata }),
+      })
     })
     return { code: SharedInviteCode(code), expiresAt }
   }
@@ -722,6 +748,11 @@ function snapshotState(state: MutableState): SharedAccessStateSnapshot {
       id: principal.id,
       ...(principal.revokedAt === undefined ? {} : { revokedAt: principal.revokedAt }),
     })),
+    invites: state.invites.map(invite => ({
+      digest: invite.digest,
+      expiresAt: invite.expiresAt,
+      ...(invite.metadata === undefined ? {} : { metadata: { ...invite.metadata } }),
+    })),
   }
 }
 
@@ -747,7 +778,30 @@ function parseInvite(value: unknown): StoredInvite {
   if (!isRecord(value) || typeof value.digest !== 'string' || !safeInteger(value.expiresAt)) {
     throw new Error('client-connection: shared-access credential record has an invalid invite')
   }
-  return { digest: value.digest, expiresAt: value.expiresAt }
+  const metadata = parseInviteMetadata(value.metadata)
+  return {
+    digest: value.digest,
+    expiresAt: value.expiresAt,
+    ...(metadata === undefined ? {} : { metadata }),
+  }
+}
+
+function parseInviteMetadata(value: unknown): SharedAccessInviteMetadata | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error('client-connection: shared-access credential record has invalid invite metadata')
+  const entries = Object.entries(value)
+  if (entries.length > MAX_INVITE_METADATA_FIELDS) {
+    throw new Error('client-connection: shared-access invite metadata has too many fields')
+  }
+  const metadata: Record<string, string> = {}
+  for (const [key, entry] of entries) {
+    if (key.length === 0 || key.length > MAX_INVITE_METADATA_KEY_LENGTH
+      || typeof entry !== 'string' || entry.length === 0 || entry.length > MAX_INVITE_METADATA_VALUE_LENGTH) {
+      throw new Error('client-connection: shared-access invite metadata is invalid')
+    }
+    metadata[key] = entry
+  }
+  return metadata
 }
 
 function parsePrincipal(value: unknown): StoredPrincipal {

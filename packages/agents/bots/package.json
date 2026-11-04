@@ -105,6 +105,7 @@
     "@yharness/storage": "workspace:*",
     "@yharness/storage-domain": "workspace:*",
     "@yharness/storage-json": "workspace:*",
+    "@yharness/storage-sqlite": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/cordis-plugin-loader": "workspace:~"
   }

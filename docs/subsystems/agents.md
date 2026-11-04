@@ -203,6 +203,23 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('recoverSharedGroupDelivery') async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue>
 
 /**
+ * Release one abandoned shared-roster admission after every possible Host
+ * has been stopped and the exact durable fence token was inspected. The
+ * caller must explicitly accept that a paused or partitioned Host cannot be
+ * disproven and may race this recovery.
+ * @param request - Exact fence token plus the unverified quiescence and race-risk assertions.
+ * @returns The durable recovery status.
+ */
+@Remote('recoverSharedRosterFence') async recoverSharedRosterFence( request: BotSharedRosterFenceRecoveryRequest, ): Promise<BotSharedRosterFenceRecoveryValue>
+
+/**
+ * Read the owner-local shared-roster fence needed for explicit recovery.
+ * This method is not part of the collaborator endpoint allowlist.
+ * @returns The current fence status and, when held, its opaque recovery token.
+ */
+@Remote('inspectSharedRosterFence') async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue>
+
+/**
  * List active memories for a Bot without accepting a model-supplied Session id.
  * @param request - Durable Bot id whose private projection should be read.
  * @returns active memory rows owned by that Bot.

@@ -265,6 +265,56 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
   })
 
+  it('shows the owner-only roster fence token and requires quiescence confirmation', async () => {
+    const inspectRosterFence = vi.fn().mockResolvedValue({ status: 'held' as const, token: 'opaque-fence-token' })
+    const recoverRosterFence = vi.fn().mockResolvedValue({ status: 'released' as const })
+    const actions = {
+      ...ownerActions(),
+      inspectRosterFence,
+      recoverRosterFence,
+    } as BotShareActions & {
+      readonly inspectRosterFence: () => Promise<{ readonly status: 'held'; readonly token: string }>
+      readonly recoverRosterFence: (token: string) => Promise<{ readonly status: 'released' }>
+    }
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('opaque-fence-token')).toBeTruthy() })
+    expect(inspectRosterFence).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover shared roster' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared roster?' })
+    expect(within(confirmation).getByText(/No process can verify a paused Host/)).toBeTruthy()
+    const confirm = within(confirmation).getByRole('button', { name: 'Recover roster' })
+    expect((confirm as HTMLButtonElement).disabled).toBe(true)
+    expect(recoverRosterFence).not.toHaveBeenCalled()
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
+    fireEvent.click(confirm)
+    await waitFor(() => { expect(recoverRosterFence).toHaveBeenCalledWith('opaque-fence-token') })
+  })
+
+  it('refreshes the owner token when recovery reports a live or changed fence', async () => {
+    const inspectRosterFence = vi.fn()
+      .mockResolvedValueOnce({ status: 'held' as const, token: 'old-fence-token' })
+      .mockResolvedValueOnce({ status: 'held' as const, token: 'new-fence-token' })
+    const recoverRosterFence = vi.fn().mockResolvedValue({ status: 'busy' as const })
+    const actions = {
+      ...ownerActions(),
+      inspectRosterFence,
+      recoverRosterFence,
+    } as BotShareActions
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('old-fence-token')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover shared roster' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared roster?' })
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Recover roster' }))
+
+    await waitFor(() => { expect(recoverRosterFence).toHaveBeenCalledWith('old-fence-token') })
+    await waitFor(() => { expect(screen.getByText('new-fence-token')).toBeTruthy() })
+    expect(screen.getByRole('alert').textContent).toContain('still active or changed')
+    expect((within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('blocks membership operations while a shared-context policy update is pending', async () => {
     const policyWrite = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['setMemoryPolicy']>>>>()
     const actions = ownerActions({
