@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { brandString } from '@yharness/brand'
 import { BotId, BotPrincipalId, BotShareMemoryId } from '@yharness/bots/client'
 import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView } from '@yharness/bots/client'
+import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
@@ -1391,13 +1392,14 @@ describe('shared Bot collaboration surfaces', () => {
     } satisfies BotGroupView
     const catalogStarted = Promise.withResolvers<true>()
     const catalogRelease = Promise.withResolvers<undefined>()
-    const originalRequest = navigator.locks.request.bind(navigator.locks)
-    vi.spyOn(navigator.locks, 'request').mockImplementation((name, callback) => {
+    vi.spyOn(navigator.locks, 'request').mockImplementation((name, options, callback) => {
+      const granted = typeof options === 'function' ? options : callback
+      if (granted === undefined) throw new Error('Web Lock callback is missing')
       if (name.endsWith('.catalog')) {
         catalogStarted.resolve(true)
-        return catalogRelease.promise.then(callback)
+        return catalogRelease.promise.then(() => granted(null))
       }
-      return originalRequest(name, callback)
+      return lockRequest(name, async () => granted(null))
     })
     const client = sharedClient({
       list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),

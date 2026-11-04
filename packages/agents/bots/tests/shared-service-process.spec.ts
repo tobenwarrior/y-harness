@@ -6,17 +6,12 @@ import { once } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import z from 'zod'
 
-interface WorkerResult {
-  readonly ok: boolean
-  readonly value?: Record<string, unknown>
-  readonly error?: string
-}
-
 const workerResultSchema = z.object({
   ok: z.boolean(),
   value: z.record(z.string(), z.unknown()).optional(),
   error: z.string().optional(),
 }).strict()
+type WorkerResult = z.infer<typeof workerResultSchema>
 
 const worker = join(process.cwd(), 'packages/agents/bots/tests/shared-service-process-worker.ts')
 

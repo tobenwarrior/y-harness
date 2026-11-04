@@ -569,7 +569,7 @@ async function replacePrivateSessionBinding(
   })
 }
 
-async function principal(fixtureValue: Fixture, enrollment: SharedAccessEnrollment) {
+async function principal(fixtureValue: Pick<Fixture, 'authority'>, enrollment: SharedAccessEnrollment) {
   return principalFromAuthority(fixtureValue.authority, enrollment)
 }
 
@@ -1010,6 +1010,7 @@ describe('shared Bot service', () => {
         (await value.service.createInvite(BotId('bot-CaseSensitive'), 'owner')).code,
         enrollmentRequest(),
       )
+      if (!('botId' in enrollment)) throw new Error('Bot enrollment returned a group enrollment')
       await value.service.enroll(
         (await value.service.createInvite(BotId('bot-casesensitive'), 'owner')).code,
         request(cookie(enrollment)),
@@ -1435,8 +1436,9 @@ describe('shared Bot service', () => {
       expect(membership).toBeDefined()
       const domain = secondary.facility.get('agent_bot_shares')
       if (domain === undefined) throw new Error('shared Bot domain is not open')
-      const mirrored = [...domain.table('memberships').entries()].find(([, record]) =>
-        record.botId === BotId('bot-chief') && record.principalId === collaborator.botPrincipalId)?.[1]
+      const mirrored = [...domain.table('memberships').entries()]
+        .map(([, record]) => sharedMembershipSchema.parse(record))
+        .find(record => record.botId === BotId('bot-chief') && record.principalId === collaborator.botPrincipalId)
       expect(mirrored).toEqual(membership)
     } finally {
       releaseResolve?.()

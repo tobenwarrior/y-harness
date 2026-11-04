@@ -10,16 +10,37 @@ import { LocalCredentialProvider } from '../../../credentials/credentials-local/
 import { BotId, type BotView } from '../src/types.ts'
 import { SharedBotService, type SharedBotHost } from '../src/shared-service.ts'
 
-const backendName = process.argv[2]
-const storageRoot = process.argv[3]
-const credentialsPath = process.argv[4]
-const operation = process.argv[5]
-const input = process.argv[6] === undefined ? {} : JSON.parse(process.argv[6]) as Record<string, string>
-
-if ((backendName !== 'json' && backendName !== 'sqlite') || storageRoot === undefined
-  || credentialsPath === undefined || operation === undefined) {
-  throw new Error('invalid shared-service process worker arguments')
+interface WorkerArguments {
+  readonly backendName: 'json' | 'sqlite'
+  readonly storageRoot: string
+  readonly credentialsPath: string
+  readonly operation: string
+  readonly input: Record<string, string>
 }
+
+function readWorkerArguments(): WorkerArguments {
+  const backendName = process.argv[2]
+  const storageRoot = process.argv[3]
+  const credentialsPath = process.argv[4]
+  const operation = process.argv[5]
+  const inputText = process.argv[6]
+  if ((backendName !== 'json' && backendName !== 'sqlite') || storageRoot === undefined
+    || credentialsPath === undefined || operation === undefined) {
+    throw new Error('invalid shared-service process worker arguments')
+  }
+  const parsedInput: unknown = inputText === undefined ? {} : JSON.parse(inputText)
+  if (parsedInput === null || typeof parsedInput !== 'object' || Array.isArray(parsedInput)) {
+    throw new Error('invalid shared-service process worker input')
+  }
+  const input: Record<string, string> = {}
+  for (const [key, value] of Object.entries(parsedInput)) {
+    if (typeof value !== 'string') throw new Error(`invalid shared-service process worker input field: ${key}`)
+    input[key] = value
+  }
+  return { backendName, storageRoot, credentialsPath, operation, input }
+}
+
+const { backendName, storageRoot, credentialsPath, operation, input } = readWorkerArguments()
 
 function bot(): BotView {
   return {

@@ -890,7 +890,6 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-      await child.stdin?.destroy()
       await closePromise
       await rm(root, { recursive: true, force: true })
     }
@@ -991,8 +990,7 @@ describe('durable Bot roster', () => {
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(h.records.get(revisionKey)?.kind === 'grant' ? h.records.get(revisionKey)?.payload : undefined)
-        .sharedRosterFence.token).toBe(fenceToken)
+      }).passthrough().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
       await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
@@ -1128,7 +1126,11 @@ describe('durable Bot roster', () => {
       const diagnostic = await second.service.inspectSharedRosterFence()
       expect(diagnostic.status).toBe('held')
       if (diagnostic.token === undefined) throw new Error('live shared roster fence token is missing')
-      await expect(second.service.recoverSharedRosterFence({ token: diagnostic.token, confirmQuiescent: true }))
+      await expect(Reflect.apply(
+        second.service.recoverSharedRosterFence,
+        second.service,
+        [{ token: diagnostic.token, confirmQuiescent: true }],
+      ))
         .rejects.toMatchObject({ code: 'gateway/bad-request' })
       await expect(second.service.recoverSharedRosterFence({ token: diagnostic.token, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })

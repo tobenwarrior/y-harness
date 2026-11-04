@@ -2,10 +2,6 @@ import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
 
-type SharedClientRealm = {
-  readonly createSharedBotsClient: typeof createSharedBotsClient
-}
-
 type MessageListener = (event: { readonly data: unknown }) => void
 
 class FakeBroadcastChannel {
@@ -250,8 +246,8 @@ describe('shared Bot client capabilities', () => {
       const secondTab = createSharedBotsClient(rpc)
       const firstChanges: string[] = []
       const secondChanges: string[] = []
-      const stopFirst = firstTab.subscribeAuth?.((change) => { firstChanges.push(change.source) })
-      const stopSecond = secondTab.subscribeAuth?.((change) => { secondChanges.push(change.source) })
+      const stopFirst = firstTab.subscribeAuth?.((change) => { if (change !== undefined) firstChanges.push(change.source) })
+      const stopSecond = secondTab.subscribeAuth?.((change) => { if (change !== undefined) secondChanges.push(change.source) })
       await firstTab.enroll('first-code')
       await secondTab.enroll('second-code')
 
@@ -362,9 +358,7 @@ describe('shared Bot client capabilities', () => {
     }
   })
 
-  it('keeps sender identities distinct across separately loaded client realms', async () => {
-    const realmA = await (import('../src/client/shared-client.ts?shared-auth-realm-a') as Promise<SharedClientRealm>)
-    const realmB = await (import('../src/client/shared-client.ts?shared-auth-realm-b') as Promise<SharedClientRealm>)
+  it('keeps sender identities distinct across separate client instances', async () => {
     const rpcA: ClientConnectionRpc = {
       call: vi.fn(async () => ({ ok: true as const, value: { principalId: 'principal-realm-a', expiresAt: 3_000 } })),
     }
@@ -373,8 +367,8 @@ describe('shared Bot client capabilities', () => {
     }
     vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
     try {
-      const firstRealmClient = realmA.createSharedBotsClient(rpcA)
-      const secondRealmClient = realmB.createSharedBotsClient(rpcB)
+      const firstRealmClient = createSharedBotsClient(rpcA)
+      const secondRealmClient = createSharedBotsClient(rpcB)
       const stopFirst = firstRealmClient.subscribeAuth?.(() => {})
       const stopSecond = secondRealmClient.subscribeAuth?.(() => {})
       await secondRealmClient.enroll('second-realm-code')

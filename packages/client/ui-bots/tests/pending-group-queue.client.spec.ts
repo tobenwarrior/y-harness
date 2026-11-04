@@ -73,10 +73,11 @@ describe('shared-group browser retry queue', () => {
 
   it('coordinates one operation through the catalog lock', async () => {
     const requests: string[] = []
-    const originalRequest = navigator.locks.request
-    vi.spyOn(navigator.locks, 'request').mockImplementation((name, callback) => {
+    vi.spyOn(navigator.locks, 'request').mockImplementation((name, options, callback) => {
       requests.push(name)
-      return originalRequest.call(navigator.locks, name, callback)
+      const granted = typeof options === 'function' ? options : callback
+      if (granted === undefined) throw new Error('Web Lock callback is missing')
+      return lockRequest(name, async () => granted(null))
     })
     try {
       const queue = createSharedGroupPendingQueue('principal-lock-compatibility')
