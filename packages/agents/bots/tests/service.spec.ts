@@ -7606,7 +7606,7 @@ describe('durable Bot roster', () => {
           persona: 'Original persona',
           capabilities: ['original'],
         })).rejects.toMatchObject({ code: 'bot/provisioning-failed' })
-        const domain = h.ctx.storageDomain.get('agent_bots')
+        const domain = h.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
         if (domain === undefined) throw new Error('Bot domain was not opened')
         const bots = domain.table('bots')
         const current = bots.get(id)
@@ -7682,7 +7682,7 @@ describe('durable Bot roster', () => {
       const records = new Map<CredentialKey, CredentialRecord>()
       const first = await harness(pool, undefined, undefined, [], new Map(), records)
       const created = await first.service.create({ name: `Roster ${scenario.rosterState}`, cwd: '/tmp' })
-      const domain = first.ctx.storageDomain.get('agent_bots')
+      const domain = first.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
       if (domain === undefined) throw new Error('Bot domain was not opened')
       const bots = domain.table('bots')
       const stored = bots.get(created.bot.id)
