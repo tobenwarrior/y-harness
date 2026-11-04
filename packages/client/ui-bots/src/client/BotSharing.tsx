@@ -438,7 +438,7 @@ function SharedGroupCreateDialog({
       const bot = bots.find(candidate => String(candidate.id) === id)
       return bot === undefined ? [] : [bot.id]
     })
-    if (trimmed === '' || botIds.length < 2 || botIds.length > 6 || submitting) return
+    if (!pendingCatalogReady || recoveryWorking !== null || trimmed === '' || botIds.length < 2 || botIds.length > 6 || submitting) return
     const dialogGeneration = dialogGenerationRef.current
     setSubmitting(true)
     try {

@@ -57,15 +57,18 @@ describe('shared-group browser retry queue', () => {
     expect(records.map(record => record.name).sort()).toEqual(['Launch room', 'Research room', 'Writing room'])
   })
 
-  it('recovers a matching pending action even when the new action nonce differs', async () => {
-    const queue = createSharedGroupPendingQueue('principal-action-recovery')
-    const firstMessage = await queue.reserveMessage('first-action-nonce', 'bot-group-room', 'same message')
-    const retriedMessage = await queue.reserveMessage('second-action-nonce', 'bot-group-room', 'same message')
-    expect(retriedMessage).toMatchObject({ id: firstMessage.id, recovered: true })
+  it('keeps intentional same-content actions independent across tabs', async () => {
+    const firstTab = createSharedGroupPendingQueue('principal-action-recovery')
+    const secondTab = createSharedGroupPendingQueue('principal-action-recovery')
+    const firstMessage = await firstTab.reserveMessage('first-action-nonce', 'bot-group-room', 'same message')
+    const secondMessage = await secondTab.reserveMessage('second-action-nonce', 'bot-group-room', 'same message')
+    expect(secondMessage).toMatchObject({ recovered: false })
+    expect(secondMessage.id).not.toBe(firstMessage.id)
 
-    const firstCreation = await queue.reserveCreation('first-create-nonce', 'Same room', ['bot-chief', 'bot-analyst'])
-    const retriedCreation = await queue.reserveCreation('second-create-nonce', 'Same room', ['bot-analyst', 'bot-chief'])
-    expect(retriedCreation).toMatchObject({ id: firstCreation.id, recovered: true })
+    const firstCreation = await firstTab.reserveCreation('first-create-nonce', 'Same room', ['bot-chief', 'bot-analyst'])
+    const secondCreation = await secondTab.reserveCreation('second-create-nonce', 'Same room', ['bot-analyst', 'bot-chief'])
+    expect(secondCreation).toMatchObject({ recovered: false })
+    expect(secondCreation.id).not.toBe(firstCreation.id)
   })
 
   it('coordinates one operation through the catalog lock', async () => {
