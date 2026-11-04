@@ -4467,6 +4467,93 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('clears the timed-out recipient marker after a late accepted ledger fast path', async () => {
+    vi.useFakeTimers()
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient late acceptance', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-late-acceptance')
+    const groupId = BotGroupId('bot-group-recipient-late-acceptance')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-late-acceptance')
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const acceptanceStarted = Promise.withResolvers<undefined>()
+      const releaseAcceptance = Promise.withResolvers<undefined>()
+      const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+      let deliveryModifyCalls = 0
+      vi.spyOn(h.credentials, 'modifyRecord').mockImplementation((key, mutate) => {
+        if (key !== deliveryKey) return originalModifyRecord(key, mutate)
+        deliveryModifyCalls += 1
+        if (deliveryModifyCalls !== 3) return originalModifyRecord(key, mutate)
+        return (async () => {
+          const next = await mutate(records.get(key))
+          acceptanceStarted.resolve(undefined)
+          await releaseAcceptance.promise
+          if (next !== undefined) records.set(key, next)
+          return records.get(key)
+        })()
+      })
+      const request = {
+        groupId,
+        groupName: 'Recipient late acceptance',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'The timed-out admission later receives a durable receipt.',
+        messageId,
+      }
+      const timedOut = host.deliverSharedGroup?.(request)
+      await acceptanceStarted.promise
+      const timedOutResult = expect(timedOut).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(15_001)
+      await timedOutResult
+
+      h.inspect.mockRejectedValueOnce(new Error('temporary late-acceptance inspection outage'))
+      await expect(host.deliverSharedGroup?.(request)).resolves.toMatchObject({ kind: 'busy' })
+
+      releaseAcceptance.resolve(undefined)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(records.get(deliveryKey)).toMatchObject({
+        payload: { messages: [{ status: 'accepted' }] },
+      })
+
+      await expect(host.deliverSharedGroup?.(request)).resolves.toBe('duplicate')
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: created.bot.id,
+        sessionId,
+        messageId,
+      })).resolves.toBe('accepted')
+    } finally {
+      await close(h.ctx)
+      vi.useRealTimers()
+    }
+  })
+
   it('reconciles a dead recipient fence for a revoked binding during Host startup', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()

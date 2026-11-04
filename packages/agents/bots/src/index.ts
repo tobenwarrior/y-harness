@@ -4644,7 +4644,10 @@ export class BotService extends TypertRemoteService {
     const current = sharedGroupMessageDeliveryStateOf(stored).messages.find(entry => entry.targetSessionId === String(request.sessionId)
       && entry.messageId === String(request.messageId))
     const now = Date.now()
-    if (current?.status === 'accepted') return 'duplicate'
+    if (current?.status === 'accepted') {
+      this.clearAcceptedSharedGroupDeliveryLocalState(request)
+      return 'duplicate'
+    }
     if (current?.status === 'pending' && current.admissionToken !== undefined) {
       const reconciliation = await this.recoverSharedGroupDeliveryAdmission(
         request,
@@ -5031,6 +5034,21 @@ export class BotService extends TypertRemoteService {
     }
     this.sharedGroupAdmissionOperatorRequired.delete(receiptKey)
     this.clearSharedGroupAdmissionRetryState(receiptKey, token)
+  }
+
+  private clearAcceptedSharedGroupDeliveryLocalState(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+  ): void {
+    const receiptKey = sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId))
+    const pending = this.sharedGroupPendingMessages.get(String(request.sessionId))
+    const tokens = [
+      this.sharedGroupDeliveryClaims.get(receiptKey),
+      pending?.messageId === request.messageId ? pending.token : undefined,
+      this.sharedGroupAdmissionRetryTokens.get(receiptKey),
+    ].filter((token): token is string => token !== undefined)
+    const token = tokens[0]
+    if (token === undefined || tokens.some(candidate => candidate !== token)) return
+    this.clearSharedGroupDeliveryLocalState(request, token)
   }
 
   private clearSharedGroupAdmissionRetryState(receiptKey: string, token?: string): void {
