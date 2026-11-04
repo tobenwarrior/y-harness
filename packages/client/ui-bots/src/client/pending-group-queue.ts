@@ -190,6 +190,11 @@ function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: st
   return `${scopePrefix(scope)}.${kind}.${operationHash}`
 }
 
+/** Lock name used by clients released before catalog-wide retry coordination. */
+function legacyLockKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
+  return `${LOCK_PREFIX}.${encodeScope(scope)}.${kind}.${operationHash}`
+}
+
 function catalogLockKey(scope: string): string {
   return `${LOCK_PREFIX}.${encodeScope(scope)}.catalog`
 }
@@ -254,6 +259,18 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       throw cause
     }
   }
+
+  const withCatalogAndLegacyLock = <T>(
+    kind: PendingRecord['kind'],
+    operationHashValue: string,
+    work: () => Promise<T>,
+  ): Promise<T> => withLock(catalogLockKey(scope), () => (
+    // Keep the pre-catalog lock while the catalog lock protects cross-record
+    // pruning. This lets an older tab serialize the same operation with us;
+    // older tabs still need a reload before they can participate in the
+    // catalog-wide protocol for unrelated operations.
+    withLock(legacyLockKey(scope, kind, operationHashValue), work)
+  ))
 
   const read = (key: string): PendingRecord | undefined => {
     if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
@@ -341,7 +358,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     reserveCreation: async (operationKey, name, botIds) => {
       const hash = await operationHash(operationKey)
       const canonicalBotIds = [...botIds].sort()
-      return withLock(catalogLockKey(scope), async () => {
+      return withCatalogAndLegacyLock('creation', hash, async () => {
         await prune()
         const key = recordKey(scope, 'creation', hash)
         const current = read(key)
@@ -367,14 +384,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withLock(catalogLockKey(scope), async () => {
+    removeCreation: (hash, id) => withCatalogAndLegacyLock('creation', hash, async () => {
       const key = recordKey(scope, 'creation', hash)
       const current = read(key)
       if (current?.kind === 'creation' && current.id === id) remove(key)
     }),
     reserveMessage: async (operationKey, groupId, text) => {
       const hash = await operationHash(operationKey)
-      return withLock(catalogLockKey(scope), async () => {
+      return withCatalogAndLegacyLock('message', hash, async () => {
         await prune()
         const key = recordKey(scope, 'message', hash)
         const current = read(key)
@@ -399,7 +416,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withLock(catalogLockKey(scope), async () => {
+    removeMessage: (hash, id) => withCatalogAndLegacyLock('message', hash, async () => {
       const key = recordKey(scope, 'message', hash)
       const current = read(key)
       if (current?.kind === 'message' && current.id === id) remove(key)

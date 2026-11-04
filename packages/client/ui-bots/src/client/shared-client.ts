@@ -144,6 +144,10 @@ export interface SharedBotsClient {
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
   readonly retryScope: string | undefined
+  /** Monotonic generation for the authenticated principal and browser session. */
+  readonly authGeneration?: number
+  /** Subscribe to authenticated-principal changes in this client instance. */
+  readonly subscribeAuth?: (listener: () => void) => () => void
   /** Discover Bots visible to the authenticated collaborator. */
   readonly list: () => Promise<SharedBotClientResult<{ readonly bots: readonly BotShareRosterEntry[] }>>
   /** Read one safe shared Bot profile. */
@@ -184,11 +188,21 @@ export interface SharedBotsClient {
 export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
+  let authGeneration = 0
+  const authListeners = new Set<() => void>()
+  const setRetryScope = (next: string | undefined): void => {
+    if (retryScope === next) return
+    retryScope = next
+    authGeneration += 1
+    for (const listener of [...authListeners]) listener()
+  }
   const call = async <T>(
     endpoint: string,
     payload: unknown,
     parse: (value: unknown) => T | undefined,
   ): Promise<SharedBotClientResult<T>> => {
+    const requestGeneration = retryScopeRequestGeneration
+    const requestScope = retryScope
     let result
     try {
       result = await rpc.call(SHARED_BOTS_PATH, endpoint, payload)
@@ -196,9 +210,10 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       return { ok: false, error: { code: 'gateway/transport', message: error instanceof Error ? error.message : 'Shared Bot transport failed', details: {} } }
     }
     if (!result.ok) {
-      if (result.error.code === 'gateway/unauthorized') {
+      if (result.error.code === 'gateway/unauthorized' && requestGeneration === retryScopeRequestGeneration
+        && requestScope === retryScope) {
         retryScopeRequestGeneration += 1
-        retryScope = undefined
+        setRetryScope(undefined)
       }
       return result
     }
@@ -212,22 +227,27 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   const enroll = async (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
-    retryScope = undefined
+    setRetryScope(undefined)
     const result = await call('bots/share/enroll', { code }, parseEnrollment)
-    if (requestGeneration === retryScopeRequestGeneration && result.ok) retryScope = result.value.principalId
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId)
     return result
   }
   const restoreRetryScope = async (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
-    retryScope = undefined
+    setRetryScope(undefined)
     const result = await call('bots/share/session', {}, parseEnrollment)
-    if (requestGeneration === retryScopeRequestGeneration && result.ok) retryScope = result.value.principalId
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) setRetryScope(result.value.principalId)
     return result
   }
 
   return {
     get retryScope(): string | undefined { return retryScope },
+    get authGeneration(): number { return authGeneration },
+    subscribeAuth: (listener) => {
+      authListeners.add(listener)
+      return () => { authListeners.delete(listener) }
+    },
     enroll,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),

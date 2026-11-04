@@ -137,4 +137,59 @@ describe('shared Bot client capabilities', () => {
     await expect(client.list()).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
     expect(client.retryScope).toBeUndefined()
   })
+
+  it('does not let an older unauthorized response clear a newer principal', async () => {
+    const oldList = Promise.withResolvers<{
+      readonly ok: false
+      readonly error: { readonly code: 'gateway/unauthorized'; readonly message: string; readonly details: Record<string, never> }
+    }>()
+    let enrollments = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') {
+          enrollments += 1
+          return { ok: true as const, value: { principalId: `principal-${enrollments === 1 ? 'old' : 'new'}`, expiresAt: 3_000 } }
+        }
+        return oldList.promise
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    await expect(client.enroll('old-code')).resolves.toMatchObject({ ok: true })
+    const oldRequest = client.list()
+    await expect(client.enroll('new-code')).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-new' } })
+
+    oldList.resolve({ ok: false, error: { code: 'gateway/unauthorized', message: 'old cookie', details: {} } })
+    await expect(oldRequest).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+    expect(client.retryScope).toBe('principal-new')
+  })
+
+  it('notifies subscribers for real principal transitions but not stale rejections', async () => {
+    const oldList = Promise.withResolvers<{
+      readonly ok: false
+      readonly error: { readonly code: 'gateway/unauthorized'; readonly message: string; readonly details: Record<string, never> }
+    }>()
+    let enrollments = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') {
+          enrollments += 1
+          return { ok: true as const, value: { principalId: `principal-${enrollments === 1 ? 'old' : 'new'}`, expiresAt: 3_000 } }
+        }
+        return oldList.promise
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    const transitions: Array<string | undefined> = []
+    const unsubscribe = client.subscribeAuth?.(() => { transitions.push(client.retryScope) })
+
+    await client.enroll('old-code')
+    const oldRequest = client.list()
+    await client.enroll('new-code')
+    oldList.resolve({ ok: false, error: { code: 'gateway/unauthorized', message: 'old cookie', details: {} } })
+    await oldRequest
+    unsubscribe?.()
+
+    expect(transitions).toEqual(['principal-old', undefined, 'principal-new'])
+    expect(client.retryScope).toBe('principal-new')
+  })
 })

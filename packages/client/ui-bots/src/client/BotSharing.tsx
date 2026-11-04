@@ -578,6 +578,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const [, setAuthRevision] = useState(0)
   const openRef = useRef(open)
   openRef.current = open
   const selectedBotIdRef = useRef<string | null>(null)
@@ -608,6 +609,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   }
   const observedClientRef = useRef(client)
   const observedScopeRef = useRef<string | undefined>(client.retryScope)
+  const observedAuthGenerationRef = useRef<number | undefined>(client.authGeneration)
   const authGenerationRef = useRef(0)
   const beginPendingMessageOperation = (id: string): number => {
     const token = pendingMessageOperationTokenRef.current + 1
@@ -752,17 +754,21 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   }
 
   const syncAuthContext = (): SharedDialogAuthContext | undefined => {
-    const scope = client.retryScope
-    const changed = observedClientRef.current !== client || observedScopeRef.current !== scope
+    const currentClient = clientIdentityRef.current
+    const scope = currentClient.retryScope
+    const authGeneration = currentClient.authGeneration
+    const changed = observedClientRef.current !== currentClient || observedScopeRef.current !== scope
+      || observedAuthGenerationRef.current !== authGeneration
     if (changed) {
-      observedClientRef.current = client
+      observedClientRef.current = currentClient
       observedScopeRef.current = scope
+      observedAuthGenerationRef.current = authGeneration
       authGenerationRef.current += 1
       clearAuthenticatedState()
     }
     if (scope === undefined) return undefined
     return {
-      client,
+      client: currentClient,
       clientGeneration: clientGenerationRef.current,
       authGeneration: authGenerationRef.current,
       scope,
@@ -776,7 +782,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const hasCurrentAuth = (context: SharedDialogAuthContext): boolean => (
     isCurrentClient(context)
     && authGenerationRef.current === context.authGeneration
-    && client.retryScope === context.scope
+    && clientIdentityRef.current.retryScope === context.scope
   )
 
   const isSameAuthContext = (left: SharedDialogAuthContext | undefined, right: SharedDialogAuthContext): boolean => (
@@ -825,8 +831,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     syncAuthContext()
     const lifecycleGeneration = lifecycleGenerationRef.current
     const clientContext = { client, clientGeneration: clientGenerationRef.current }
+    const admissionAuthGeneration = clientIdentityRef.current.authGeneration
+    const admissionScope = clientIdentityRef.current.retryScope
     const refreshGeneration = refreshGenerationRef.current + 1
     refreshGenerationRef.current = refreshGeneration
+    let refreshAuth: SharedDialogAuthContext | undefined
     pendingGroupQueueRef.current = null
     invalidatePendingRetryState()
     setWorking('list')
@@ -841,16 +850,24 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         if (!isCurrentClient(clientContext) || !isCurrentLifecycle(lifecycleGeneration)
           || refreshGenerationRef.current !== refreshGeneration) return
         if (!restored.ok) {
-          clearAuthenticatedState(restored.error.message || t('sharedGroupRetryIdentityUnavailable'))
+          if (clientIdentityRef.current.authGeneration === admissionAuthGeneration
+            && clientIdentityRef.current.retryScope === admissionScope) {
+            clearAuthenticatedState(restored.error.message || t('sharedGroupRetryIdentityUnavailable'))
+          } else {
+            syncAuthContext()
+          }
           return
         }
       } catch (cause: unknown) {
-        if (isCurrentClient(clientContext)) {
+        if (isCurrentClient(clientContext) && clientIdentityRef.current.authGeneration === admissionAuthGeneration
+          && clientIdentityRef.current.retryScope === admissionScope && isCurrentLifecycle(lifecycleGeneration)
+          && refreshGenerationRef.current === refreshGeneration) {
           clearAuthenticatedState(cause instanceof Error ? cause.message : t('sharedGroupRetryIdentityUnavailable'))
         }
         return
       }
       const auth = syncAuthContext()
+      refreshAuth = auth
       if (auth === undefined || !isCurrentClient(clientContext)) {
         clearAuthenticatedState(t('sharedGroupRetryIdentityUnavailable'))
         return
@@ -902,12 +919,13 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         else setError(result.error.message)
       }
     } catch (cause: unknown) {
-      if (isCurrentClient(clientContext) && client.retryScope !== undefined
+      if (isCurrentClient(clientContext) && refreshAuth !== undefined && isCurrentAuth(refreshAuth)
         && isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
         setError(cause instanceof Error ? cause.message : t('shareError'))
       }
     } finally {
-      if (isCurrentClient(clientContext) && isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
+      if (isCurrentClient(clientContext) && (refreshAuth === undefined || isCurrentAuth(refreshAuth))
+        && isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
         setWorking(current => current === 'list' ? null : current)
       }
     }
@@ -1064,6 +1082,14 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     void refresh()
   }, [open, client])
 
+  useEffect(() => {
+    const unsubscribe = client.subscribeAuth?.(() => {
+      syncAuthContext()
+      setAuthRevision(current => current + 1)
+    })
+    return unsubscribe
+  }, [client])
+
   const enroll = async (): Promise<void> => {
     const submittedCode = code
     const trimmed = submittedCode.trim()
@@ -1208,6 +1234,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const id = brandString<BotGroupIdType>(reservation.id)
       if (!isCurrentAuth(auth)) return
       const result = await create({ ...request, id, name, botIds: request.botIds })
+      if (!isCurrentAuth(auth)) return
       if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
       const created = result.value.group
       if (!isCurrentCreate()) return
@@ -1263,6 +1290,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
           name: creation.name,
           botIds: creation.botIds.map(id => brandString<BotIdType>(id)),
         })
+        if (!isCurrentAuth(auth)) return
         if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
         created = result.value.group
       }
@@ -1392,7 +1420,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     try {
       if (!isCurrentAuth(auth)) return
       const result = await createInvite(groupId)
-      if (!isCurrentInvite()) return
+      if (!isCurrentAuth(auth) || !isCurrentInvite()) return
       if (result.ok) setGroupInvite(result.value)
       else {
         setGroupInviteUnavailable(result.error.code === 'gateway/forbidden')

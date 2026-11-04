@@ -57,6 +57,26 @@ describe('shared-group browser retry queue', () => {
     expect(records.map(record => record.name).sort()).toEqual(['Launch room', 'Research room', 'Writing room'])
   })
 
+  it('keeps the legacy operation lock while coordinating through the catalog lock', async () => {
+    const requests: string[] = []
+    const originalRequest = navigator.locks.request
+    vi.spyOn(navigator.locks, 'request').mockImplementation((name, callback) => {
+      requests.push(name)
+      return originalRequest.call(navigator.locks, name, callback)
+    })
+    try {
+      const queue = createSharedGroupPendingQueue('principal-lock-compatibility')
+      const reservation = await queue.reserveCreation('lock-operation', 'Lock room', ['bot-chief', 'bot-analyst'])
+      const prefix = 'yharness.client-ui-bots.shared-group-pending-lock.principal-lock-compatibility'
+      expect(requests).toEqual([
+        `${prefix}.catalog`,
+        `${prefix}.creation.${reservation.operationHash}`,
+      ])
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
   it('partitions retry records by server-issued principal scope and supports explicit discard', async () => {
     const alpha = createSharedGroupPendingQueue('principal-alpha')
     const beta = createSharedGroupPendingQueue('principal-beta')
