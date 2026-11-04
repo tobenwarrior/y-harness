@@ -69,6 +69,7 @@ export interface SharedBotAuthChange {
   readonly reason: 'invalidated' | 'authenticated'
 }
 
+/** Receives local or cross-tab shared-Bot authentication transitions. */
 export type SharedBotAuthListener = (change?: SharedBotAuthChange) => void
 
 interface SharedAuthChannel {
