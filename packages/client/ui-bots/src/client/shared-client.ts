@@ -362,11 +362,16 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
   const getOwnerCapability = (): Promise<SharedBotOwnerCapability> => {
     if (ownerCapabilityRequest !== undefined) return ownerCapabilityRequest
-    ownerCapabilityRequest = (async () => {
+    const request = (async () => {
       const result = await call('bots/share/enroll', { capability: true }, parseOwnerCapability, false)
       return result.ok ? result.value : { ownerBootstrap: false }
     })()
-    return ownerCapabilityRequest
+    ownerCapabilityRequest = request
+    void request.then(
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+    )
+    return request
   }
 
   return {

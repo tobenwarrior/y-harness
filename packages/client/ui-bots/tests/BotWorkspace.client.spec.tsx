@@ -90,6 +90,24 @@ function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, childr
   </>)
 }
 
+function ownerCapabilityClient(getOwnerCapability: NonNullable<SharedBotsClient['getOwnerCapability']>): SharedBotsClient {
+  return {
+    retryScope: undefined,
+    enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+    enrollOwner: vi.fn<NonNullable<SharedBotsClient['enrollOwner']>>().mockRejectedValue(new Error('unused test operation')),
+    getOwnerCapability,
+    restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
+    list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
+    readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
+    readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
+    readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
+    chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
+    writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
+    createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
+    revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
+  }
+}
+
 describe('Bot roster and detail', () => {
   it('submits the complete profile from the create dialog', async () => {
     const create = vi.fn(async () => {})
@@ -534,22 +552,10 @@ describe('Bot roster and detail', () => {
   })
 
   it('disables owner setup when the server does not advertise this connection', async () => {
-    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>().mockResolvedValue({ ownerBootstrap: false })
-    const sharedClient: SharedBotsClient = {
-      retryScope: undefined,
-      enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
-      enrollOwner: vi.fn<NonNullable<SharedBotsClient['enrollOwner']>>().mockRejectedValue(new Error('unused test operation')),
-      getOwnerCapability,
-      restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
-      list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
-      readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
-      readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
-      readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
-      chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
-      writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
-      createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
-      revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
-    }
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>()
+      .mockResolvedValueOnce({ ownerBootstrap: false })
+      .mockResolvedValueOnce({ ownerBootstrap: true })
+    const sharedClient = ownerCapabilityClient(getOwnerCapability)
     render(<BotRoster
       bots={bots}
       selectedBotId="research"
@@ -563,6 +569,30 @@ describe('Bot roster and detail', () => {
     const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
     expect(ownerButton.disabled).toBe(true)
     expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds repeated owner capability retries while the connection remains unavailable', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>().mockResolvedValue({ ownerBootstrap: false })
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={ownerCapabilityClient(getOwnerCapability)}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    for (let index = 0; index < 6; index += 1) window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(4) })
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(4)
   })
 
   it('renders the selected detail as a standalone main surface', () => {

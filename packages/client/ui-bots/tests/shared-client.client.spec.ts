@@ -125,20 +125,24 @@ describe('shared Bot client capabilities', () => {
   })
 
   it('uses the server-advertised owner capability instead of assuming enrollment is mounted', async () => {
+    let capabilityCalls = 0
     const rpc: ClientConnectionRpc = {
       call: vi.fn(async (_channel, endpoint, payload) => {
         expect(endpoint).toBe('bots/share/enroll')
         expect(payload).toEqual({ capability: true })
-        return { ok: true as const, value: { ownerBootstrap: true } }
+        capabilityCalls += 1
+        return { ok: true as const, value: { ownerBootstrap: capabilityCalls === 1 } }
       }),
     }
     const client = createSharedBotsClient(rpc)
-    const first = client.getOwnerCapability?.()
-    const second = client.getOwnerCapability?.()
-    if (first === undefined || second === undefined) throw new Error('owner capability is unavailable')
+    const capability = client.getOwnerCapability
+    if (capability === undefined) throw new Error('owner capability is unavailable')
+    const first = capability()
+    const second = capability()
     await expect(first).resolves.toEqual({ ownerBootstrap: true })
     await expect(second).resolves.toEqual({ ownerBootstrap: true })
-    expect(rpc.call).toHaveBeenCalledOnce()
+    await expect(capability()).resolves.toEqual({ ownerBootstrap: false })
+    expect(rpc.call).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed when owner capability discovery cannot reach the shared route', async () => {

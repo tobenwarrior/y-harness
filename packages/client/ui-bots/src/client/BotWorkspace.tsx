@@ -29,6 +29,8 @@ type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   sharedClient?: SharedBotsClient
 }
 
+const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
+
 function connectedAppName(app: BotConnectedAppAccess, t: BotWorkspaceViewProps['t']): string {
   const name = app.name.trim()
   return name !== '' && name !== '-' ? name : t('connectedAppFallbackName', { id: app.id })
@@ -1309,17 +1311,35 @@ export function BotRoster({
   const ownerEnrollment = sharedClient?.enrollOwner
   useEffect(() => {
     let active = true
+    let retryOnFocus = true
+    let focusRetryCount = 0
     if (sharedClient === undefined || ownerCapabilityProbe === undefined || ownerEnrollment === undefined) {
       setSharedOwnerCapability('unknown')
       return () => { active = false }
     }
     setSharedOwnerCapability('unknown')
-    void ownerCapabilityProbe().then((capability) => {
-      if (active) setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
-    }).catch(() => {
-      if (active) setSharedOwnerCapability('unavailable')
-    })
-    return () => { active = false }
+    const probe = (): void => {
+      void Promise.resolve().then(ownerCapabilityProbe).then((capability) => {
+        if (!active) return
+        retryOnFocus = !capability.ownerBootstrap
+        setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
+      }).catch(() => {
+        if (!active) return
+        retryOnFocus = true
+        setSharedOwnerCapability('unavailable')
+      })
+    }
+    const onFocus = (): void => {
+      if (!active || !retryOnFocus || focusRetryCount >= MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES) return
+      focusRetryCount += 1
+      probe()
+    }
+    probe()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      window.removeEventListener('focus', onFocus)
+    }
   }, [ownerCapabilityProbe, ownerEnrollment, sharedClient])
   const sharedOwnerAvailable = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'available'
   const sharedOwnerUnsupported = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'unavailable'
