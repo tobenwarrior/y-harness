@@ -13,7 +13,8 @@ import {
   type HostConnectionHandle,
 } from '@yharness/client-connection'
 import { MessageId } from '@yharness/llm/brand'
-import { freezeMessage } from '@yharness/llm'
+import { createSystemMessage, freezeMessage, isAgentLoopRequest } from '@yharness/llm'
+import type { GenerateOptions } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {
   PreToolDecision,
@@ -22,7 +23,7 @@ import type {
   ToolExecution,
   ToolFailure,
 } from '@yharness/tools'
-import { PERSONA_PREFIX_SECTION } from '@yharness/system-prompt'
+import { PERSONA_PREFIX_SECTION, renderPrompt } from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
 import { ScheduleId, ScheduleInputError, scheduleTitle, scheduleView } from '@yharness/schedule'
 import { snapshotJsonValue, type JsonValue } from '@yharness/util-values'
@@ -1634,6 +1635,23 @@ const SHARED_BOT_CAPABILITY_ERROR = {
   code: 'SHARED_BOT_CAPABILITY_DENIED',
 } as const
 const SHARED_BOT_CAPABILITY_REASON = 'Shared Bot Sessions cannot access host capabilities.'
+const SHARED_BOT_LLM_REJECTION = 'Shared Bot Session LLM calls require an admitted agent-loop request or an audited auxiliary request.'
+
+/** Accept only bounded auxiliary envelopes whose model input is independently framed and attributed. */
+function isAuditedSharedAuxiliaryRequest(options: GenerateOptions): boolean {
+  if (options.toolHistory !== undefined || options.messages.length !== 1 || options.system === undefined) return false
+  const [message] = options.messages
+  if (message?.role !== 'user' || !('id' in message)) return false
+  const sourceKind = message.source.kind
+  switch (options.purpose) {
+    case 'session-title':
+      return sourceKind === 'dsh-session-title-llm'
+    case 'skill-learning':
+      return sourceKind === 'skill-learning'
+    default:
+      return false
+  }
+}
 
 function sharedBotCapabilityFailure(exec: { readonly name: string }): ToolFailure | undefined {
   if (SHARED_BOT_ALLOWED_TOOL_NAMES.has(exec.name)) return undefined
@@ -1810,6 +1828,7 @@ export class BotService extends TypertRemoteService {
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
   private readonly sharedScopeAgents = new WeakSet<Agent>()
+  private readonly sharedPromptMigrations = new WeakSet<Agent>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
@@ -1932,9 +1951,22 @@ export class BotService extends TypertRemoteService {
     ctx.on('agent/pre-step', ({ agent }, next) => this.sharedScopeFences.has(agent)
       ? Promise.resolve({ kind: 'reject' as const })
       : next(), { prepend: true })
+    ctx.on('llm/stream', (options, next) => {
+      const sessionKey = options.sessionId === undefined ? undefined : String(options.sessionId)
+      if (sessionKey === undefined || !this.sharedSessionIds.has(sessionKey)) return next()
+      const agent = ctx.agents.get(options.sessionId)
+      if (agent === undefined
+        || !this.sharedScopeAgents.has(agent)
+        || this.sharedScopeInstallations.has(agent)
+        || this.sharedScopeFences.has(agent)) {
+        throw new Error(SHARED_BOT_LLM_REJECTION)
+      }
+      if (isAgentLoopRequest(options) || isAuditedSharedAuxiliaryRequest(options)) return next()
+      throw new Error(SHARED_BOT_LLM_REJECTION)
+    })
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const agent = context.scope as Agent | undefined
-      return agent !== undefined && this.sharedScopeFences.has(agent)
+      return agent !== undefined && this.sharedScopeFences.has(agent) && !this.sharedPromptMigrations.has(agent)
         ? { sections: [], contexts: [], tools: [], variables: {} }
         : next()
     }, { prepend: true })
@@ -5490,6 +5522,60 @@ export class BotService extends TypertRemoteService {
     return active
   }
 
+  /** Replace legacy private system-prompt surface nodes before shared LLM access. */
+  private async sanitizeSharedPromptSurface(agent: Agent): Promise<void> {
+    this.sharedPromptMigrations.add(agent)
+    let rendered: string
+    try {
+      const assembly = await this.ctx.systemPrompt.assemble({ scope: agent })
+      rendered = renderPrompt(assembly)
+    } finally {
+      this.sharedPromptMigrations.delete(agent)
+    }
+    const nodes = agent.session.surface.nodes.flatMap((seq) => {
+      const event = agent.session.eventAt(seq)
+      if (event?.type !== 'system/message') return []
+      const [block] = event.data.message.content
+      const text = event.data.message.content.length === 1 && block?.type === 'text' ? block.text : undefined
+      return [{ seq, turn: event.data.turn, step: event.data.step, text }]
+    })
+    const head = nodes[0]
+    if (head === undefined) return
+    const replacements = nodes.slice(1)
+      .filter(node => node.text !== '')
+      .map(node => ({
+        turn: node.turn,
+        step: node.step,
+        message: createSystemMessage(''),
+        intent: {
+          surfaceOp: { op: 'replace' as const, startSeq: node.seq, endSeq: node.seq },
+          sourceEventSeqs: [node.seq],
+        },
+      }))
+    if (head.text !== rendered) {
+      replacements.push({
+        turn: head.turn,
+        step: head.step,
+        message: createSystemMessage(rendered),
+        intent: {
+          surfaceOp: { op: 'replace' as const, startSeq: head.seq, endSeq: head.seq },
+          sourceEventSeqs: [head.seq],
+        },
+      })
+    }
+    if (replacements.length === 0) return
+    for (const replacement of replacements) {
+      agent.session.append('system/message', {
+        turn: replacement.turn,
+        step: replacement.step,
+        message: replacement.message,
+      }, replacement.intent)
+    }
+    if (!await this.ctx.sessions.flush(agent.session)) {
+      throw new Error('shared Bot Session prompt migration has no durable persistence listener')
+    }
+  }
+
   /** Install the Bot identity in the Agent scope before its first model turn. */
   private async installPrompt(agent: Agent): Promise<void> {
     await this.ready
@@ -5498,10 +5584,15 @@ export class BotService extends TypertRemoteService {
     const sharedSession = this.sharedSessionIds.has(sessionKey)
     const operatorBot = this.recordsBySession.has(String(agent.id))
     if (record === undefined && !sharedSession) return
+    const sharedAdmission = sharedSession && !operatorBot
+    if (sharedAdmission) this.ensureSharedScopeFence(agent)
     const existingFiber = this.promptFibers.get(agent)
     if (existingFiber !== undefined) {
       await existingFiber
-      if (sharedSession && !operatorBot) this.markSharedScopeInstalled(agent)
+      if (sharedAdmission) {
+        await this.sanitizeSharedPromptSurface(agent)
+        this.markSharedScopeInstalled(agent)
+      }
       return
     }
     if (operatorBot && record !== undefined) await this.ensureMemoryLoaded(record)
@@ -5627,7 +5718,10 @@ export class BotService extends TypertRemoteService {
     })
     this.promptFibers.set(agent, fiber)
     await fiber
-    if (sharedSession && !operatorBot) this.markSharedScopeInstalled(agent)
+    if (sharedAdmission) {
+      await this.sanitizeSharedPromptSurface(agent)
+      this.markSharedScopeInstalled(agent)
+    }
   }
 
   /** Install a synchronous fail-closed fence before shared scope setup awaits. */

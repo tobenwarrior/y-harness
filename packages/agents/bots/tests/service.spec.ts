@@ -731,6 +731,9 @@ describe('durable Bot roster', () => {
         inspectSharedSessions: true,
         realAgent: true,
         realAgentInitialResponse: 'text',
+        beforeService: (ctx) => {
+          ctx.on('session/flush', () => true)
+        },
       },
     )
     try {
@@ -843,6 +846,7 @@ describe('durable Bot roster', () => {
           realAgent: true,
           realAgentInitialResponse: 'text',
           beforeService: (ctx) => {
+            ctx.on('session/flush', () => true)
             const agent = ctx.agents.get(sharedSessionId)
             if (agent === undefined) throw new Error('startup legacy prompt Agent was not created')
             agent.session.append('system/message', {
@@ -856,6 +860,69 @@ describe('durable Bot roster', () => {
       try {
         const agent = h.agents[0]
         if (agent === undefined || h.adapter === undefined) throw new Error('startup legacy prompt Agent was not created')
+        const startupSurfaceText = agent.session.deriveMessages()
+          .flatMap(message => message.content)
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')
+        expect(startupSurfaceText).not.toContain('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
+        expect(startupSurfaceText).toContain('Your role is: Public startup role')
+
+        const directCompaction = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            purpose: 'compaction',
+            messages: agent.session.deriveMessages(),
+          })) { /* The guard must reject before the adapter is reached. */ }
+        }
+        await expect(directCompaction()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
+
+        const directRaw = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'unattributed raw input' }] }],
+          })) { /* The guard must reject before the adapter is reached. */ }
+        }
+        await expect(directRaw()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
+
+        const directToolHistory = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            purpose: 'session-title',
+            system: 'title system',
+            messages: [createUserMessage({
+              content: [{ type: 'text', text: 'attributed title input' }],
+              source: { kind: 'dsh-session-title-llm' },
+            })],
+            toolHistory: { tools: [], updates: [] },
+          })) { /* The guard must reject before the adapter is reached. */ }
+        }
+        await expect(directToolHistory()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
+
+        const directTitle = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            purpose: 'session-title',
+            system: 'title system',
+            messages: [createUserMessage({
+              content: [{ type: 'text', text: 'attributed title input' }],
+              source: { kind: 'dsh-session-title-llm' },
+            })],
+          })) { /* The audited auxiliary envelope is admitted. */ }
+        }
+        await expect(directTitle()).resolves.toBeUndefined()
+        expect(h.adapter.requests).toHaveLength(1)
+
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
           content: [{ type: 'text', text: 'continue after startup resume' }],
@@ -1942,6 +2009,9 @@ describe('durable Bot roster', () => {
           },
           inspectSharedSessions: true,
           realAgent: true,
+          beforeService: (ctx) => {
+            ctx.on('session/flush', () => true)
+          },
         },
       )
       let authority: SharedAccessAuthority | undefined
