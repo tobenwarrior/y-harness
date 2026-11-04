@@ -76,7 +76,7 @@ export interface SharedPendingGroupMessage {
   readonly operationHash: string
   readonly id: string
   readonly groupId: string
-  /** Present until the record expires; expired tombstones never retain message text. */
+  /** Present for an interrupted message; completed records remain hidden from this view. */
   readonly text?: string
   readonly createdAt: number
   readonly expiresAt: number
@@ -97,19 +97,19 @@ export interface SharedGroupPendingQueue {
   readonly durable: boolean
   /** List interrupted group creations and explicit expiry tombstones for this principal. */
   listCreations(): Promise<readonly SharedPendingGroupCreation[]>
-  /** List pending group messages and text-free expired tombstones for this principal. */
+  /** List interrupted group messages for this principal. */
   listMessages(): Promise<readonly SharedPendingGroupMessage[]>
   /** Reserve or recover one stable group id for a creation operation. */
   reserveCreation(operationKey: string, name: string, botIds: readonly string[]): Promise<SharedPendingGroupReservation>
   /** Remove one creation record only when its id still matches. */
   removeCreation(operationHash: string, id: string): Promise<void>
-  /** Retain a text-free completion fence for older tabs while the id can still be reconciled. */
+  /** Retain a completion fence for older tabs while the id can still be reconciled. */
   completeCreation(operationHash: string, id: string): Promise<void>
   /** Reserve or recover one stable message id for a group message operation. */
   reserveMessage(operationKey: string, groupId: string, text: string): Promise<SharedPendingGroupReservation>
   /** Remove one message record only when its operation hash and id still match. */
   removeMessage(operationHash: string, id: string): Promise<void>
-  /** Retain a text-free completion fence for older tabs while the id can still be reconciled. */
+  /** Retain a V1-compatible completion fence while the id can still be reconciled. */
   completeMessage(operationHash: string, id: string): Promise<void>
 }
 
@@ -156,8 +156,9 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     }
   }
   if (value.kind !== 'message' || typeof value.groupId !== 'string' || !isSafeId(value.groupId)) return undefined
-  if (status === 'pending' && (typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH)) return undefined
-  if (status === 'expired' && value.text !== undefined) return undefined
+  if (value.text !== undefined && (typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH)) return undefined
+  if (status === 'pending' && value.text === undefined) return undefined
+  if (status === 'expired' && value.text !== undefined && completedAt === undefined) return undefined
   return {
     version: 1,
     kind: 'message',
@@ -165,7 +166,7 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     id: value.id,
     operationHash: value.operationHash,
     groupId: value.groupId,
-    ...(status === 'pending' && typeof value.text === 'string' ? { text: value.text } : {}),
+    ...(typeof value.text === 'string' ? { text: value.text } : {}),
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
     ...(completedAt === undefined ? {} : { completedAt }),
@@ -251,7 +252,7 @@ function messageView(record: PendingMessageRecord): SharedPendingGroupMessage {
     operationHash: record.operationHash,
     id: record.id,
     groupId: record.groupId,
-    ...(record.text === undefined ? {} : { text: record.text }),
+    ...(record.status === 'pending' && record.text !== undefined ? { text: record.text } : {}),
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
     expired: record.status === 'expired',
@@ -533,8 +534,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       const current = read(key)
       if (current?.kind === 'message' && current.id === id) {
         const now = Date.now()
-        const { text: _text, ...tombstone } = current
-        writeRecord({ ...tombstone, status: 'expired', completedAt: now, expiresAt: now + PENDING_TTL_MS })
+        writeRecord({ ...current, status: 'expired', completedAt: now, expiresAt: now + PENDING_TTL_MS })
       }
       return Promise.resolve()
     }),

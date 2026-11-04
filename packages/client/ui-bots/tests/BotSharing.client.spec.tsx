@@ -561,6 +561,58 @@ describe('shared Bot collaboration surfaces', () => {
     }
   })
 
+  it('keeps a newly typed invite code when the submitted enrollment fails', async () => {
+    const enrollment = Promise.withResolvers<{
+      readonly ok: false
+      readonly error: { readonly code: 'gateway/unauthorized'; readonly message: string; readonly details: Record<string, never> }
+    }>()
+    const enrollmentStarted = Promise.withResolvers<true>()
+    const wireBot = {
+      id: bot.id,
+      name: bot.name,
+      description: bot.description,
+      identity: bot.identity,
+      accent: bot.accent,
+      state: 'active' as const,
+      availability: 'idle' as const,
+      role: 'collaborator' as const,
+    }
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') {
+          enrollmentStarted.resolve(true)
+          return enrollment.promise
+        }
+        if (endpoint === 'bots/share/session') return { ok: true as const, value: { principalId: 'principal-member', expiresAt: 3_000 } }
+        if (endpoint === 'bots/share/list') return { ok: true as const, value: { bots: [wireBot] } }
+        if (endpoint === 'bots/share/read-private-chat') return { ok: true as const, value: { botId: bot.id, recent: [{ role: 'assistant', text: 'Private answer' }] } }
+        if (endpoint === 'bots/share/read-memory') return { ok: true as const, value: { botId: bot.id, enabled: true, updatedAt: 1, entries: [] } }
+        if (endpoint === 'bots/share/list-groups') return { ok: true as const, value: { groups: [] } }
+        return { ok: true as const, value: {} }
+      }),
+    }
+    vi.stubGlobal('BroadcastChannel', undefined)
+    try {
+      const client = createSharedBotsClient(rpc)
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      await waitFor(() => { expect(screen.getByText('Private answer')).toBeTruthy() })
+      const input = screen.getByRole('textbox', { name: 'Invite code' })
+      fireEvent.change(input, { target: { value: 'first-code' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Join bot' }))
+      await enrollmentStarted.promise
+      fireEvent.change(input, { target: { value: 'second-code' } })
+
+      await act(async () => {
+        enrollment.resolve({ ok: false, error: { code: 'gateway/unauthorized', message: 'expired', details: {} } })
+        await Promise.resolve()
+      })
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Join bot' })).toBeTruthy() })
+      expect(input).toHaveProperty('value', 'second-code')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('localizes the collaborator role in the shared roster', async () => {
     const client = sharedClient()
     render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
@@ -1160,6 +1212,79 @@ describe('shared Bot collaboration surfaces', () => {
     })
   })
 
+  it('assigns a fresh delivery id when the same group text is sent again', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-repeat-message'),
+      name: 'Repeat room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-repeat-one'), status: 'accepted' as const, deliveries: [] } })
+      .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-repeat-two'), status: 'accepted' as const, deliveries: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Repeat room')).toBeTruthy() })
+    const input = screen.getByPlaceholderText('Message Repeat room')
+    fireEvent.change(input, { target: { value: 'Repeat this note' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledOnce() })
+    await waitFor(() => { expect((input as HTMLInputElement).value).toBe('') })
+
+    fireEvent.change(input, { target: { value: 'Repeat this note' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(2) })
+    expect(sendGroupMessage.mock.calls[0]?.[0].messageId).not.toBe(sendGroupMessage.mock.calls[1]?.[0].messageId)
+  })
+
+  it('assigns a fresh group id when the same create request is submitted again', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const groupA = {
+      id: brandString<BotGroupId>('bot-group-repeat-create-one'),
+      name: 'Repeat create room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const groupB = { ...groupA, id: brandString<BotGroupId>('bot-group-repeat-create-two') }
+    const createGroup = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { group: groupA } })
+      .mockResolvedValueOnce({ ok: true as const, value: { group: groupB } })
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group: groupA, messages: [] } }),
+      createGroup,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    const submitCreate = async (): Promise<void> => {
+      fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+      const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Repeat create room' } })
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+      await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull() })
+    }
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    await submitCreate()
+    await submitCreate()
+    const firstRequest = createGroup.mock.calls[0]?.[0] as { readonly id?: string }
+    const secondRequest = createGroup.mock.calls[1]?.[0] as { readonly id?: string }
+    expect(firstRequest.id).not.toBe(secondRequest.id)
+  })
+
   it('refuses to resend a recovered message owned by another principal', async () => {
     const group = {
       id: brandString<BotGroupId>('bot-group-message-owner-check'),
@@ -1238,13 +1363,14 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledOnce() })
     fireEvent.click(screen.getByRole('button', { name: /Recovery beta/ }))
     await waitFor(() => { expect(screen.getByPlaceholderText('Message Recovery beta')).toBeTruthy() })
-    expect(screen.getByRole('button', { name: 'Recover' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: 'Sending…' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       send.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-recovery'), status: 'accepted', deliveries: [] } })
       await Promise.resolve()
       await Promise.resolve()
     })
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Recover' })).toHaveProperty('disabled', false) })
   })
 
   it('keeps a newer group send busy when an older group send resolves', async () => {
@@ -2168,6 +2294,76 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(client.restoreRetryScope).toHaveBeenCalledTimes(2) })
     await waitFor(() => { expect(client.list).toHaveBeenCalledTimes(2) })
     expect(screen.queryByText('Private answer')).toBeNull()
+  })
+
+  it('bounds two-page revalidation when session restoration is unauthorized', async () => {
+    type Listener = (event: { readonly data: unknown }) => void
+    class TwoPageBroadcastChannel {
+      static readonly peers = new Set<TwoPageBroadcastChannel>()
+      readonly listeners = new Set<Listener>()
+
+      constructor(readonly name: string) {
+        TwoPageBroadcastChannel.peers.add(this)
+      }
+
+      addEventListener(_type: 'message', listener: Listener): void {
+        this.listeners.add(listener)
+      }
+
+      removeEventListener(_type: 'message', listener: Listener): void {
+        this.listeners.delete(listener)
+      }
+
+      postMessage(data: unknown): void {
+        for (const peer of [...TwoPageBroadcastChannel.peers]) {
+          if (peer === this || peer.name !== this.name) continue
+          queueMicrotask(() => {
+            for (const listener of [...peer.listeners]) listener({ data })
+          })
+        }
+      }
+
+      close(): void {
+        TwoPageBroadcastChannel.peers.delete(this)
+        this.listeners.clear()
+      }
+    }
+    let firstSessionCalls = 0
+    let secondSessionCalls = 0
+    const makeRpc = (which: 'first' | 'second'): ClientConnectionRpc => ({
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/session') {
+          const calls = which === 'first' ? ++firstSessionCalls : ++secondSessionCalls
+          return calls <= 2
+            ? { ok: false as const, error: { code: 'gateway/unauthorized', message: 'session expired', details: {} } }
+            : { ok: true as const, value: { principalId: `principal-${which}`, expiresAt: 3_000 } }
+        }
+        if (endpoint === 'bots/share/list') return { ok: true as const, value: { bots: [] } }
+        if (endpoint === 'bots/share/list-groups') return { ok: true as const, value: { groups: [] } }
+        return { ok: true as const, value: {} }
+      }),
+    })
+    vi.stubGlobal('BroadcastChannel', TwoPageBroadcastChannel)
+    try {
+      const firstClient = createSharedBotsClient(makeRpc('first'))
+      const secondClient = createSharedBotsClient(makeRpc('second'))
+      render(
+        <>
+          <SharedBotsDialog client={firstClient} open onClose={vi.fn()} t={t} />
+          <SharedBotsDialog client={secondClient} open onClose={vi.fn()} t={t} />
+        </>,
+      )
+      await waitFor(() => {
+        expect(firstSessionCalls).toBeGreaterThan(0)
+        expect(secondSessionCalls).toBeGreaterThan(0)
+      })
+      await new Promise<void>((resolve) => { setTimeout(resolve, 10) })
+      expect(firstSessionCalls).toBe(1)
+      expect(secondSessionCalls).toBe(1)
+    } finally {
+      vi.unstubAllGlobals()
+      TwoPageBroadcastChannel.peers.clear()
+    }
   })
 
   it('does not apply a group send after the authenticated principal rotates', async () => {
