@@ -83,6 +83,20 @@ export interface BotGroupSummary {
   readonly bots: readonly BotSummary[]
 }
 
+/** Browser-owned attachment draft staged beside a local or shared group message. */
+export interface BotGroupAttachmentDraft {
+  /** Stable draft identity used for removal and retry. */
+  readonly id: string
+  /** Browser file retained until the group operation settles. */
+  readonly file: File
+  /** Object URL used only for an in-memory image preview. */
+  readonly previewUrl?: string
+  /** Local preparation state; failed drafts remain visible for retry. */
+  readonly state: 'ready' | 'error'
+  /** Safe display detail for a failed preparation attempt. */
+  readonly error?: string
+}
+
 /** A group transcript row projected for the Bot workspace. */
 export interface BotGroupMessageSummary {
   /** Durable transcript message identity. */

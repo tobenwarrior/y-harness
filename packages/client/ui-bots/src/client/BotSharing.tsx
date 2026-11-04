@@ -37,6 +37,11 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
+import {
+  BotGroupAttachments,
+  createBotGroupAttachmentDraft,
+  releaseBotGroupAttachment,
+} from './BotGroupAttachments.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotShareActions } from './controller.ts'
 import {
@@ -48,7 +53,7 @@ import type {
   SharedPendingGroupMessage,
   SharedPendingGroupCreation,
 } from './pending-group-queue.ts'
-import type { BotSummary } from './types.ts'
+import type { BotGroupAttachmentDraft, BotSummary } from './types.ts'
 import { broadcastSharedAuthChanged } from './shared-client.ts'
 import type { SharedBotAuthChange, SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
 
@@ -669,6 +674,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
   const [groupDraft, setGroupDraft] = useState('')
+  const [groupAttachments, setGroupAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
+  const [groupAttachmentError, setGroupAttachmentError] = useState<string | null>(null)
   const [groupWorking, setGroupWorking] = useState<'load' | 'create' | 'send' | null>(null)
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   const [createGroupError, setCreateGroupError] = useState<string | null>(null)
@@ -709,6 +716,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const groupOperationGenerationRef = useRef(0)
   const groupDraftRevisionRef = useRef(0)
   const groupInviteGenerationRef = useRef(0)
+  const groupAttachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
+  const groupAttachmentMessageIdRef = useRef<string | null>(null)
   const createGroupGenerationRef = useRef(0)
   const pendingRefreshGenerationRef = useRef(0)
   const recoveryWorkingRef = useRef<string | null>(null)
@@ -725,6 +734,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const deferredRevalidationRef = useRef(false)
   const clientIdentityRef = useRef(client)
   const clientGenerationRef = useRef(0)
+  groupAttachmentsRef.current = groupAttachments
   if (clientIdentityRef.current !== client) {
     clientIdentityRef.current = client
     clientGenerationRef.current += 1
@@ -800,6 +810,28 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     openRef.current && selectedBotIdRef.current === botId && selectionEpochRef.current === selectionEpoch
   )
 
+  const clearGroupAttachments = (): void => {
+    for (const attachment of groupAttachmentsRef.current) releaseBotGroupAttachment(attachment)
+    groupAttachmentsRef.current = []
+    groupAttachmentMessageIdRef.current = null
+    setGroupAttachments([])
+    setGroupAttachmentError(null)
+  }
+
+  const addGroupAttachments = (files: readonly File[]): void => {
+    setGroupAttachmentError(null)
+    groupAttachmentMessageIdRef.current = null
+    setGroupAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
+  }
+
+  const removeGroupAttachment = (id: string): void => {
+    const removed = groupAttachmentsRef.current.find(attachment => attachment.id === id)
+    if (removed !== undefined) releaseBotGroupAttachment(removed)
+    setGroupAttachmentError(null)
+    groupAttachmentMessageIdRef.current = null
+    setGroupAttachments(current => current.filter(attachment => attachment.id !== id))
+  }
+
   const setSelection = (botId: string | null): void => {
     if (selectedBotIdRef.current !== botId) selectionEpochRef.current += 1
     if (botId !== null && selectedGroupIdRef.current !== null) {
@@ -823,6 +855,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
 
   const setGroupSelection = (groupId: string | null): void => {
     if (selectedGroupIdRef.current !== groupId) {
+      clearGroupAttachments()
       groupOperationGenerationRef.current += 1
       groupDraftRevisionRef.current += 1
       groupInviteGenerationRef.current += 1
@@ -865,6 +898,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setSelection(null)
     setGroups([])
     setGroupSelection(null)
+    clearGroupAttachments()
     setGroupMessages([])
     setMessageDrafts({})
     setMemoryDrafts({})
@@ -1259,6 +1293,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     setError(null)
     void refresh()
   }, [open, client])
+
+  useEffect(() => () => {
+    for (const attachment of groupAttachmentsRef.current) releaseBotGroupAttachment(attachment)
+  }, [])
 
   useEffect(() => {
     const unsubscribe = client.subscribeAuth?.((change?: SharedBotAuthChange) => {
@@ -1756,14 +1794,21 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const sendGroup = async (): Promise<void> => {
     const auth = syncAuthContext()
     const send = auth?.client.sendGroupMessage
+    const sendWithAttachments = auth?.client.sendGroupMessageWithAttachments
     const groupId = selectedGroupIdRef.current
     const draft = groupDraft.trim()
-    if (auth === undefined || send === undefined || !openRef.current || groupId === null || draft === '' || working !== null
+    const attachments = groupAttachmentsRef.current
+    if (auth === undefined || (send === undefined && attachments.length === 0) || !openRef.current || groupId === null
+      || (draft === '' && attachments.length === 0) || working !== null
       || !pendingCatalogReady
       || groupWorking !== null || pendingMessageBusy || hasPendingChat || hasPendingMemory) return
+    if (attachments.length > 0 && sendWithAttachments === undefined) {
+      setGroupAttachmentError(t('sharedGroupAttachmentsUnavailable'))
+      return
+    }
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
-    const pendingMessageKey = sharedGroupMessageKey(randomUUID(), submittedGroupId, draft)
+    const pendingMessageKey = attachments.length === 0 ? sharedGroupMessageKey(randomUUID(), submittedGroupId, draft) : undefined
     const operationGeneration = groupOperationGenerationRef.current + 1
     groupOperationGenerationRef.current = operationGeneration
     const isCurrentGroupOperation = (): boolean => (
@@ -1774,46 +1819,75 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     )
     setGroupWorking('send')
     setError(null)
+    setGroupAttachmentError(null)
     try {
       if (!isCurrentAuth(auth)) return
-      const queue = getPendingGroupQueue(auth)
-      const reservation = await queue.reserveMessage(pendingMessageKey, submittedGroupId, draft)
-      if (!isCurrentGroupOperation()) return
-      const messageId = brandString<BotGroupMessageIdType>(reservation.id)
-      if (reservation.recovered) {
-        await reconcileGroupMessage(submittedGroupId, messageId, draft, auth)
+      let queue: SharedGroupPendingQueue | undefined
+      let reservation: Awaited<ReturnType<SharedGroupPendingQueue['reserveMessage']>> | undefined
+      let messageId: BotGroupMessageIdType
+      if (attachments.length > 0) {
+        const stableId = groupAttachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
+        groupAttachmentMessageIdRef.current = stableId
+        messageId = brandString<BotGroupMessageIdType>(stableId)
+      } else {
+        queue = getPendingGroupQueue(auth)
+        reservation = await queue.reserveMessage(pendingMessageKey ?? '', submittedGroupId, draft)
         if (!isCurrentGroupOperation()) return
+        messageId = brandString<BotGroupMessageIdType>(reservation.id)
+        if (reservation.recovered) {
+          await reconcileGroupMessage(submittedGroupId, messageId, draft, auth)
+          if (!isCurrentGroupOperation()) return
+        }
       }
       if (!isCurrentAuth(auth)) return
-      const result = await send({
-        groupId: brandString<BotGroupIdType>(groupId),
-        text: draft,
-        messageId,
-      })
+      let result
+      if (attachments.length > 0) {
+        if (sendWithAttachments === undefined) throw new Error(t('sharedGroupAttachmentsUnavailable'))
+        result = await sendWithAttachments({
+          groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId, attachments,
+        })
+      } else {
+        if (send === undefined) throw new Error(t('sharedGroupSendFailed'))
+        result = await send({ groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId })
+      }
       if (!isCurrentAuth(auth) || selectedGroupIdRef.current !== submittedGroupId) return
       if (!isCurrentGroupOperation()) return
       if (result.ok) {
         if (result.value.status === 'partial') {
-          setError(t('sharedGroupSendFailed'))
-          void refreshPendingOperations()
+          if (attachments.length > 0) setGroupAttachmentError(t('sharedGroupSendFailed'))
+          else {
+            setError(t('sharedGroupSendFailed'))
+            void refreshPendingOperations()
+          }
           return
         }
         if (!isCurrentAuth(auth)) return
-        await queue.completeMessage(reservation.operationHash, reservation.id)
-        if (!isCurrentAuth(auth) || !isCurrentGroupOperation()) return
-        setPendingMessages(current => current.filter(candidate => candidate.id !== reservation.id))
+        if (queue !== undefined && reservation !== undefined) {
+          await queue.completeMessage(reservation.operationHash, reservation.id)
+          if (!isCurrentAuth(auth) || !isCurrentGroupOperation()) return
+          setPendingMessages(current => current.filter(candidate => candidate.id !== reservation?.id))
+        } else {
+          clearGroupAttachments()
+        }
         if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
         await readGroup(submittedGroupId)
       } else if (result.error.code === 'gateway/forbidden') {
         requestRevalidation(true, result.error.message)
       } else {
-        setError(result.error.message || t('sharedGroupSendFailed'))
-        await refreshPendingOperations()
+        if (attachments.length > 0) setGroupAttachmentError(result.error.message || t('sharedGroupSendFailed'))
+        else {
+          setError(result.error.message || t('sharedGroupSendFailed'))
+          await refreshPendingOperations()
+        }
       }
     } catch (cause: unknown) {
       if (isCurrentGroupOperation()) {
-        setError(retryErrorMessage(cause, t('sharedGroupSendFailed')))
-        await refreshPendingOperations()
+        const message = retryErrorMessage(cause, t('sharedGroupSendFailed'))
+        if (attachments.length > 0) setGroupAttachmentError(message)
+        else {
+          setError(message)
+          await refreshPendingOperations()
+        }
       }
     } finally {
       if (isCurrentGroupOperation()) setGroupWorking(null)
@@ -2035,20 +2109,52 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                   })}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>
-                  <Input
-                    value={groupDraft}
-                    placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
-                    aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
-                    onChange={(event) => { groupDraftRevisionRef.current += 1; setGroupDraft(event.currentTarget.value) }}
+                  <BotGroupAttachments
+                    attachments={groupAttachments}
+                    disabled={groupWorking === 'send'}
+                    labels={{
+                      picker: t('groupAttachFiles'),
+                      input: t('groupChooseFiles'),
+                      attachments: t('groupAttachments'),
+                      file: t('groupAttachmentFile'),
+                      preview: name => t('groupPreviewAttachment', { name }),
+                      remove: name => t('groupRemoveAttachment', { name }),
+                      retry: name => t('groupRetryAttachment', { name }),
+                      failed: t('groupAttachmentFailed'),
+                      uploading: t('groupAttachmentPreparing'),
+                      lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
+                    }}
+                    onAddFiles={addGroupAttachments}
+                    onRemove={removeGroupAttachment}
                   />
-                  <Button
-                    variant="primary"
-                    type="submit"
-                    disabled={!pendingCatalogReady || groupWorking !== null || working !== null || pendingMessageBusy || groupDraft.trim() === '' || hasPendingChat || hasPendingMemory}
-                    icon={<IconShareOutlineRegular size={14} />}
-                  >
-                    {groupWorking === 'send' ? t('sharedGroupSending') : t('sharedGroupSend')}
-                  </Button>
+                  {groupAttachmentError !== null && (
+                    <div className={css.groupAttachmentNotice} role="alert">
+                      <span>{groupAttachmentError}</span>
+                      {client.sendGroupMessageWithAttachments !== undefined && (
+                        <Button variant="ghost" size="sm" disabled={groupWorking === 'send'} onClick={() => { void sendGroup() }}>{t('retry')}</Button>
+                      )}
+                    </div>
+                  )}
+                  <div className={css.sharedComposerTextRow}>
+                    <Input
+                      value={groupDraft}
+                      placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
+                      aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
+                      onChange={(event) => {
+                        groupDraftRevisionRef.current += 1
+                        setGroupAttachmentError(null)
+                        setGroupDraft(event.currentTarget.value)
+                      }}
+                    />
+                    <Button
+                      variant="primary"
+                      type="submit"
+                      disabled={!pendingCatalogReady || groupWorking !== null || working !== null || pendingMessageBusy || (groupDraft.trim() === '' && groupAttachments.length === 0) || hasPendingChat || hasPendingMemory}
+                      icon={<IconShareOutlineRegular size={14} />}
+                    >
+                      {groupWorking === 'send' ? t('sharedGroupSending') : t('sharedGroupSend')}
+                    </Button>
+                  </div>
                 </form>
               </section>
             )}

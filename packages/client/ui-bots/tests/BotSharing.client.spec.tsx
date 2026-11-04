@@ -715,6 +715,41 @@ describe('shared Bot collaboration surfaces', () => {
     })
   })
 
+  it('keeps a picked attachment visible when the shared transport is text-only', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-attachments'),
+      name: 'Attachment room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { messageId: brandString<BotGroupMessageId>('bot-group-message-attachments'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Attachment room')).toBeTruthy() })
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Attachments are not available') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+  })
+
   it('explains the owner-only group invite after a collaborator is refused', async () => {
     const group = {
       id: brandString<BotGroupId>('bot-group-collaborator'),

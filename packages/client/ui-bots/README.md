@@ -62,6 +62,7 @@ The Client registration creates one controller for the Bot Remote, Session store
 | [`src/client/apply.ts`](src/client/apply.ts) | Client injections, locale registration, panel slots, sidebar entry, and controller lifecycle. |
 | [`src/client/controller.ts`](src/client/controller.ts) | Bot roster loading, selection, Session binding, avatar loading, and owner-facing callbacks. |
 | [`src/client/BotWorkspace.tsx`](src/client/BotWorkspace.tsx) | `BotRoster` sidebar and `BotDetail` main-panel surfaces with loading, error, empty, and creation states. |
+| [`src/client/BotGroupAttachments.tsx`](src/client/BotGroupAttachments.tsx) | Browser-only group-message picker, image preview, removal, and retry presentation. |
 | [`src/client/BotTemplatesPanel.tsx`](src/client/BotTemplatesPanel.tsx) | Safe template publishing, share-code preview/import, copy, and revocation controls. |
 | [`src/client/BotAvatarEditor.tsx`](src/client/BotAvatarEditor.tsx) | Provider availability, description, preview, commit, and assignment flow. |
 
@@ -109,6 +110,7 @@ These limits define the current Bot workspace. They are package constraints, not
 - **Provider selection is not a profile field** — setup and editing intentionally do not promise dynamic provider or model switching; those choices remain owned by Session composition and Host presets.
 - **Shared retry scope follows authenticated enrollment** — shared-group recovery requires the server-issued principal scope returned by Bot enrollment or the authenticated shared-session endpoint after reload; the Client does not fabricate an owner identity because the Host does not expose one through this package. The endpoint must be mounted by the shared route for reload recovery.
 - **Shared retry needs browser coordination** — durable recovery requires localStorage and Web Locks. Unsupported browsers fail closed; the UI does not claim that a retry is safe when tabs cannot coordinate.
+- **Group-message attachments require Host admission** — local and shared composers stage browser files, preview images, and retain drafts after optional transport failures; the current text-only group RPCs reject attachment sends without exposing raw paths or silently dropping files.
 - **Template operation ids are controller-local** — a full browser reload before a failed import is reconciled loses the in-memory retry key; callers that need recovery across reloads can submit their own stable `importId` through the Host Remote.
 
 <a id="dev-note"></a>

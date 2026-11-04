@@ -9,6 +9,7 @@ import {
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import { randomUUID } from '@yharness/util-crypto'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
@@ -16,10 +17,16 @@ import { BotShareDialog, SharedBotsDialog } from './BotSharing.tsx'
 import type { BotShareActions } from './controller.ts'
 import type { SharedBotsClient } from './shared-client.ts'
 import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
+import {
+  BotGroupAttachments,
+  createBotGroupAttachmentDraft,
+  releaseBotGroupAttachment,
+} from './BotGroupAttachments.tsx'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
-  BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
+  BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
+  BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
@@ -478,7 +485,7 @@ function deliveryStatusText(
 }
 
 /** Render a persistent workspace group transcript without creating a second Bot Session. */
-export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, loadAvatar, t }: {
+export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, onSendWithAttachments, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
   bots?: readonly BotSummary[]
   loading: boolean
@@ -486,11 +493,19 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   onRetry: () => void
   onUpdate?: BotWorkspaceProps['onUpdateGroup']
   onSend: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  onSendWithAttachments?: (
+    text: string,
+    attachments: readonly BotGroupAttachmentDraft[],
+    messageId?: string,
+    targetBotIds?: readonly string[],
+  ) => Promise<void>
   loadAvatar: BotWorkspaceProps['loadAvatar']
   t: BotWorkspaceViewProps['t']
 }): ReactNode {
   const availableBots = bots ?? []
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -508,6 +523,9 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const attachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
+  const attachmentMessageIdRef = useRef<string | null>(null)
+  attachmentsRef.current = attachments
   const mentionOptions = useMemo(() => {
     if (group === undefined || mentionQuery === null) return []
     const query = mentionQuery.toLocaleLowerCase()
@@ -518,10 +536,36 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     if (node !== null) node.scrollTop = node.scrollHeight
   }, [transcript.length, transcriptRef])
   useEffect(() => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+    attachmentsRef.current = []
+    attachmentMessageIdRef.current = null
+    setAttachments([])
+    setAttachmentError(null)
     setDraft('')
     setMentionQuery(null)
     setMentionIndex(0)
   }, [group?.id])
+  useEffect(() => () => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+  }, [])
+  const clearAttachments = (): void => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+    attachmentsRef.current = []
+    attachmentMessageIdRef.current = null
+    setAttachments([])
+  }
+  const addAttachments = (files: readonly File[]): void => {
+    setAttachmentError(null)
+    attachmentMessageIdRef.current = null
+    setAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
+  }
+  const removeAttachment = (id: string): void => {
+    const removed = attachmentsRef.current.find(attachment => attachment.id === id)
+    if (removed !== undefined) releaseBotGroupAttachment(removed)
+    setAttachmentError(null)
+    attachmentMessageIdRef.current = null
+    setAttachments(current => current.filter(attachment => attachment.id !== id))
+  }
   const selectMention = (bot: BotSummary): void => {
     const input = composerInputRef.current
     const cursor = input?.selectionStart ?? draft.length
@@ -541,16 +585,25 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   }
   const submit = async (): Promise<void> => {
     const text = draft.trim()
-    if (text === '' || sending) return
+    if ((text === '' && attachments.length === 0) || sending) return
     const targets = group === undefined ? [] : mentionTargets(text, group.bots)
     setSending(true)
+    setAttachmentError(null)
     try {
-      if (targets.length === 0) await onSend(text)
+      if (attachments.length > 0) {
+        if (onSendWithAttachments === undefined) throw new Error(t('groupAttachmentsUnavailable'))
+        const messageId = attachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
+        attachmentMessageIdRef.current = messageId
+        if (targets.length === 0) await onSendWithAttachments(text, attachments, messageId)
+        else await onSendWithAttachments(text, attachments, messageId, targets)
+        clearAttachments()
+      } else if (targets.length === 0) await onSend(text)
       else await onSend(text, undefined, targets)
       setDraft('')
       setMentionQuery(null)
-    } catch {
-      // Keep the draft visible while the owner exposes a retryable failure.
+    } catch (cause: unknown) {
+      if (attachments.length > 0) setAttachmentError(cause instanceof Error ? cause.message : t('groupDeliveryFailure'))
+      // Keep the draft and attachments visible so the owner can retry safely.
     } finally {
       setSending(false)
     }
@@ -646,6 +699,32 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           if (!composerRef.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null)
         }}
       >
+        <BotGroupAttachments
+          attachments={attachments}
+          disabled={sending}
+          labels={{
+            picker: t('groupAttachFiles'),
+            input: t('groupChooseFiles'),
+            attachments: t('groupAttachments'),
+            file: t('groupAttachmentFile'),
+            preview: name => t('groupPreviewAttachment', { name }),
+            remove: name => t('groupRemoveAttachment', { name }),
+            retry: name => t('groupRetryAttachment', { name }),
+            failed: t('groupAttachmentFailed'),
+            uploading: t('groupAttachmentPreparing'),
+            lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
+          }}
+          onAddFiles={addAttachments}
+          onRemove={removeAttachment}
+        />
+        {attachmentError !== null && (
+          <div className={css.groupAttachmentNotice} role="alert">
+            <span>{attachmentError}</span>
+            {onSendWithAttachments !== undefined && (
+              <Button variant="ghost" size="sm" disabled={sending} onClick={() => { void submit() }}>{t('retry')}</Button>
+            )}
+          </div>
+        )}
         {mentionQuery !== null && mentionOptions.length > 0 && (
           <MenuSurface className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
             {mentionOptions.map((bot, index) => (
@@ -705,7 +784,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
             }
           }}
         />
-        <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={draft.trim() === '' || sending} onClick={() => { void submit() }} />
+        <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={(draft.trim() === '' && attachments.length === 0) || sending} onClick={() => { void submit() }} />
       </div>
       <EditGroupDialog
         open={editOpen}

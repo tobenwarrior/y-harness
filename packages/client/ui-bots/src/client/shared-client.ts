@@ -32,6 +32,7 @@ import type {
 } from '@yharness/bots/client'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 import { randomUUID } from '@yharness/util-crypto'
+import type { BotGroupAttachmentDraft } from './types.ts'
 
 const SHARED_BOTS_PATH = '/shared-bots' as const
 const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
@@ -219,6 +220,10 @@ export interface SharedBotsClient {
   readonly inspectGroup?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInspectValue>>
   /** Send an idempotent shared group message attributed by the server. */
   readonly sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
+  /** Optional attachment-aware group transport supplied by a Host with attachment admission. */
+  readonly sendGroupMessageWithAttachments?: (
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+  ) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
   /** Create one explicit ACL invite for a shared group. */
   readonly createGroupInvite?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInviteValue>>
   /** Revoke one explicit shared-group ACL member. */

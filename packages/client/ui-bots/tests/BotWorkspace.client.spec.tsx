@@ -938,6 +938,60 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
+  it('keeps a picked attachment visible when the current local transport is text-only', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Attachments are not available') })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+  })
+
+  it('retries an attachment with the same message id and clears it only after success', async () => {
+    const sendWithAttachments = vi.fn()
+      .mockRejectedValueOnce(new Error('attachment upload failed'))
+      .mockResolvedValueOnce(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={vi.fn()}
+      onSendWithAttachments={sendWithAttachments}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => {
+      expect(sendWithAttachments).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('alert').textContent).toContain('attachment upload failed')
+    })
+
+    const firstMessageId = sendWithAttachments.mock.calls[0]?.[2]
+    expect(firstMessageId).toMatch(/^bot-group-message-/)
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => { expect(sendWithAttachments).toHaveBeenCalledTimes(2) })
+    expect(sendWithAttachments.mock.calls[1]?.[2]).toBe(firstMessageId)
+    expect(screen.queryByText('release-notes.txt')).toBeNull()
+  })
+
   it('shows persisted per-Bot turn failures and retries only the failed user message', async () => {
     const onSend = vi.fn().mockResolvedValue(undefined)
     render(<BotGroupDetail
