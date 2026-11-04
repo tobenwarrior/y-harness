@@ -854,10 +854,11 @@ function immutableBotBindingMatches(current: ImmutableBotBinding, expected: Immu
     && current.agentPreset === expected.agentPreset
 }
 
-/** Reject a persisted profile roster that would rebind an existing Bot row. */
+/** Reject a persisted profile roster that would rebind or misstate an existing Bot row. */
 function assertProfileRosterMatchesDurableBots(
   state: BotProfileRevisionState,
   bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  allowPendingStateTransition = true,
 ): void {
   for (const [id, profile] of Object.entries(state.profiles)) {
     const roster = profile.roster
@@ -870,6 +871,23 @@ function assertProfileRosterMatchesDurableBots(
         'Bot profile roster identity does not match the authoritative Bot row',
         { botId: BotId(id) },
       )
+    }
+    if (current.state !== roster.state) {
+      const pending = allowPendingStateTransition ? state.pending : undefined
+      const pendingStateMatches = pending !== undefined
+        && String(pending.record.id) === id
+        && roster.state === 'provisioning'
+        && pending.record.state === 'active'
+        && current.state === pending.record.state
+        && current.updatedAt === pending.record.updatedAt
+        && immutableBotBindingMatches(roster, pending.record)
+      if (!pendingStateMatches) {
+        throw new RemoteError(
+          'gateway/conflict',
+          'Bot profile roster state does not match the authoritative Bot row',
+          { botId: BotId(id) },
+        )
+      }
     }
   }
 }
@@ -885,7 +903,7 @@ function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: B
     const currentValue = current[field]
     const legacyValue = legacy[field]
     if (currentValue !== undefined && legacyValue !== undefined
-      && (field === 'pendingMemoryUpdate' || (currentValue !== null && legacyValue !== null))
+      && !(field === 'pendingMemoryUpdate' && currentValue === null)
       && !profileValuesEqual(currentValue, legacyValue)) {
       throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
     }
@@ -7082,7 +7100,9 @@ export class BotService extends TypertRemoteService {
       if (state.sharedRosterFence !== undefined) {
         throw new Error('Bot profile is changing during a shared group admission')
       }
-      assertProfileRosterMatchesDurableBots(state, bots)
+      const allowPendingStateTransition = state.pending === undefined
+        || reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)
+      assertProfileRosterMatchesDurableBots(state, bots, allowPendingStateTransition)
       if (state.pending !== undefined) {
         if (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)) {
           const pendingTransactionId = state.pending.transactionId

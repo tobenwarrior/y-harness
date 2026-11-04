@@ -7673,6 +7673,56 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed when a v3 roster state differs without a pending transition', async () => {
+    for (const scenario of [
+      { durableState: 'provisioning' as const, rosterState: 'active' as const },
+      { durableState: 'active' as const, rosterState: 'provisioning' as const },
+    ]) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const first = await harness(pool, undefined, undefined, [], new Map(), records)
+      const created = await first.service.create({ name: `Roster ${scenario.rosterState}`, cwd: '/tmp' })
+      const domain = first.ctx.storageDomain.get('agent_bots')
+      if (domain === undefined) throw new Error('Bot domain was not opened')
+      const bots = domain.table('bots')
+      const stored = bots.get(created.bot.id)
+      if (stored === undefined) throw new Error('Bot row was not written')
+      await bots.put(created.bot.id, { ...stored, state: scenario.durableState })
+      const id = String(created.bot.id)
+      records.set(credentialKey('agent-bots', 'profile-revisions-v3'), {
+        kind: 'grant',
+        payload: {
+          version: 3,
+          revisions: { [id]: stored.updatedAt },
+          profiles: { [id]: {
+            roster: {
+              id,
+              sessionId: String(stored.sessionId),
+              ownerId: stored.ownerId,
+              cwd: stored.cwd,
+              state: scenario.rosterState,
+              createdAt: stored.createdAt,
+            },
+            name: stored.name,
+            identity: stored.identity,
+            accent: stored.accent,
+            updatedAt: stored.updatedAt,
+          } },
+        },
+      })
+      await close(first.ctx)
+
+      const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+        initializeService: false,
+      })
+      try {
+        await expect(second.service.list({})).rejects.toThrow('state')
+      } finally {
+        await close(second.ctx)
+      }
+    }
+  })
+
   it('serializes a Bot without an agent preset through the local credential provider', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-profile-json-'))
     const h = await harness(
@@ -7827,9 +7877,9 @@ describe('durable Bot roster', () => {
         legacy: { memoryId: 'memory-legacy', text: 'Legacy pending memory.' },
       },
       {
-        label: 'an explicit clear',
-        current: null,
-        legacy: { memoryId: 'memory-legacy-clear', text: 'Legacy pending memory.' },
+        label: 'current marker versus predecessor clear',
+        current: { memoryId: 'memory-current-marker', text: 'Current pending memory.' },
+        legacy: null,
       },
     ] as const
 
@@ -7872,6 +7922,55 @@ describe('durable Bot roster', () => {
       } finally {
         await close(second.ctx)
       }
+    }
+  })
+
+  it('preserves a same-revision v3 pending memory clear over a predecessor marker', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending memory clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const base = {
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      updatedAt: created.bot.updatedAt,
+    }
+    records.set(v2Key, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          ...base,
+          pendingMemoryUpdate: { memoryId: 'memory-predecessor-marker', text: 'Must be cleared.' },
+        } },
+      },
+    })
+    records.set(v3Key, {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, pendingMemoryUpdate: null } },
+      },
+    })
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id }] })
+      expect(records.get(v3Key)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 3, profiles: { [id]: { pendingMemoryUpdate: null } } },
+      })
+    } finally {
+      await close(second.ctx)
     }
   })
 
