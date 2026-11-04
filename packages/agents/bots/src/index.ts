@@ -839,29 +839,19 @@ function stableBotIdentityMatches(
     && current.createdAt === expected.createdAt
 }
 
-interface DurableBotBinding {
+interface ImmutableBotBinding {
   readonly id: string
   readonly sessionId: string
   readonly ownerId: string
   readonly cwd: string
   readonly agentPreset?: string | undefined
-  readonly state: 'provisioning' | 'active'
   readonly createdAt: number
-  readonly persona?: string | undefined
-  readonly capabilities?: readonly string[] | undefined
 }
 
-function optionalBindingValueMatches(left: unknown, right: unknown): boolean {
-  return (left === undefined) === (right === undefined) && profileValuesEqual(left, right)
-}
-
-function durableBotBindingMatches(current: DurableBotBinding, expected: DurableBotBinding): boolean {
+function immutableBotBindingMatches(current: ImmutableBotBinding, expected: ImmutableBotBinding): boolean {
   return stableBotIdentityMatches(current, expected)
     && current.cwd === expected.cwd
     && current.agentPreset === expected.agentPreset
-    && current.state === expected.state
-    && optionalBindingValueMatches(current.persona, expected.persona)
-    && optionalBindingValueMatches(current.capabilities, expected.capabilities)
 }
 
 /** Reject a persisted profile roster that would rebind an existing Bot row. */
@@ -874,16 +864,7 @@ function assertProfileRosterMatchesDurableBots(
     if (roster === undefined) continue
     const current = bots.get(BotId(id))
     if (current === undefined) continue
-    const expected: DurableBotBinding = {
-      ...roster,
-      persona: profile.persona === undefined
-        ? roster.persona
-        : current.persona,
-      capabilities: profile.capabilities === undefined
-        ? roster.capabilities
-        : current.capabilities,
-    }
-    if (!durableBotBindingMatches(current, expected)) {
+    if (!immutableBotBindingMatches(current, roster)) {
       throw new RemoteError(
         'gateway/conflict',
         'Bot profile roster identity does not match the authoritative Bot row',
@@ -897,14 +878,14 @@ function assertProfileRosterMatchesDurableBots(
 function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: BotProfileSnapshot): void {
   const fields: readonly (keyof BotProfileSnapshot)[] = [
     'roster', 'name', 'description', 'identity', 'accent', 'avatar', 'connectedAppIds',
-    'connectedAppDenyIds', 'eventRoutines', 'timedRoutines', 'timedRoutinesUpdatedAt',
+    'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate', 'timedRoutines', 'timedRoutinesUpdatedAt',
     'pinned', 'hidden', 'group', 'updatedAt',
   ]
   for (const field of fields) {
     const currentValue = current[field]
     const legacyValue = legacy[field]
     if (currentValue !== undefined && legacyValue !== undefined
-      && currentValue !== null && legacyValue !== null
+      && (field === 'pendingMemoryUpdate' || (currentValue !== null && legacyValue !== null))
       && !profileValuesEqual(currentValue, legacyValue)) {
       throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
     }
@@ -1001,7 +982,7 @@ function legacyPendingWasApplied(
   if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
   if (profile.updatedAt !== revision) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
   if (revision < pending.record.updatedAt) {
-    if (profile.roster !== undefined && !durableBotBindingMatches(profile.roster, pending.record)) {
+    if (profile.roster !== undefined && !immutableBotBindingMatches(profile.roster, pending.record)) {
       throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
     }
     return false
@@ -1028,7 +1009,7 @@ function legacyPendingWasApplied(
       const expectedRoster = expected.roster
       const profileRoster = profile.roster
       return expectedRoster !== undefined && profileRoster !== undefined
-        && durableBotBindingMatches(profileRoster, expectedRoster)
+        && immutableBotBindingMatches(profileRoster, expectedRoster)
     }
     return true
   })
@@ -1541,7 +1522,7 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
     ...(profile.roster === undefined ? {} : {
       ownerId: profile.roster.ownerId,
       cwd: profile.roster.cwd,
-      agentPreset: profile.roster.agentPreset,
+      ...(profile.roster.agentPreset === undefined ? {} : { agentPreset: profile.roster.agentPreset }),
       state: profile.roster.state,
       createdAt: profile.roster.createdAt,
     }),
@@ -3203,7 +3184,7 @@ export class BotService extends TypertRemoteService {
       await bots.put(id, pending.record)
       return finishPendingProfile(state)
     }
-    if (!durableBotBindingMatches(current, pending.record)) {
+    if (!immutableBotBindingMatches(current, pending.record)) {
       throw new RemoteError(
         'gateway/conflict',
         'Bot profile revision cannot replay a pending transaction because Bot identity changed during legacy profile recovery',
