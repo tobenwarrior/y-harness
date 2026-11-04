@@ -1100,6 +1100,19 @@ function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfile
   }
 }
 
+function sameSharedBotRoster(expected: readonly BotView[], current: readonly BotView[]): boolean {
+  const byId = new Map(current.map(bot => [String(bot.id), bot]))
+  if (expected.length === current.length && new Set(current.map(bot => String(bot.id))).size !== expected.length) return false
+  return expected.every((bot) => {
+    const candidate = byId.get(String(bot.id))
+    return candidate !== undefined
+      && candidate.sessionId === bot.sessionId
+      && candidate.updatedAt === bot.updatedAt
+      && candidate.state === bot.state
+      && candidate.availability === bot.availability
+  })
+}
+
 function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof botProfileSnapshotSchema> | undefined): BotStoredRecord {
   if (profile === undefined) return record
   const {
@@ -6735,6 +6748,7 @@ export class BotService extends TypertRemoteService {
         signal?.throwIfAborted()
         return bots
       }, signal),
+      withBotRoster: (expected, signal, operation) => this.withSharedBotRoster(expected, signal, operation),
       findBot: (botId, signal) => this.serialize(async () => {
         signal?.throwIfAborted()
         const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === botId)
@@ -6866,6 +6880,49 @@ export class BotService extends TypertRemoteService {
       deliverSharedGroup: request => this.deliverSharedGroup(request),
       recoverSharedGroupDelivery: request => this.recoverSharedGroupDeliveryFence(request),
     }
+  }
+
+  /**
+   * Hold the durable Bot profile revision record while a shared-group
+   * admission commits. Profile writes from another Host queue behind this
+   * fence, so a Bot cannot disappear or change after roster validation and
+   * before the shared authority mutation.
+   */
+  private async withSharedBotRoster<T>(
+    expected: readonly BotView[],
+    signal: AbortSignal | undefined,
+    operation: () => Promise<T>,
+  ): Promise<{ readonly valid: true; readonly value: T } | { readonly valid: false }> {
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const credentials = this.credentials ?? this.ctx.get('credentials')
+      if (credentials === undefined) return { valid: false as const }
+      const domain = await this.getDomain()
+      const bots = domain.table('bots')
+      const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
+      let result: { readonly valid: true; readonly value: T } | { readonly valid: false } | undefined
+      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+        let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+        if (state.pending !== undefined) {
+          await bots.put(state.pending.record.id, state.pending.record)
+          this.blockedProfileTransactions.delete(state.pending.transactionId)
+          state = finishPendingProfile(state)
+        }
+        const current = [...bots.entries()].map(([, record]) => this.view(
+          applyProfileSnapshot(record, state.profiles[String(record.id)]),
+        ))
+        if (!sameSharedBotRoster(expected, current)) {
+          result = { valid: false }
+        } else {
+          signal?.throwIfAborted()
+          result = { valid: true, value: await operation() }
+        }
+        if (stored === undefined && legacyProfileState === undefined && state.pending === undefined) return undefined
+        return profileRevisionRecordOfState(state)
+      })
+      if (result === undefined) throw new Error('shared Bot roster fence did not produce a result')
+      return result
+    }, signal)
   }
 
   private registerSharedGroupSessions(bindings: readonly SharedGroupSessionBinding[]): void {

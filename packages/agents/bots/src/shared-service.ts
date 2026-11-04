@@ -117,6 +117,8 @@ export interface SharedBotProfileUpdate {
 export interface SharedBotHost extends SharedGroupHost {
   /** List the operator-owned Bots without exposing private Session data. */
   readonly listBots: (signal?: AbortSignal) => Promise<readonly BotView[]>
+  /** Hold the durable Bot-profile lifecycle fence while one group operation commits. */
+  readonly withBotRoster: NonNullable<SharedGroupHost['withBotRoster']>
   /** Find one operator-owned Bot by stable id. */
   readonly findBot: (botId: BotId, signal?: AbortSignal) => Promise<BotView | undefined>
   /**
@@ -409,7 +411,7 @@ export class SharedBotService {
     }
     let domain: Domain<typeof sharedBotDomain> | undefined
     try {
-      await authority.mutateExtension(SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY, async (current) => {
+      await authority.mutateExtension(SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY, async (current, authorityState) => {
         if (current !== undefined && !sharedPairKeyMigrationSchema.safeParse(current).success) {
           throw new Error('shared Bot pair-key migration marker is invalid')
         }
@@ -419,6 +421,11 @@ export class SharedBotService {
         domain = await facility.open(sharedBotDomain)
         await migrateSharedPairTable(domain.table('memberships'), 'memberships')
         await migrateSharedPairTable(domain.table('private_sessions'), 'private_sessions')
+        await reconcileInviteMirror(
+          domain.table('invites'),
+          authorityState.invites ?? [],
+          options.now?.() ?? Date.now(),
+        )
         return {
           value: undefined,
           next: { version: SHARED_PAIR_KEY_MIGRATION_VERSION },
@@ -426,7 +433,9 @@ export class SharedBotService {
       })
       if (domain === undefined) throw new Error('shared Bot domain did not open during migration')
       const membershipSnapshot = await initializeMembershipSnapshot(authority, credentials, domain.table('memberships'))
+      await reconcileMembershipMirror(authority, domain.table('memberships'))
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
+      await reconcilePrivateSessionMirror(authority, domain.table('private_sessions'))
       return new SharedBotService(owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options)
     } catch (error) {
       if (domain !== undefined) await waitForTracked([domain.close()])
@@ -2001,6 +2010,72 @@ async function initializePrivateSessionSnapshot(
       bindings,
     }
     return { value: snapshot, next: snapshot }
+  })
+}
+
+/** Reconcile invite mirror rows against the authority state while its lock is held. */
+async function reconcileInviteMirror(
+  table: KvTable<string, SharedInviteRecord>,
+  authorityInvites: readonly { readonly digest: string; readonly expiresAt: number }[],
+  now: number,
+): Promise<void> {
+  const active = new Set(authorityInvites
+    .filter(invite => now < invite.expiresAt)
+    .map(invite => invite.digest))
+  for (const [key] of [...table.entries()]) {
+    if (!active.has(key)) await table.delete(key)
+  }
+}
+
+/**
+ * Reconcile membership rows against the authority extension. A failed mirror
+ * write may leave a row behind after the authority mutation rejects; stale
+ * rows are never treated as grants and are removed on the next Host startup.
+ */
+async function reconcileMembershipMirror(
+  authority: SharedAccessAuthority,
+  table: KvTable<string, SharedMembershipRecord>,
+): Promise<void> {
+  await authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current) => {
+    const snapshot = parseMembershipSnapshot(current)
+    const expected = new Map(snapshot.memberships.map(member => [membershipKey(member.botId, member.principalId), member]))
+    for (const [storedKey, record] of [...table.entries()]) {
+      const canonicalKey = membershipKey(record.botId, record.principalId)
+      if (storedKey !== canonicalKey) throw new Error('shared Bot membership mirror key changed during reconciliation')
+      const authoritative = expected.get(canonicalKey)
+      if (authoritative === undefined) {
+        await table.delete(storedKey)
+      } else if (!isDeepStrictEqual(record, authoritative)) {
+        await table.put(storedKey, authoritative)
+      }
+      expected.delete(canonicalKey)
+    }
+    for (const [key, record] of expected) await table.put(key, record)
+    return { value: undefined, next: current }
+  })
+}
+
+/** Reconcile private-Session mirror rows against their authority bindings. */
+async function reconcilePrivateSessionMirror(
+  authority: SharedAccessAuthority,
+  table: KvTable<string, SharedPrivateSessionRecord>,
+): Promise<void> {
+  await authority.mutateExtension(SHARED_PRIVATE_SESSIONS_EXTENSION_KEY, async (current) => {
+    const snapshot = parsePrivateSessionSnapshot(current)
+    const expected = new Map(snapshot.bindings.map(binding => [sessionKey(binding.botId, binding.principalId), binding]))
+    for (const [storedKey, record] of [...table.entries()]) {
+      const canonicalKey = sessionKey(record.botId, record.principalId)
+      if (storedKey !== canonicalKey) throw new Error('shared Bot private-Session mirror key changed during reconciliation')
+      const authoritative = expected.get(canonicalKey)
+      if (authoritative === undefined) {
+        await table.delete(storedKey)
+      } else if (!isDeepStrictEqual(record, authoritative)) {
+        await table.put(storedKey, authoritative)
+      }
+      expected.delete(canonicalKey)
+    }
+    for (const [key, record] of expected) await table.put(key, record)
+    return { value: undefined, next: current }
   })
 }
 

@@ -339,6 +339,16 @@ export type SharedGroupDeliveryRecord = Omit<BotGroupDeliveryRecord, 'updatedAt'
 export interface SharedGroupHost {
   /** Read the current operator-owned Bot roster. */
   readonly listBots: (signal?: AbortSignal) => Promise<readonly BotView[]>
+  /**
+   * Hold the durable Bot-profile lifecycle fence while one group operation
+   * commits. Shared group admission fails closed when a Host cannot provide
+   * this capability.
+   */
+  readonly withBotRoster?: <T>(
+    expected: readonly BotView[],
+    signal: AbortSignal | undefined,
+    operation: () => Promise<T>,
+  ) => Promise<{ readonly valid: true; readonly value: T } | { readonly valid: false }>
   /** Admit a new durable group Session with the shared-only preset and cwd. */
   readonly createSharedGroupSession?: (
     bot: BotView,
@@ -580,7 +590,7 @@ export class SharedBotGroupService {
     const botIds = normalizeBotIds(request.botIds)
     const id = request.id === undefined ? BotGroupId(`bot-group-${randomUUID()}`) : normalizeGroupId(request.id)
     const availableBots = await this.stableActiveBots(botIds, signal)
-    const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(principalId, 'write-group', signal, (snapshot, memberships) => {
       requireBotAccess(memberships, botIds, principalId, 'write-group')
       const bots = this.activeBotsFromList(botIds, availableBots)
       const existing = snapshot.groups.find(group => group.id === id)
@@ -614,7 +624,7 @@ export class SharedBotGroupService {
       ]
       const next = { ...snapshot, revision: snapshot.revision + 1, groups: [...snapshot.groups, group], sessions }
       return { snapshot: next, value: { group: groupView(group, bots) } }
-    })
+    }))
     this.host.registerSharedGroupSessions?.(result.snapshot.sessions.filter(session => session.revokedAt === undefined))
     return result.value
   }
@@ -623,7 +633,7 @@ export class SharedBotGroupService {
   async list(principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal): Promise<BotGroupListValue> {
     this.requireIsolatedHost()
     const bots = await this.host.listBots(signal)
-    const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
+    const result = await this.withRosterFence(bots, signal, () => this.locked(principalId, 'read-group', signal, (snapshot, memberships) => {
       const groups: BotGroupView[] = []
       for (const group of snapshot.groups) {
         if (!hasGroupAccess(group, memberships, principalId, 'read-group')) continue
@@ -638,7 +648,7 @@ export class SharedBotGroupService {
           ),
         },
       }
-    })
+    }))
     return result.value
   }
 
@@ -652,7 +662,7 @@ export class SharedBotGroupService {
     const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
     const botIds = normalizeBotIds(request.botIds)
     const availableBots = await this.stableActiveBots(botIds, signal)
-    const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(principalId, 'write-group', signal, (snapshot, memberships) => {
       const group = findGroup(snapshot, normalizeGroupId(request.groupId))
       requireGroupAccess(group, memberships, principalId, 'write-group')
       if (group.ownerPrincipalId !== principalId) throw new SharedGroupError('gateway/forbidden', 'only the shared group owner may edit its roster')
@@ -719,7 +729,7 @@ export class SharedBotGroupService {
         responseReservations: snapshot.responseReservations.filter(id => !removedDeliveryIds.has(id)),
       }
       return { snapshot: next, value: { group: groupView(nextGroup, bots) } }
-    })
+    }))
     this.host.registerSharedGroupSessions?.(result.snapshot.sessions.filter(session => session.revokedAt === undefined))
     return result.value
   }
@@ -732,7 +742,7 @@ export class SharedBotGroupService {
   ): Promise<BotGroupInspectValue> {
     this.requireIsolatedHost()
     const availableBots = await this.stableBotRoster(signal)
-    const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(principalId, 'read-group', signal, (snapshot, memberships) => {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'read-group')
       const bots = this.activeBotsFromList(group.botIds, availableBots)
@@ -754,7 +764,7 @@ export class SharedBotGroupService {
           ...(delivery.error === undefined ? {} : { error: delivery.error }),
         }))
       return { snapshot, value: { group: groupView(group, bots), messages, deliveries } }
-    })
+    }))
     return result.value
   }
 
@@ -1724,6 +1734,20 @@ export class SharedBotGroupService {
     })
   }
 
+  private async withRosterFence<T>(
+    expected: readonly BotView[],
+    signal: AbortSignal,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const fence = this.host.withBotRoster
+    if (fence === undefined) return operation()
+    const result = await fence(expected, signal, operation)
+    if (!result.valid) {
+      throw new SharedGroupError('gateway/conflict', 'shared Bot roster changed while the group was being committed')
+    }
+    return result.value
+  }
+
   private async mutateWithoutActor(
     work: (snapshot: SharedGroupSnapshot) => SharedGroupSnapshot | Promise<SharedGroupSnapshot>,
   ): Promise<void> {
@@ -1788,7 +1812,8 @@ export class SharedBotGroupService {
       || this.host.inspectSharedGroupSession === undefined
       || this.host.flushSharedGroupSession === undefined
       || this.host.registerSharedGroupSessions === undefined
-      || this.host.deliverSharedGroup === undefined) {
+      || this.host.deliverSharedGroup === undefined
+      || this.host.withBotRoster === undefined) {
       throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
     }
   }

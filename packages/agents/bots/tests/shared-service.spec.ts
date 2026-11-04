@@ -177,6 +177,26 @@ class SharedBotHostFixture implements SharedBotHost {
 
   listBots = async (_signal?: AbortSignal): Promise<readonly BotView[]> => [...this.bots]
 
+  withBotRoster = async <T>(
+    expected: readonly BotView[],
+    signal: AbortSignal | undefined,
+    operation: () => Promise<T>,
+  ): Promise<{ readonly valid: true; readonly value: T } | { readonly valid: false }> => {
+    signal?.throwIfAborted()
+    const current = await this.listBots(signal)
+    const byId = new Map(current.map(bot => [String(bot.id), bot]))
+    const valid = expected.every((bot) => {
+      const candidate = byId.get(String(bot.id))
+      return candidate !== undefined
+        && candidate.sessionId === bot.sessionId
+        && candidate.updatedAt === bot.updatedAt
+        && candidate.state === bot.state
+        && candidate.availability === bot.availability
+    })
+    if (!valid) return { valid: false }
+    return { valid: true, value: await operation() }
+  }
+
   findBot = async (botId: BotId, _signal?: AbortSignal): Promise<BotView | undefined> => this.bots.find(bot => bot.id === botId)
 
   withBot = async <T>(
@@ -784,6 +804,134 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('cleans an enrollment mirror left by a failed authority commit', async () => {
+    const value = await fixture()
+    let reloaded: SharedBotService | undefined
+    try {
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const invites = domain.table('invites')
+      const originalDelete = invites.delete.bind(invites)
+      let failed = false
+      vi.spyOn(invites, 'delete').mockImplementation(async (key) => {
+        if (!failed) {
+          failed = true
+          throw new Error('injected enrollment mirror failure')
+        }
+        return originalDelete(key)
+      })
+
+      const invite = await value.service.createInvite(BotId('bot-chief'), 'owner')
+      await expect(value.service.enroll(invite.code, enrollmentRequest())).rejects.toThrow()
+      expect([...domain.table('memberships').entries()]).toHaveLength(1)
+      vi.restoreAllMocks()
+
+      await value.service.dispose()
+      value.pool.failNextWrites = 1
+      await expect(SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })).rejects.toThrow('injected write failure')
+      vi.restoreAllMocks()
+      reloaded = await SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })
+      const reloadedDomain = value.facility.get('agent_bot_shares')
+      if (reloadedDomain === undefined) throw new Error('shared Bot domain did not reopen')
+      expect([...reloadedDomain.table('memberships').entries()]).toHaveLength(0)
+    } finally {
+      vi.restoreAllMocks()
+      await reloaded?.dispose()
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
+  it('cleans an invite mirror left by a failed publication and cleanup', async () => {
+    const value = await fixture()
+    let reloaded: SharedBotService | undefined
+    try {
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const invites = domain.table('invites')
+      const originalPut = invites.put.bind(invites)
+      let failedPut = false
+      vi.spyOn(invites, 'put').mockImplementation(async (key, record) => {
+        await originalPut(key, record)
+        if (!failedPut) {
+          failedPut = true
+          throw new Error('injected invite publication failure')
+        }
+      })
+      vi.spyOn(invites, 'delete').mockRejectedValue(new Error('injected invite cleanup failure'))
+
+      await expect(value.service.createInvite(BotId('bot-chief'), 'owner')).rejects.toThrow()
+      vi.restoreAllMocks()
+
+      await value.service.dispose()
+      reloaded = await SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })
+      const reloadedDomain = value.facility.get('agent_bot_shares')
+      if (reloadedDomain === undefined) throw new Error('shared Bot domain did not reopen')
+      expect([...reloadedDomain.table('invites').entries()]).toHaveLength(0)
+    } finally {
+      vi.restoreAllMocks()
+      await reloaded?.dispose()
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
+  it('cleans a private-Session mirror left by a failed binding commit', async () => {
+    const value = await fixture()
+    let reloaded: SharedBotService | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const admitted = await principal(value, enrollment)
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const sessions = domain.table('private_sessions')
+      const originalPut = sessions.put.bind(sessions)
+      let failed = false
+      vi.spyOn(sessions, 'put').mockImplementation(async (key, record) => {
+        await originalPut(key, record)
+        if (!failed) {
+          failed = true
+          throw new Error('injected private-session binding failure')
+        }
+      })
+
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: BotId('bot-chief'), text: 'create a binding' },
+        new AbortController().signal,
+        admitted.peer,
+      )).resolves.toMatchObject({ ok: false })
+      vi.restoreAllMocks()
+
+      await value.service.dispose()
+      reloaded = await SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })
+      const reloadedDomain = value.facility.get('agent_bot_shares')
+      if (reloadedDomain === undefined) throw new Error('shared Bot domain did not reopen')
+      expect([...reloadedDomain.table('private_sessions').entries()]).toHaveLength(0)
+      expect(reloaded.privateSessionBindings()).toHaveLength(0)
+    } finally {
+      vi.restoreAllMocks()
+      await reloaded?.dispose()
+      await value.authority.dispose()
+      await value.ctx.fiber.dispose()
+    }
+  })
+
   it('uses bounded case-sensitive keys for mixed-case Bot ids on JSON storage', async () => {
     const value = await jsonFixture()
     try {
@@ -1154,6 +1302,36 @@ describe('shared Bot service', () => {
 
       const result = await value.service.handle('bots/share/create-group', {
         name: 'Stale roster room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      expect(result.ok).toBe(false)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('fails closed when a Bot is removed after the stable roster read', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const originalListBots = value.host.listBots
+      let reads = 0
+      value.host.listBots = async (signal) => {
+        const bots = await originalListBots(signal)
+        if (reads++ === 1) value.host.removeBot(BotId('bot-second'))
+        return bots
+      }
+
+      const result = await value.service.handle('bots/share/create-group', {
+        name: 'Roster changed after validation',
         botIds: [BotId('bot-chief'), BotId('bot-second')],
       }, new AbortController().signal, owner.peer)
       expect(result.ok).toBe(false)

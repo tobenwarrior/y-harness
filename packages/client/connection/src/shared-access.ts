@@ -120,6 +120,11 @@ export interface SharedAccessStateSnapshot {
     readonly id: SharedPrincipalId
     readonly revokedAt?: number
   }[]
+  /** Pending invite digests used by durable mirror consumers; the code is never exposed. */
+  readonly invites?: readonly {
+    readonly digest: string
+    readonly expiresAt: number
+  }[]
 }
 
 /** Result of one atomic authority-extension mutation. */
@@ -715,6 +720,7 @@ function snapshotState(state: MutableState): SharedAccessStateSnapshot {
       id: principal.id,
       ...(principal.revokedAt === undefined ? {} : { revokedAt: principal.revokedAt }),
     })),
+    invites: state.invites.map(invite => ({ digest: invite.digest, expiresAt: invite.expiresAt })),
   }
 }
 
