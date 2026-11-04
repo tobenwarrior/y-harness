@@ -446,6 +446,39 @@ interface SecondaryFixture {
   readonly close: () => Promise<void>
 }
 
+type DiskFixture = JsonFixture | SqliteFixture
+
+async function secondaryDiskFixture(value: DiskFixture): Promise<SecondaryFixture> {
+  const ctx = new Context()
+  await ctx.plugin(Storage)
+  const sqlite = 'path' in value
+  const backend: StorageBackend = sqlite
+    ? new SqliteStorageBackend(new SqliteConfig({ path: value.path }))
+    : new JsonStorageBackend(value.root)
+  ctx.effect(() => ctx.storage.backend.register(sqlite ? 'sqlite' : 'json', backend))
+  ctx.effect(() => async () => { await backend.close() })
+  const facility = new DomainFacility(ctx, { backend: sqlite ? 'sqlite' : 'json' })
+  ctx.effect(() => {
+    const unmount = ctx.storage.mount('domain', facility)
+    return async () => { await facility.closeAll(); unmount() }
+  })
+  const credentials = new KeyedCredentials(ctx, value.records)
+  const authority = await SharedAccessAuthority.create(ctx, credentials, {
+    sessionMaxAgeMs: 60_000,
+    inviteMaxAgeMs: 60_000,
+    now: () => value.clock.value,
+  })
+  const host = new SharedBotHostFixture()
+  const service = await SharedBotService.create(ctx, facility, authority, host, {
+    now: () => value.clock.value,
+    membershipPollIntervalMs: 10,
+  })
+  return {
+    ctx, facility, authority, service, host,
+    close: async () => { await service.dispose(); await authority.dispose(); await ctx.fiber.dispose() },
+  }
+}
+
 async function secondaryFixture(value: Fixture, includeSecondBot = false, includeThirdBot = false): Promise<SecondaryFixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -517,7 +550,11 @@ async function replacePrivateSessionBinding(
 }
 
 async function principal(fixtureValue: Fixture, enrollment: SharedAccessEnrollment) {
-  const admitted = await fixtureValue.authority.admit(request(cookie(enrollment)))
+  return principalFromAuthority(fixtureValue.authority, enrollment)
+}
+
+async function principalFromAuthority(authority: SharedAccessAuthority, enrollment: SharedAccessEnrollment) {
+  const admitted = await authority.admit(request(cookie(enrollment)))
   if (!('peer' in admitted)) throw new Error(`admission rejected: ${String(admitted.rejection)}`)
   const principalId = sharedPrincipalOf(admitted.peer)
   if (principalId === undefined) throw new Error('missing shared principal')
@@ -714,6 +751,34 @@ describe('shared Bot service', () => {
       expect([...domain.table('memberships').keys()]).toEqual([
         expect.stringMatching(/^shared-v3_[a-f0-9]{64}_[a-f0-9]{64}$/),
       ])
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not publish a Bot invite before its mirror row is durable', async () => {
+    const value = await fixture()
+    try {
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const invites = domain.table('invites')
+      const originalPut = invites.put.bind(invites)
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      let releaseResolve: (() => void) | undefined
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      vi.spyOn(invites, 'put').mockImplementation(async (key, record) => {
+        enteredResolve?.()
+        await release
+        await originalPut(key, record)
+      })
+
+      const pending = value.service.createInvite(BotId('bot-chief'), 'owner')
+      await entered
+      expect(pendingInviteCount(value.records.get(credentialKey('client-connection', 'shared-access')))).toBe(0)
+      releaseResolve?.()
+      await expect(pending).resolves.toEqual(expect.objectContaining({ expiresAt: 61_000 }))
+      expect(pendingInviteCount(value.records.get(credentialKey('client-connection', 'shared-access')))).toBe(1)
     } finally {
       await value.close()
     }
@@ -1063,6 +1128,100 @@ describe('shared Bot service', () => {
         value: { group: { name: 'Lock-order room' } },
       })
     } finally {
+      await value.close()
+    }
+  })
+
+  it('fails closed when a Bot is removed after the pre-lock group roster read', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const originalListBots = value.host.listBots
+      let reads = 0
+      value.host.listBots = async (signal) => {
+        const bots = await originalListBots(signal)
+        if (reads++ === 0) value.host.removeBot(BotId('bot-second'))
+        return bots
+      }
+
+      const result = await value.service.handle('bots/share/create-group', {
+        name: 'Stale roster room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      expect(result.ok).toBe(false)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not let a stale revocation delete a later enrollment mirror', async () => {
+    const value = await fixture()
+    let secondary: SecondaryFixture | undefined
+    let releaseResolve: (() => void) | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: BotId('bot-chief'), text: 'establish revocation race',
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({ ok: true })
+
+      value.clock.value = 2_000
+      const retryInvite = await value.service.createInvite(
+        BotId('bot-chief'), 'collaborator', owner.botPrincipalId,
+      )
+      secondary = await secondaryFixture(value)
+      const originalResolve = value.host.resolvePrivateAgent
+      let enteredResolve: (() => void) | undefined
+      const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+      const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+      value.host.resolvePrivateAgent = async (sessionId: SessionId, signal: AbortSignal) => {
+        enteredResolve?.()
+        await release
+        return originalResolve(sessionId, signal)
+      }
+
+      const revoke = value.service.revokeMember(
+        BotId('bot-chief'), collaborator.botPrincipalId, owner.botPrincipalId,
+      )
+      await entered
+      const retryEnrollment = await secondary.service.enroll(
+        retryInvite.code,
+        request(cookie(collaboratorEnrollment)),
+      )
+      expect(retryEnrollment).toMatchObject({ role: 'collaborator', principalId: collaborator.botPrincipalId })
+      releaseResolve?.()
+      await expect(revoke).resolves.toMatchObject({ revoked: true })
+
+      const authoritySnapshot = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      const membership = authoritySnapshot.memberships.find(member =>
+        member.botId === BotId('bot-chief') && member.principalId === collaborator.botPrincipalId)
+      expect(membership).toBeDefined()
+      const domain = secondary.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const mirrored = [...domain.table('memberships').entries()].find(([, record]) =>
+        record.botId === BotId('bot-chief') && record.principalId === collaborator.botPrincipalId)?.[1]
+      expect(mirrored).toEqual(membership)
+    } finally {
+      releaseResolve?.()
+      await secondary?.close()
       await value.close()
     }
   })
@@ -2570,6 +2729,137 @@ describe('shared Bot service', () => {
       await reloaded?.dispose()
       await value.authority.dispose()
       await value.ctx.fiber.dispose()
+    }
+  })
+
+  it.each([
+    ['JSON', jsonFixture],
+    ['SQLite', sqliteFixture],
+  ] as const)('keeps a stale Host private-Session mirror safe during %s migration', async (_label, open) => {
+    const value = await open()
+    const secondaries: SecondaryFixture[] = []
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const admitted = await principal(value, enrollment)
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: BotId('bot-chief'), text: 'seed private mirror' },
+        new AbortController().signal,
+        admitted.peer,
+      )).resolves.toMatchObject({ ok: true })
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const [entry] = [...domain.table('private_sessions').entries()]
+      if (entry === undefined) throw new Error('private Session mirror is missing')
+      const session = sharedPrivateSessionSchema.parse(entry[1])
+      const legacy = 'path' in value
+        ? `${encodeURIComponent(String(session.botId))}:${encodeURIComponent(String(session.principalId))}`
+        : `shared-v2_${String(session.botId)}_${String(session.principalId)}`
+      await domain.table('private_sessions').delete(entry[0])
+      await domain.table('private_sessions').put(legacy, session)
+
+      const [firstSecondary, secondSecondary] = await Promise.all([
+        secondaryDiskFixture(value),
+        secondaryDiskFixture(value),
+      ])
+      secondaries.push(firstSecondary, secondSecondary)
+      const secondaryPrincipal = await principalFromAuthority(firstSecondary.authority, enrollment)
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: BotId('bot-chief'), text: 'stale Host mirror write' },
+        new AbortController().signal,
+        admitted.peer,
+      )).resolves.toMatchObject({ ok: true })
+      const secondaryDomain = firstSecondary.facility.get('agent_bot_shares')
+      if (secondaryDomain === undefined) throw new Error('secondary shared Bot domain is not open')
+      const keys = [...secondaryDomain.table('private_sessions').keys()]
+      expect(keys).toHaveLength(1)
+      expect(keys[0]).toMatch(/^shared-v3_[a-f0-9]{64}_[a-f0-9]{64}$/)
+      for (const secondary of secondaries) {
+        expect(secondary.service.privateSessionBindings()).toContainEqual(expect.objectContaining({
+          botId: session.botId,
+          principalId: session.principalId,
+        }))
+      }
+      expect(secondaryPrincipal.botPrincipalId).toBe(admitted.botPrincipalId)
+    } finally {
+      await Promise.all(secondaries.map(secondary => secondary.close()))
+      await value.close()
+    }
+  })
+
+  it.each([
+    ['JSON', jsonFixture, 'json'],
+    ['SQLite', sqliteFixture, 'sqlite'],
+  ] as const)('retries private-Session migration after a %s write failure', async (_label, open, backendName) => {
+    const value = await open()
+    let reloaded: SharedBotService | undefined
+    let restoreOpen: (() => void) | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const admitted = await principal(value, enrollment)
+      await expect(value.service.handle(
+        'bots/share/chat',
+        { botId: BotId('bot-chief'), text: 'seed migration retry' },
+        new AbortController().signal,
+        admitted.peer,
+      )).resolves.toMatchObject({ ok: true })
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const [entry] = [...domain.table('private_sessions').entries()]
+      if (entry === undefined) throw new Error('private Session mirror is missing')
+      const session = sharedPrivateSessionSchema.parse(entry[1])
+      const legacy = backendName === 'json'
+        ? `shared-v2_${String(session.botId)}_${String(session.principalId)}`
+        : `${encodeURIComponent(String(session.botId))}:${encodeURIComponent(String(session.principalId))}`
+      await domain.table('private_sessions').delete(entry[0])
+      await domain.table('private_sessions').put(legacy, session)
+      await value.service.dispose()
+
+      const backend = value.ctx.storage.backend.get(backendName)
+      if (backend.kv === undefined) throw new Error(`${backendName} backend has no kv facet`)
+      const originalOpen = backend.kv.open.bind(backend.kv)
+      let failed = false
+      backend.kv.open = async (descriptor) => {
+        const unit = await originalOpen(descriptor)
+        const originalPut = unit.putRecord.bind(unit)
+        unit.putRecord = async (table, key, next) => {
+          if (!failed && table === 'private_sessions' && key.startsWith('shared-v3_')) {
+            failed = true
+            throw new Error('injected private-session migration failure')
+          }
+          return originalPut(table, key, next)
+        }
+        return unit
+      }
+      restoreOpen = () => { backend.kv!.open = originalOpen }
+      await expect(SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })).rejects.toThrow('injected private-session migration failure')
+      restoreOpen()
+      restoreOpen = undefined
+
+      reloaded = await SharedBotService.create(value.ctx, value.facility, value.authority, value.host, {
+        now: () => value.clock.value,
+        membershipPollIntervalMs: 10,
+      })
+      const migrated = value.facility.get('agent_bot_shares')
+      if (migrated === undefined) throw new Error('shared Bot domain did not reopen')
+      expect([...migrated.table('private_sessions').keys()]).toEqual([
+        expect.stringMatching(/^shared-v3_[a-f0-9]{64}_[a-f0-9]{64}$/),
+      ])
+      expect(reloaded.privateSessionBindings()).toEqual([session])
+    } finally {
+      restoreOpen?.()
+      await reloaded?.dispose()
+      await value.close()
     }
   })
 

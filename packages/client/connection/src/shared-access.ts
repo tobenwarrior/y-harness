@@ -238,6 +238,8 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
    * invite. A guard rejection leaves no invite behind.
    * @param authorize - synchronous or asynchronous authority-side guard. The
    *   second argument is private extension data observed in the same mutation.
+   * @param persist - optional mirror write performed before the authority
+   *   records the invite. A rejected mirror leaves the invite unpublished.
    * @returns opaque invite code and its expiry.
    */
   async createInviteIf(
@@ -245,11 +247,13 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
       state: SharedAccessStateSnapshot,
       extensions: Readonly<Record<string, unknown>>,
     ) => void | Promise<void>,
+    persist?: (invite: SharedAccessInvite) => void | Promise<void>,
   ): Promise<SharedAccessInvite> {
     const expiresAt = expiry(this.options.now(), this.options.inviteMaxAgeMs)
     const code = encodeBase64Url(this.options.randomBytes(SHARED_ACCESS_CODE_BYTES))
     await this.mutate(async (state) => {
       await authorize(snapshotState(state), { ...state.extensions })
+      await persist?.({ code: SharedInviteCode(code), expiresAt })
       state.invites.push({ digest: sharedInviteDigest(code), expiresAt })
     })
     return { code: SharedInviteCode(code), expiresAt }

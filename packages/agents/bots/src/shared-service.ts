@@ -539,7 +539,7 @@ export class SharedBotService {
       const digest = sharedInviteDigest(code)
       const pending = this.invites.get(digest)
       if (pending === undefined || this.now() >= pending.expiresAt) {
-        if (pending !== undefined) await this.invites.delete(digest)
+        if (pending !== undefined) await this.withPairKeyMirrorWrite(() => this.invites.delete(digest))
         throw new SharedServiceFault('gateway/bad-request', 'shared Bot invite is invalid or expired')
       }
       const operation = await this.host.withBot(pending.botId, undefined, async (bot) => {
@@ -568,45 +568,41 @@ export class SharedBotService {
         }
         let existingMembership: SharedMembershipRecord | undefined
         try {
-          await this.memberships.put(membershipKey(membership.botId, membership.principalId), membership)
-          await this.updateMemberships((memberships) => {
+          await this.updateMemberships(async (memberships) => {
             const existing = memberships.find(member =>
               member.botId === membership.botId && member.principalId === membership.principalId)
             if (existing !== undefined) {
               existingMembership = existing
+              const existingKey = membershipKey(existing.botId, existing.principalId)
+              const stored = this.memberships.get(existingKey)
+              if (stored === undefined || !isDeepStrictEqual(stored, existing)) {
+                await this.memberships.put(existingKey, existing)
+              }
+              await this.invites.delete(digest)
               return { memberships, value: undefined }
             }
             if (membership.role === 'owner' && memberships.some(member =>
               member.botId === membership.botId && member.role === 'owner')) {
               throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
             }
+            await this.memberships.put(membershipKey(membership.botId, membership.principalId), membership)
+            await this.invites.delete(digest)
             return { memberships: [...memberships, membership], value: undefined }
           })
           if (existingMembership !== undefined) {
-            // The durable table write precedes the cross-host extension lock;
-            // restore the authoritative row when another invite won the race.
-            await this.memberships.put(
-              membershipKey(existingMembership.botId, existingMembership.principalId),
-              existingMembership,
-            )
             if (existingMembership.role !== pending.role) {
-              await this.invites.delete(digest)
               throw new SharedServiceFault('gateway/bad-request', 'shared Bot principal is already enrolled with a different role')
             }
           }
-          await this.invites.delete(digest)
         } catch (error) {
           if (existingMembership !== undefined) {
-            await this.memberships.put(
-              membershipKey(existingMembership.botId, existingMembership.principalId),
-              existingMembership,
-            ).catch(() => undefined)
             if (error instanceof SharedServiceFault) throw error
             throw new SharedServiceFault('gateway/internal', 'shared Bot enrollment could not restore its existing membership')
           }
-          await this.memberships.delete(membershipKey(membership.botId, membership.principalId)).catch(() => undefined)
-          await this.removeMembershipSnapshot(membership.botId, membership.principalId).catch(() => undefined)
-          await this.invites.delete(digest).catch(() => undefined)
+          // The membership extension and mirror are written in one
+          // authority-record mutation. If the credential provider reports an
+          // uncertain commit, do not issue a compensating delete that could
+          // remove a row from a committed grant; the next Host reconciles it.
           await this.authority.revokePrincipal(SharedPrincipalId(String(enrollment.principalId))).catch(() => undefined)
           if (error instanceof SharedServiceFault) throw error
           throw new SharedServiceFault('gateway/internal', 'shared Bot enrollment could not be stored')
@@ -1366,7 +1362,7 @@ export class SharedBotService {
         }
       } finally {
         try {
-          await this.memberships.delete(membershipKey(botId, committedTarget.principalId))
+          await this.removeMembershipMirrorIfUnclaimed(botId, committedTarget.principalId)
         } finally {
           if (quiescent) {
             this.deferredRemoteCleanup.delete(cleanupKey)
@@ -1676,50 +1672,48 @@ export class SharedBotService {
     const operation = await this.host.withBot(botId, signal, async () => {
       signal?.throwIfAborted()
       if (!BOT_SHARE_ROLES.includes(role)) throw new SharedServiceFault('gateway/bad-request', 'invalid shared Bot role')
-      const invite = await this.authority.createInviteIf((authorityState, extensions) => {
-        const snapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-        const memberships = snapshot.memberships.filter(member => member.botId === botId)
-        const owner = memberships.find(member => member.role === 'owner')
-        if (role === 'owner' && owner !== undefined) {
-          throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
-        }
-        if (role !== 'owner' && owner === undefined) {
-          throw new SharedServiceFault('gateway/bad-request', 'shared Bot must have an owner first')
-        }
-        if (actor !== undefined) {
-          const principal = authorityState.principals.find(candidate => String(candidate.id) === String(actor))
-          if (principal === undefined || principal.revokedAt !== undefined) {
-            throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+      let persistedDigest: string | undefined
+      let invite: { readonly code: SharedInviteCode; readonly expiresAt: number }
+      try {
+        invite = await this.authority.createInviteIf((authorityState, extensions) => {
+          const snapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+          const memberships = snapshot.memberships.filter(member => member.botId === botId)
+          const owner = memberships.find(member => member.role === 'owner')
+          if (role === 'owner' && owner !== undefined) {
+            throw new SharedServiceFault('gateway/bad-request', 'shared Bot already has an owner')
           }
-          this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, 'manage-members')
+          if (role !== 'owner' && owner === undefined) {
+            throw new SharedServiceFault('gateway/bad-request', 'shared Bot must have an owner first')
+          }
+          if (actor !== undefined) {
+            const principal = authorityState.principals.find(candidate => String(candidate.id) === String(actor))
+            if (principal === undefined || principal.revokedAt !== undefined) {
+              throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+            }
+            this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, 'manage-members')
+          }
+          signal?.throwIfAborted()
+        }, async (issued) => {
+          signal?.throwIfAborted()
+          const record: SharedInviteRecord = {
+            digest: sharedInviteDigest(issued.code),
+            botId,
+            role,
+            createdAt: this.now(),
+            expiresAt: issued.expiresAt,
+          }
+          persistedDigest = record.digest
+          await this.invites.put(record.digest, record)
+          signal?.throwIfAborted()
+        })
+      } catch (error) {
+        const digest = persistedDigest
+        if (digest !== undefined) {
+          await this.withPairKeyMirrorWrite(() => this.invites.delete(digest)).catch(() => undefined)
         }
-        signal?.throwIfAborted()
-      })
-      try {
-        signal?.throwIfAborted()
-      } catch (error) {
-        await this.authority.cancelInvite(invite.code).catch(() => undefined)
-        throw error
-      }
-      const record: SharedInviteRecord = {
-        digest: sharedInviteDigest(invite.code),
-        botId,
-        role,
-        createdAt: this.now(),
-        expiresAt: invite.expiresAt,
-      }
-      try {
-        await this.invites.put(record.digest, record)
-      } catch {
-        await this.authority.cancelInvite(invite.code).catch(() => undefined)
+        if (signal?.aborted) throw error
+        if (error instanceof SharedServiceFault) throw error
         throw new SharedServiceFault('gateway/internal', 'shared Bot invite could not be stored')
-      }
-      try {
-        signal?.throwIfAborted()
-      } catch (error) {
-        await this.invites.delete(record.digest).catch(() => undefined)
-        await this.authority.cancelInvite(invite.code).catch(() => undefined)
-        throw error
       }
       return invite
     })
@@ -1853,21 +1847,67 @@ export class SharedBotService {
     mutation: (memberships: readonly SharedMembershipRecord[], authorityState: SharedAccessStateSnapshot) => {
       readonly memberships: readonly SharedMembershipRecord[]
       readonly value: T
-    },
+    } | Promise<{
+      readonly memberships: readonly SharedMembershipRecord[]
+      readonly value: T
+    }>,
   ): Promise<T> {
     const result = await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, (current, authorityState) => {
       const snapshot = parseMembershipSnapshot(current)
-      const next = mutation(snapshot.memberships, authorityState)
-      return {
+      return Promise.resolve(mutation(snapshot.memberships, authorityState)).then(next => ({
         value: { memberships: next.memberships, value: next.value },
         next: {
           ...snapshot,
           memberships: next.memberships,
         },
-      }
+      }))
     })
     this.membershipSnapshot = result.memberships
     return result.value
+  }
+
+  /**
+   * Serialize one membership/invite mirror write with pair-key migration and
+   * every other current Host mirror writer. The callback must only touch the
+   * already-open storage table; it must not call another authority mutation
+   * or inspect a Bot while the credential record is exclusive.
+   * @param operation - one bounded durable table mutation.
+   * @returns the table mutation result after the authority fence commits.
+   */
+  private async withPairKeyMirrorWrite<T>(operation: () => Promise<T>): Promise<T> {
+    return this.authority.mutateExtension(SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY, async (current) => {
+      if (current !== undefined && !sharedPairKeyMigrationSchema.safeParse(current).success) {
+        throw new Error('shared Bot pair-key migration marker is invalid')
+      }
+      const value = await operation()
+      return {
+        value,
+        next: { version: SHARED_PAIR_KEY_MIGRATION_VERSION },
+      }
+    })
+  }
+
+  /**
+   * Remove one revoked membership row only while the authority still proves
+   * that no later enrollment has restored the membership. The table handle is
+   * Host-local, so the decision must come from the credential record rather
+   * than a cached table read.
+   * @param botId - Bot whose stale row may be removed.
+   * @param principalId - principal whose membership was revoked.
+   * @returns completion after the fenced reconciliation.
+   */
+  private async removeMembershipMirrorIfUnclaimed(
+    botId: BotId,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<void> {
+    await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current) => {
+      const snapshot = parseMembershipSnapshot(current)
+      if (snapshot.memberships.some(member => member.botId === botId && member.principalId === principalId)) {
+        return { value: undefined, next: current }
+      }
+      await this.memberships.delete(membershipKey(botId, principalId))
+      return { value: undefined, next: current }
+    })
   }
 
   private async mutateSharedMemory<T>(
@@ -1913,12 +1953,6 @@ export class SharedBotService {
     return operationResult.value
   }
 
-  private async removeMembershipSnapshot(botId: BotId, principalId: ReturnType<typeof BotPrincipalId>): Promise<void> {
-    await this.updateMemberships(memberships => ({
-      memberships: memberships.filter(member => !(member.botId === botId && member.principalId === principalId)),
-      value: undefined,
-    }))
-  }
 }
 
 async function initializeMembershipSnapshot(

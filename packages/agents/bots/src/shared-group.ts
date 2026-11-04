@@ -579,7 +579,7 @@ export class SharedBotGroupService {
     const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
     const botIds = normalizeBotIds(request.botIds)
     const id = request.id === undefined ? BotGroupId(`bot-group-${randomUUID()}`) : normalizeGroupId(request.id)
-    const availableBots = await this.host.listBots(signal)
+    const availableBots = await this.stableActiveBots(botIds, signal)
     const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
       requireBotAccess(memberships, botIds, principalId, 'write-group')
       const bots = this.activeBotsFromList(botIds, availableBots)
@@ -651,7 +651,7 @@ export class SharedBotGroupService {
     this.requireIsolatedHost()
     const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
     const botIds = normalizeBotIds(request.botIds)
-    const availableBots = await this.host.listBots(signal)
+    const availableBots = await this.stableActiveBots(botIds, signal)
     const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
       const group = findGroup(snapshot, normalizeGroupId(request.groupId))
       requireGroupAccess(group, memberships, principalId, 'write-group')
@@ -731,7 +731,7 @@ export class SharedBotGroupService {
     signal: AbortSignal,
   ): Promise<BotGroupInspectValue> {
     this.requireIsolatedHost()
-    const availableBots = await this.host.listBots(signal)
+    const availableBots = await this.stableBotRoster(signal)
     const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'read-group')
@@ -1746,6 +1746,42 @@ export class SharedBotGroupService {
     return selected
   }
 
+  /**
+   * Read the operator Bot roster twice before taking the authority lock. A
+   * lifecycle/profile revision that changes between reads is not safe to use
+   * for a group result, while reading the roster inside the authority
+   * mutation would invert the Host/storage lock order.
+   * @param signal - request cancellation signal.
+   * @returns a stable roster snapshot for one authority operation.
+   */
+  private async stableBotRoster(signal: AbortSignal): Promise<readonly BotView[]> {
+    signal.throwIfAborted()
+    const first = await this.host.listBots(signal)
+    signal.throwIfAborted()
+    const second = await this.host.listBots(signal)
+    signal.throwIfAborted()
+    if (!sameBotRosterRevision(first, second)) {
+      throw new SharedGroupError('gateway/conflict', 'shared Bot roster changed while the group was being prepared')
+    }
+    return second
+  }
+
+  /** Read and stabilize only the Bot rows selected by a create/update request. */
+  private async stableActiveBots(
+    botIds: readonly BotId[],
+    signal: AbortSignal,
+  ): Promise<readonly BotView[]> {
+    signal.throwIfAborted()
+    const first = this.activeBotsFromList(botIds, await this.host.listBots(signal))
+    signal.throwIfAborted()
+    const second = this.activeBotsFromList(botIds, await this.host.listBots(signal))
+    signal.throwIfAborted()
+    if (!sameBotRosterRevision(first, second)) {
+      throw new SharedGroupError('gateway/conflict', 'shared Bot roster changed while the group was being prepared')
+    }
+    return second
+  }
+
   private requireIsolatedHost(): void {
     if (this.host.createSharedGroupSession === undefined
       || this.host.resolveSharedGroupAgent === undefined
@@ -1756,6 +1792,19 @@ export class SharedBotGroupService {
       throw new SharedGroupError('gateway/unavailable', 'shared Bot group delivery is unavailable without an isolated Session')
     }
   }
+}
+
+function sameBotRosterRevision(left: readonly BotView[], right: readonly BotView[]): boolean {
+  if (left.length !== right.length) return false
+  const revisions = new Map(left.map(bot => [String(bot.id), bot]))
+  return right.every((bot) => {
+    const prior = revisions.get(String(bot.id))
+    return prior !== undefined
+      && prior.sessionId === bot.sessionId
+      && prior.updatedAt === bot.updatedAt
+      && prior.state === bot.state
+      && prior.availability === bot.availability
+  })
 }
 
 function parseMembershipExtension(value: unknown): SharedMembershipSnapshot {
