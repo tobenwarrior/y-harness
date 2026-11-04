@@ -4531,6 +4531,7 @@ describe('durable Bot roster', () => {
         revisions: { [id]: created.bot.updatedAt },
         profiles: { [id]: {
           name: created.bot.name,
+          description: 'Stale V2 description',
           identity: created.bot.identity,
           accent: created.bot.accent,
           timedRoutines: [routineProjection],
@@ -4566,9 +4567,11 @@ describe('durable Bot roster', () => {
 
     const second = await harness(pool, undefined, undefined, [], new Map(), records)
     try {
-      await expect(second.service.list({})).resolves.toMatchObject({
+      const listed = await second.service.list({})
+      expect(listed).toMatchObject({
         bots: [{ id: created.bot.id, name: created.bot.name }],
       })
+      expect(listed.bots[0]).not.toHaveProperty('description')
       expect(records.get(v3Key)).toMatchObject({
         kind: 'grant',
         payload: {

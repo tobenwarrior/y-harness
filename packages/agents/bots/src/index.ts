@@ -794,23 +794,8 @@ function mergeProfileSnapshots(
     || (current.timedRoutines === undefined && canUseLegacyRoutineField('timedRoutines') && legacy.timedRoutines !== undefined)
     || (current.timedRoutinesUpdatedAt === undefined
       && canUseLegacyRoutineField('timedRoutinesUpdatedAt') && legacy.timedRoutinesUpdatedAt !== undefined)
-  const legacyWithoutDescription = preserveLegacyOmissions.includes('description') && current.description === undefined
-    ? (() => {
-      const { description: ignoredDescription, ...withoutDescription } = legacy
-      void ignoredDescription
-      return withoutDescription
-    })()
-    : legacy
-  const legacyForSnapshot = preserveLegacyOmissions.includes('avatar') && current.avatar === undefined
-    ? (() => {
-      const { avatar: ignoredAvatar, ...withoutAvatar } = legacyWithoutDescription
-      void ignoredAvatar
-      return withoutAvatar
-    })()
-    : legacyWithoutDescription
   return {
     snapshot: {
-      ...legacyForSnapshot,
       ...current,
       ...(current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined
         ? { description: legacy.description } : {}),
@@ -833,6 +818,13 @@ function mergeProfileSnapshots(
         ? { hidden: legacy.hidden } : {}),
       ...(current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined
         ? { group: legacy.group } : {}),
+      ...(current.roster === undefined && canUseLegacyRoutineField('roster') && legacy.roster !== undefined
+        ? { roster: legacy.roster } : {}),
+      ...(current.timedRoutines === undefined && canUseLegacyRoutineField('timedRoutines') && legacy.timedRoutines !== undefined
+        ? { timedRoutines: legacy.timedRoutines } : {}),
+      ...(current.timedRoutinesUpdatedAt === undefined
+        && canUseLegacyRoutineField('timedRoutinesUpdatedAt') && legacy.timedRoutinesUpdatedAt !== undefined
+        ? { timedRoutinesUpdatedAt: legacy.timedRoutinesUpdatedAt } : {}),
     },
     changed,
   }
