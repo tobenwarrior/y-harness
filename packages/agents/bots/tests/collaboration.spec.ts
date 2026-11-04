@@ -347,6 +347,59 @@ describe('Bot collaboration seam', () => {
     expect(text).not.toContain('Descendant of earlier private assistant surface.')
   })
 
+  it('retroactively taints a closed markerless segment sharing a later group turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Earlier markerless private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Earlier markerless private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Later markerless group source.' }],
+      source: { kind: 'bot-group-message', groupId: BotGroupId('bot-group-later'), messageId: BotGroupMessageId('bot-group-later-message') },
+    }), 3))
+    targetEvents.push(assistantEvent('Later markerless group reply.', 4, 1))
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Descendant of earlier markerless private request.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(1)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Earlier markerless private request.')
+    expect(text).not.toContain('Earlier markerless private reply.')
+    expect(text).not.toContain('Descendant of earlier markerless private request.')
+  })
+
+  it('retroactively taints a closed markerless segment sharing a later routine turn', async () => {
+    const h = harness()
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Earlier markerless routine private request.' }], source: { kind: 'user' },
+    }), 1))
+    targetEvents.push(assistantEvent('Earlier markerless routine private reply.', 2, 1))
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Later markerless routine source.' }],
+      source: {
+        kind: 'bot-event-routine', form: 'notice', summary: 'Routine triggered',
+        routineId: 'routine-later', triggerEventSeq: 3,
+      },
+    }), 3))
+    targetEvents.push(assistantEvent('Later markerless routine reply.', 4, 1))
+    const descendant = userEvent(createUserMessage({
+      content: [{ type: 'text', text: 'Descendant of earlier markerless routine request.' }], source: { kind: 'user' },
+    }), 5)
+    targetEvents.push({ ...descendant, sourceEventSeqs: [SessionSeq(1)] })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    const text = inspected.recent.map(entry => entry.text).join('\n')
+    expect(text).not.toContain('Earlier markerless routine private request.')
+    expect(text).not.toContain('Earlier markerless routine private reply.')
+    expect(text).not.toContain('Descendant of earlier markerless routine request.')
+  })
+
   it('delivers to the target Session with durable sender identity and is idempotent', async () => {
     const h = harness()
     const client = await h.client

@@ -287,6 +287,7 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
   const taintedTurns = new Set<number>()
   const taintedEventSeqs = new Set<string>()
   const eventSeqsByTurn = new Map<number, Set<string>>()
+  const markerlessEventSeqsByTurn = new Map<number, Set<string>>()
   const legacyEventSeqs = new Set<string>()
   let currentTurn: number | undefined
   let lastLegacyAssistantTurn: number | undefined
@@ -298,6 +299,12 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
 
   const markTurnEvents = (turn: number): void => {
     markTaintedEvents(eventSeqsByTurn.get(turn) ?? [])
+    markTaintedEvents(markerlessEventSeqsByTurn.get(turn) ?? [])
+  }
+
+  const taintTurn = (turn: number): void => {
+    taintedTurns.add(turn)
+    markTurnEvents(turn)
   }
 
   const closeLegacySegment = (failClosedForTaintedTurn: boolean): void => {
@@ -348,9 +355,13 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       const sameTaintedLegacyTurn = currentTurn === undefined
         && lastLegacyAssistantTurn === event.data.turn
         && taintedTurns.has(event.data.turn)
+      if (currentTurn === undefined) {
+        const segmentSeqs = markerlessEventSeqsByTurn.get(event.data.turn) ?? new Set<string>()
+        for (const seq of legacyEventSeqs) segmentSeqs.add(seq)
+        markerlessEventSeqsByTurn.set(event.data.turn, segmentSeqs)
+      }
       if (currentTurn === undefined && (legacySegmentTainted || sameTaintedLegacyTurn)) {
-        taintedTurns.add(event.data.turn)
-        markTaintedEvents(legacyEventSeqs)
+        taintTurn(event.data.turn)
       }
       legacyEventSeqs.clear()
       legacySegmentTainted = false
@@ -366,8 +377,7 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       groupSourceSeqs.add(seq)
       if (currentTurn === undefined) legacySegmentTainted = true
       else {
-        taintedTurns.add(currentTurn)
-        markTurnEvents(currentTurn)
+        taintTurn(currentTurn)
       }
     }
     const citesRoutine = event.data.source.kind === 'bot-event-routine'
@@ -376,8 +386,7 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       routineSourceSeqs.add(seq)
       if (currentTurn === undefined) legacySegmentTainted = true
       else {
-        taintedTurns.add(currentTurn)
-        markTurnEvents(currentTurn)
+        taintTurn(currentTurn)
       }
     }
     const citesTainted = event.sourceEventSeqs?.some((sourceSeq) => {
@@ -387,8 +396,7 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
     if (citesTainted) {
       if (currentTurn === undefined) legacySegmentTainted = true
       else {
-        taintedTurns.add(currentTurn)
-        markTurnEvents(currentTurn)
+        taintTurn(currentTurn)
       }
     }
     if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([seq])
