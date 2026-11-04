@@ -633,12 +633,18 @@ export class SharedBotService {
     }))
   }
 
-  /** Return durable isolated shared-group Session bindings for Host recovery. */
+  /**
+   * Return durable isolated shared-group Session bindings for Host recovery.
+   * @returns the persisted shared-group Session bindings.
+   */
   async sharedGroupSessionBindings(): Promise<readonly SharedGroupSessionBinding[]> {
     return this.groups.sessionBindings()
   }
 
-  /** Replay durable shared-group deliveries after a Host restart. */
+  /**
+   * Replay durable shared-group deliveries after a Host restart.
+   * @param signal - optional cancellation for the recovery sweep.
+   */
   async recoverSharedGroupDeliveries(signal?: AbortSignal): Promise<void> {
     await this.groups.recoverPendingDeliveries(signal)
   }
@@ -653,7 +659,16 @@ export class SharedBotService {
     return this.groups.recoverDelivery(request)
   }
 
-  /** Record one shared-group Session's exact model claim. */
+  /**
+   * Record one shared-group Session's exact model claim.
+   * @param groupId - group containing the delivery.
+   * @param botId - Bot whose Session claimed the delivery.
+   * @param claims - message claims observed in the model step.
+   * @param turn - model turn number.
+   * @param step - model step number.
+   * @param isolated - whether the step retained shared-group isolation.
+   * @param competingInput - whether competing input invalidated prior isolated claims.
+   */
   async recordSharedGroupMessageClaims(
     groupId: ReturnType<typeof BotGroupId>,
     botId: BotId,
@@ -666,7 +681,15 @@ export class SharedBotService {
     await this.groups.recordBotMessageClaims(groupId, botId, claims, turn, step, isolated, competingInput)
   }
 
-  /** Record one visible shared-group Bot response. */
+  /**
+   * Record one visible shared-group Bot response.
+   * @param groupId - group containing the delivery.
+   * @param botId - responding Bot.
+   * @param turn - model turn number.
+   * @param step - model step number.
+   * @param text - visible response text.
+   * @param sourceMessageId - source message identity used for idempotency.
+   */
   async recordSharedGroupResponse(
     groupId: ReturnType<typeof BotGroupId>,
     botId: BotId,
@@ -678,7 +701,13 @@ export class SharedBotService {
     await this.groups.recordBotResponse(groupId, botId, turn, step, text, sourceMessageId)
   }
 
-  /** Record one safe shared-group Bot turn failure. */
+  /**
+   * Record one safe shared-group Bot turn failure.
+   * @param groupId - group containing the delivery.
+   * @param botId - Bot whose turn failed.
+   * @param turn - model turn number.
+   * @param error - bounded failure text shown in the delivery status.
+   */
   async recordSharedGroupTurnFailure(groupId: ReturnType<typeof BotGroupId>, botId: BotId, turn: number, error: string): Promise<void> {
     await this.groups.recordBotTurnFailure(groupId, botId, turn, error)
   }

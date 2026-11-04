@@ -452,7 +452,10 @@ export class SharedBotGroupService {
     this.recoveryDeliveryTasks.clear()
   }
 
-  /** Return durable group Session bindings for Host startup recovery. */
+  /**
+   * Return durable group Session bindings for Host startup recovery.
+   * @returns the persisted isolated shared-group Session bindings.
+   */
   async sessionBindings(): Promise<readonly SharedGroupSessionBinding[]> {
     const extension = await withSharedGroupAuthorityTimeout(
       this.authority.readExtension('agent-bots/shared-memberships'),
@@ -508,7 +511,10 @@ export class SharedBotGroupService {
     return { botId, messageId, status: 'operator-required' }
   }
 
-  /** Replay durable pending deliveries after a Host restart or crash. */
+  /**
+   * Replay durable pending deliveries after a Host restart or crash.
+   * @param signal - optional cancellation for the recovery sweep.
+   */
   async recoverPendingDeliveries(signal?: AbortSignal): Promise<void> {
     if (this.stopped) return
     if (this.recoverySweepRunning) {
@@ -561,7 +567,11 @@ export class SharedBotGroupService {
     }
   }
 
-  /** Return whether an enrollment code is currently a group invite. */
+  /**
+   * Return whether an enrollment code is currently a group invite.
+   * @param code - enrollment code to inspect.
+   * @returns whether the code identifies an unexpired group invite.
+   */
   async hasInvite(code: SharedInviteCode): Promise<boolean> {
     const extension = await this.authority.readExtension('agent-bots/shared-memberships')
     const snapshot = parseMembershipExtension(extension.value)
@@ -569,7 +579,13 @@ export class SharedBotGroupService {
     return groups.invites.some(invite => invite.digest === sharedInviteDigest(code) && this.now() < invite.expiresAt)
   }
 
-  /** Create a group from Bots the authenticated principal can currently use. */
+  /**
+   * Create a group from Bots the authenticated principal can currently use.
+   * @param request - group name, Bot roster, and optional idempotency id.
+   * @param principalId - authenticated principal creating the group.
+   * @param signal - cancellation for authorization and Bot lookup.
+   * @returns the created or already-existing group view.
+   */
   async create(
     request: BotGroupCreateRequest,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -618,7 +634,12 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** List only groups for which the principal has both ACL and Bot membership. */
+  /**
+   * List only groups for which the principal has both ACL and Bot membership.
+   * @param principalId - authenticated principal requesting the groups.
+   * @param signal - cancellation for authorization and Bot lookup.
+   * @returns groups visible to the principal.
+   */
   async list(principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal): Promise<BotGroupListValue> {
     this.requireIsolatedHost()
     const result = await this.locked(principalId, 'read-group', signal, async (snapshot, memberships) => {
@@ -641,7 +662,13 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** Update a group roster through its explicit owner ACL. */
+  /**
+   * Update a group roster through its explicit owner ACL.
+   * @param request - replacement group name, Bot roster, and group id.
+   * @param principalId - authenticated owner making the update.
+   * @param signal - cancellation for authorization and Bot lookup.
+   * @returns the updated group view.
+   */
   async update(
     request: BotGroupUpdateRequest,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -722,7 +749,13 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** Read one shared-group transcript, never the owner-local group domain. */
+  /**
+   * Read one shared-group transcript, never the owner-local group domain.
+   * @param groupId - group whose transcript is requested.
+   * @param principalId - authenticated principal requesting the transcript.
+   * @param signal - cancellation for authorization and Bot lookup.
+   * @returns the group, visible messages, and delivery statuses.
+   */
   async inspect(
     groupId: ReturnType<typeof BotGroupId>,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -755,7 +788,13 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** Persist one principal-authored shared-group message, then deliver outside the authority lock. */
+  /**
+   * Persist one principal-authored shared-group message, then deliver outside the authority lock.
+   * @param request - group message text, recipients, and optional idempotency id.
+   * @param principalId - authenticated principal sending the message.
+   * @param signal - cancellation for delivery attempts.
+   * @returns the message id and per-Bot delivery outcomes.
+   */
   async send(
     request: BotGroupSendRemoteRequest,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -942,7 +981,12 @@ export class SharedBotGroupService {
     return { messageId: plan.messageId, status, deliveries: ordered }
   }
 
-  /** Create one explicit group ACL invitation. */
+  /**
+   * Create one explicit group ACL invitation.
+   * @param groupId - group whose owner is creating the invite.
+   * @param principalId - authenticated group owner.
+   * @returns the one-time invite code and expiry timestamp.
+   */
   async createInvite(
     groupId: ReturnType<typeof BotGroupId>,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -988,7 +1032,12 @@ export class SharedBotGroupService {
     return invite
   }
 
-  /** Redeem a group invite and add the authenticated principal to its ACL. */
+  /**
+   * Redeem a group invite and add the authenticated principal to its ACL.
+   * @param code - one-time invite code.
+   * @param request - authenticated connection trust request.
+   * @returns the shared access enrollment and group id.
+   */
   async redeemInvite(
     code: SharedInviteCode,
     request: ConnectionTrustRequest,
@@ -1073,7 +1122,14 @@ export class SharedBotGroupService {
     return { ...enrollment, groupId: pending.groupId }
   }
 
-  /** Remove one explicit ACL member without changing the Bot memberships. */
+  /**
+   * Remove one explicit ACL member without changing the Bot memberships.
+   * @param groupId - group whose ACL is changing.
+   * @param principalId - member to remove.
+   * @param actor - authenticated group owner performing the removal.
+   * @param signal - cancellation for the durable mutation.
+   * @returns the removed principal and group identity.
+   */
   async revokeMember(
     groupId: ReturnType<typeof BotGroupId>,
     principalId: ReturnType<typeof BotPrincipalId>,
@@ -1118,7 +1174,16 @@ export class SharedBotGroupService {
     return result.value
   }
 
-  /** Record the exact model step that claimed a shared-group delivery. */
+  /**
+   * Record the exact model step that claimed a shared-group delivery.
+   * @param groupId - group containing the delivery.
+   * @param botId - Bot whose Session claimed the delivery.
+   * @param claims - message claims observed in the model step.
+   * @param turn - model turn number.
+   * @param step - model step number.
+   * @param isolated - whether the step retained shared-group isolation.
+   * @param competingInput - whether competing input invalidated prior isolated claims.
+   */
   async recordBotMessageClaims(
     groupId: ReturnType<typeof BotGroupId>,
     botId: BotId,
@@ -1166,7 +1231,15 @@ export class SharedBotGroupService {
     })
   }
 
-  /** Record a visible Bot response against one exact isolated group turn. */
+  /**
+   * Record a visible Bot response against one exact isolated group turn.
+   * @param groupId - group containing the delivery.
+   * @param botId - responding Bot.
+   * @param turn - model turn number.
+   * @param step - model step number.
+   * @param text - visible response text.
+   * @param sourceMessageId - source message identity used for idempotency.
+   */
   async recordBotResponse(
     groupId: ReturnType<typeof BotGroupId>,
     botId: BotId,
@@ -1221,7 +1294,13 @@ export class SharedBotGroupService {
     })
   }
 
-  /** Record a safe failure for one isolated shared-group turn. */
+  /**
+   * Record a safe failure for one isolated shared-group turn.
+   * @param groupId - group containing the delivery.
+   * @param botId - Bot whose turn failed.
+   * @param turn - model turn number.
+   * @param error - bounded failure text shown in the delivery status.
+   */
   async recordBotTurnFailure(
     groupId: ReturnType<typeof BotGroupId>,
     botId: BotId,

@@ -207,6 +207,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Adapters register provider implementations; the loop and compaction call the provider-neutral stream service.',
   },
   {
+    key: 'auxiliarySessionAdmission',
+    pkg: 'llm',
+    title: 'Bounded auxiliary Session admission',
+    mode: 'seam',
+    consumers: ['session-title-llm', 'skill-library'],
+    note: 'The Bot service binds trusted auxiliary producers to one Session and purpose while their model stream is active; the capability is process-local and never serialized.',
+  },
+  {
     key: 'codexBackendConnection',
     pkg: 'llm-pi-ai',
     title: 'Native Codex backend controls',

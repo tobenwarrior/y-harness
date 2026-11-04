@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Add a Bot workspace to the Web client with a roster, persistent conversations, organization, status, and animated avatars. Bot setup and profile editing expose the durable name, role description, persona, and capability declarations while keeping the linked Session, working directory, and preset unchanged. Capability declarations are descriptive labels, not permissions, and this surface does not claim to switch providers dynamically. Host callbacks provide Sessions, connected apps, generated images, and optional templates. Signed templates preview their self-asserted issuer, avatar, configuration, and local permissions before approval and import. Missing permissions disable approval; missing callbacks hide their controls. Request guards preserve newer drafts and prevent duplicate submissions.
+Add a Bot workspace to the Web client with a roster, conversations, organization, status, and animated avatars. Bot setup and profile editing expose the durable name, role description, persona, and capability declarations while keeping the linked Session, working directory, and preset. Capability declarations are descriptive labels, not permissions, and this surface does not claim to switch providers dynamically. Host callbacks provide Sessions, connected apps, generated images, and templates. Signed templates preview their self-asserted issuer, avatar, configuration, and local permissions before approval and import. Missing permissions disable approval; missing callbacks hide controls. Request guards preserve newer drafts and prevent duplicate submissions.
 
 ## Table of Contents
 

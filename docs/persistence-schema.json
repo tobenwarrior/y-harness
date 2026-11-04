@@ -29381,8 +29381,8 @@
       ],
       "sources": [
         "packages/agents/bots/src/collaboration.ts:16",
-        "packages/agents/bots/src/group-chat.ts:15",
-        "packages/agents/bots/src/group-chat.ts:26",
+        "packages/agents/bots/src/group-chat.ts:17",
+        "packages/agents/bots/src/group-chat.ts:28",
         "packages/agents/bots/src/memory.ts:8",
         "packages/agents/bots/src/types.ts:10",
         "packages/api/session-controller/src/types.ts:413",

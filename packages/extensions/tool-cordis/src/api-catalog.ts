@@ -561,6 +561,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'auxiliarySessionAdmission',
+    summary: 'Process-local admission capability for a trusted producer\'s bounded auxiliary request.',
+    description: 'Process-local admission capability for a trusted producer\'s bounded auxiliary request. The operation remains inside the capability\'s async context while it awaits the model stream; the capability is never serialized into GenerateOptions or Session data.',
+    methods: [
+      {
+        signature: 'run<T>(sessionId: string, purpose: AuxiliarySessionPurpose, operation: () => T): T',
+        description: 'Run one producer-owned operation with exact Session and purpose attribution.',
+        parameters: [{ name: 'sessionId', description: 'Session identity the operation may request.' }, { name: 'purpose', description: 'bounded auxiliary generation purpose.' }, { name: 'operation', description: 'producer operation that performs and awaits the LLM stream.' }],
+        returns: 'the operation result.',
+      },
+    ],
+  },
+  {
     key: 'avatarGeneration',
     summary: 'Host service that discovers the configured OpenAI credential per operation.',
     description: 'Host service that discovers the configured OpenAI credential per operation.',
@@ -5537,6 +5550,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationStatus',
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
+  },
+  {
+    name: 'AuxiliarySessionPurpose',
+    declaration: 'export type AuxiliarySessionPurpose = Extract<GenerateOptions[\'purpose\'], \'session-title\' | \'skill-learning\'>;',
   },
   {
     name: 'AvatarGenerationCommitRequest',

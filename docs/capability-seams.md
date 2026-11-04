@@ -49,6 +49,9 @@ flowchart LR
   pkg_llm_replay["llm-replay"]
   pkg_agent_loop["agent-loop"]
   pkg_compaction_basic["compaction-basic"]
+  svc_auxiliarySessionAdmission["ctx.auxiliarySessionAdmission<br/>Bounded auxiliary Session admission"]
+  pkg_session_title_llm["session-title-llm"]
+  pkg_skill_library["skill-library"]
   svc_codexBackendConnection["ctx.codexBackendConnection<br/>Native Codex backend controls"]
   pkg_client_ui_settings_models["client-ui-settings-models"]
   svc_nousConnection["ctx.nousConnection<br/>Nous device authorization controls"]
@@ -174,7 +177,6 @@ flowchart LR
   pkg_skill_badge["skill-badge"]
   pkg_skill_filesystem["skill-filesystem"]
   pkg_skill_office["skill-office"]
-  pkg_skill_library["skill-library"]
   svc_skillLibrary["ctx.skillLibrary<br/>Scoped skill library and reviewed learning"]
   pkg_client_ui_skill_library["client-ui-skill-library"]
   pkg_web_app["web-app"]
@@ -365,6 +367,7 @@ flowchart LR
   pkg_inspector --> svc_inspector
   pkg_jobs --> svc_jobs
   pkg_jobs_local --> svc_jobs
+  pkg_llm --> svc_auxiliarySessionAdmission
   pkg_llm --> svc_llm
   pkg_llm_deepseek --> svc_llm
   pkg_llm_pi_ai --> svc_codexBackendConnection
@@ -467,6 +470,8 @@ flowchart LR
   svc_attachments --> pkg_llm_pi_ai
   svc_attachments --> pkg_tool_fs
   svc_authorization --> pkg_llm_pi_ai
+  svc_auxiliarySessionAdmission --> pkg_session_title_llm
+  svc_auxiliarySessionAdmission --> pkg_skill_library
   svc_avatarGeneration --> pkg_client_ui_bots
   svc_bots --> pkg_client_ui_bots
   svc_browserUse --> pkg_experimental_browser_use_chrome_devtools_mcp
@@ -624,6 +629,7 @@ flowchart LR
 | `ctx.attachments` | `seam` | [`attachment`](../packages/attachment/attachment) | [`attachment-local`](../packages/attachment/attachment-local) | [`api-session-controller`](../packages/api/session-controller), [`tool-fs`](../packages/fs/tool-fs), [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`llm-deepseek`](../packages/llm/llm-deepseek) | - | The host commits accepted images before session events; provider adapters resolve authorized durable references into provider-native content. |
 | `ctx.fileUploads` | `core` | [`client-file-upload`](../packages/client/file-upload) | - | [`api-session-controller`](../packages/api/session-controller) | - | Owns streaming intake, durable storage, and staged receipt lifetime; the Session controller binds receipts to accepted submissions. |
 | `ctx.llm` | `seam` | [`llm`](../packages/llm/llm) | [`llm-deepseek`](../packages/llm/llm-deepseek), [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`llm-replay`](../packages/test-support/llm-replay) | [`agent-loop`](../packages/core/agent-loop), [`compaction-basic`](../packages/compaction/compaction-basic) | - | Adapters register provider implementations; the loop and compaction call the provider-neutral stream service. |
+| `ctx.auxiliarySessionAdmission` | `seam` | [`llm`](../packages/llm/llm) | - | [`session-title-llm`](../packages/session/session-title-llm), [`skill-library`](../packages/skill/skill-library) | - | The Bot service binds trusted auxiliary producers to one Session and purpose while their model stream is active; the capability is process-local and never serialized. |
 | `ctx.codexBackendConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device login, cached model discovery, and adapter enablement through the generated Remote namespace; Codex owns its native credential file. |
 | `ctx.nousConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device authorization for an explicitly configured public client, durable grant commit, and account model discovery through the generated Remote namespace. |
 | `ctx.xaiConnection` | `service` | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | - | [`llm-pi-ai`](../packages/llm/llm-pi-ai), [`client-ui-settings-models`](../packages/client/ui-settings-models) | - | Owns device authorization, durable grant commit, and installed model catalog discovery through the generated Remote namespace. |
