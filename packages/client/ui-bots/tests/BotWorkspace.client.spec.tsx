@@ -1002,7 +1002,7 @@ describe('Bot roster and detail', () => {
     />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit group' }))
-    const dialog = screen.getByRole('dialog', { name: 'Edit shared group' })
+    const dialog = screen.getByRole('dialog', { name: 'Edit bot group' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch command room' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))
 
@@ -1011,7 +1011,7 @@ describe('Bot roster and detail', () => {
         groupId: 'group-release', name: 'Launch command room', botIds: ['research', 'release'],
       })
     })
-    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit shared group' })).toBeNull() })
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot group' })).toBeNull() })
   })
 
   it('keeps loading and owner-provided failures explicit', () => {

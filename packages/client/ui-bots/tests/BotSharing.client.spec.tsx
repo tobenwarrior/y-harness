@@ -344,6 +344,7 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByText('Private answer')).toBeTruthy()
     expect(screen.getByText('Shared decision')).toBeTruthy()
     expect(screen.getByText('Visible to members')).toBeTruthy()
+    expect(screen.getByText('Join each shared Bot before redeeming a group invite.')).toBeTruthy()
     expect(client.readPrivateChat).toHaveBeenCalledWith(bot.id)
     expect(client.readMemory).toHaveBeenCalledWith(bot.id)
   })
@@ -388,7 +389,7 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
 
     await waitFor(() => {
-      expect(createGroup).toHaveBeenCalledWith({ name: 'Launch room', botIds: [BotId(bot.id), BotId(analystBot.id)] })
+      expect(createGroup).toHaveBeenCalledWith(expect.objectContaining({ name: 'Launch room', botIds: [BotId(bot.id), BotId(analystBot.id)] }))
       expect(screen.getByRole('button', { name: 'Invite people' })).toBeTruthy()
     })
     fireEvent.click(screen.getByRole('button', { name: 'Invite people' }))
@@ -396,6 +397,206 @@ describe('shared Bot collaboration surfaces', () => {
       expect(createGroupInvite).toHaveBeenCalledWith(group.id)
       expect(screen.getByLabelText('Group invite code').textContent).toContain('group-invite')
     })
+  })
+
+  it('explains the owner-only group invite after a collaborator is refused', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-collaborator'),
+      name: 'Collaborator room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const createGroupInvite = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'gateway/forbidden', message: 'only the shared group owner may invite members', details: {} },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      createGroupInvite,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Invite people' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite people' }))
+    await waitFor(() => { expect(createGroupInvite).toHaveBeenCalledWith(group.id) })
+    expect(screen.getByText('Only the group owner can create an invite. Ask the owner to share one.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Invite people' })).toBeNull()
+  })
+
+  it('reuses the shared group id after an uncertain create response', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-retry'),
+      name: 'Retry room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const createGroup = vi.fn()
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockResolvedValueOnce({ ok: true, value: { group } })
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      createGroup,
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Retry room' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+
+    await waitFor(() => { expect(createGroup).toHaveBeenCalledTimes(1) })
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('connection closed after commit') })
+    const firstRequest = createGroup.mock.calls[0]?.[0] as { readonly id?: string }
+    expect(firstRequest.id).toMatch(/^bot-group-/)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+    await waitFor(() => {
+      expect(createGroup).toHaveBeenCalledTimes(2)
+      expect(createGroup.mock.calls[1]?.[0].id).toBe(firstRequest.id)
+    })
+  })
+
+  it('reuses the shared message id after an uncertain send response', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-message-retry'),
+      name: 'Retry room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockResolvedValueOnce({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-retry'), status: 'accepted', deliveries: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Retry room')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText('Message Retry room'), { target: { value: 'Retry this update' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(1) })
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('connection closed after commit') })
+    const firstRequest = sendGroupMessage.mock.calls[0]?.[0] as { readonly messageId?: string }
+    expect(firstRequest.messageId).toMatch(/^bot-group-message-/)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => {
+      expect(sendGroupMessage).toHaveBeenCalledTimes(2)
+      expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstRequest.messageId)
+    })
+  })
+
+  it('does not leave a group invite busy after switching groups', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const groupA = {
+      id: brandString<BotGroupId>('bot-group-invite-alpha'),
+      name: 'Alpha room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const groupB = { ...groupA, id: brandString<BotGroupId>('bot-group-invite-beta'), name: 'Beta room' } satisfies BotGroupView
+    const firstInvite = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['createGroupInvite']>>>>()
+    const secondInvite = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['createGroupInvite']>>>>()
+    const createGroupInvite = vi.fn()
+      .mockReturnValueOnce(firstInvite.promise)
+      .mockReturnValueOnce(secondInvite.promise)
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup: vi.fn().mockImplementation(async (groupId: string) => ({
+        ok: true,
+        value: { group: groupId === groupA.id ? groupA : groupB, messages: [] },
+      })),
+      createGroupInvite,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Invite people' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite people' }))
+    await waitFor(() => { expect(createGroupInvite).toHaveBeenCalledWith(groupA.id) })
+    fireEvent.click(screen.getByRole('button', { name: /Beta room/ }))
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Invite people' })).toHaveProperty('disabled', false) })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invite people' }))
+    await waitFor(() => { expect(createGroupInvite).toHaveBeenCalledWith(groupB.id) })
+    await act(async () => {
+      secondInvite.resolve({ ok: true, value: { code: 'beta-invite', expiresAt: 2_000 } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByLabelText('Group invite code').textContent).toContain('beta-invite')
+    await act(async () => {
+      firstInvite.resolve({ ok: true, value: { code: 'alpha-invite', expiresAt: 2_000 } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByLabelText('Group invite code').textContent).toContain('beta-invite')
+  })
+
+  it('does not apply a shared-group create after the owner cancels it', async () => {
+    const existingGroup = {
+      id: brandString<BotGroupId>('bot-group-existing'),
+      name: 'Existing room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const createdGroup = { ...existingGroup, id: brandString<BotGroupId>('bot-group-created'), name: 'Created after cancel' } satisfies BotGroupView
+    const createGroup = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['createGroup']>>>>()
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [existingGroup] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group: existingGroup, messages: [] } }),
+      createGroup: vi.fn().mockReturnValue(createGroup.promise),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Created after cancel' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+    await waitFor(() => { expect(client.createGroup).toHaveBeenCalledOnce() })
+    fireEvent.click(within(dialog).getAllByRole('button', { name: 'Cancel' }).at(-1)!)
+    expect(screen.queryByRole('dialog', { name: 'Create a shared group' })).toBeNull()
+
+    await act(async () => {
+      createGroup.resolve({ ok: true, value: { group: createdGroup } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('button', { name: /Created after cancel/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Existing room/ })).toBeTruthy()
   })
 
   it('shows and sends a collaborator group without mixing private transcript data', async () => {
@@ -441,7 +642,7 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.change(input, { target: { value: 'Coordinate launch' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
     await waitFor(() => {
-      expect(sendGroupMessage).toHaveBeenCalledWith({ groupId: group.id, text: 'Coordinate launch' })
+      expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ groupId: group.id, text: 'Coordinate launch' }))
     })
   })
 
@@ -494,6 +695,102 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+  })
+
+  it('does not refresh an old group send after switching away and back', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const groupA = {
+      id: brandString<BotGroupId>('bot-group-send-alpha'),
+      name: 'Alpha room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const groupB = { ...groupA, id: brandString<BotGroupId>('bot-group-send-beta'), name: 'Beta room' } satisfies BotGroupView
+    const send = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['sendGroupMessage']>>>>()
+    let alphaReads = 0
+    const inspectGroup = vi.fn().mockImplementation(async (groupId: string) => {
+      if (groupId === groupA.id) {
+        alphaReads += 1
+        return {
+          ok: true,
+          value: {
+            group: groupA,
+            messages: [{
+              id: brandString<BotGroupMessageId>(`bot-group-message-alpha-${alphaReads}`),
+              groupId: groupA.id,
+              sender: { kind: 'user' as const },
+              text: alphaReads === 1 ? 'Alpha initial' : alphaReads === 2 ? 'Alpha current' : 'Alpha stale completion',
+              createdAt: alphaReads,
+            }],
+          },
+        }
+      }
+      return { ok: true, value: { group: groupB, messages: [] } }
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup,
+      sendGroupMessage: vi.fn().mockReturnValue(send.promise),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Alpha initial')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText('Message Alpha room'), { target: { value: 'Alpha update' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(client.sendGroupMessage).toHaveBeenCalledOnce() })
+    fireEvent.click(screen.getByRole('button', { name: /Beta room/ }))
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Beta room')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Alpha room/ }))
+    await waitFor(() => { expect(screen.getByText('Alpha current')).toBeTruthy() })
+
+    await act(async () => {
+      send.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-alpha-send'), status: 'accepted', deliveries: [] } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Alpha current')).toBeTruthy()
+    expect(screen.queryByText('Alpha stale completion')).toBeNull()
+  })
+
+  it('does not surface a stale group-send failure after switching away and back', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const groupA = {
+      id: brandString<BotGroupId>('bot-group-error-alpha'),
+      name: 'Alpha room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const groupB = { ...groupA, id: brandString<BotGroupId>('bot-group-error-beta'), name: 'Beta room' } satisfies BotGroupView
+    const send = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['sendGroupMessage']>>>>()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup: vi.fn().mockImplementation(async (groupId: string) => ({
+        ok: true,
+        value: { group: groupId === groupA.id ? groupA : groupB, messages: [] },
+      })),
+      sendGroupMessage: vi.fn().mockReturnValue(send.promise),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Alpha room')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText('Message Alpha room'), { target: { value: 'Alpha update' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(client.sendGroupMessage).toHaveBeenCalledOnce() })
+    fireEvent.click(screen.getByRole('button', { name: /Beta room/ }))
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Beta room')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Alpha room/ }))
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Alpha room')).toBeTruthy() })
+
+    await act(async () => {
+      send.resolve({ ok: false, error: { code: 'gateway/unavailable', message: 'stale failure', details: {} } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('stale failure')).toBeNull()
   })
 
   it('closes the collaborator shared-note confirmation when the dialog closes', async () => {

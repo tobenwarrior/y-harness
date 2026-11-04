@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { brandString } from '@yharness/brand'
+import { randomUUID } from '@yharness/util-crypto'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
   Button,
@@ -21,6 +22,7 @@ import {
 } from '@yharness/client-ui-primitives'
 import type {
   BotGroupCreateRequest,
+  BotGroupMessageId as BotGroupMessageIdType,
   BotGroupMessageView,
   BotGroupView,
   BotGroupId as BotGroupIdType,
@@ -356,12 +358,14 @@ function SharedGroupCreateDialog({ open, onClose, onCreate, bots, error, t }: {
   const [name, setName] = useState('')
   const [selected, setSelected] = useState<readonly string[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const requestIdRef = useRef<{ readonly signature: string; readonly id: BotGroupIdType } | null>(null)
 
   useEffect(() => {
     if (!open) return
     setName('')
     setSelected([])
     setSubmitting(false)
+    requestIdRef.current = null
   }, [open])
 
   const toggle = (id: string, checked: boolean): void => {
@@ -375,9 +379,15 @@ function SharedGroupCreateDialog({ open, onClose, onCreate, bots, error, t }: {
       return bot === undefined ? [] : [bot.id]
     })
     if (trimmed === '' || botIds.length < 2 || botIds.length > 6 || submitting) return
+    const signature = `${trimmed}\u0000${botIds.map(String).join('\u0000')}`
+    const requestId = requestIdRef.current?.signature === signature
+      ? requestIdRef.current.id
+      : brandString<BotGroupIdType>(`bot-group-${randomUUID()}`)
+    requestIdRef.current = { signature, id: requestId }
     setSubmitting(true)
     try {
-      await onCreate({ name: trimmed, botIds })
+      await onCreate({ id: requestId, name: trimmed, botIds })
+      requestIdRef.current = null
       onClose()
     } catch {
       // Keep the selection and draft in place so the owner can retry.
@@ -482,6 +492,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [groupInvite, setGroupInvite] = useState<SharedBotGroupInviteValue | null>(null)
   const [groupInviteWorking, setGroupInviteWorking] = useState(false)
   const [groupInviteCopied, setGroupInviteCopied] = useState(false)
+  const [groupInviteUnavailable, setGroupInviteUnavailable] = useState(false)
   const [working, setWorking] = useState<'list' | 'enroll' | null>(null)
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
@@ -502,6 +513,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const groupOperationGenerationRef = useRef(0)
   const groupDraftRevisionRef = useRef(0)
   const groupInviteGenerationRef = useRef(0)
+  const createGroupGenerationRef = useRef(0)
+  const groupPendingMessageIdsRef = useRef(new Map<string, BotGroupMessageIdType>())
   const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
   const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
   const hasPendingChat = chatWorkingBotIds.size > 0
@@ -537,6 +550,8 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setGroupWorking(null)
       setGroupInvite(null)
       setGroupInviteCopied(false)
+      setGroupInviteWorking(false)
+      setGroupInviteUnavailable(false)
     }
     selectedGroupIdRef.current = groupId
     setSelectedGroupId(groupId)
@@ -659,13 +674,29 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
   }
 
+  const openCreateGroup = (): void => {
+    createGroupGenerationRef.current += 1
+    setCreateGroupError(null)
+    setCreateGroupOpen(true)
+  }
+
+  const closeCreateGroup = (): void => {
+    createGroupGenerationRef.current += 1
+    groupReadGenerationRef.current += 1
+    setCreateGroupOpen(false)
+    setCreateGroupError(null)
+    setGroupWorking(current => current === 'create' ? null : current)
+  }
+
   useEffect(() => {
     lifecycleGenerationRef.current += 1
     readGenerationRef.current += 1
     groupReadGenerationRef.current += 1
     operationGenerationRef.current += 1
     if (!open) {
+      createGroupGenerationRef.current += 1
       setWorking(null)
+      setGroupWorking(null)
       setMemoryConfirmOpen(false)
       setMemoryAcknowledged(false)
       setGroupSelection(null)
@@ -675,6 +706,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setGroupInvite(null)
       setGroupInviteCopied(false)
       setGroupInviteWorking(false)
+      setGroupInviteUnavailable(false)
       return
     }
     setError(null)
@@ -788,11 +820,20 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const create = client.createGroup
     const lifecycleGeneration = lifecycleGenerationRef.current
     if (create === undefined || !isCurrentLifecycle(lifecycleGeneration)) return
+    const createGeneration = createGroupGenerationRef.current
+    const selectionGeneration = groupOperationGenerationRef.current
+    const selectedGroupBeforeCreate = selectedGroupIdRef.current
+    const isCurrentCreate = (): boolean => (
+      isCurrentLifecycle(lifecycleGeneration)
+      && createGroupGenerationRef.current === createGeneration
+      && groupOperationGenerationRef.current === selectionGeneration
+      && selectedGroupIdRef.current === selectedGroupBeforeCreate
+    )
     setCreateGroupError(null)
     setGroupWorking('create')
     try {
       const result = await create(request)
-      if (!isCurrentLifecycle(lifecycleGeneration)) return
+      if (!isCurrentCreate()) return
       if (!result.ok) throw new Error(result.error.message || t('sharedGroupCreateFailed'))
       const created = result.value.group
       setGroups(current => [
@@ -802,13 +843,13 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setGroupSelection(String(created.id))
       await readGroup(String(created.id))
     } catch (cause: unknown) {
-      if (isCurrentLifecycle(lifecycleGeneration)) {
+      if (isCurrentCreate()) {
         const error = cause instanceof Error ? cause : new Error(t('sharedGroupCreateFailed'))
         setCreateGroupError(error.message || t('sharedGroupCreateFailed'))
       }
       throw cause
     } finally {
-      if (isCurrentLifecycle(lifecycleGeneration)) setGroupWorking(current => current === 'create' ? null : current)
+      if (isCurrentCreate()) setGroupWorking(current => current === 'create' ? null : current)
     }
   }
 
@@ -832,7 +873,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const result = await createInvite(groupId)
       if (!isCurrentInvite()) return
       if (result.ok) setGroupInvite(result.value)
-      else setError(result.error.message || t('sharedGroupInviteFailed'))
+      else {
+        setGroupInviteUnavailable(result.error.code === 'gateway/forbidden')
+        setError(result.error.message || t('sharedGroupInviteFailed'))
+      }
     } catch (cause: unknown) {
       if (isCurrentInvite()) setError(cause instanceof Error ? cause.message : t('sharedGroupInviteFailed'))
     } finally {
@@ -848,6 +892,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       || groupWorking !== null || hasPendingChat || hasPendingMemory) return
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
+    const pendingMessageKey = `${submittedGroupId}\u0000${draft}`
+    const messageId = groupPendingMessageIdsRef.current.get(pendingMessageKey)
+      ?? brandString<BotGroupMessageIdType>(`bot-group-message-${randomUUID()}`)
+    groupPendingMessageIdsRef.current.set(pendingMessageKey, messageId)
     const operationGeneration = groupOperationGenerationRef.current + 1
     groupOperationGenerationRef.current = operationGeneration
     const isCurrentGroupOperation = (): boolean => (
@@ -861,16 +909,23 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       const result = await send({
         groupId: brandString<BotGroupIdType>(groupId),
         text: draft,
+        messageId,
       })
       if (!openRef.current || selectedGroupIdRef.current !== submittedGroupId) return
+      if (!isCurrentGroupOperation()) return
       if (result.ok) {
+        if (result.value.status === 'partial') {
+          setError(t('sharedGroupSendFailed'))
+          return
+        }
+        groupPendingMessageIdsRef.current.delete(pendingMessageKey)
         if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
         await readGroup(submittedGroupId)
       } else {
         setError(result.error.message || t('sharedGroupSendFailed'))
       }
     } catch (cause: unknown) {
-      if (openRef.current && selectedGroupIdRef.current === submittedGroupId) {
+      if (isCurrentGroupOperation()) {
         setError(cause instanceof Error ? cause.message : t('sharedGroupSendFailed'))
       }
     } finally {
@@ -988,7 +1043,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => { setCreateGroupError(null); setCreateGroupOpen(true) }}
+                  onClick={openCreateGroup}
                   disabled={groupWorking !== null || bots.length < 2}
                 >
                   {t('sharedGroupCreate')}
@@ -1015,7 +1070,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
               <section className={css.sharedConversation} aria-label={selectedGroup.name}>
                 <header className={css.sharedConversationHeader}>
                   <div><strong>{selectedGroup.name}</strong><small>{selectedGroup.bots.map(bot => bot.name).join(', ')}</small></div>
-                  {client.createGroupInvite !== undefined && (
+                  {client.createGroupInvite !== undefined && !groupInviteUnavailable && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -1025,6 +1080,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                       {groupInviteWorking ? t('sharedGroupInviteCreating') : t('sharedGroupInvite')}
                     </Button>
                   )}
+                  {groupInviteUnavailable && <span className={css.shareMemberHint}>{t('sharedGroupInviteOwnerOnly')}</span>}
                 </header>
                 {groupInvite !== null && (
                   <div className={css.inviteCode}>
@@ -1084,7 +1140,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       {client.createGroup !== undefined && (
         <SharedGroupCreateDialog
           open={open && createGroupOpen}
-          onClose={() => { setCreateGroupOpen(false) }}
+          onClose={closeCreateGroup}
           onCreate={createSharedGroup}
           bots={bots}
           error={createGroupError}
