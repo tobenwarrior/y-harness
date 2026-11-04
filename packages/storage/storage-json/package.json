@@ -31,6 +31,7 @@
     "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
+    "@yharness/atomic-write": "workspace:*",
     "@yharness/schemastery": "workspace:~"
   },
   "devDependencies": {

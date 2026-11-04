@@ -29,6 +29,7 @@
 import { mkdir, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Dirent } from 'node:fs'
+import { withFileLock } from '@yharness/atomic-write'
 import { StorageError } from '@yharness/storage'
 import type { KvUnit, KvUnitDescriptor } from '@yharness/storage'
 import { writeAtomic } from './atomic.ts'
@@ -214,18 +215,58 @@ export class PerRecordJsonUnit implements KvUnit {
     return { tables, global: state.global }
   }
 
+  async getRecord(table: string, key: string): Promise<unknown | undefined> {
+    this.assertOpen()
+    assertSafeKey(this.descriptor.name, key)
+    return readRecord(join(this.tableDir(table), `${key}.json`), acceptedStamps(this.descriptor))
+  }
+
+  async updateRecord(
+    table: string,
+    key: string,
+    update: (current: unknown) => unknown,
+  ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
+    this.assertOpen()
+    assertSafeKey(this.descriptor.name, key)
+    const path = join(this.tableDir(table), `${key}.json`)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    return this.tracked(withFileLock(path, async () => {
+      const current = await readRecord(path, acceptedStamps(this.descriptor))
+      if (current === undefined) return { found: false }
+      const value = update(current)
+      await this.writeDocument(path, value)
+      return { found: true, value }
+    }))
+  }
+
+  async insertRecord(table: string, key: string, value: unknown): Promise<boolean> {
+    this.assertOpen()
+    assertSafeKey(this.descriptor.name, key)
+    const path = join(this.tableDir(table), `${key}.json`)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    return this.tracked(withFileLock(path, async () => {
+      if (await readRecord(path, acceptedStamps(this.descriptor)) !== undefined) return false
+      await this.writeDocument(path, value)
+      return true
+    }))
+  }
+
   /** Durably replace one record: its own document, atomically. */
   async putRecord(table: string, key: string, value: unknown): Promise<void> {
     this.assertOpen()
     assertSafeKey(this.descriptor.name, key)
-    await this.tracked(this.writeDocument(join(this.tableDir(table), `${key}.json`), value))
+    const path = join(this.tableDir(table), `${key}.json`)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await this.tracked(withFileLock(path, () => this.writeDocument(path, value)))
   }
 
   /** Durably delete one record. Idempotent: a missing key is a no-op. */
   async deleteRecord(table: string, key: string): Promise<void> {
     this.assertOpen()
     assertSafeKey(this.descriptor.name, key)
-    await this.tracked(rm(join(this.tableDir(table), `${key}.json`), { force: true }))
+    const path = join(this.tableDir(table), `${key}.json`)
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await this.tracked(withFileLock(path, () => rm(path, { force: true })))
   }
 
   /**
@@ -240,7 +281,7 @@ export class PerRecordJsonUnit implements KvUnit {
     assertSafeKey(this.descriptor.name, key)
     const path = join(this.tableDir(table), `${key}.json`)
     const moved = `${path}.bak.${backupStamp(new Date())}`
-    await this.tracked(rename(path, moved))
+    await this.tracked(withFileLock(path, () => rename(path, moved)))
     return moved
   }
 
@@ -250,7 +291,9 @@ export class PerRecordJsonUnit implements KvUnit {
     if (!this.descriptor.hasGlobal) {
       throw new Error(`unit '${this.descriptor.name}' does not declare a global slot`)
     }
-    await this.tracked(this.writeDocument(join(this.dir, 'global.json'), value))
+    const path = join(this.dir, 'global.json')
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await this.tracked(withFileLock(path, () => this.writeDocument(path, value)))
   }
 
   /* jscpd:ignore-start -- the two unit classes are standalone; the drain/guard lifecycle mirrors the shared KvUnit contract */
@@ -289,11 +332,12 @@ export class PerRecordJsonUnit implements KvUnit {
   }
 
   /** Track one durable write so close() drains it. */
-  private tracked(write: Promise<void>): Promise<void> {
-    this.inFlight.add(write)
+  private tracked<T>(write: Promise<T>): Promise<T> {
+    const drain = write.then(() => undefined, () => undefined)
+    this.inFlight.add(drain)
     // Swallow only on the tracking branch: the caller still awaits `write`
     // itself, so rejections stay observed exactly once.
-    write.catch(() => {}).finally(() => this.inFlight.delete(write))
+    drain.then(() => this.inFlight.delete(drain), () => {})
     return write
   }
 }

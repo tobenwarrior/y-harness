@@ -140,7 +140,7 @@ Independent: domain reads and writes never touch request prefixes, so nothing he
 
 These limits define when the domain layer is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 
-- **Single-process change visibility** — `domain/changed` is an in-process event; a second host process or a reconnecting GUI observes no changes until the cross-process revision pattern lands ([Agent Note](../../../.agents/notes/proposed/architecture/2026-07-24-domain-kv-storage-and-workspace.md)).
+- **Single-process change visibility** — `domain/changed` is an in-process event; a second host process or a reconnecting GUI must use `KvTable.getFresh` or another explicit refresh to observe durable changes. `KvTable.update` and `KvTable.insert` use the backend's fenced primitives when available; consumers that require multi-Host safety must check `supportsDurableCoordination` and fail closed when it is false.
 - **No cross-table transactions, secondary indexes, or multi-segment keys** — each write touches one record; these extensions are deferred in the Agent Note's out-of-scope list.
 - **No data migration** — a domain whose stored version differs from its spec rejects at open (`version-mismatch`); changing a schema requires migrating the stored data by hand.
 

@@ -49,6 +49,7 @@ import type { TurnEndReason } from '@yharness/session'
 import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
+import { scopeOf, scopeParentOf } from '@yharness/scope'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { z as zod } from 'zod'
@@ -92,6 +93,13 @@ import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
+import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
+import {
+  createBotSkillPolicyProvider,
+  normalizeBotSkillPolicy,
+  projectBotSkillSummary,
+} from './skills.ts'
+import type { BotSkillPolicy } from './types.ts'
 import type {
   BotAvailability,
   BotAccent,
@@ -131,6 +139,10 @@ import type {
   BotMemoryUpdateValue,
   BotMemoryView,
   BotRecord,
+  BotSkillListRequest,
+  BotSkillListValue,
+  BotSkillUpdateRequest,
+  BotSkillUpdateValue,
   BotRenameRequest,
   BotRenameValue,
   BotShareMemberRevokeRequest,
@@ -146,13 +158,13 @@ import type {
   BotSharedRosterFenceRecoveryValue,
   BotView,
 } from './types.ts'
-import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
   BOT_APPEARANCE_MIGRATION_VERSION,
   botDomain,
   botEventRoutineSchema,
   botPendingMemoryUpdateSchema,
   botRecordSchema,
+  botSkillPolicySchema,
   imageAttachmentRefSchema,
 } from './storage.ts'
 import type { BotStoredRecord } from './storage.ts'
@@ -359,6 +371,14 @@ export type {
   BotGroupView,
 } from './group-chat.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
+export {
+  BOT_SKILL_NAME_LIMIT,
+  BOT_SKILL_NAME_MAX_LENGTH,
+  DEFAULT_BOT_SKILL_POLICY,
+  botSkillPolicyAllows,
+  createBotSkillPolicyProvider,
+  normalizeBotSkillPolicy,
+} from './skills.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
 export {
   authorizeBotShare,
@@ -490,6 +510,7 @@ interface NormalizedCreate {
   readonly accent: BotAccent
   readonly cwd: string
   readonly agentPreset?: string
+  readonly skillPolicy?: BotSkillPolicy
   readonly persona?: string
   readonly capabilities?: readonly string[]
 }
@@ -665,6 +686,10 @@ const botProfileSnapshotSchema = zod.object({
   persona: zod.string().max(4000).nullable().optional(),
   /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
   capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+  /** Optional in v2 snapshots so v1/profile-only records remain readable; null clears a policy. */
+  skillPolicy: botSkillPolicySchema.nullable().optional(),
+  /** Optional in v2 snapshots so old profile records retain their row revision. */
+  skillPolicyRevision: zod.number().int().nonnegative().optional(),
 }).strict()
 const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
@@ -1005,6 +1030,14 @@ function normalizeCapabilities(value: BotCreateRequest['capabilities']): readonl
   return capabilities
 }
 
+function normalizeRequestedBotSkillPolicy(value: unknown): BotSkillPolicy {
+  try {
+    return normalizeBotSkillPolicy(value)
+  } catch (error: unknown) {
+    return badRequest(error instanceof Error ? error.message : 'Bot skill policy is invalid')
+  }
+}
+
 function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
   if (value === undefined) return undefined
   if (!BOT_IDENTITIES.includes(value)) return badRequest(`Unknown Bot identity '${String(value)}'`)
@@ -1030,6 +1063,7 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
   const description = normalizeOptionalText('Bot description', request.description, 240)
   const cwdInput = normalizeOptionalText('Bot working directory', request.cwd, 4096)
   const agentPreset = normalizeOptionalText('Bot agent preset', request.agentPreset, 160)
+  const skillPolicy = request.skillPolicy === undefined ? undefined : normalizeRequestedBotSkillPolicy(request.skillPolicy)
   const persona = normalizeOptionalText('Bot persona', request.persona, 4000)
   const capabilities = normalizeCapabilities(request.capabilities)
   return {
@@ -1040,6 +1074,7 @@ function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
     accent: normalizeAccent(request.accent),
     cwd: resolve(cwdInput ?? process.cwd()),
     ...(agentPreset === undefined ? {} : { agentPreset }),
+    ...(skillPolicy === undefined ? {} : { skillPolicy }),
     ...(persona === undefined ? {} : { persona }),
     ...(capabilities === undefined ? {} : { capabilities }),
   }
@@ -1052,6 +1087,7 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && record.accent === request.accent
     && record.cwd === request.cwd
     && record.agentPreset === request.agentPreset
+    && JSON.stringify(record.skillPolicy ?? undefined) === JSON.stringify(request.skillPolicy ?? undefined)
     && record.persona === request.persona
     && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
@@ -1111,6 +1147,14 @@ function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfile
     ...(record.connectedAppIds === undefined ? {} : { connectedAppIds: record.connectedAppIds }),
     ...(record.connectedAppDenyIds === undefined ? {} : { connectedAppDenyIds: record.connectedAppDenyIds }),
     ...(record.eventRoutines === undefined ? {} : { eventRoutines: record.eventRoutines }),
+    skillPolicy: record.skillPolicy === undefined
+      ? null
+      : {
+        mode: record.skillPolicy.mode,
+        enabled: [...record.skillPolicy.enabled],
+        disabled: [...record.skillPolicy.disabled],
+      },
+    skillPolicyRevision: record.skillPolicyRevision ?? 0,
     pendingMemoryUpdate: record.pendingMemoryUpdate ?? null,
     pinned: record.pinned ?? false,
     hidden: record.hidden ?? false,
@@ -1140,6 +1184,8 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
     capabilities: currentCapabilities,
     avatar: ignoredAvatar,
     group: currentGroup,
+    skillPolicy: currentSkillPolicy,
+    skillPolicyRevision: currentSkillPolicyRevision,
     pendingMemoryUpdate: currentPendingMemoryUpdate,
     ...withoutOptionalProfile
   } = record
@@ -1147,6 +1193,8 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
   void currentPersona
   void currentCapabilities
   void ignoredAvatar
+  void currentSkillPolicy
+  void currentSkillPolicyRevision
   return {
     ...withoutOptionalProfile,
     name: profile.name,
@@ -1163,6 +1211,12 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
     ...(profile.connectedAppIds === undefined ? {} : { connectedAppIds: profile.connectedAppIds }),
     ...(profile.connectedAppDenyIds === undefined ? {} : { connectedAppDenyIds: profile.connectedAppDenyIds }),
     ...(profile.eventRoutines === undefined ? {} : { eventRoutines: profile.eventRoutines }),
+    ...(profile.skillPolicy === undefined
+      ? currentSkillPolicy === undefined ? {} : { skillPolicy: currentSkillPolicy }
+      : profile.skillPolicy === null ? {} : { skillPolicy: profile.skillPolicy }),
+    ...(profile.skillPolicyRevision === undefined
+      ? currentSkillPolicyRevision === undefined ? {} : { skillPolicyRevision: currentSkillPolicyRevision }
+      : { skillPolicyRevision: profile.skillPolicyRevision }),
     ...(profile.pendingMemoryUpdate === undefined
       ? currentPendingMemoryUpdate === undefined ? {} : { pendingMemoryUpdate: currentPendingMemoryUpdate }
       : profile.pendingMemoryUpdate === null ? {} : { pendingMemoryUpdate: profile.pendingMemoryUpdate }),
@@ -1823,11 +1877,17 @@ function memoryView(memory: BotMemoryRecord): BotMemoryView {
 async function migrateLegacyAvatars(domain: Domain<typeof botDomain>): Promise<void> {
   if (domain.global.get().animatedAvatarVersion === BOT_APPEARANCE_MIGRATION_VERSION) return
   const bots = domain.table('bots')
+  if (!bots.supportsDurableCoordination) {
+    throw new Error('Bot profile persistence requires durable cross-process coordination')
+  }
   for (const [key, record] of bots.entries()) {
     if (record.avatar === undefined) continue
-    const { avatar: legacyAvatar, ...withoutAvatar } = record
-    void legacyAvatar
-    await bots.put(key, withoutAvatar)
+    await bots.update(key, (current) => {
+      if (current.avatar === undefined) return current
+      const { avatar: ignoredAvatar, ...withoutAvatar } = current
+      void ignoredAvatar
+      return withoutAvatar
+    })
   }
   await domain.global.set({ animatedAvatarVersion: BOT_APPEARANCE_MIGRATION_VERSION })
 }
@@ -1925,6 +1985,8 @@ export class BotService extends TypertRemoteService {
   private readonly sharedScopeAgents = new WeakSet<Agent>()
   private readonly sharedPromptMigrations = new WeakSet<Agent>()
   private readonly sharedPromptMigrationsPending = new WeakSet<Agent>()
+  private readonly skillPolicyFibers = new Map<Agent, ReturnType<Context['inject']>>()
+  private readonly skillPolicyInvalidators = new Map<string, () => void>()
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
@@ -2443,9 +2505,12 @@ export class BotService extends TypertRemoteService {
           await this.chain
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
+          const skillPolicyFibers = [...this.skillPolicyFibers.values()]
+          this.skillPolicyFibers.clear()
           await this.groupService.then(service => service.whenIdle())
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
+            ...skillPolicyFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
             openedDomain.close(),
             openedGroupDomain.close(),
@@ -4755,6 +4820,118 @@ export class BotService extends TypertRemoteService {
     }
   }
 
+  /**
+   * Read host-local skill metadata and one Bot's current discovery policy.
+   * Bodies, paths, provider handles, and credentials never cross this Remote.
+   * @param request - Bot id whose skill view should be projected.
+   * @returns the Bot view, canonical policy, and metadata-only skill rows.
+   */
+  @Remote('listSkills')
+  async listSkills(request: BotSkillListRequest): Promise<BotSkillListValue> {
+    const id = normalizeBotId(request.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const bots = (await this.getDomain()).table('bots')
+    const record = await this.freshBotRecord(bots, id, 'skill-policy')
+    const policy = normalizeBotSkillPolicy(record.skillPolicy)
+    const revision = record.skillPolicyRevision ?? 0
+    const agent = this.ctx.agents.get(record.sessionId)
+    const registry = agent === undefined
+      ? this.ctx.get('skills')
+      : this.ctx.get('agentPresets')?.serviceFor(agent, 'skills') ?? agent.ctx.get('skills') ?? this.ctx.get('skills')
+    if (registry === undefined) return { bot: this.view(record), policy, revision, skills: [] }
+    const agentScope = agent === undefined ? undefined : scopeOf(agent.ctx)
+    let scope = agentScope === undefined ? undefined : scopeParentOf(agentScope)
+    let releasePreset: (() => Promise<void>) | undefined
+    if (agent === undefined) {
+      const presets = this.ctx.get('agentPresets')
+      const presetId = record.agentPreset ?? presets?.defaultId
+      if (presets !== undefined && presetId !== undefined) {
+        try {
+          const lease = await presets.acquireScope(presetId)
+          scope = lease.key
+          releasePreset = async () => { await lease[Symbol.asyncDispose]() }
+        } catch (error: unknown) {
+          this.ctx.logger.debug(`bots: skill catalog could not retain preset "${presetId}": ${String(error)}`)
+        }
+      }
+    }
+    try {
+      const summaries = await registry.list({ cwd: record.cwd, scope })
+      return {
+        bot: this.view(record),
+        policy,
+        revision,
+        skills: summaries.map(skill => projectBotSkillSummary(skill, policy)),
+      }
+    } finally {
+      await releasePreset?.()
+    }
+  }
+
+  /**
+   * Persist a canonical host-local skill policy for one Bot.
+   * @param request - Bot id and complete replacement policy.
+   * @returns the committed Bot view and canonical policy.
+   */
+  @Remote('updateSkills')
+  async updateSkills(request: BotSkillUpdateRequest): Promise<BotSkillUpdateValue> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const bots = (await this.getDomain()).table('bots')
+      await this.freshBotRecord(bots, id, 'skill-policy')
+      if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0) {
+        return badRequest('Bot skill policy revision must be a non-negative safe integer')
+      }
+      const policy = normalizeRequestedBotSkillPolicy({
+        mode: request.mode,
+        enabled: request.enabled,
+        disabled: request.disabled,
+      })
+      let revision = 0
+      let updated: BotStoredRecord
+      try {
+        updated = await this.updateProfileRecord(bots, id, 'skill-policy', (current) => {
+          const currentRevision = current.skillPolicyRevision ?? 0
+          if (request.expectedRevision !== currentRevision) {
+            throw new RemoteError(
+              'bot/skill-policy-conflict',
+              `Bot "${id}" skill policy changed while it was being edited`,
+              { botId: id, expectedRevision: request.expectedRevision, actualRevision: currentRevision },
+            )
+          }
+          if (currentRevision === Number.MAX_SAFE_INTEGER) {
+            throw new RemoteError('gateway/bad-request', 'Bot skill policy revision limit reached', {})
+          }
+          revision = currentRevision + 1
+          return {
+            ...current,
+            skillPolicy: policy,
+            skillPolicyRevision: revision,
+            updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+          }
+        })
+      } catch (error: unknown) {
+        if (error instanceof RemoteError && error.code === 'gateway/conflict') {
+          const current = await this.freshBotRecord(bots, id, 'skill-policy')
+          const actualRevision = current.skillPolicyRevision ?? 0
+          if (actualRevision !== request.expectedRevision) {
+            throw new RemoteError(
+              'bot/skill-policy-conflict',
+              `Bot "${id}" skill policy changed while it was being edited`,
+              { botId: id, expectedRevision: request.expectedRevision, actualRevision },
+              { cause: error },
+            )
+          }
+        }
+        throw error
+      }
+      this.skillPolicyInvalidators.get(String(updated.sessionId))?.()
+      this.emitChanged()
+      return { bot: this.view(updated), policy, revision }
+    })
+  }
+
   /** Replace one active memory while retaining its stable identity in the log. */
   private async updateMemoryForSession(
     sessionId: SessionId,
@@ -4870,8 +5047,7 @@ export class BotService extends TypertRemoteService {
       const botId = normalizeBotId(request.botId)
       if (botId === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const source = bots.get(botId)
-      if (source === undefined) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      const source = await this.freshBotRecord(bots, botId, 'template-publish')
       if (source.ownerId !== this.ownerId) throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
       const name = request.name === undefined ? source.name : normalizeName(request.name)
       const description = request.description === undefined
@@ -5293,8 +5469,7 @@ export class BotService extends TypertRemoteService {
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
-      const record = bots.get(id)
-      if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+      const record = await this.freshBotRecord(bots, id, 'memory-list')
       const memories = await this.readMemoryForSession(record.sessionId)
       return { memories: memories.map(memoryView) }
     })
@@ -5310,8 +5485,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const record = bots.get(id)
-    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const record = await this.freshBotRecord(bots, id, 'memory-update')
     const memoryId = parseBotMemoryId(request.memoryId)
     const memory = await this.updateMemoryForSession(record.sessionId, { memoryId, text: request.text })
     return { memory: memoryView(memory) }
@@ -5327,8 +5501,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    const record = bots.get(id)
-    if (record === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const record = await this.freshBotRecord(bots, id, 'memory-forget')
     const memoryId = parseBotMemoryId(request.memoryId)
     await this.forgetMemoryForSession(record.sessionId, { memoryId })
     return { removed: true }
@@ -5424,6 +5597,8 @@ export class BotService extends TypertRemoteService {
       ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
       ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
       ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
+      ...(normalized.skillPolicy === undefined ? {} : { skillPolicy: normalized.skillPolicy }),
+      skillPolicyRevision: 0,
       state: 'provisioning',
       createdAt: now,
       updatedAt: now,
@@ -5643,7 +5818,7 @@ export class BotService extends TypertRemoteService {
     const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const bots = (await this.getDomain()).table('bots')
-    if (bots.get(id) === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    await this.freshBotRecord(bots, id, 'avatar-upload')
     const [avatar] = await admitEncodedImages(this.ctx.attachments, [{ data: request.data, mediaType: request.mediaType }])
     if (avatar === undefined) throw new Error('Avatar attachment was not stored')
     return this.updateAvatarImpl({ botId: id, avatar })
@@ -5993,6 +6168,29 @@ export class BotService extends TypertRemoteService {
       }
     })
     this.promptFibers.set(agent, fiber)
+    if (agent.ctx.get('skills') !== undefined) {
+      const skillFiber = agent.ctx.inject(['skills'], (skillScope) => {
+        const key = scopeOf(agent.ctx)
+        const parentScope = key === undefined ? undefined : scopeParentOf(key)
+        skillScope.skills.registerProvider((control) => {
+          const sessionKey = String(agent.id)
+          const invalidator = control.invalidate
+          this.skillPolicyInvalidators.set(sessionKey, invalidator)
+          return createBotSkillPolicyProvider(
+            skillScope.skills,
+            parentScope,
+            () => this.readBotSkillPolicy(sessionKey),
+          )
+        })
+        skillScope.effect(() => () => {
+          const sessionKey = String(agent.id)
+          if (this.skillPolicyInvalidators.get(sessionKey) === undefined) return
+          this.skillPolicyInvalidators.delete(sessionKey)
+        }, 'bot skill policy cleanup')
+      })
+      this.skillPolicyFibers.set(agent, skillFiber)
+      await skillFiber
+    }
     await fiber
     if (sharedAdmission) {
       await this.sanitizeSharedPromptSurface(agent)
@@ -6384,6 +6582,16 @@ export class BotService extends TypertRemoteService {
     const fiber = this.promptFibers.get(agent)
     if (fiber === undefined) return
     this.promptFibers.delete(agent)
+    const skillFiber = this.skillPolicyFibers.get(agent)
+    this.skillPolicyFibers.delete(agent)
+    this.skillPolicyInvalidators.delete(String(agent.id))
+    if (skillFiber !== undefined) {
+      const skillTask = skillFiber.dispose().catch((error: unknown) => {
+        this.ctx.logger.warn(`bots: skill policy cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+      this.promptDisposals.add(skillTask)
+      void skillTask.finally(() => { this.promptDisposals.delete(skillTask) })
+    }
     const task = fiber.dispose().catch((error: unknown) => {
       this.ctx.logger.warn(`bots: prompt cleanup failed: ${error instanceof Error ? error.message : String(error)}`)
     })
@@ -6396,6 +6604,7 @@ export class BotService extends TypertRemoteService {
       ownerId: ignoredOwnerId,
       pendingMemoryUpdate: ignoredPendingMemoryUpdate,
       eventRoutines: ignoredEventRoutines,
+      skillPolicyRevision: ignoredSkillPolicyRevision,
       ...withoutPrivateFields
     } = record
     const agent = this.ctx.agents.get(record.sessionId)
@@ -6405,6 +6614,7 @@ export class BotService extends TypertRemoteService {
     void ignoredOwnerId
     void ignoredPendingMemoryUpdate
     void ignoredEventRoutines
+    void ignoredSkillPolicyRevision
     return {
       ...withoutPrivateFields,
       pinned: record.pinned ?? false,
@@ -6478,6 +6688,61 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  /** Reject profile writes when the routed medium cannot fence other Hosts. */
+  private requireProfileCoordination(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    operation: string,
+    botId?: BotRecord['id'],
+  ): void {
+    if (bots.supportsDurableCoordination) return
+    throw new RemoteError(
+      'bot/profile-coordination-unavailable',
+      'Bot profile changes require a storage backend with cross-process coordination.',
+      { operation, ...(botId === undefined ? {} : { botId }) },
+    )
+  }
+
+  /** Read one Bot row from the current durable medium and refresh the local index. */
+  private async freshBotRecord(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    id: BotRecord['id'],
+    operation: string,
+  ): Promise<BotStoredRecord> {
+    this.requireProfileCoordination(bots, operation, id)
+    const stored = await bots.getFresh(id)
+    if (stored === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
+    const profileState = await this.readProfileRevisionState(bots)
+    const current = applyProfileSnapshot(stored, profileState.profiles[String(id)])
+    this.recordsBySession.set(String(current.sessionId), current)
+    return current
+  }
+
+  /** Apply one profile transform against the medium's current row. */
+  private async updateProfileRecord(
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+    id: BotRecord['id'],
+    operation: string,
+    update: (current: BotStoredRecord) => BotStoredRecord,
+  ): Promise<BotStoredRecord> {
+    this.requireProfileCoordination(bots, operation, id)
+    const current = await this.freshBotRecord(bots, id, operation)
+    const next = await this.commitBotMutation(id, update, current.updatedAt)
+    this.recordsBySession.set(String(next.sessionId), next)
+    return next
+  }
+
+  /** Read the current skill policy for every scoped discovery or load. */
+  private async readBotSkillPolicy(sessionKey: string): Promise<BotSkillPolicy> {
+    const known = this.recordsBySession.get(sessionKey)
+    if (known === undefined) throw new Error(`Bot Session "${sessionKey}" is no longer owned by a Bot`)
+    const bots = (await this.getDomain()).table('bots')
+    this.requireProfileCoordination(bots, 'skill-policy', known.id)
+    const current = await bots.getFresh(known.id)
+    if (current === undefined) throw new Error(`Bot "${known.id}" is no longer present`)
+    this.recordsBySession.set(sessionKey, current)
+    return normalizeBotSkillPolicy(current.skillPolicy)
   }
 
   private async activeTemplate(
@@ -7269,7 +7534,7 @@ export class BotService extends TypertRemoteService {
         admissionRequest,
         admissionToken,
         { releaseWithoutReceipt: true },
-      ), { waitMs: 0, takeOverExited: false })
+      ), { waitMs: 0 })
       if (outcome === 'accepted') {
         this.clearSharedGroupDeliveryLocalState(admissionRequest, admissionToken)
         return 'accepted'
@@ -7643,7 +7908,7 @@ export class BotService extends TypertRemoteService {
           await this.reconcileSharedGroupDeliveryAdmission(request, token, { releaseWithoutReceipt: true })
           throw error
         }
-      }, { waitMs: 0, takeOverExited: false })
+      }, { waitMs: 0 })
     })()
     try {
       const admitted = await withSharedGroupDeliveryTimeout(admission, request.signal, () => { cancelled = true })

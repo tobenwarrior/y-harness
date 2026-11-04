@@ -1,9 +1,11 @@
 /**
  * One opened SQLite KV unit: prepared per-table statements over the
  * `u_<unit>_<table>` record tables plus this unit's row in the shared
- * `unit_globals` table. Each primitive is a single statement, so atomicity
- * comes from SQLite itself — no explicit transactions, and no write queue
- * (write ordering is the caller's responsibility per the KV contract).
+ * `unit_globals` table. Ordinary primitives are single statements; fenced
+ * updates use a bounded-retry `BEGIN IMMEDIATE` transaction. Unit close drains
+ * an already-started fenced update before releasing the unit slot. There is no
+ * write queue (write ordering is the caller's responsibility per the KV
+ * contract).
  * @module @yharness/storage-sqlite/unit
  */
 
@@ -12,11 +14,18 @@ import { StorageError } from '@yharness/storage'
 import type { KvUnit, KvUnitDescriptor } from '@yharness/storage'
 import { recordTableName } from './schema.ts'
 
+/** Bounded retry cadence for a second SQLite connection holding the write lock. */
+const WRITE_LOCK_RETRY_INITIAL_MS = 5
+const WRITE_LOCK_RETRY_MAX_MS = 100
+const WRITE_LOCK_RETRY_BUDGET_MS = 2_000
+
 /** Prepared statements for one declared table. */
 interface TableStatements {
   upsert: StatementSync
+  insert: StatementSync
   remove: StatementSync
   selectAll: StatementSync
+  selectOne: StatementSync
 }
 
 /**
@@ -25,10 +34,14 @@ interface TableStatements {
  * primitive. Values are stored as JSON text in the `value` column.
  */
 export class SqliteKvUnit implements KvUnit {
+  private readonly db: DatabaseSync
   private readonly tables = new Map<string, TableStatements>()
   private readonly globalUpsert: StatementSync | undefined
   private readonly globalSelect: StatementSync | undefined
   private closed = false
+  /** Fenced updates that must settle before unit teardown releases its slot. */
+  private readonly inFlight = new Set<Promise<void>>()
+  private closing: Promise<void> | undefined
 
   /**
    * @param db - Open database handle owned by the backend (never closed here).
@@ -40,6 +53,7 @@ export class SqliteKvUnit implements KvUnit {
     private readonly descriptor: KvUnitDescriptor,
     private readonly onClose: () => void,
   ) {
+    this.db = db
     for (const table of descriptor.tables) {
       // Both name segments are validated against UNIT_NAME_RE by the backend,
       // so the physical identifier is safe to interpolate into statement text.
@@ -48,8 +62,10 @@ export class SqliteKvUnit implements KvUnit {
         upsert: db.prepare(
           `INSERT INTO "${physical}" (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
         ),
+        insert: db.prepare(`INSERT OR IGNORE INTO "${physical}" (key, value) VALUES (?, ?)`),
         remove: db.prepare(`DELETE FROM "${physical}" WHERE key = ?`),
         selectAll: db.prepare(`SELECT key, value FROM "${physical}"`),
+        selectOne: db.prepare(`SELECT value FROM "${physical}" WHERE key = ?`),
       })
     }
     this.globalUpsert = descriptor.hasGlobal
@@ -60,6 +76,35 @@ export class SqliteKvUnit implements KvUnit {
     this.globalSelect = descriptor.hasGlobal
       ? db.prepare('SELECT value FROM unit_globals WHERE unit = ?')
       : undefined
+  }
+
+  getRecord(table: string, key: string): Promise<unknown | undefined> {
+    return this.settle(() => {
+      const statements = this.statementsFor(table)
+      const row = statements.selectOne.get(key) as { value: string } | undefined
+      return row === undefined ? undefined : this.parseValue(row.value, `table '${table}' key '${key}'`)
+    })
+  }
+
+  updateRecord(
+    table: string,
+    key: string,
+    update: (current: unknown) => unknown,
+  ): Promise<{ readonly found: false } | { readonly found: true; readonly value: unknown }> {
+    return this.track(this.withImmediateTransaction(() => {
+      const statements = this.statementsFor(table)
+      const row = statements.selectOne.get(key) as { value: string } | undefined
+      if (row === undefined) {
+        return { found: false }
+      }
+      const value = update(this.parseValue(row.value, `table '${table}' key '${key}'`))
+      statements.upsert.run(key, JSON.stringify(value))
+      return { found: true, value }
+    }))
+  }
+
+  insertRecord(table: string, key: string, value: unknown): Promise<boolean> {
+    return this.settle(() => this.statementsFor(table).insert.run(key, JSON.stringify(value)).changes === 1)
   }
 
   loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }> {
@@ -118,11 +163,12 @@ export class SqliteKvUnit implements KvUnit {
   }
 
   close(): Promise<void> {
-    if (!this.closed) {
-      this.closed = true
+    if (this.closing !== undefined) return this.closing
+    this.closed = true
+    this.closing = Promise.allSettled(this.inFlight).then(() => {
       this.onClose()
-    }
-    return Promise.resolve()
+    })
+    return this.closing
   }
 
   /**
@@ -140,10 +186,54 @@ export class SqliteKvUnit implements KvUnit {
     }
   }
 
+  /**
+   * Acquire SQLite's write lock with bounded asynchronous retries. The
+   * synchronous driver returns `database is locked` immediately when another
+   * connection owns the lock, so waiting between attempts keeps the event loop
+   * available for that connection to commit while still failing a permanently
+   * contended medium within a fixed budget.
+   */
+  private async withImmediateTransaction<T>(operation: () => T): Promise<T> {
+    try {
+      this.ensureOpen()
+      const deadline = Date.now() + WRITE_LOCK_RETRY_BUDGET_MS
+      let delay = WRITE_LOCK_RETRY_INITIAL_MS
+      for (;;) {
+        try {
+          this.db.exec('BEGIN IMMEDIATE')
+        } catch (error) {
+          if (!isSqliteBusy(error) || Date.now() >= deadline) throw error
+          const remaining = deadline - Date.now()
+          await new Promise(resolve => setTimeout(resolve, Math.min(delay, remaining)))
+          delay = Math.min(delay * 2, WRITE_LOCK_RETRY_MAX_MS)
+          continue
+        }
+        try {
+          const result = operation()
+          this.db.exec('COMMIT')
+          return result
+        } catch (error: unknown) {
+          try { this.db.exec('ROLLBACK') } catch (rollbackError: unknown) { void rollbackError }
+          throw error
+        }
+      }
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(String(error))
+    }
+  }
+
   private ensureOpen(): void {
     if (this.closed) {
       throw new StorageError('closed', `kv unit '${this.descriptor.name}' is closed`)
     }
+  }
+
+  /** Keep asynchronous fenced updates inside the close drain barrier. */
+  private track<T>(operation: Promise<T>): Promise<T> {
+    const drain = operation.then(() => undefined, () => undefined)
+    this.inFlight.add(drain)
+    drain.then(() => this.inFlight.delete(drain), () => {})
+    return operation
   }
 
   private statementsFor(table: string): TableStatements {
@@ -153,4 +243,12 @@ export class SqliteKvUnit implements KvUnit {
     }
     return statements
   }
+}
+
+/** Return true only for SQLite's transient writer-lock errors. */
+function isSqliteBusy(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if ('code' in error && typeof error.code === 'string'
+    && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED')) return true
+  return /database (?:is )?locked|database busy/i.test(error.message)
 }

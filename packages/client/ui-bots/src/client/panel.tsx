@@ -111,6 +111,7 @@ export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager,
   SessionProvider, renderSlot, t, share,
+  skillManager,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -148,6 +149,7 @@ export function BotsPanel({
       onUpdateProfile={updateProfile}
       {...(share === undefined ? {} : { share })}
       memoryManager={memoryManager}
+      skillManager={skillManager}
       loading={state.phase === 'loading' && bots.length === 0}
     />
   )

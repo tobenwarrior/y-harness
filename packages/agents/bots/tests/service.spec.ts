@@ -9,7 +9,7 @@ import { SharedAccessAuthority, sharedPrincipalOf } from '@yharness/client-conne
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
-import { createScope } from '@yharness/scope'
+import { createScope, scopeOf } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
@@ -38,6 +38,7 @@ import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { defineTool } from '@yharness/tools'
 import type { ToolDefinition, ToolExecutionToken, ToolRunContext } from '@yharness/tools'
+import SkillRegistry, { type SkillCandidate, type SkillDefinition } from '@yharness/skill'
 import McpResources from '@yharness/mcp-resources'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
@@ -375,6 +376,7 @@ async function createHarness({
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime, { mode: toolMode })
   if (toolMode !== 'native') ctx.provide('ptcRuntime', { language: 'typescript' } as never)
+  await ctx.plugin(SkillRegistry)
   await ctx.plugin(McpResources)
   const backend: StorageBackend = new MemoryStorageBackend(pool)
   ctx.effect(() => ctx.storage.backend.register('fixture', backend))
@@ -11410,6 +11412,272 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('persists a Bot skill policy and blocks denied skill bodies in its scoped registry', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Skill owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const bodies = vi.fn()
+    const candidates: SkillCandidate[] = [
+      {
+        name: 'code-review', description: 'Review code',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'fixture', source: 'bundled', rank: 600, locator: 'code-review',
+      },
+      {
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'fixture', source: 'bundled', rank: 600, locator: 'release-notes',
+      },
+    ]
+    h.ctx.skills.registerProvider(() => ({
+      name: 'fixture',
+      list: () => Promise.resolve(candidates),
+      get: async (candidate): Promise<SkillDefinition> => {
+        bodies(candidate.name)
+        return { ...candidate, content: `${candidate.name} body.` }
+      },
+    }))
+    const agent = h.agents[0]
+    if (agent === undefined) throw new Error('skill policy test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('skill policy test Agent has no scope')
+    try {
+      await expect(h.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        revision: 0,
+        policy: { mode: 'all', enabled: [], disabled: [] },
+        skills: [{ name: 'code-review', enabled: true }, { name: 'release-notes', enabled: true }],
+      })
+      await expect(h.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['not valid'], disabled: [],
+      })).rejects.toThrow('Bot skill name')
+      await h.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review', 'code-review'], disabled: [],
+      })
+      const scoped = await h.ctx.skills.list({ scope })
+      expect(scoped.map(skill => [skill.name, skill.invocation.modelInvocable])).toEqual([
+        ['code-review', true], ['release-notes', false],
+      ])
+      await expect(h.ctx.skills.get('release-notes', { scope })).resolves.toMatchObject({
+        name: 'release-notes', content: '', invocation: { modelInvocable: false },
+      })
+      expect(bodies).not.toHaveBeenCalledWith('release-notes')
+      expect(bodies).not.toHaveBeenCalledWith('code-review')
+      await expect(h.ctx.skills.get('code-review', { scope })).resolves.toMatchObject({ content: 'code-review body.' })
+      expect(bodies).toHaveBeenCalledWith('code-review')
+    } finally {
+      await close(h.ctx)
+    }
+    const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      await expect(reopened.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        revision: 1,
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
+  it('rejects a stale full-policy write after another actor revokes a skill', async () => {
+    const h = await harness()
+    try {
+      const { bot } = await h.service.create({ name: 'Concurrent skill owner', cwd: '/tmp' })
+      await expect(h.service.updateSkills({
+        botId: bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
+      })).resolves.toMatchObject({ revision: 1, policy: { mode: 'selected', enabled: ['code-review'] } })
+      await expect(h.service.updateSkills({
+        botId: bot.id, expectedRevision: 0, mode: 'all', enabled: [], disabled: [],
+      })).rejects.toMatchObject({
+        code: 'bot/skill-policy-conflict',
+        details: { botId: bot.id, expectedRevision: 0, actualRevision: 1 },
+      })
+      await expect(h.service.listSkills({ botId: bot.id })).resolves.toMatchObject({
+        revision: 1,
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects one of two concurrent Host skill writes against the same durable row', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Two host owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool, undefined, undefined, [], new Map(), records)
+    const hostB = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const results = await Promise.allSettled([
+        hostA.service.updateSkills({
+          botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
+        }),
+        hostB.service.updateSkills({
+          botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['code-review'],
+        }),
+      ])
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1)
+      const rejected = results.find(result => result.status === 'rejected')
+      expect(rejected).toMatchObject({ reason: { code: 'bot/skill-policy-conflict' } })
+      await expect(hostA.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({ revision: 1 })
+      await expect(hostB.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({ revision: 1 })
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
+  it('preserves a newer skill policy when a stale Host commits a fenced profile edit', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Profile fence owner', cwd: '/tmp' })
+    const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+    try {
+      await expect(first.service.updateSkills({
+        botId: created.bot.id,
+        expectedRevision: 0,
+        mode: 'selected',
+        enabled: ['code-review'],
+        disabled: [],
+      })).resolves.toMatchObject({ revision: 1 })
+
+      await expect(second.service.updateProfile({
+        botId: created.bot.id,
+        description: 'Updated without clearing host-local skills.',
+      })).resolves.toMatchObject({ bot: { description: 'Updated without clearing host-local skills.' } })
+      await expect(first.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        revision: 1,
+        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('rechecks a durable policy after a delayed body load on another Host revokes it', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Delayed two host owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const hostB = await harness(pool)
+    const bodyRequested = vi.fn()
+    let releaseBody!: (definition: SkillDefinition) => void
+    const body = new Promise<SkillDefinition>((resolve) => { releaseBody = resolve })
+    hostA.ctx.skills.registerProvider(() => ({
+      name: 'two-host-delayed',
+      list: () => Promise.resolve([{
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'two-host-delayed', source: 'bundled', rank: 600, locator: 'release-notes',
+      }]),
+      get: async (candidate): Promise<SkillDefinition> => {
+        bodyRequested()
+        return body.then(definition => ({ ...candidate, ...definition }))
+      },
+    }))
+    const agent = hostA.agents[0]
+    if (agent === undefined) throw new Error('two-host delayed test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('two-host delayed test Agent has no scope')
+    try {
+      const loading = hostA.ctx.skills.get('release-notes', { scope })
+      await vi.waitFor(() => { expect(bodyRequested).toHaveBeenCalledOnce() })
+      await hostB.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['release-notes'],
+      })
+      releaseBody({
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'two-host-delayed', source: 'bundled', content: 'revoked body',
+      })
+      await expect(loading).resolves.toMatchObject({ content: '', invocation: { modelInvocable: false, userInvocable: false } })
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
+  it('does not cache a Bot skill catalog across a Host revocation', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Catalog revocation owner', cwd: '/tmp' })
+    await close(first.ctx)
+    const hostA = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const hostB = await harness(pool)
+    hostA.ctx.skills.registerProvider(() => ({
+      name: 'catalog-revocation-fixture',
+      list: () => Promise.resolve([{
+        name: 'release-notes', description: 'Write release notes',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'catalog-revocation-fixture', source: 'bundled', rank: 600, locator: 'release-notes',
+      }]),
+      get: async candidate => ({ ...candidate, content: 'release notes body' }),
+    }))
+    const agent = hostA.agents[0]
+    if (agent === undefined) throw new Error('catalog revocation test Agent was not created')
+    const scope = scopeOf(agent.ctx)
+    if (scope === undefined) throw new Error('catalog revocation test Agent has no scope')
+    try {
+      await expect(hostA.ctx.skills.list({ scope })).resolves.toMatchObject([
+        { name: 'release-notes', invocation: { modelInvocable: true } },
+      ])
+      await hostB.service.updateSkills({
+        botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: [], disabled: ['release-notes'],
+      })
+      await expect(hostA.ctx.skills.list({ scope })).resolves.toMatchObject([
+        { name: 'release-notes', invocation: { modelInvocable: false, userInvocable: false } },
+      ])
+    } finally {
+      await close(hostA.ctx)
+      await close(hostB.ctx)
+    }
+  })
+
+  it('reads cold Bot skill metadata through its selected preset scope', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Cold skill owner', cwd: '/tmp', agentPreset: 'review' })
+    await close(first.ctx)
+    const h = await harness(pool)
+    const preset = createScope(h.ctx, {})
+    const key = scopeOf(preset.ctx)
+    if (key === undefined) throw new Error('cold skill test preset has no scope')
+    const presetSkills = preset.ctx.get('skills')
+    if (presetSkills === undefined) throw new Error('cold skill test has no skill registry')
+    presetSkills.registerProvider(() => ({
+      name: 'preset-fixture',
+      list: () => Promise.resolve([{
+        name: 'preset-review', description: 'Review with the selected preset',
+        invocation: { modelInvocable: true, userInvocable: true },
+        provider: 'preset-fixture', source: 'bundled', rank: 600, locator: 'preset-review',
+      }]),
+      get: async (candidate): Promise<SkillDefinition> => ({ ...candidate, content: 'Preset review body.' }),
+    }))
+    const release = vi.fn(async () => {})
+    const acquireScope = vi.fn(async (id: string) => {
+      expect(id).toBe('review')
+      return { key, [Symbol.asyncDispose]: release }
+    })
+    h.ctx.provide('agentPresets', { defaultId: 'default', acquireScope } as never)
+    try {
+      await expect(h.service.listSkills({ botId: created.bot.id })).resolves.toMatchObject({
+        skills: [{ name: 'preset-review', enabled: true }],
+      })
+      expect(acquireScope).toHaveBeenCalledWith('review')
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      await preset.dispose()
+      await close(h.ctx)
     }
   })
 })

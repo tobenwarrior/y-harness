@@ -50,6 +50,79 @@ describe('sqlite backend specifics', () => {
     await backend.close()
   })
 
+  it('fences current updates and claims absent keys', async () => {
+    const backend = backendAt(':memory:')
+    const unit = await backend.kv.open(DESCRIPTOR)
+    await unit.putRecord('records', 'counter', { n: 0 })
+    const first = await unit.updateRecord!('records', 'counter', value => ({ n: (value as { n: number }).n + 1 }))
+    const second = await unit.updateRecord!('records', 'counter', value => ({ n: (value as { n: number }).n + 1 }))
+    expect(first).toEqual({ found: true, value: { n: 1 } })
+    expect(second).toEqual({ found: true, value: { n: 2 } })
+    expect(await unit.getRecord!('records', 'counter')).toEqual({ n: 2 })
+    expect(await unit.insertRecord!('records', 'claimed', { owner: 'first' })).toBe(true)
+    expect(await unit.insertRecord!('records', 'claimed', { owner: 'second' })).toBe(false)
+    await backend.close()
+  })
+
+  it('waits for a second connection to release an immediate write lock', async () => {
+    const path = await freshDbPath()
+    const backend = backendAt(path)
+    const unit = await backend.kv.open(DESCRIPTOR)
+    await unit.putRecord('records', 'counter', { n: 0 })
+    const blocker = new DatabaseSync(path)
+    blocker.exec('BEGIN IMMEDIATE')
+    try {
+      const update = unit.updateRecord!('records', 'counter', value => ({
+        n: (value as { n: number }).n + 1,
+      }))
+      await new Promise(resolve => setTimeout(resolve, 30))
+      blocker.exec('COMMIT')
+      await expect(update).resolves.toEqual({ found: true, value: { n: 1 } })
+    } finally {
+      try { blocker.exec('ROLLBACK') } catch (error) {
+        // The commit above may have released the transaction already.
+        void error
+      }
+      blocker.close()
+      await backend.close()
+    }
+  })
+
+  it('drains a lock-retried update before resolving unit close', async () => {
+    const path = await freshDbPath()
+    const backend = backendAt(path)
+    const unit = await backend.kv.open(DESCRIPTOR)
+    await unit.putRecord('records', 'counter', { n: 0 })
+    const blocker = new DatabaseSync(path)
+    blocker.exec('BEGIN IMMEDIATE')
+    const update = unit.updateRecord!('records', 'counter', value => ({
+      n: (value as { n: number }).n + 1,
+    }))
+    const closing = unit.close()
+    let closeSettled = false
+    void closing.then(() => { closeSettled = true })
+    try {
+      // The update has synchronously reached its first busy retry; close must
+      // wait for that already-started operation instead of releasing early.
+      await Promise.resolve()
+      expect(closeSettled).toBe(false)
+      blocker.exec('COMMIT')
+      await expect(update).resolves.toEqual({ found: true, value: { n: 1 } })
+      await expect(closing).resolves.toBeUndefined()
+      await expect(unit.updateRecord!('records', 'counter', () => ({ n: 2 })))
+        .rejects.toMatchObject({ code: 'closed' })
+    } finally {
+      try { blocker.exec('ROLLBACK') } catch (error) {
+        // The commit above may have released the transaction already.
+        void error
+      }
+      blocker.close()
+      await update.catch(() => {})
+      await closing
+      await backend.close()
+    }
+  })
+
   it('materializes STRICT record tables and stamps the schema version', async () => {
     const path = await freshDbPath()
     const backend = backendAt(path)

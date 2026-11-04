@@ -654,6 +654,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The updated Bot view and connected-app access row.',
       },
       {
+        signature: '@Remote(\'listSkills\') async listSkills(request: BotSkillListRequest): Promise<BotSkillListValue>',
+        description: 'Read host-local skill metadata and one Bot\'s current discovery policy. Bodies, paths, provider handles, and credentials never cross this Remote.',
+        parameters: [{ name: 'request', description: 'Bot id whose skill view should be projected.' }],
+        returns: 'the Bot view, canonical policy, and metadata-only skill rows.',
+      },
+      {
+        signature: '@Remote(\'updateSkills\') async updateSkills(request: BotSkillUpdateRequest): Promise<BotSkillUpdateValue>',
+        description: 'Persist a canonical host-local skill policy for one Bot.',
+        parameters: [{ name: 'request', description: 'Bot id and complete replacement policy.' }],
+        returns: 'the committed Bot view and canonical policy.',
+      },
+      {
         signature: '@Remote(\'list\') async list(request: BotListRequest): Promise<BotListValue>',
         description: 'List the durable Bot roster without activating cold Sessions.',
         parameters: [{ name: 'request', description: 'Optional hidden-row inclusion for the restore surface.' }],
@@ -5677,7 +5689,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCreateRequest',
-    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly persona?: string;\n    readonly capabilities?: readonly string[];\n}',
+    declaration: 'export interface BotCreateRequest {\n    readonly id?: BotId;\n    readonly name: string;\n    readonly description?: string;\n    readonly identity?: BotIdentity;\n    readonly accent?: BotAccent;\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly skillPolicy?: BotSkillPolicy;\n    readonly persona?: string;\n    readonly capabilities?: readonly string[];\n}',
   },
   {
     name: 'BotCreateValue',
@@ -5889,7 +5901,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotRecord',
-    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface BotRecord {\n    readonly id: BotId;\n    readonly sessionId: SessionId;\n    readonly ownerId: string;\n    readonly name: string;\n    readonly description?: string | undefined;\n    readonly identity: BotIdentity;\n    readonly accent: BotAccent;\n    readonly avatar?: BotAvatar | undefined;\n    readonly eventRoutines?: readonly BotEventRoutine[] | undefined;\n    readonly persona?: string | undefined;\n    readonly capabilities?: readonly string[] | undefined;\n    readonly connectedAppIds?: readonly string[] | undefined;\n    readonly connectedAppDenyIds?: readonly string[] | undefined;\n    readonly pinned?: boolean | undefined;\n    readonly hidden?: boolean | undefined;\n    readonly group?: string | undefined;\n    readonly cwd: string;\n    readonly agentPreset?: string | undefined;\n    readonly skillPolicy?: BotSkillPolicy | undefined;\n    readonly skillPolicyRevision?: number | undefined;\n    readonly state: BotProvisioningState;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'BotRenameRequest',
@@ -5950,6 +5962,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotShareRole',
     declaration: 'export type BotShareRole = typeof BOT_SHARE_ROLES[number];',
+  },
+  {
+    name: 'BotSkillAccess',
+    declaration: 'export interface BotSkillAccess {\n    readonly name: string;\n    readonly description: string;\n    readonly whenToUse?: string;\n    readonly enabled: boolean;\n    readonly available: boolean;\n}',
+  },
+  {
+    name: 'BotSkillListRequest',
+    declaration: 'export interface BotSkillListRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotSkillListValue',
+    declaration: 'export interface BotSkillListValue {\n    readonly bot: BotView;\n    readonly policy: BotSkillPolicy;\n    readonly revision: number;\n    readonly skills: readonly BotSkillAccess[];\n}',
+  },
+  {
+    name: 'BotSkillUpdateRequest',
+    declaration: 'export interface BotSkillUpdateRequest {\n    readonly botId: BotId;\n    readonly expectedRevision: number;\n    readonly mode: BotSkillPolicy[\'mode\'];\n    readonly enabled: readonly string[];\n    readonly disabled: readonly string[];\n}',
+  },
+  {
+    name: 'BotSkillUpdateValue',
+    declaration: 'export interface BotSkillUpdateValue {\n    readonly bot: BotView;\n    readonly policy: BotSkillPolicy;\n    readonly revision: number;\n}',
   },
   {
     name: 'BotTemplateApproveRequest',
@@ -6033,7 +6065,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\' | \'skillPolicyRevision\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
   },
   {
     name: 'BoxProps',
@@ -7197,11 +7229,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'KvTable',
-    declaration: 'export interface KvTable<K extends string, V> {\n    get(key: K): V | undefined;\n    entries(): IterableIterator<[\n        K,\n        V\n    ]>;\n    keys(): IterableIterator<K>;\n    readonly size: number;\n    put(key: K, value: V): Promise<void>;\n    delete(key: K): Promise<boolean>;\n    update(key: K, fn: (current: V) => V): Promise<V>;\n}',
+    declaration: 'export interface KvTable<K extends string, V> {\n    readonly supportsDurableCoordination: boolean;\n    get(key: K): V | undefined;\n    getFresh(key: K): Promise<V | undefined>;\n    entries(): IterableIterator<[\n        K,\n        V\n    ]>;\n    keys(): IterableIterator<K>;\n    readonly size: number;\n    put(key: K, value: V): Promise<void>;\n    delete(key: K): Promise<boolean>;\n    update(key: K, fn: (current: V) => V): Promise<V>;\n    insert(key: K, value: V): Promise<boolean>;\n}',
   },
   {
     name: 'KvUnit',
-    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    backupRecord?(table: string, key: string): Promise<string>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    getRecord?(table: string, key: string): Promise<unknown | undefined>;\n    updateRecord?(table: string, key: string, update: (current: unknown) => unknown): Promise<{\n        readonly found: false;\n    } | {\n        readonly found: true;\n        readonly value: unknown;\n    }>;\n    insertRecord?(table: string, key: string, value: unknown): Promise<boolean>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    backupRecord?(table: string, key: string): Promise<string>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'KvUnitDescriptor',

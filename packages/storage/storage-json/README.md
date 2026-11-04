@@ -135,7 +135,7 @@ None — the backend never touches live request prefixes.
 These limits define when this backend is a poor fit or needs special operational care. They are current package constraints, not a task backlog.
 
 - **`single` rewrites the whole unit** — each write republishes the complete unit file; use `per-record` or route the domain to SQLite when this cost is too high.
-- **No cross-process write locking** — two processes writing the same unit can interleave replacements; writes to the same file use last-completion wins.
+- **Direct writes replace rather than merge records** — all JSON write primitives take the file lock, while `updateRecord` and `insertRecord` also reread the current document for an authoritative transform or absent-key claim. Consumers that need fenced multi-Host profile changes must use the domain coordination capability; network filesystems and writers on different hosts remain unsupported by the PID-based lock.
 - **Windows rename without explicit write-through** — durability relies on libuv's `rename()` (`MoveFileExW` with replacement); the stricter Win32 write-through publish helper from the session-log backend is planned to move down here when the `log` facet lands.
 
 <a id="dev-note"></a>

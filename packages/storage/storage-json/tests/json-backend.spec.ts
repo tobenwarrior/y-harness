@@ -44,6 +44,27 @@ describe('json backend specifics', () => {
     await backend.close()
   })
 
+  it.each(['single', 'per-record'] as const)('fences fresh updates and inserts across two backend instances (%s)', async (layout) => {
+    const root = await freshRoot()
+    const first = new JsonStorageBackend(root)
+    const second = new JsonStorageBackend(root)
+    const firstUnit = await first.kv.open({ ...descriptor, layout })
+    const secondUnit = await second.kv.open({ ...descriptor, layout })
+    await firstUnit.putRecord('t', 'counter', { n: 0 })
+    await Promise.all([
+      firstUnit.updateRecord!('t', 'counter', value => ({ n: (value as { n: number }).n + 1 })),
+      secondUnit.updateRecord!('t', 'counter', value => ({ n: (value as { n: number }).n + 1 })),
+    ])
+    expect(await firstUnit.getRecord!('t', 'counter')).toEqual({ n: 2 })
+    const inserted = await Promise.all([
+      firstUnit.insertRecord!('t', 'claimed', { owner: 'first' }),
+      secondUnit.insertRecord!('t', 'claimed', { owner: 'second' }),
+    ])
+    expect(inserted.sort()).toEqual([false, true])
+    await first.close()
+    await second.close()
+  })
+
   it('defers materialization until the first write', async () => {
     const root = await freshRoot()
     const backend = new JsonStorageBackend(root)
