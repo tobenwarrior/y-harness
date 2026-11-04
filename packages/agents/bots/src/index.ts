@@ -6512,6 +6512,15 @@ export class BotService extends TypertRemoteService {
     return this.ready
   }
 
+  /** Cache a Bot projection without regressing a newer local revision. */
+  private cacheBotRecord(record: BotStoredRecord): void {
+    const sessionKey = String(record.sessionId)
+    const cached = this.recordsBySession.get(sessionKey)
+    if (cached !== undefined && cached.updatedAt > record.updatedAt) return
+    this.recordsBySession.set(sessionKey, record)
+    this.refreshSharedRecords(record)
+  }
+
   /** Read one owner-scoped Bot through the authoritative V3 profile fence. */
   private async readOwnedBot(botId: BotRecord['id']): Promise<BotStoredRecord> {
     const bots = (await this.getDomain()).table('bots')
@@ -6530,8 +6539,7 @@ export class BotService extends TypertRemoteService {
       }
       return projected
     })
-    this.recordsBySession.set(String(current.sessionId), current)
-    this.refreshSharedRecords(current)
+    this.cacheBotRecord(current)
     return current
   }
 

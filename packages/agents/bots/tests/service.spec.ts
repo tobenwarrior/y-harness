@@ -6594,7 +6594,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not combine a pre-write profile snapshot with a concurrent event-routine row', async () => {
+  it('does not combine a pre-write profile snapshot or regress a newer routine cache', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
     const created = await seed.service.create({ name: 'Routine read race', cwd: '/tmp' })
@@ -6640,6 +6640,17 @@ describe('durable Bot roster', () => {
       releaseProfileRead.resolve(undefined)
 
       await expect(listing).resolves.toEqual({ routines: [] })
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('routine read race Agent was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger the routine after the stale read.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
     } finally {
       releaseProfileRead.resolve(undefined)
       await close(h.ctx)
