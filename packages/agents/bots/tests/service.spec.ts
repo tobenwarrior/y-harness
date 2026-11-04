@@ -4391,6 +4391,145 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('reads a routine-extended v2 predecessor without treating it as the strict setup schema', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Routine v2 predecessor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            roster: {
+              id,
+              sessionId: String(created.bot.sessionId),
+              ownerId: 'local-owner',
+              cwd: created.bot.cwd,
+              state: created.bot.state,
+              createdAt: created.bot.createdAt,
+            },
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            timedRoutines: [{
+              record: {
+                id: 'schedule-v2-predecessor',
+                kind: 'every',
+                title: 'V2 predecessor routine',
+                prompt: 'Keep this routine.',
+                everySeconds: 3_600,
+                scheduledAt: '2099-01-01T00:00:00.000Z',
+              },
+              sessionId: String(created.bot.sessionId),
+              status: 'active',
+            }],
+            timedRoutinesUpdatedAt: created.bot.updatedAt,
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(v3Key)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Routine v2 predecessor' }],
+      })
+      expect(records.get(v2Key)).toEqual(v2)
+      expect(records.get(v3Key)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 3,
+          profiles: {
+            [id]: {
+              timedRoutines: [{ record: { id: 'schedule-v2-predecessor' } }],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('does not revive V1 description or avatar when setup V2 omitted those fields', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'V2 omission is clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            description: 'Stale V1 description',
+            avatar: {
+              attachmentId: AttachmentId(`sha256:${'aa'.repeat(32)}`),
+              mediaType: 'image/png',
+              bytes: 3,
+              width: 1,
+              height: 1,
+            },
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(v3Key)
+    records.set(v1Key, v1)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const listed = await second.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('description')
+      expect(listed.bots[0]).not.toHaveProperty('avatar')
+      expect(records.get(v1Key)).toEqual(v1)
+      expect(records.get(v2Key)).toEqual(v2)
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
   it('fails closed instead of replaying a setup v2 pending row onto another Bot Session', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
@@ -4432,6 +4571,87 @@ describe('durable Bot roster', () => {
       await expect(h.service.list({})).rejects.toThrow('cannot replay')
       expect(records.get(v2Key)).toEqual(v2)
       expect(records.get(v3Key)).toBeUndefined()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a predecessor create pending row when the Bot row was never written', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Pending create row', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered create row',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: {},
+        pending: { transactionId: 'pending-v1-create-before-row', record: pendingRecord },
+      },
+    }
+    const bots = h.ctx.storageDomain.get('agent_bots')
+    if (bots === undefined || !await bots.table('bots').delete(id)) {
+      throw new Error('pending-create fixture did not remove the Bot row')
+    }
+    records.delete(v3Key)
+    records.set(v1Key, v1)
+    try {
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered create row' }],
+      })
+      expect(records.get(v3Key)).toMatchObject({ kind: 'grant', payload: { version: 3 } })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not overwrite a newer same-identity Bot row with a stale predecessor pending row', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer durable row', cwd: '/tmp' })
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Stale predecessor row',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt - 1,
+    }
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: {},
+        pending: { transactionId: 'pending-v1-stale-row', record: pendingRecord },
+      },
+    }
+    records.delete(v3Key)
+    records.set(v1Key, v1)
+    try {
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Newer durable row' }],
+      })
+      expect(records.get(v1Key)).toEqual(v1)
     } finally {
       await close(h.ctx)
     }
@@ -4874,6 +5094,81 @@ describe('durable Bot roster', () => {
           connectedAppIds: [],
         }],
       })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when newer v3 evidence omits a field claimed by the pending row', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer omitted claim', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v3')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      description: 'Claimed pending description',
+      avatar: {
+        attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`),
+        mediaType: 'image/png',
+        bytes: 3,
+        width: 1,
+        height: 1,
+      },
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-omitted-claim', record: pendingRecord },
+      },
+    })
+    records.set(currentKey, {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    })
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
     } finally {
       await close(h.ctx)
     }

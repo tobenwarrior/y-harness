@@ -670,6 +670,13 @@ const botProfileRevisionRecordV2Schema = zod.object({
   profiles: zod.record(zod.string(), botProfileSnapshotV2Schema).optional(),
   pending: botProfilePendingSchema.optional(),
 }).strict()
+/** Historical v2 routine records written before setup shipped its strict schema. */
+const botProfileRevisionRecordV2RoutineCompatSchema = zod.object({
+  version: zod.literal(2),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
 const botProfileRevisionRecordSchema = zod.object({
   version: zod.literal(BOT_PROFILE_REVISION_RECORD_VERSION),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
@@ -696,6 +703,9 @@ type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
 const BOT_PROFILE_OPTIONAL_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
   'description', 'avatar', 'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines',
 ]
+const BOT_PROFILE_V2_AUTHORITATIVE_OPTIONAL_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
+  'description', 'avatar',
+]
 
 function profileValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
@@ -709,14 +719,6 @@ function stableBotIdentityMatches(
     && String(current.sessionId) === String(expected.sessionId)
     && current.ownerId === expected.ownerId
     && current.createdAt === expected.createdAt
-}
-
-function isLegacyPendingReplay(
-  current: BotProfileRevisionState | undefined,
-  legacy: BotProfileRevisionState | undefined,
-  pending: zod.infer<typeof botProfilePendingSchema>,
-): boolean {
-  return current?.pending === undefined && legacy?.pending?.transactionId === pending.transactionId
 }
 
 /** Reject two same-generation profile snapshots that make different claims. */
@@ -750,44 +752,61 @@ function mergeProfileSnapshots(
   current: BotProfileSnapshot,
   legacy: BotProfileSnapshot,
   rejectConflicts: boolean,
+  preserveLegacyOmissions: readonly (keyof BotProfileSnapshot)[] = [],
 ): { readonly snapshot: BotProfileSnapshot; readonly changed: boolean } {
   if (rejectConflicts) assertCompatibleProfileSnapshots(current, legacy)
   const canUseLegacySetupFields = current.roster === undefined
-  const changed = (current.description === undefined && canUseLegacySetupFields && legacy.description !== undefined)
-    || (current.persona === undefined && canUseLegacySetupFields && legacy.persona !== undefined)
-    || (current.capabilities === undefined && canUseLegacySetupFields && legacy.capabilities !== undefined)
-    || (current.avatar === undefined && canUseLegacySetupFields && legacy.avatar !== undefined)
-    || (current.connectedAppIds === undefined && canUseLegacySetupFields && legacy.connectedAppIds !== undefined)
-    || (current.connectedAppDenyIds === undefined && canUseLegacySetupFields && legacy.connectedAppDenyIds !== undefined)
-    || (current.eventRoutines === undefined && canUseLegacySetupFields && legacy.eventRoutines !== undefined)
-    || (current.pendingMemoryUpdate === undefined && canUseLegacySetupFields && legacy.pendingMemoryUpdate !== undefined)
-    || (current.pinned === undefined && canUseLegacySetupFields && legacy.pinned !== undefined)
-    || (current.hidden === undefined && canUseLegacySetupFields && legacy.hidden !== undefined)
-    || (current.group === undefined && canUseLegacySetupFields && legacy.group !== undefined)
+  const canUseLegacyField = (field: keyof BotProfileSnapshot): boolean =>
+    canUseLegacySetupFields && !preserveLegacyOmissions.includes(field)
+  const changed = (current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined)
+    || (current.persona === undefined && canUseLegacyField('persona') && legacy.persona !== undefined)
+    || (current.capabilities === undefined && canUseLegacyField('capabilities') && legacy.capabilities !== undefined)
+    || (current.avatar === undefined && canUseLegacyField('avatar') && legacy.avatar !== undefined)
+    || (current.connectedAppIds === undefined && canUseLegacyField('connectedAppIds') && legacy.connectedAppIds !== undefined)
+    || (current.connectedAppDenyIds === undefined && canUseLegacyField('connectedAppDenyIds') && legacy.connectedAppDenyIds !== undefined)
+    || (current.eventRoutines === undefined && canUseLegacyField('eventRoutines') && legacy.eventRoutines !== undefined)
+    || (current.pendingMemoryUpdate === undefined && canUseLegacyField('pendingMemoryUpdate') && legacy.pendingMemoryUpdate !== undefined)
+    || (current.pinned === undefined && canUseLegacyField('pinned') && legacy.pinned !== undefined)
+    || (current.hidden === undefined && canUseLegacyField('hidden') && legacy.hidden !== undefined)
+    || (current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined)
+  const legacyWithoutDescription = preserveLegacyOmissions.includes('description') && current.description === undefined
+    ? (() => {
+      const { description: ignoredDescription, ...withoutDescription } = legacy
+      void ignoredDescription
+      return withoutDescription
+    })()
+    : legacy
+  const legacyForSnapshot = preserveLegacyOmissions.includes('avatar') && current.avatar === undefined
+    ? (() => {
+      const { avatar: ignoredAvatar, ...withoutAvatar } = legacyWithoutDescription
+      void ignoredAvatar
+      return withoutAvatar
+    })()
+    : legacyWithoutDescription
   return {
     snapshot: {
-      ...legacy,
+      ...legacyForSnapshot,
       ...current,
-      ...(current.description === undefined && canUseLegacySetupFields && legacy.description !== undefined
+      ...(current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined
         ? { description: legacy.description } : {}),
-      ...(current.persona === undefined && canUseLegacySetupFields && legacy.persona !== undefined ? { persona: legacy.persona } : {}),
-      ...(current.capabilities === undefined && canUseLegacySetupFields && legacy.capabilities !== undefined
+      ...(current.persona === undefined && canUseLegacyField('persona') && legacy.persona !== undefined ? { persona: legacy.persona } : {}),
+      ...(current.capabilities === undefined && canUseLegacyField('capabilities') && legacy.capabilities !== undefined
         ? { capabilities: legacy.capabilities } : {}),
-      ...(current.avatar === undefined && canUseLegacySetupFields && legacy.avatar !== undefined
+      ...(current.avatar === undefined && canUseLegacyField('avatar') && legacy.avatar !== undefined
         ? { avatar: legacy.avatar } : {}),
-      ...(current.connectedAppIds === undefined && canUseLegacySetupFields && legacy.connectedAppIds !== undefined
+      ...(current.connectedAppIds === undefined && canUseLegacyField('connectedAppIds') && legacy.connectedAppIds !== undefined
         ? { connectedAppIds: legacy.connectedAppIds } : {}),
-      ...(current.connectedAppDenyIds === undefined && canUseLegacySetupFields && legacy.connectedAppDenyIds !== undefined
+      ...(current.connectedAppDenyIds === undefined && canUseLegacyField('connectedAppDenyIds') && legacy.connectedAppDenyIds !== undefined
         ? { connectedAppDenyIds: legacy.connectedAppDenyIds } : {}),
-      ...(current.eventRoutines === undefined && canUseLegacySetupFields && legacy.eventRoutines !== undefined
+      ...(current.eventRoutines === undefined && canUseLegacyField('eventRoutines') && legacy.eventRoutines !== undefined
         ? { eventRoutines: legacy.eventRoutines } : {}),
-      ...(current.pendingMemoryUpdate === undefined && canUseLegacySetupFields && legacy.pendingMemoryUpdate !== undefined
+      ...(current.pendingMemoryUpdate === undefined && canUseLegacyField('pendingMemoryUpdate') && legacy.pendingMemoryUpdate !== undefined
         ? { pendingMemoryUpdate: legacy.pendingMemoryUpdate } : {}),
-      ...(current.pinned === undefined && canUseLegacySetupFields && legacy.pinned !== undefined
+      ...(current.pinned === undefined && canUseLegacyField('pinned') && legacy.pinned !== undefined
         ? { pinned: legacy.pinned } : {}),
-      ...(current.hidden === undefined && canUseLegacySetupFields && legacy.hidden !== undefined
+      ...(current.hidden === undefined && canUseLegacyField('hidden') && legacy.hidden !== undefined
         ? { hidden: legacy.hidden } : {}),
-      ...(current.group === undefined && canUseLegacySetupFields && legacy.group !== undefined
+      ...(current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined
         ? { group: legacy.group } : {}),
     },
     changed,
@@ -827,9 +846,9 @@ function legacyPendingWasApplied(
     const expectedHasField = Object.hasOwn(expected, field)
     const profileHasField = Object.hasOwn(profile, field)
     if (expectedHasField !== profileHasField) {
-      // A complete newer snapshot may add or clear optional fields; required
-      // fields, revision, and stable identity are checked below.
-      return newer && BOT_PROFILE_OPTIONAL_FIELDS.includes(field)
+      // A newer snapshot may add an optional field, but it cannot omit a
+      // field claimed by the pending row without explicit evidence.
+      return newer && !expectedHasField && BOT_PROFILE_OPTIONAL_FIELDS.includes(field)
     }
     if (!expectedHasField) return true
     if (!newer) return profileValuesEqual(profile[field], expected[field])
@@ -850,6 +869,7 @@ function legacyPendingWasApplied(
 function mergeProfileRevisionStates(
   current: BotProfileRevisionState | undefined,
   legacy: BotProfileRevisionState | undefined,
+  preserveLegacyOmissions: readonly (keyof BotProfileSnapshot)[] = [],
 ): { readonly state: BotProfileRevisionState; readonly changed: boolean } {
   if (current === undefined) {
     return { state: legacy ?? emptyProfileRevisionState(), changed: legacy !== undefined }
@@ -875,6 +895,7 @@ function mergeProfileRevisionStates(
       currentProfile,
       legacyProfile,
       current.revisions[id] !== undefined && current.revisions[id] === legacy.revisions[id],
+      preserveLegacyOmissions,
     )
     if (merged.changed) profiles[id] = merged.snapshot
     changed ||= merged.changed
@@ -1206,12 +1227,21 @@ function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRev
 function profileRevisionStateFromV2(record: CredentialRecord): BotProfileRevisionState {
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordV2Schema.safeParse(record.payload)
-  if (!parsed.success) throw new Error('Bot profile revision v2 record is invalid')
+  if (parsed.success) {
+    return {
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
+      revisions: { ...parsed.data.revisions },
+      profiles: { ...parsed.data.profiles },
+      ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+    }
+  }
+  const routineCompat = botProfileRevisionRecordV2RoutineCompatSchema.safeParse(record.payload)
+  if (!routineCompat.success) throw new Error('Bot profile revision v2 record is invalid')
   return {
     version: BOT_PROFILE_REVISION_RECORD_VERSION,
-    revisions: { ...parsed.data.revisions },
-    profiles: { ...parsed.data.profiles },
-    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+    revisions: { ...routineCompat.data.revisions },
+    profiles: { ...routineCompat.data.profiles },
+    ...(routineCompat.data.pending === undefined ? {} : { pending: routineCompat.data.pending }),
   }
 }
 
@@ -1341,12 +1371,12 @@ function commitProfileState(state: BotProfileRevisionState, record: BotRecord): 
   }
 }
 
-function finishPendingProfile(state: BotProfileRevisionState): BotProfileRevisionState {
+function finishPendingProfile(state: BotProfileRevisionState, committedRecord?: BotRecord): BotProfileRevisionState {
   const pending = state.pending
   if (pending === undefined) return state
   const { pending: ignoredPending, ...withoutPending } = state
   void ignoredPending
-  return commitProfileState(withoutPending, pending.record)
+  return commitProfileState(withoutPending, committedRecord ?? pending.record)
 }
 
 function botMessageDeliveryStateOf(record: CredentialRecord | undefined): BotMessageDeliveryState {
@@ -2660,6 +2690,43 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Recover one durable Bot profile pending row without regressing a newer row.
+   * @param state - V3 state containing the pending row.
+   * @param bots - Durable Bot table used for identity and revision checks.
+   * @returns V3 state with the pending row acknowledged.
+   */
+  private async recoverPendingProfile(
+    state: BotProfileRevisionState,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  ): Promise<BotProfileRevisionState> {
+    const pending = state.pending
+    if (pending === undefined) return state
+    const id = pending.record.id
+    const current = bots.get(id)
+    if (current === undefined) {
+      if (state.revisions[String(id)] !== undefined || state.profiles[String(id)] !== undefined) {
+        throw new RemoteError(
+          'gateway/conflict',
+          'Bot profile revision cannot replay a pending transaction without an authoritative Bot row',
+          { botId: id },
+        )
+      }
+      await bots.put(id, pending.record)
+      return finishPendingProfile(state)
+    }
+    if (!stableBotIdentityMatches(current, pending.record)) {
+      throw new RemoteError(
+        'gateway/conflict',
+        'Bot profile revision cannot replay a pending transaction because Bot identity changed during legacy profile recovery',
+        { botId: id },
+      )
+    }
+    if (current.updatedAt > pending.record.updatedAt) return finishPendingProfile(state, current)
+    await bots.put(id, pending.record)
+    return finishPendingProfile(state)
+  }
+
+  /**
    * Commit one Bot row while holding a durable per-roster revision fence.
    *
    * The credential record is used only as a cross-process lock and revision
@@ -2720,17 +2787,9 @@ export class BotService extends TypertRemoteService {
       )
       let state = merged.state
       if (state.pending !== undefined) {
-        if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
-          const current = bots.get(state.pending.record.id)
-          if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
-            throw new RemoteError('gateway/conflict', 'Bot profile identity changed during legacy profile recovery', {
-              botId: state.pending.record.id,
-            })
-          }
-        }
-        await bots.put(state.pending.record.id, state.pending.record)
-        this.blockedProfileTransactions.delete(state.pending.transactionId)
-        state = finishPendingProfile(state)
+        const pendingTransactionId = state.pending.transactionId
+        state = await this.recoverPendingProfile(state, bots)
+        this.blockedProfileTransactions.delete(pendingTransactionId)
       }
       const storedCurrent = bots.get(botId)
       if (storedCurrent === undefined) {
@@ -2855,17 +2914,9 @@ export class BotService extends TypertRemoteService {
       const currentState = profileRevisionRecordOf(stored)
       let state = mergeProfileRevisionStates(currentState, legacyProfileState).state
       if (state.pending !== undefined) {
-        if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
-          const current = bots.get(state.pending.record.id)
-          if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
-            throw new RemoteError('gateway/conflict', 'Bot profile identity changed during legacy profile recovery', {
-              botId: state.pending.record.id,
-            })
-          }
-        }
-        await bots.put(state.pending.record.id, state.pending.record)
-        this.blockedProfileTransactions.delete(state.pending.transactionId)
-        state = finishPendingProfile(state)
+        const pendingTransactionId = state.pending.transactionId
+        state = await this.recoverPendingProfile(state, bots)
+        this.blockedProfileTransactions.delete(pendingTransactionId)
       }
       if (bots.get(record.id) !== undefined || state.revisions[String(record.id)] !== undefined) {
         throw new RemoteError('bot/id-conflict', `Bot "${record.id}" already exists`, { botId: record.id })
@@ -6154,15 +6205,10 @@ export class BotService extends TypertRemoteService {
       const state = merged.state
       if (state.pending === undefined) return merged.changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
-      if (isLegacyPendingReplay(currentState, legacyProfileState, state.pending)) {
-        const current = bots.get(state.pending.record.id)
-        if (current === undefined || !stableBotIdentityMatches(current, state.pending.record)) {
-          throw new Error('Bot profile revision cannot replay a legacy pending transaction')
-        }
-      }
-      await bots.put(state.pending.record.id, state.pending.record)
-      this.blockedProfileTransactions.delete(state.pending.transactionId)
-      return profileRevisionRecordOfState(finishPendingProfile(state))
+      const pendingTransactionId = state.pending.transactionId
+      const recovered = await this.recoverPendingProfile(state, bots)
+      this.blockedProfileTransactions.delete(pendingTransactionId)
+      return profileRevisionRecordOfState(recovered)
     })
     return profileRevisionRecordOf(stored)
   }
@@ -6175,7 +6221,7 @@ export class BotService extends TypertRemoteService {
     const v1 = v1Record === undefined ? undefined : profileRevisionStateFromLegacy(v1Record)
     if (v2 === undefined) return v1
     if (v1 === undefined) return v2
-    return mergeProfileRevisionStates(v2, v1).state
+    return mergeProfileRevisionStates(v2, v1, BOT_PROFILE_V2_AUTHORITATIVE_OPTIONAL_FIELDS).state
   }
 
   private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotStoredRecord | undefined> {
