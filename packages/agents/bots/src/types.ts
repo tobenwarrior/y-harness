@@ -178,6 +178,20 @@ export interface BotShareMemoryWriteValue {
   readonly entry: BotShareMemoryEntry
 }
 
+/** Explicit owner assertion used to release one abandoned shared-roster fence. */
+export interface BotSharedRosterFenceRecoveryRequest {
+  /** Exact durable fence token observed before every possible Host was stopped. */
+  readonly token: string
+  /** Unverified assertion that no Host can still own the shared-roster admission. */
+  readonly confirmQuiescent: true
+}
+
+/** Result of explicit owner-local shared-roster fence recovery. */
+export interface BotSharedRosterFenceRecoveryValue {
+  /** Durable recovery result. */
+  readonly status: 'released' | 'busy' | 'absent'
+}
+
 /** Safe Bot profile returned through the collaborator-only route. */
 export interface BotShareProfile {
   /** Stable Bot identity. */

@@ -141,6 +141,8 @@ import type {
   BotShareInviteValue,
   BotShareMemoryPolicyRequest,
   BotShareMemoryPolicyValue,
+  BotSharedRosterFenceRecoveryRequest,
+  BotSharedRosterFenceRecoveryValue,
   BotView,
 } from './types.ts'
 import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
@@ -434,6 +436,10 @@ const sharedGroupDeliveryRecoveryRequestSchema = zod.object({
   messageId: zod.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId),
   confirmQuiescent: zod.literal(true),
 }).strict()
+const sharedRosterFenceRecoveryRequestSchema = zod.object({
+  token: zod.string().min(1).max(128),
+  confirmQuiescent: zod.literal(true),
+}).strict()
 const sharedEnrollmentPayloadSchema = zod.object({
   code: zod.string().min(1).max(512),
 }).strict()
@@ -589,6 +595,7 @@ const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_ATTEMPTS = 8
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY = 8
 const SHARED_GROUP_DELIVERY_LOCK_PREFIX = '.delivery-'
+const activeSharedRosterFenceTokens = new WeakMap<CredentialProvider, string>()
 /**
  * Version-one write-ahead Bot rows for hosts that do not mount credentials.
  * A pending row is replayed before reads after a restart and before any later
@@ -5242,6 +5249,23 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Release one abandoned shared-roster admission after every possible Host
+   * has been stopped and the exact durable fence token was inspected.
+   * @param request - Exact fence token plus the unverified quiescence assertion.
+   * @returns The durable recovery status.
+   */
+  @Remote('recoverSharedRosterFence')
+  async recoverSharedRosterFence(
+    request: BotSharedRosterFenceRecoveryRequest,
+  ): Promise<BotSharedRosterFenceRecoveryValue> {
+    const parsed = sharedRosterFenceRecoveryRequestSchema.safeParse(request)
+    if (!parsed.success) {
+      throw new RemoteError('gateway/bad-request', 'Invalid shared Bot roster fence recovery request', {})
+    }
+    return this.recoverSharedRosterFenceImpl(parsed.data)
+  }
+
+  /**
    * List active memories for a Bot without accepting a model-supplied Session id.
    * @param request - Durable Bot id whose private projection should be read.
    * @returns active memory rows owned by that Bot.
@@ -6916,6 +6940,7 @@ export class BotService extends TypertRemoteService {
       const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
       const token = randomUUID()
       let acquired = false
+      if (activeSharedRosterFenceTokens.has(credentials)) return { valid: false as const }
       await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
         let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
         const hadProfileState = stored !== undefined || legacyProfileState !== undefined || state.pending !== undefined
@@ -6940,20 +6965,62 @@ export class BotService extends TypertRemoteService {
         })
       })
       if (!acquired) return { valid: false as const }
+      activeSharedRosterFenceTokens.set(credentials, token)
       try {
         return { valid: true as const, value: await operation() }
       } finally {
-        await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-          const state = profileRevisionRecordOf(stored)
-          if (state.sharedRosterFence?.token !== token) {
-            throw new Error('shared Bot roster fence changed before release')
+        try {
+          await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+            const state = profileRevisionRecordOf(stored)
+            if (state.sharedRosterFence?.token !== token) {
+              throw new Error('shared Bot roster fence changed before release')
+            }
+            const { sharedRosterFence: ignoredFence, ...withoutFence } = state
+            void ignoredFence
+            return profileRevisionRecordOfState(withoutFence)
+          })
+        } finally {
+          if (activeSharedRosterFenceTokens.get(credentials) === token) {
+            activeSharedRosterFenceTokens.delete(credentials)
           }
-          const { sharedRosterFence: ignoredFence, ...withoutFence } = state
-          void ignoredFence
-          return profileRevisionRecordOfState(withoutFence)
-        })
+        }
       }
     }, signal)
+  }
+
+  /**
+   * Clear one durable roster fence only when its token still matches the
+   * owner's explicit quiescence assertion. No liveness or authority outcome
+   * is inferred from a PID, timeout, or an in-memory cache.
+   * @param request - Exact abandoned fence token and owner assertion.
+   * @returns The durable recovery status.
+   */
+  private async recoverSharedRosterFenceImpl(
+    request: BotSharedRosterFenceRecoveryRequest,
+  ): Promise<BotSharedRosterFenceRecoveryValue> {
+    return this.serialize(async () => {
+      const credentials = this.credentials ?? this.ctx.get('credentials')
+      if (credentials === undefined) return { status: 'absent' as const }
+      if (activeSharedRosterFenceTokens.has(credentials)) return { status: 'busy' as const }
+      let status: BotSharedRosterFenceRecoveryValue['status'] = 'absent'
+      await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+        const state = profileRevisionRecordOf(stored)
+        const fence = state.sharedRosterFence
+        if (fence === undefined) {
+          status = 'absent'
+          return undefined
+        }
+        if (fence.token !== request.token) {
+          status = 'busy'
+          return undefined
+        }
+        const { sharedRosterFence: ignoredFence, ...withoutFence } = state
+        void ignoredFence
+        status = 'released'
+        return profileRevisionRecordOfState(withoutFence)
+      })
+      return { status }
+    })
   }
 
   private registerSharedGroupSessions(bindings: readonly SharedGroupSessionBinding[]): void {

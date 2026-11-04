@@ -797,6 +797,138 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('requires explicit recovery after a shared roster fence release failure', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const host = productionSharedHost(h.service)
+    let failRelease = false
+    const originalModify = h.credentials.modifyRecord.bind(h.credentials)
+    h.credentials.modifyRecord = async (key, mutate) => {
+      if (key === revisionKey && failRelease) {
+        failRelease = false
+        throw new Error('simulated roster fence release failure')
+      }
+      return originalModify(key, mutate)
+    }
+    try {
+      const bots = (await h.service.list({ includeHidden: true })).bots
+      await expect(host.withBotRoster(bots, undefined, async () => {
+        failRelease = true
+        throw new Error('simulated crash before authority commit')
+      })).rejects.toThrow('simulated roster fence release failure')
+      const storedFence = h.records.get(revisionKey)
+      if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
+      const fenceToken = z.object({
+        sharedRosterFence: z.object({ token: z.string() }),
+      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+
+      type SharedRosterRecoveryService = {
+        recoverSharedRosterFence: (request: { readonly confirmQuiescent: true }) => Promise<{
+          readonly status: 'released' | 'busy' | 'absent'
+        }>
+      }
+      const recovery = h.service as SharedRosterRecoveryService
+      const invalidRecovery = h.service as {
+        recoverSharedRosterFence: (request: { readonly token: string; readonly confirmQuiescent: boolean }) => Promise<unknown>
+      }
+      await expect(invalidRecovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: false }))
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(recovery.recoverSharedRosterFence({ token: 'different-fence', confirmQuiescent: true }))
+        .resolves.toEqual({ status: 'busy' })
+      expect(z.object({
+        sharedRosterFence: z.object({ token: z.string() }),
+      }).passthrough().parse(h.records.get(revisionKey)?.kind === 'grant' ? h.records.get(revisionKey)?.payload : undefined)
+        .sharedRosterFence.token).toBe(fenceToken)
+      await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true })).resolves.toEqual({ status: 'released' })
+      await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
+        valid: true,
+        value: 'recovered',
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a fence after the shared authority committed before a release failure', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+      sessionMaxAgeMs: 60_000,
+      inviteMaxAgeMs: 60_000,
+    })
+    const host = productionSharedHost(h.service)
+    let failRelease = false
+    const originalModify = h.credentials.modifyRecord.bind(h.credentials)
+    h.credentials.modifyRecord = async (key, mutate) => {
+      if (key === revisionKey && failRelease) {
+        failRelease = false
+        throw new Error('simulated crash after authority commit')
+      }
+      return originalModify(key, mutate)
+    }
+    try {
+      await expect(host.withBotRoster([], undefined, async () => {
+        await authority.mutateExtension('test/shared-roster-fence-after-authority', current => ({
+          value: undefined,
+          next: current ?? null,
+        }))
+        failRelease = true
+      })).rejects.toThrow('simulated crash after authority commit')
+      const storedFence = h.records.get(revisionKey)
+      if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
+      const fenceToken = z.object({
+        sharedRosterFence: z.object({ token: z.string() }),
+      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+
+      await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true }))
+        .resolves.toEqual({ status: 'released' })
+      await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
+        valid: true,
+        value: 'authority-reconciled',
+      })
+    } finally {
+      await authority.dispose()
+      await close(h.ctx)
+    }
+  })
+
+  it('does not let a stale Host clear a newer shared roster fence', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const staleToken = 'stale-roster-fence'
+    const newerToken = 'newer-roster-fence'
+    const fenceRecord = (token: string): CredentialRecord => ({
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: {},
+        profiles: {},
+        sharedRosterFence: { token },
+      },
+    })
+    try {
+      first.records.set(revisionKey, fenceRecord(staleToken))
+      first.records.set(revisionKey, fenceRecord(newerToken))
+      await expect(second.service.recoverSharedRosterFence({ token: staleToken, confirmQuiescent: true }))
+        .resolves.toEqual({ status: 'busy' })
+      expect(first.records.get(revisionKey)).toMatchObject({ payload: { sharedRosterFence: { token: newerToken } } })
+
+      const outcomes = await Promise.all([
+        first.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true }),
+        second.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true }),
+      ])
+      expect(outcomes.map(outcome => outcome.status).sort()).toEqual(['absent', 'released'])
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
   it('stores an uploaded avatar without an image generation service', async () => {
     const h = await harness()
     try {
