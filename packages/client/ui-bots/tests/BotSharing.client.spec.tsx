@@ -818,7 +818,7 @@ describe('shared Bot collaboration surfaces', () => {
     const firstRequest = sendGroupMessage.mock.calls[0]?.[0] as { readonly messageId?: string }
     expect(firstRequest.messageId).toMatch(/^bot-group-message-/)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
     await waitFor(() => {
       expect(sendGroupMessage).toHaveBeenCalledTimes(2)
       expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstRequest.messageId)
@@ -867,7 +867,7 @@ describe('shared Bot collaboration surfaces', () => {
     const firstMessageId = sendGroupMessage.mock.calls[0]?.[0].messageId
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('The group message could not be sent. Try again.') })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
     await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(2) })
     expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstMessageId)
   })
@@ -1089,6 +1089,13 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
     await waitFor(() => { expect(client.createGroup).toHaveBeenCalledOnce() })
+    const nameInput = within(dialog).getByRole('textbox', { name: 'Group name' })
+    fireEvent.change(nameInput, { target: { value: 'Keyboard create while recovering' } })
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+    fireEvent.keyDown(nameInput, { key: 'Enter', code: 'Enter', charCode: 13 })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('dialog', { name: 'Create a shared group' })).toBe(dialog)
 
     await act(async () => {
       view.rerender(<SharedBotsDialog client={client} open={false} onClose={vi.fn()} t={t} />)

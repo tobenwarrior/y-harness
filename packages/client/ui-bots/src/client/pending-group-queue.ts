@@ -335,30 +335,6 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     return Promise.resolve()
   }
 
-  const findPendingCreation = (name: string, botIds: readonly string[]): PendingCreationRecord | undefined => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
-      if (key === null || !key.startsWith(`${scopePrefix(scope)}.creation.`)) continue
-      const record = read(key)
-      if (record?.kind !== 'creation' || record.status !== 'pending' || record.name !== name
-        || record.botIds.length !== botIds.length || !record.botIds.every((botId, item) => botId === botIds[item])) continue
-      return record
-    }
-    return undefined
-  }
-
-  const findPendingMessage = (groupId: string, text: string): PendingMessageRecord | undefined => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
-      if (key === null || !key.startsWith(`${scopePrefix(scope)}.message.`)) continue
-      const record = read(key)
-      if (record?.kind === 'message' && record.status === 'pending' && record.groupId === groupId && record.text === text) return record
-    }
-    return undefined
-  }
-
   return {
     get durable(): boolean { return healthy },
     listCreations: () => withLock(catalogLockKey(scope), async () => {
@@ -398,10 +374,6 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           && current.botIds.every((botId, index) => botId === canonicalBotIds[index])) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
-        const pending = findPendingCreation(name, canonicalBotIds)
-        if (pending !== undefined) {
-          return { operationHash: pending.operationHash, id: pending.id, recovered: true, expired: false }
-        }
         ensureCapacity(key)
         const record: PendingCreationRecord = {
           version: 1,
@@ -440,10 +412,6 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         if (current?.kind === 'message' && current.groupId === groupId
           && (current.status === 'expired' || current.text === text)) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
-        }
-        const pending = findPendingMessage(groupId, text)
-        if (pending !== undefined) {
-          return { operationHash: pending.operationHash, id: pending.id, recovered: true, expired: false }
         }
         ensureCapacity(key)
         const record: PendingMessageRecord = {
