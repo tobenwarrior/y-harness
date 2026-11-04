@@ -152,8 +152,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
     await roster.waitFor({ state: 'visible', timeout: 15_000 })
-    await roster.getByRole('button', { name: 'New group', exact: true }).click()
-    const dialog = page.getByRole('dialog', { name: 'Create a shared group', exact: true })
+    await roster.getByRole('button', { name: 'New bot group', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Create a bot group', exact: true })
     await dialog.getByLabel('Group name', { exact: true }).fill('Release room')
     await dialog.getByRole('checkbox', { name: firstBot.name, exact: true }).check()
     await dialog.getByRole('checkbox', { name: secondBot.name, exact: true }).check()

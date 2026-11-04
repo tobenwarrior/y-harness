@@ -18,9 +18,9 @@
       - img "Orbit"
       - text: Orbit Idle
     - button "Bot actions for Orbit"
-  - region "Shared groups":
-    - heading "Shared groups" [level=2]
-    - button "New group"
+  - region "Bot groups":
+    - heading "Bot groups" [level=2]
+    - button "New bot group"
   - button "App access"
 - region "Scout":
   - img "Scout"
