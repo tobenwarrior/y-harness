@@ -249,7 +249,7 @@ export interface BotGroupDeliveryRecoveryRequest {
   readonly sessionId: string
   /** Source group message whose recipient fence is being reconciled. */
   readonly messageId: BotGroupMessageId
-  /** Explicit operator assertion that every Host able to own the Session is quiesced. */
+  /** Explicit, unverified operator assertion that every Host able to own the Session is quiesced. */
   readonly confirmQuiescent: true
 }
 

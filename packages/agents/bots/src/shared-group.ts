@@ -1282,7 +1282,7 @@ export class SharedBotGroupService {
       })
       if (typeof deliveryResult !== 'string') {
         if (deliveryResult.recovery === 'operator-required') {
-          const error = 'Shared Bot recipient admission needs operator recovery before retrying this message'
+          const error = 'Shared Bot recipient admission needs owner recovery after every Host is quiesced; confirmQuiescent is not verified'
           await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', error, dispatchSignal)
           return {
             kind: 'failed',
@@ -1310,7 +1310,16 @@ export class SharedBotGroupService {
       }
       const detail = error instanceof Error ? error.message : String(error)
       const safeError = detail.trim().slice(0, 400) || 'Bot delivery failed'
-      await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', safeError, dispatchSignal)
+      try {
+        await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', safeError, dispatchSignal)
+      } catch {
+        const retryAt = this.now()
+        return {
+          kind: 'busy',
+          error: 'Shared Bot group delivery outcome is pending bounded durable recovery',
+          leaseUntil: retryAt + SHARED_GROUP_DELIVERY_LEASE_MS,
+        }
+      }
       return { kind: 'failed', error: safeError }
     } finally {
       lease.stop()

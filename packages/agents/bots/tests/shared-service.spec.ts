@@ -245,11 +245,7 @@ class SharedBotHostFixture implements SharedBotHost {
     this.sharedGroupBindings.push([...bindings])
   }
 
-  deliverSharedGroup = vi.fn(async (request: {
-    readonly messageId: BotGroupMessageId
-    readonly targetBotId: BotId
-    readonly sessionId: SessionId
-  }): Promise<'accepted' | 'duplicate'> => {
+  deliverSharedGroup = vi.fn<NonNullable<SharedBotHost['deliverSharedGroup']>>(async (request) => {
     const registered = this.sharedGroupBindings.at(-1)?.some(
       binding => binding.sessionId === request.sessionId && binding.botId === request.targetBotId,
     )
@@ -1227,7 +1223,7 @@ describe('shared Bot service', () => {
           status: 'partial',
           deliveries: [{
             status: 'failed',
-            error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+            error: 'Shared Bot recipient admission needs owner recovery after every Host is quiesced; confirmQuiescent is not verified',
           }],
         },
       })
@@ -1240,7 +1236,7 @@ describe('shared Bot service', () => {
           messageId: BotGroupMessageId('bot-group-message-operator-recovery'),
           botId: BotId('bot-chief'),
           status: 'failed',
-          error: 'Shared Bot recipient admission needs operator recovery before retrying this message',
+          error: 'Shared Bot recipient admission needs owner recovery after every Host is quiesced; confirmQuiescent is not verified',
         }),
       ]))
       await vi.advanceTimersByTimeAsync(60_000)
@@ -1259,6 +1255,80 @@ describe('shared Bot service', () => {
         },
       })
     } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a pending delivery recoverable when operator outcome writes fail twice', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true, false, { value: 1_000 })
+    let restoreMutation: (() => void) | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Durable operator recovery room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      value.host.deliverSharedGroup.mockImplementation(async () => ({
+        kind: 'busy' as const,
+        retryAt: value.clock.value,
+        recovery: 'operator-required' as const,
+      }))
+      const originalMutation = value.authority.mutateExtension.bind(value.authority)
+      let outcomeFailures = 2
+      const mutation = vi.spyOn(value.authority, 'mutateExtension')
+      restoreMutation = () => { mutation.mockRestore() }
+      mutation.mockImplementation(async (...args) => {
+        if (value.host.deliverSharedGroup.mock.calls.length > 0 && outcomeFailures > 0) {
+          outcomeFailures -= 1
+          throw new Error('outcome write unavailable')
+        }
+        return originalMutation(...args)
+      })
+
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Recover this after two outcome write failures.',
+        messageId: BotGroupMessageId('bot-group-message-double-outcome-failure'),
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'partial',
+          deliveries: [{ status: 'failed' }],
+        },
+      })
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
+
+      value.host.deliverSharedGroup.mockImplementation(async () => 'accepted')
+      value.clock.value = 31_001
+      await vi.advanceTimersByTimeAsync(30_001)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
+      const stored = await value.authority.readExtension('agent-bots/shared-memberships')
+      const membership = sharedMembershipSnapshotSchema.parse(stored.value)
+      const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      expect(groups.deliveries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          messageId: BotGroupMessageId('bot-group-message-double-outcome-failure'),
+          botId: BotId('bot-chief'),
+          status: 'accepted',
+        }),
+      ]))
+    } finally {
+      restoreMutation?.()
       await value.close()
       vi.useRealTimers()
     }
@@ -1455,7 +1525,16 @@ describe('shared Bot service', () => {
         messageId,
       }, new AbortController().signal, owner.peer)
       await vi.advanceTimersByTimeAsync(5_001)
-      await expect(send).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unavailable' } })
+      await expect(send).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: 'partial',
+          deliveries: [{
+            status: 'failed',
+            error: 'Shared Bot group delivery outcome is pending bounded durable recovery',
+          }],
+        },
+      })
       release.resolve(undefined)
       await Promise.resolve()
       await Promise.resolve()
