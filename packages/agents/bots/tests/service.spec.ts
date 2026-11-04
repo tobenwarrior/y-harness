@@ -823,32 +823,32 @@ describe('durable Bot roster', () => {
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
       }).passthrough().parse(storedFence.payload).sharedRosterFence.token
-      const agedPayload = z.object({
-        sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload)
-      h.records.set(revisionKey, {
-        kind: 'grant',
-        payload: { ...agedPayload, sharedRosterFence: { token: fenceToken, heartbeatAt: 0 } },
-      })
-
       type SharedRosterRecoveryService = {
-        recoverSharedRosterFence: (request: { readonly confirmQuiescent: true }) => Promise<{
+        recoverSharedRosterFence: (request: {
+          readonly token: string
+          readonly confirmQuiescent: true
+          readonly acceptRaceRisk: true
+        }) => Promise<{
           readonly status: 'released' | 'busy' | 'absent'
         }>
       }
       const recovery = h.service as SharedRosterRecoveryService
       const invalidRecovery = h.service as {
-        recoverSharedRosterFence: (request: { readonly token: string; readonly confirmQuiescent: boolean }) => Promise<unknown>
+        recoverSharedRosterFence: (request: {
+          readonly token: string
+          readonly confirmQuiescent: boolean
+          readonly acceptRaceRisk: boolean
+        }) => Promise<unknown>
       }
-      await expect(invalidRecovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: false }))
+      await expect(invalidRecovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: false, acceptRaceRisk: true }))
         .rejects.toMatchObject({ code: 'gateway/bad-request' })
-      await expect(recovery.recoverSharedRosterFence({ token: 'different-fence', confirmQuiescent: true }))
+      await expect(recovery.recoverSharedRosterFence({ token: 'different-fence', confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
       }).passthrough().parse(h.records.get(revisionKey)?.kind === 'grant' ? h.records.get(revisionKey)?.payload : undefined)
         .sharedRosterFence.token).toBe(fenceToken)
-      await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true })).resolves.toEqual({ status: 'released' })
+      await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
         value: 'recovered',
@@ -889,15 +889,7 @@ describe('durable Bot roster', () => {
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
       }).passthrough().parse(storedFence.payload).sharedRosterFence.token
-      const agedPayload = z.object({
-        sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload)
-      h.records.set(revisionKey, {
-        kind: 'grant',
-        payload: { ...agedPayload, sharedRosterFence: { token: fenceToken, heartbeatAt: 0 } },
-      })
-
-      await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true }))
+      await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
         valid: true,
@@ -929,13 +921,13 @@ describe('durable Bot roster', () => {
     try {
       first.records.set(revisionKey, fenceRecord(staleToken))
       first.records.set(revisionKey, fenceRecord(newerToken))
-      await expect(second.service.recoverSharedRosterFence({ token: staleToken, confirmQuiescent: true }))
+      await expect(second.service.recoverSharedRosterFence({ token: staleToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'busy' })
       expect(first.records.get(revisionKey)).toMatchObject({ payload: { sharedRosterFence: { token: newerToken } } })
 
       const outcomes = await Promise.all([
-        first.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true }),
-        second.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true }),
+        first.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true, acceptRaceRisk: true }),
+        second.service.recoverSharedRosterFence({ token: newerToken, confirmQuiescent: true, acceptRaceRisk: true }),
       ])
       expect(outcomes.map(outcome => outcome.status).sort()).toEqual(['absent', 'released'])
     } finally {
@@ -944,7 +936,30 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('reports a live shared roster fence as busy to another Host', async () => {
+  it('does not infer liveness from a legacy heartbeat field', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const token = 'legacy-heartbeat-fence'
+    records.set(revisionKey, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: {},
+        profiles: {},
+        sharedRosterFence: { token, heartbeatAt: Date.now() },
+      },
+    })
+    try {
+      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true }))
+        .resolves.toEqual({ status: 'released' })
+      await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('requires explicit owner risk acknowledgement to recover a paused shared roster fence', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-live-'))
     const credentialPath = join(root, 'credentials.yaml')
     const pool = new MemoryMediaPool()
@@ -969,9 +984,11 @@ describe('durable Bot roster', () => {
       expect(diagnostic.status).toBe('held')
       if (diagnostic.token === undefined) throw new Error('live shared roster fence token is missing')
       await expect(second.service.recoverSharedRosterFence({ token: diagnostic.token, confirmQuiescent: true }))
-        .resolves.toEqual({ status: 'busy' })
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(second.service.recoverSharedRosterFence({ token: diagnostic.token, confirmQuiescent: true, acceptRaceRisk: true }))
+        .resolves.toEqual({ status: 'released' })
       release.resolve(true)
-      await expect(operation).resolves.toEqual({ valid: true, value: 'completed' })
+      await expect(operation).rejects.toThrow('shared Bot roster fence changed before release')
       await expect(second.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
     } finally {
       release.resolve(true)
@@ -993,7 +1010,7 @@ describe('durable Bot roster', () => {
         version: 2,
         revisions: {},
         profiles: {},
-        sharedRosterFence: { token, heartbeatAt: 0 },
+        sharedRosterFence: { token },
       },
     })
     const originalModify = h.credentials.modifyRecord.bind(h.credentials)
@@ -1007,10 +1024,10 @@ describe('durable Bot roster', () => {
       return result
     }
     try {
-      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true }))
+      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true }))
         .rejects.toThrow('ambiguous recovery write')
       await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
-      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true }))
+      await expect(h.service.recoverSharedRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'absent' })
     } finally {
       await close(h.ctx)

@@ -282,6 +282,7 @@ describe('shared Bot collaboration surfaces', () => {
     expect(inspectRosterFence).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Recover shared roster' }))
     const confirmation = screen.getByRole('dialog', { name: 'Recover shared roster?' })
+    expect(within(confirmation).getByText(/No process can verify a paused Host/)).toBeTruthy()
     const confirm = within(confirmation).getByRole('button', { name: 'Recover roster' })
     expect((confirm as HTMLButtonElement).disabled).toBe(true)
     expect(recoverRosterFence).not.toHaveBeenCalled()

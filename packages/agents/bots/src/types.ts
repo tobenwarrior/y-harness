@@ -184,6 +184,8 @@ export interface BotSharedRosterFenceRecoveryRequest {
   readonly token: string
   /** Unverified assertion that no Host can still own the shared-roster admission. */
   readonly confirmQuiescent: true
+  /** Explicitly accepts that a paused or partitioned Host cannot be disproven and may race recovery. */
+  readonly acceptRaceRisk: true
 }
 
 /** Result of explicit owner-local shared-roster fence recovery. */

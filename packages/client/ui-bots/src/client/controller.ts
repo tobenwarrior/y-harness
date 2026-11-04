@@ -1564,7 +1564,7 @@ export class BotWorkspaceController {
       }),
       ...(recoverRosterFence === undefined ? {} : {
         recoverRosterFence: async (token: string) => {
-          const result = await recoverRosterFence({ token, confirmQuiescent: true })
+          const result = await recoverRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true })
           if (!result.ok) throw new Error(result.error.message)
           return result.value
         },

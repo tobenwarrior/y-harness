@@ -204,8 +204,10 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
  * Release one abandoned shared-roster admission after every possible Host
- * has been stopped and the exact durable fence token was inspected.
- * @param request - Exact fence token plus the unverified quiescence assertion.
+ * has been stopped and the exact durable fence token was inspected. The
+ * caller must explicitly accept that a paused or partitioned Host cannot be
+ * disproven and may race this recovery.
+ * @param request - Exact fence token plus the unverified quiescence and race-risk assertions.
  * @returns The durable recovery status.
  */
 @Remote('recoverSharedRosterFence') async recoverSharedRosterFence( request: BotSharedRosterFenceRecoveryRequest, ): Promise<BotSharedRosterFenceRecoveryValue>

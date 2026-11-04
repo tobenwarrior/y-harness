@@ -733,8 +733,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'recoverSharedRosterFence\') async recoverSharedRosterFence( request: BotSharedRosterFenceRecoveryRequest, ): Promise<BotSharedRosterFenceRecoveryValue>',
-        description: 'Release one abandoned shared-roster admission after every possible Host has been stopped and the exact durable fence token was inspected.',
-        parameters: [{ name: 'request', description: 'Exact fence token plus the unverified quiescence assertion.' }],
+        description: 'Release one abandoned shared-roster admission after every possible Host has been stopped and the exact durable fence token was inspected. The caller must explicitly accept that a paused or partitioned Host cannot be disproven and may race this recovery.',
+        parameters: [{ name: 'request', description: 'Exact fence token plus the unverified quiescence and race-risk assertions.' }],
         returns: 'The durable recovery status.',
       },
       {
@@ -5905,7 +5905,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotSharedRosterFenceRecoveryRequest',
-    declaration: 'export interface BotSharedRosterFenceRecoveryRequest {\n    readonly token: string;\n    readonly confirmQuiescent: true;\n}',
+    declaration: 'export interface BotSharedRosterFenceRecoveryRequest {\n    readonly token: string;\n    readonly confirmQuiescent: true;\n    readonly acceptRaceRisk: true;\n}',
   },
   {
     name: 'BotSharedRosterFenceRecoveryValue',
