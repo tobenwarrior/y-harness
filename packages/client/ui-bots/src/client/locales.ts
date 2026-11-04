@@ -118,7 +118,7 @@ export const en = {
   sharedBotsDescription: 'Bots shared with you keep a private session for your work.',
   sharedOwnerDescription: 'Set up one shared owner for this Host, then build a room from your Bots.',
   sharedOwnerSettingUp: 'Setting up shared owner access…',
-  sharedOwnerSetupUnavailable: 'Shared owner setup is unavailable on this Host.',
+  sharedOwnerSetupUnavailable: 'Shared owner setup is unavailable in this connection.',
   sharedOwnerSetupFailed: 'Shared owner setup could not be completed. Try again.',
   refreshSharedBots: 'Refresh shared bots',
   sharedChatPlaceholder: 'Message this shared bot',

@@ -992,7 +992,15 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     try {
       if (ownerMode) {
         const enrollOwner = client.enrollOwner
-        if (enrollOwner === undefined) {
+        const getOwnerCapability = client.getOwnerCapability
+        if (enrollOwner === undefined || getOwnerCapability === undefined) {
+          setError(t('sharedOwnerSetupUnavailable'))
+          return
+        }
+        const capability = await getOwnerCapability()
+        if (!isCurrentClient(clientContext) || !isCurrentLifecycle(lifecycleGeneration)
+          || refreshGenerationRef.current !== refreshGeneration) return
+        if (!capability.ownerBootstrap) {
           setError(t('sharedOwnerSetupUnavailable'))
           return
         }

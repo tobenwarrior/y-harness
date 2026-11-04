@@ -112,6 +112,12 @@ export interface SharedBotEnrollmentValue {
   /** Shared group admitted by a group-only invitation, when applicable. */
   readonly groupId?: string
 }
+
+/** Server-advertised owner-bootstrap capability for the active connection. */
+export interface SharedBotOwnerCapability {
+  /** Whether this connection can authenticate the local operator for owner setup. */
+  readonly ownerBootstrap: boolean
+}
 /** Private transcript response for one Bot and the current collaborator. */
 export interface SharedBotPrivateChatValue {
   /** Bot whose private conversation was read. */
@@ -191,6 +197,12 @@ export interface SharedBotsClient {
    * Host-issued HttpOnly cookie.
    */
   readonly enrollOwner?: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Discover whether the server can admit owner setup on this connection.
+   * Transport, authentication, and malformed-response failures resolve to an
+   * unavailable capability so the UI never offers a request that cannot work.
+   */
+  readonly getOwnerCapability?: () => Promise<SharedBotOwnerCapability>
   /** Restore the server-authenticated principal scope after a browser reload. */
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
@@ -347,6 +359,15 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
+  let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
+  const getOwnerCapability = (): Promise<SharedBotOwnerCapability> => {
+    if (ownerCapabilityRequest !== undefined) return ownerCapabilityRequest
+    ownerCapabilityRequest = (async () => {
+      const result = await call('bots/share/enroll', { capability: true }, parseOwnerCapability, false)
+      return result.ok ? result.value : { ownerBootstrap: false }
+    })()
+    return ownerCapabilityRequest
+  }
 
   return {
     get retryScope(): string | undefined { return retryScope },
@@ -365,6 +386,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     },
     enroll,
     enrollOwner,
+    getOwnerCapability,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
@@ -392,6 +414,11 @@ function parseEnrollment(value: unknown): SharedBotEnrollmentValue | undefined {
     expiresAt: value.expiresAt,
     ...(value.groupId === undefined ? {} : { groupId: value.groupId }),
   }
+}
+
+function parseOwnerCapability(value: unknown): SharedBotOwnerCapability | undefined {
+  if (!isRecord(value) || typeof value.ownerBootstrap !== 'boolean') return undefined
+  return { ownerBootstrap: value.ownerBootstrap }
 }
 
 function parseRoster(value: unknown): { readonly bots: readonly BotShareRosterEntry[] } | undefined {

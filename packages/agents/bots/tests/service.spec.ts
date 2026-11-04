@@ -778,8 +778,35 @@ describe('durable Bot roster', () => {
     try {
       if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
       const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: false } })
       await expect(enrollmentHandler('bots/share/enroll', { owner: true }, new AbortController().signal, request))
         .resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+      expect(admit).toHaveBeenCalledTimes(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('advertises owner setup only after ordinary operator admission succeeds', async () => {
+    let enrollmentHandler: SharedConnectionEnrollmentHandler | undefined
+    const admit = vi.fn(() => ({ peer: {} }))
+    const connection = {
+      admit,
+      sharedRpc: {
+        enroll: vi.fn((_path: string, handler: SharedConnectionEnrollmentHandler) => {
+          enrollmentHandler = handler
+          return async () => {}
+        }),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
+      const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: true } })
       expect(admit).toHaveBeenCalledTimes(1)
     } finally {
       await close(h.ctx)

@@ -78,6 +78,7 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
   return {
     retryScope: 'principal-member',
     enroll: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
+    getOwnerCapability: vi.fn().mockResolvedValue({ ownerBootstrap: true }),
     restoreRetryScope: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
     list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } }),
     readProfile: vi.fn().mockResolvedValue({ ok: true, value: { bot } }),
@@ -106,6 +107,20 @@ describe('shared Bot collaboration surfaces', () => {
     expect(client.enroll).not.toHaveBeenCalled()
     expect(list).toHaveBeenCalled()
     expect(screen.getAllByText('Chief of staff')).not.toHaveLength(0)
+  })
+
+  it('does not invoke owner enrollment when the server denies this connection', async () => {
+    const enrollOwner = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { principalId: 'principal-owner', expiresAt: 2_000 },
+    })
+    const getOwnerCapability = vi.fn().mockResolvedValue({ ownerBootstrap: false })
+    const client = sharedClient({ enrollOwner, getOwnerCapability })
+    render(<SharedBotsDialog client={client} ownerMode open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(1) })
+    expect(enrollOwner).not.toHaveBeenCalled()
+    expect(screen.getByText('Shared owner setup is unavailable in this connection.')).toBeTruthy()
   })
 
   it('keeps the invite role fixed while an invite is being created', async () => {

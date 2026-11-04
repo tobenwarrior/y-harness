@@ -124,6 +124,35 @@ describe('shared Bot client capabilities', () => {
     expect(client.retryScope).toBe('principal-owner')
   })
 
+  it('uses the server-advertised owner capability instead of assuming enrollment is mounted', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        expect(endpoint).toBe('bots/share/enroll')
+        expect(payload).toEqual({ capability: true })
+        return { ok: true as const, value: { ownerBootstrap: true } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    const first = client.getOwnerCapability?.()
+    const second = client.getOwnerCapability?.()
+    if (first === undefined || second === undefined) throw new Error('owner capability is unavailable')
+    await expect(first).resolves.toEqual({ ownerBootstrap: true })
+    await expect(second).resolves.toEqual({ ownerBootstrap: true })
+    expect(rpc.call).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when owner capability discovery cannot reach the shared route', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => {
+        throw new Error('shared route unavailable')
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    const capability = client.getOwnerCapability
+    if (capability === undefined) throw new Error('owner capability is unavailable')
+    await expect(capability()).resolves.toEqual({ ownerBootstrap: false })
+  })
+
   it('clears a stale principal scope when the authenticated session is gone', async () => {
     let sessionCalls = 0
     const rpc: ClientConnectionRpc = {

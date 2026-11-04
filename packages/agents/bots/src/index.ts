@@ -446,6 +446,7 @@ const sharedRosterFenceRecoveryRequestSchema = zod.object({
 const sharedEnrollmentPayloadSchema = zod.union([
   zod.object({ code: zod.string().min(1).max(512) }).strict(),
   zod.object({ owner: zod.literal(true) }).strict(),
+  zod.object({ capability: zod.literal(true) }).strict(),
 ])
 
 interface ResolvedBotSharedConfig {
@@ -6751,6 +6752,15 @@ export class BotService extends TypertRemoteService {
         const parsed = sharedEnrollmentPayloadSchema.safeParse(payload)
         if (!parsed.success) {
           return { ok: false, error: { code: 'gateway/bad-request', message: 'Invalid shared Bot enrollment request', details: {} } }
+        }
+        if ('capability' in parsed.data) {
+          try {
+            const admission = connection.admit(request)
+            return { ok: true, value: { ownerBootstrap: !('rejection' in admission) } }
+          } catch (admissionError: unknown) {
+            this.ctx.logger.warn(`bots: owner capability admission failed: ${String(admissionError)}`)
+            return { ok: true, value: { ownerBootstrap: false } }
+          }
         }
         if ('owner' in parsed.data) {
           const admission = connection.admit(request)

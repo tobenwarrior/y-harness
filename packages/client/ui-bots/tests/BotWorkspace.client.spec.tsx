@@ -533,6 +533,38 @@ describe('Bot roster and detail', () => {
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
   })
 
+  it('disables owner setup when the server does not advertise this connection', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>().mockResolvedValue({ ownerBootstrap: false })
+    const sharedClient: SharedBotsClient = {
+      retryScope: undefined,
+      enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+      enrollOwner: vi.fn<NonNullable<SharedBotsClient['enrollOwner']>>().mockRejectedValue(new Error('unused test operation')),
+      getOwnerCapability,
+      restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
+      list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
+      readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
+      readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
+      readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
+      chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
+      writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
+      createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
+      revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
+    }
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={sharedClient}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    expect(ownerButton.disabled).toBe(true)
+    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+  })
+
   it('renders the selected detail as a standalone main surface', () => {
     render(<BotDetail
       bot={bots[0]}

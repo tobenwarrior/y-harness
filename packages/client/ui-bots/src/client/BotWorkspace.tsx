@@ -1303,7 +1303,26 @@ export function BotRoster({
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
   const [sharedOwnerMode, setSharedOwnerMode] = useState(false)
+  const [sharedOwnerCapability, setSharedOwnerCapability] = useState<'unknown' | 'available' | 'unavailable'>('unknown')
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
+  const ownerCapabilityProbe = sharedClient?.getOwnerCapability
+  const ownerEnrollment = sharedClient?.enrollOwner
+  useEffect(() => {
+    let active = true
+    if (sharedClient === undefined || ownerCapabilityProbe === undefined || ownerEnrollment === undefined) {
+      setSharedOwnerCapability('unknown')
+      return () => { active = false }
+    }
+    setSharedOwnerCapability('unknown')
+    void ownerCapabilityProbe().then((capability) => {
+      if (active) setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
+    }).catch(() => {
+      if (active) setSharedOwnerCapability('unavailable')
+    })
+    return () => { active = false }
+  }, [ownerCapabilityProbe, ownerEnrollment, sharedClient])
+  const sharedOwnerAvailable = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'available'
+  const sharedOwnerUnsupported = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'unavailable'
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
@@ -1392,9 +1411,16 @@ export function BotRoster({
                     <Tooltip label={t('joinBot')} side="bottom" portal>
                       <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
                     </Tooltip>
-                    {sharedClient.enrollOwner !== undefined && (
+                    {sharedOwnerAvailable && (
                       <Tooltip label={t('createSharedGroup')} side="bottom" portal>
                         <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
+                      </Tooltip>
+                    )}
+                    {sharedOwnerUnsupported && (
+                      <Tooltip label={t('sharedOwnerSetupUnavailable')} side="bottom" portal>
+                        <span>
+                          <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} title={t('sharedOwnerSetupUnavailable')} icon={<IconUsersOutlineRegular size={16} />} disabled />
+                        </span>
                       </Tooltip>
                     )}
                   </>
@@ -1520,7 +1546,7 @@ export function BotRoster({
                     onClick={openSharedBots}
                   />
                 </Tooltip>
-                {sharedClient.enrollOwner !== undefined && (
+                {sharedOwnerAvailable && (
                   <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
                     <Button
                       variant="ghost"
@@ -1530,6 +1556,21 @@ export function BotRoster({
                       icon={<IconUsersOutlineRegular size={18} />}
                       onClick={openSharedOwner}
                     />
+                  </Tooltip>
+                )}
+                {sharedOwnerUnsupported && (
+                  <Tooltip label={t('sharedOwnerSetupUnavailable')} side="right" delayMs={500}>
+                    <span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={css.botRailAction}
+                        aria-label={t('createSharedGroup')}
+                        title={t('sharedOwnerSetupUnavailable')}
+                        icon={<IconUsersOutlineRegular size={18} />}
+                        disabled
+                      />
+                    </span>
                   </Tooltip>
                 )}
               </>
