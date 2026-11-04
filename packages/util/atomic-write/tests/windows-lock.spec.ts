@@ -1,4 +1,4 @@
-import { closeSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -14,6 +14,7 @@ const state = {
   nodeOpenCalls: 0,
   replaceAfterNodeOpen: false,
   replaceAfterNativeOpen: false,
+  fakeFilePath: undefined as string | undefined,
 }
 
 const fakeKoffi = {
@@ -31,7 +32,9 @@ const fakeKoffi = {
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           }
-          const fd = isSymbolicLink ? openSync('/dev/null', 'r+') : openSync(canonical, 'a+')
+          const fd = isSymbolicLink
+            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, 'a+')
+            : openSync(canonical, 'a+')
           state.handles.set(handle, { path: canonical, fd })
           state.fds.add(fd)
           state.paths.push(canonical)
@@ -107,7 +110,17 @@ afterEach(async () => {
   state.nodeOpenCalls = 0
   state.replaceAfterNodeOpen = false
   state.replaceAfterNativeOpen = false
+  state.fakeFilePath = undefined
 })
+
+function fdIsClosed(fd: number): boolean {
+  try {
+    fstatSync(fd)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EBADF'
+  }
+}
 
 async function waitForLock(lockPath: string): Promise<void> {
   for (;;) {
@@ -143,6 +156,7 @@ describe('Windows lock handle', () => {
     await expect(withFileLock(canonical, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
     expect(new Set(state.paths)).toEqual(new Set([resolve(`${canonical}.lock`)]))
     expect(await readFile(`${canonical}.lock`, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })
 
   it('fails closed on a symlink sidecar before opening its referent', async () => {
@@ -156,11 +170,29 @@ describe('Windows lock handle', () => {
     const lockPath = join(dir, 'document.lock')
     await writeFile(victim, 'protected')
     await symlink(victim, lockPath)
+    state.fakeFilePath = join(dir, 'native-scratch')
 
     await expect(withFileLock(join(dir, 'document'), async () => {}, { waitMs: 0 }))
       .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
     expect(await readFile(victim, 'utf8')).toBe('protected')
-    expect(state.paths).toEqual([resolve(lockPath)])
+    expect(state.paths).toEqual([])
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
+  })
+
+  it('rejects a directory sidecar before opening it natively', async () => {
+    vi.doMock('koffi', () => ({ default: fakeKoffi }))
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.resetModules()
+    const { withFileLock } = await import('../src/index.ts?windows-lock-directory') as typeof import('../src/index.ts')
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
+    scratchDirs.push(dir)
+    const target = join(dir, 'document')
+    const lockPath = `${target}.lock`
+    await mkdir(lockPath)
+
+    await expect(withFileLock(target, async () => {}, { waitMs: 0 }))
+      .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
+    expect(state.paths).toEqual([])
   })
 
   it('does not use a pathname-open during a replacement race', async () => {
@@ -197,6 +229,7 @@ describe('Windows lock handle', () => {
     await expect(withFileLock(target, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
     expect(state.nodeOpenCalls).toBe(0)
     expect(await readFile(lockPath, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })
 
   it('rejects a pathname replacement after native open before marker access', async () => {
@@ -215,5 +248,6 @@ describe('Windows lock handle', () => {
     await expect(withFileLock(target, async () => {}, { waitMs: 0 }))
       .rejects.toMatchObject({ code: 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL' })
     expect(await readFile(victim, 'utf8')).toBe('protected')
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })
 })

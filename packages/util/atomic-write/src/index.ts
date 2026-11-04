@@ -419,10 +419,15 @@ async function acquirePosixLock(lockPath: string): Promise<HeldLock> {
 }
 
 async function acquireWindowsFileLock(lockPath: string): Promise<HeldLock> {
+  const info = await lstat(lockPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (info !== undefined && !info.isFile()) throw lockProtocolError(lockPath)
   const windowsLock = await acquireWindowsLock(lockPath)
   try {
-    const info = await lstat(lockPath)
-    if (!info.isFile()) throw lockProtocolError(lockPath)
+    const currentInfo = await lstat(lockPath)
+    if (!currentInfo.isFile()) throw lockProtocolError(lockPath)
     const held = await statWindowsFd(windowsLock.fd)
     const current = await stat(lockPath, { bigint: true })
     if (held.dev === 0n || held.ino === 0n || current.dev === 0n || current.ino === 0n
