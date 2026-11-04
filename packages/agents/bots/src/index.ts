@@ -611,6 +611,7 @@ const SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_TIMEOUT_MS = 15_000
 const SHARED_GROUP_MESSAGE_DELIVERY_ADMISSION_FENCE = Number.MAX_SAFE_INTEGER
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS = 1_000
+const BOT_ROSTER_FENCE_BUSY_ERROR_NAME = 'BotRosterFenceBusyError'
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_ATTEMPTS = 8
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY = 8
@@ -2381,6 +2382,7 @@ export class BotService extends TypertRemoteService {
   private readonly eventRoutineAdmissionRecoveryRetryKeys = new Set<string>()
   private readonly eventRoutineRepairRetryKeys = new Set<string>()
   private readonly eventRoutineResultRetryKeys = new Set<string>()
+  private readonly eventRoutineResultRecoveryRetryKeys = new Set<string>()
   private readonly collaborationRepairRetryKeys = new Set<string>()
   private readonly groupRepairRetryKeys = new Set<string>()
   private readonly groupSessionRepairRetryKeys = new Set<string>()
@@ -2389,6 +2391,7 @@ export class BotService extends TypertRemoteService {
   private readonly eventRoutineAdmissionRecoveryRetryAttempts = new Map<string, number>()
   private readonly eventRoutineRepairRetryAttempts = new Map<string, number>()
   private readonly eventRoutineResultRetryAttempts = new Map<string, number>()
+  private readonly eventRoutineResultRecoveryRetryAttempts = new Map<string, number>()
   private readonly groupRepairRetryAttempts = new Map<string, number>()
   private readonly collaborationRepairRetryAttempts = new Map<string, number>()
   private readonly groupSessionRepairRetryAttempts = new Map<string, number>()
@@ -5059,10 +5062,48 @@ export class BotService extends TypertRemoteService {
         return
       }
       void this.retryPendingEventRoutines(sessionId, routineId, false, attempt)
+        .catch((error: unknown) => {
+          this.ctx.logger.warn(`bots: pending event routine ${routineId} retry failed: ${String(error)}`)
+          this.scheduleCanceledEventRoutineRetry(sessionId, routineId, messageId, attempt + 1)
+        })
         .finally(() => {
           if (this.eventRoutineRetryAttempts.get(key) === attempt) {
             this.eventRoutineRetryAttempts.delete(key)
             this.eventRoutineRetryKeys.delete(key)
+          }
+        })
+    }
+    this.scheduleRecoveryRetry(run, delay)
+  }
+
+  /** Retry result discovery after a startup profile read was deferred. */
+  private scheduleEventRoutineResultRecoveryRetry(sessionId: SessionId, attempt: number): void {
+    const key = String(sessionId)
+    const delay = botRecoveryRetryDelay(attempt)
+    if (delay === undefined || this.stopping) {
+      this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+      this.eventRoutineResultRecoveryRetryKeys.delete(key)
+      return
+    }
+    const prior = this.eventRoutineResultRecoveryRetryAttempts.get(key)
+    if (prior !== undefined && prior >= attempt) return
+    this.eventRoutineResultRecoveryRetryAttempts.set(key, attempt)
+    this.eventRoutineResultRecoveryRetryKeys.add(key)
+    const run = () => {
+      if (this.stopping) {
+        this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+        this.eventRoutineResultRecoveryRetryKeys.delete(key)
+        return
+      }
+      void this.recoverEventRoutineResults(sessionId, attempt)
+        .catch((error: unknown) => {
+          this.ctx.logger.warn(`bots: event routine result recovery retry failed for ${sessionId}: ${String(error)}`)
+          this.scheduleEventRoutineResultRecoveryRetry(sessionId, attempt + 1)
+        })
+        .finally(() => {
+          if (this.eventRoutineResultRecoveryRetryAttempts.get(key) === attempt) {
+            this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+            this.eventRoutineResultRecoveryRetryKeys.delete(key)
           }
         })
     }
@@ -5159,11 +5200,30 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Retry deliveries reserved before a Host restart. */
-  private async recoverPendingEventRoutines(): Promise<void> {
+  private async recoverPendingEventRoutines(
+    retrySessionId?: SessionId,
+    retryAttempt = 0,
+  ): Promise<void> {
     await this.serialize(async () => {
       const domain = await this.getDomain()
-      for (const [sessionKey] of [...this.recordsBySession]) {
-        const record = await this.refreshBotRecordFromProfile(domain, SessionId(sessionKey))
+      const records = retrySessionId === undefined
+        ? [...this.recordsBySession.entries()]
+        : [[String(retrySessionId), this.recordsBySession.get(String(retrySessionId))] as const]
+      for (const [sessionKey, mapped] of records) {
+        const sessionId = SessionId(sessionKey)
+        let record: BotRecord | undefined
+        try {
+          record = await this.refreshBotRecordFromProfile(domain, sessionId)
+        } catch (error: unknown) {
+          this.ctx.logger.warn(`bots: pending event routine startup recovery deferred for ${sessionId}: ${String(error)}`)
+          for (const routine of mapped?.eventRoutines ?? []) {
+            if (routine.status !== 'active') continue
+            for (const delivery of routine.deliveries.filter(candidate => candidate.status === 'pending')) {
+              this.scheduleCanceledEventRoutineRetry(sessionId, routine.id, delivery.messageId, retryAttempt + 1)
+            }
+          }
+          continue
+        }
         if (record === undefined) continue
         let current = record
         for (const routine of record.eventRoutines ?? []) {
@@ -5177,7 +5237,7 @@ export class BotService extends TypertRemoteService {
               current = await this.deliverEventRoutine(current, latest, retry)
             } catch (error: unknown) {
               this.ctx.logger.warn(`bots: pending event routine ${routine.id} recovery failed: ${String(error)}`)
-              this.scheduleCanceledEventRoutineRetry(record.sessionId, routine.id, delivery.messageId)
+              this.scheduleCanceledEventRoutineRetry(record.sessionId, routine.id, delivery.messageId, retryAttempt + 1)
             }
           }
         }
@@ -5230,13 +5290,20 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Recover completed routine turns whose result write was interrupted by a restart. */
-  private async recoverEventRoutineResults(): Promise<void> {
+  private async recoverEventRoutineResults(
+    retrySessionId?: SessionId,
+    retryAttempt = 0,
+  ): Promise<void> {
     const domain = await this.getDomain()
-    for (const [sessionKey] of [...this.recordsBySession]) {
-      const record = await this.refreshBotRecordFromProfile(domain, SessionId(sessionKey))
-      if (record === undefined) continue
-      if ((record.eventRoutines ?? []).length === 0) continue
+    const records = retrySessionId === undefined
+      ? [...this.recordsBySession.keys()]
+      : [String(retrySessionId)]
+    for (const sessionKey of records) {
+      const sessionId = SessionId(sessionKey)
       try {
+        const record = await this.refreshBotRecordFromProfile(domain, sessionId)
+        if (record === undefined) continue
+        if ((record.eventRoutines ?? []).length === 0) continue
         const inspection = await this.ctx.sessionController.inspect(record.sessionId)
         const turns = routineTurnsFromEvents(inspection.events)
         for (const event of inspection.events) {
@@ -5246,7 +5313,8 @@ export class BotService extends TypertRemoteService {
           await this.recordEventRoutineResults(record.sessionId, turn, event, turn)
         }
       } catch (error: unknown) {
-        this.ctx.logger.warn(`bots: event routine result recovery failed for ${record.id}: ${String(error)}`)
+        this.ctx.logger.warn(`bots: event routine result recovery deferred for ${sessionId}: ${String(error)}`)
+        this.scheduleEventRoutineResultRecoveryRetry(sessionId, retryAttempt + 1)
       }
     }
   }
@@ -7114,7 +7182,9 @@ export class BotService extends TypertRemoteService {
       let changed = merged.changed
       const sharedRosterFenceHeld = state.sharedRosterFence !== undefined
       if (sharedRosterFenceHeld && !allowSharedRosterFence) {
-        throw new Error('Bot profile is changing during a shared group admission')
+        const error = new Error('Bot profile is changing during a shared group admission')
+        error.name = BOT_ROSTER_FENCE_BUSY_ERROR_NAME
+        throw error
       }
       const allowPendingStateTransition = state.pending === undefined || (
         !sharedRosterFenceHeld
@@ -8029,21 +8099,31 @@ export class BotService extends TypertRemoteService {
     const key = String(request.sessionId)
     const prior = this.sharedGroupDeliveryTails.get(key) ?? Promise.resolve()
     const run = prior.then(async () => {
-      const preflightBusy = await this.sharedGroupDeliveryBusy(request)
-      if (preflightBusy !== undefined) return preflightBusy
-      const prepared = await this.prepareSharedGroupDelivery(request)
-      const prunableKeys = await this.findPrunableSharedGroupDeliveryKeys(request)
-      const claim = await this.claimSharedGroupDelivery(request, prepared.kind === 'duplicate', prunableKeys, request.signal)
-      if (claim.kind === 'duplicate') return 'duplicate'
-      if (claim.kind === 'busy') return claim
-      const lease = this.startSharedGroupDeliveryLeaseRenewal(request, claim.token)
-      const dispatchSignal = request.signal === undefined
-        ? lease.signal
-        : AbortSignal.any([request.signal, lease.signal])
-      const dispatchedRequest = { ...request, signal: dispatchSignal }
       try {
-        return await this.enqueuePreparedSharedGroupDelivery(dispatchedRequest, prepared, claim.token)
+        const preflightBusy = await this.sharedGroupDeliveryBusy(request)
+        if (preflightBusy !== undefined) return preflightBusy
+        const prepared = await this.prepareSharedGroupDelivery(request)
+        const prunableKeys = await this.findPrunableSharedGroupDeliveryKeys(request)
+        const claim = await this.claimSharedGroupDelivery(request, prepared.kind === 'duplicate', prunableKeys, request.signal)
+        if (claim.kind === 'duplicate') return 'duplicate'
+        if (claim.kind === 'busy') return claim
+        const lease = this.startSharedGroupDeliveryLeaseRenewal(request, claim.token)
+        const dispatchSignal = request.signal === undefined
+          ? lease.signal
+          : AbortSignal.any([request.signal, lease.signal])
+        const dispatchedRequest = { ...request, signal: dispatchSignal }
+        try {
+          return await this.enqueuePreparedSharedGroupDelivery(dispatchedRequest, prepared, claim.token)
+        } finally {
+          lease.stop()
+        }
       } catch (error: unknown) {
+        if (error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME) {
+          return {
+            kind: 'busy' as const,
+            retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS,
+          }
+        }
         if (error instanceof SharedGroupRecipientClaimLostError) {
           return { kind: 'busy' as const, retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS }
         }
@@ -8051,8 +8131,6 @@ export class BotService extends TypertRemoteService {
           return { kind: 'busy' as const, retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS }
         }
         throw error
-      } finally {
-        lease.stop()
       }
     })
     const tail = run.then(() => undefined, () => undefined)

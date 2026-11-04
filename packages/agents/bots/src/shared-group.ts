@@ -416,6 +416,12 @@ export class SharedGroupError extends Error {
   }
 }
 
+const BOT_ROSTER_FENCE_BUSY_ERROR_NAME = 'BotRosterFenceBusyError'
+
+function isBotRosterFenceBusyError(error: unknown): boolean {
+  return error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME
+}
+
 interface SharedGroupMutationResult<T> {
   readonly snapshot: SharedGroupSnapshot
   readonly value: T
@@ -1405,6 +1411,13 @@ export class SharedBotGroupService {
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'accepted', undefined, dispatchSignal)
       return { kind: 'accepted', result: deliveryResult }
     } catch (error: unknown) {
+      if (isBotRosterFenceBusyError(error)) {
+        return {
+          kind: 'busy',
+          error: 'Shared Bot group delivery is waiting for the Bot roster fence',
+          leaseUntil: this.now() + SHARED_GROUP_DELIVERY_LEASE_MS,
+        }
+      }
       if (deliveredResult !== undefined) {
         if (dispatchSignal.aborted || error instanceof SharedGroupClaimLostError) {
           return {

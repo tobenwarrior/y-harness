@@ -71,7 +71,7 @@ import { SessionTitleProviderId } from '../../../session/session-title/src/index
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
-import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
+import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
 
@@ -850,6 +850,123 @@ describe('durable Bot roster', () => {
       release.resolve(true)
       await operation?.catch(() => undefined)
       await close(h.ctx)
+    }
+  })
+
+  it('defers shared-group delivery while another Host holds the roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Shared delivery fence target', cwd: '/tmp' })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const sharedSessionId = SessionId('shared-session-group-roster-fence-recovery')
+    const first = await harness(
+      pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const second = await harness(
+      pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-roster-fence-recovery'),
+        botId: created.bot.id,
+        sessionId: sharedSessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const firstHost = productionSharedHost(first.service)
+      const secondHost = productionSharedHost(second.service)
+      firstHost.registerSharedGroupSessions?.([binding])
+      secondHost.registerSharedGroupSessions?.([binding])
+      const bots = (await first.service.list({ includeHidden: true })).bots
+      fence = firstHost.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+      })
+      if (fence === undefined) throw new Error('shared roster fence capability was not mounted')
+      await started.promise
+
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Roster fence recovery',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Retry this after the roster fence releases.',
+        messageId: BotGroupMessageId('bot-group-message-roster-fence-recovery'),
+      }
+      await expect(secondHost.deliverSharedGroup?.(request)).resolves.toMatchObject({ kind: 'busy' })
+      release.resolve(true)
+      await expect(fence).resolves.toMatchObject({ valid: true })
+      await expect(secondHost.deliverSharedGroup?.(request)).resolves.toBe('accepted')
+    } finally {
+      release.resolve(true)
+      await fence?.catch(() => undefined)
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('does not reject startup when pending event-routine recovery meets another Host roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Event routine fence target', cwd: '/tmp' })
+    const domain = seed.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    if (domain === undefined) throw new Error('event routine fence Bot domain was not mounted')
+    const stored = domain.table('bots').get(created.bot.id)
+    if (stored === undefined) throw new Error('event routine fence Bot row was not found')
+    const routine: BotEventRoutine = {
+      id: 'bot-event-routine-roster-fence-recovery',
+      title: 'Roster fence recovery',
+      prompt: 'Retry this pending event routine.',
+      trigger: { type: 'message', source: 'user' },
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+      deliveries: [{
+        triggerEventSeq: 1,
+        triggerMessageId: MessageId('event-routine-roster-fence-source'),
+        messageId: MessageId('event-routine-roster-fence-delivery'),
+        status: 'pending',
+        createdAt: new Date(1).toISOString(),
+      }],
+      results: [],
+    }
+    await domain.table('bots').put(created.bot.id, { ...stored, eventRoutines: [routine] })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const firstHost = productionSharedHost(first.service)
+      const bots = (await first.service.list({ includeHidden: true })).bots
+      fence = firstHost.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+      })
+      if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
+      await started.promise
+
+      const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+      try {
+        release.resolve(true)
+        await expect(fence).resolves.toMatchObject({ valid: true })
+        await vi.waitFor(() => { expect(second.followups[0]).toHaveBeenCalledOnce() })
+      } finally {
+        await close(second.ctx)
+      }
+    } finally {
+      release.resolve(true)
+      await fence?.catch(() => undefined)
+      await close(first.ctx)
     }
   })
 
