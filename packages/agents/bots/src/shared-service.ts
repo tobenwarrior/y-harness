@@ -8,6 +8,7 @@ import {
   SharedPrincipalId,
   sharedInviteDigest,
   sharedPrincipalOf,
+  sharedSessionExpiresAt,
   sharedRevocationSignal,
   type SharedAccessEnrollment,
   type SharedAccessStateSnapshot,
@@ -72,6 +73,7 @@ import {
 
 /** Exact endpoint allowlist mounted on the collaborator-only route. */
 export const SHARED_BOT_ENDPOINTS = [
+  'bots/share/session',
   'bots/share/list',
   'bots/share/read-profile',
   'bots/share/read-private-chat',
@@ -175,6 +177,14 @@ export interface SharedBotEnrollment extends SharedAccessEnrollment {
 /** Enrollment result after a principal redeems a group-only ACL invitation. */
 export interface SharedGroupEnrollment extends SharedAccessEnrollment {
   readonly groupId: BotGroupId
+}
+
+/** Current collaborator identity returned after the browser reloads. */
+export interface SharedBotSessionValue {
+  /** Stable collaborator identity derived from the authenticated shared Peer. */
+  readonly principalId: SharedPrincipalId
+  /** Absolute expiry of the authenticated collaborator session. */
+  readonly expiresAt: number
 }
 
 /** Result of a private-session lookup. */
@@ -835,6 +845,8 @@ export class SharedBotService {
     const sharedPrincipal = sharedPrincipalOf(peer)
     if (sharedPrincipal === undefined) return failure('gateway/forbidden', 'shared Bot identity is required')
     const principalId = BotPrincipalId(String(sharedPrincipal))
+    const sessionExpiresAt = sharedSessionExpiresAt(peer)
+    if (sessionExpiresAt === undefined) return failure('gateway/forbidden', 'shared Bot session is required')
     const revocationSignal = sharedRevocationSignal(peer)
     if (revocationSignal?.aborted) return failure('gateway/forbidden', 'shared Bot identity is no longer active')
     const botId = sharedBotIdFromPayload(endpoint, payload)
@@ -860,7 +872,7 @@ export class SharedBotService {
       await this.prepareRevocation(endpoint, payload, principalId, requestController.signal)
       requestController.signal.throwIfAborted()
       return await this.serialize(
-        () => this.dispatch(endpoint, payload, requestController.signal, principalId),
+        () => this.dispatch(endpoint, payload, requestController.signal, principalId, sessionExpiresAt),
         requestController.signal,
       )
     } catch (error) {
@@ -904,8 +916,14 @@ export class SharedBotService {
     payload: unknown,
     signal: AbortSignal,
     principalId: ReturnType<typeof BotPrincipalId>,
+    sessionExpiresAt: number,
   ): Promise<ConnectionRpcHandlerResult> {
     switch (endpoint) {
+      case 'bots/share/session':
+        return {
+          ok: true,
+          value: { principalId: SharedPrincipalId(String(principalId)), expiresAt: sessionExpiresAt } satisfies SharedBotSessionValue,
+        }
       case 'bots/share/list':
         return this.list(signal, principalId)
       case 'bots/share/read-profile':

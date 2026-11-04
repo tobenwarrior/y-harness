@@ -139,6 +139,8 @@ const authorityInstances = new WeakMap<CredentialProvider, Set<SharedAccessAutho
 export interface SharedAccessPeer extends PeerScope {
   readonly audience: typeof SHARED_ACCESS_AUDIENCE
   readonly principalId: SharedPrincipalId
+  /** Absolute expiry of the authenticated session represented by this Peer. */
+  readonly expiresAt: number
   /** Aborts requests and turns that still run when this identity is revoked. */
   readonly revocationSignal: AbortSignal
 }
@@ -364,7 +366,7 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
       if (principal === undefined || principal.revokedAt !== undefined) return { rejection: 401 }
       let peer = this.peers.get(session.id)
       if (peer === undefined) {
-        peer = new SharedAccessPeerImpl(this.owner, principal.id)
+        peer = new SharedAccessPeerImpl(this.owner, principal.id, session.expiresAt)
         this.peers.set(session.id, peer)
         this.schedulePeerExpiry(session.id, session.expiresAt)
         this.ensurePeerSweep()
@@ -579,6 +581,15 @@ export function sharedPrincipalOf(peer: PeerScope): SharedPrincipalId | undefine
 }
 
 /**
+ * Return the absolute expiry of a Peer minted by this authority.
+ * @param peer - admitted Peer to inspect.
+ * @returns its session expiry, or `undefined` for an operator or other Peer.
+ */
+export function sharedSessionExpiresAt(peer: PeerScope): number | undefined {
+  return peer instanceof SharedAccessPeerImpl ? peer.expiresAt : undefined
+}
+
+/**
  * Return the signal aborted when a shared identity is revoked or expires.
  * @param peer - admitted Peer to inspect.
  * @returns the revocation signal, or `undefined` for an operator Peer.
@@ -595,7 +606,7 @@ class SharedAccessPeerImpl implements SharedAccessPeer {
   private readonly scope: Scope
   private readonly sockets = new Set<SharedConnectionSocket>()
 
-  constructor(owner: Context, readonly principalId: SharedPrincipalId) {
+  constructor(owner: Context, readonly principalId: SharedPrincipalId, readonly expiresAt: number) {
     this.scope = createScope(owner, this)
     this.ctx = this.scope.ctx
   }

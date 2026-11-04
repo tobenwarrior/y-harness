@@ -57,6 +57,7 @@ export {
   SHARED_ACCESS_COOKIE_NAME,
   sharedInviteDigest,
   sharedPrincipalOf,
+  sharedSessionExpiresAt,
   sharedRevocationSignal,
 } from './shared-access.ts'
 export {

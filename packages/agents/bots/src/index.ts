@@ -276,6 +276,7 @@ export {
 } from './shared-group.ts'
 export type {
   SharedBotEnrollment,
+  SharedBotSessionValue,
   SharedGroupEnrollment,
   SharedBotHost,
   SharedBotHostOperationResult,

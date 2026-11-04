@@ -22,6 +22,7 @@ import {
   apply,
   inject,
   sharedPrincipalOf,
+  sharedSessionExpiresAt,
   sharedRevocationSignal,
   type ClientRequest,
   type ConnectionConfig,
@@ -559,6 +560,63 @@ describe('self-hosted shared-bot access', () => {
         cookie: cookieFromSetCookie(enrollment.setCookie),
       }, '/api/bots/share/chat', request), operatorWithShared.response)
       expect(operatorWithShared.state).toMatchObject({ status: 401, body: 'unauthorized' })
+    } finally {
+      await remove()
+      await authority.dispose()
+      await dispose()
+    }
+  })
+
+  it('restores the authenticated shared principal without exposing credentials', async () => {
+    const { ctx, routes, connection, dispose } = await mounted()
+    const authority = await SharedAccessAuthority.create(ctx, ctx.credentials, {
+      sessionMaxAgeMs: 60_000,
+      inviteMaxAgeMs: 60_000,
+      now: () => 1_000,
+    })
+    const enrollment = await authority.redeemInvite((await authority.createInvite()).code, fakeRequest({ host: '127.0.0.1:3080' }))
+    const remove = connection.sharedRpc.handle(SHARED_BOTS_PATH, authority, async (endpoint, _payload, _signal, peer) => {
+      if (endpoint !== 'bots/share/session') return { ok: false, error: { code: 'gateway/forbidden', message: 'unexpected endpoint', details: {} } }
+      return {
+        ok: true,
+        value: {
+          principalId: sharedPrincipalOf(peer),
+          expiresAt: sharedSessionExpiresAt(peer),
+        },
+      }
+    }, { endpoints: ['bots/share/session'] })
+    try {
+      const route = routes.find(candidate => candidate.path === SHARED_BOTS_PATH)
+      expect(route).toBeDefined()
+      const request: ClientRequest = {
+        type: 'client-request',
+        rpcId: 'shared-session' as ClientRequest['rpcId'],
+        method: 'bots/share/session',
+        payload: {},
+      }
+      const authenticated = fakeResponse()
+      await route!.handler(fakePost({
+        host: '127.0.0.1:3080',
+        cookie: cookieFromSetCookie(enrollment.setCookie),
+      }, `${SHARED_BOTS_PATH}/bots/share/session`, request), authenticated.response)
+      expect(authenticated.state.status).toBe(200)
+      const body = parsedJson(authenticated.state.body!)
+      expect(body).toMatchObject({
+        result: { ok: true, value: { principalId: enrollment.principalId, expiresAt: 61_000 } },
+      })
+      expect(body).not.toHaveProperty('result.value.setCookie')
+
+      const unauthenticated = fakeResponse()
+      await route!.handler(fakePost({ host: '127.0.0.1:3080' }, `${SHARED_BOTS_PATH}/bots/share/session`, request), unauthenticated.response)
+      expect(unauthenticated.state.status).toBe(401)
+
+      const mismatchedOrigin = fakeResponse()
+      await route!.handler(fakePost({
+        host: '127.0.0.1:3080',
+        origin: 'http://evil.example',
+        cookie: cookieFromSetCookie(enrollment.setCookie),
+      }, `${SHARED_BOTS_PATH}/bots/share/session`, request), mismatchedOrigin.response)
+      expect(mismatchedOrigin.state.status).toBe(403)
     } finally {
       await remove()
       await authority.dispose()

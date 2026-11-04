@@ -610,6 +610,29 @@ describe('shared Bot snapshot validation', () => {
 })
 
 describe('shared Bot service', () => {
+  it('returns only the authenticated principal and session expiry after reload', async () => {
+    const value = await fixture()
+    try {
+      expect(SHARED_BOT_ENDPOINTS).toContain('bots/share/session')
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const participant = await principal(value, enrollment)
+      await expect(value.service.handle(
+        'bots/share/session',
+        {},
+        new AbortController().signal,
+        participant.peer,
+      )).resolves.toEqual({
+        ok: true,
+        value: { principalId: enrollment.principalId, expiresAt: 61_000 },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
   it('uses explicit shared-group state instead of a pre-existing owner-local group transcript', async () => {
     const value = await fixture(10, true)
     try {
