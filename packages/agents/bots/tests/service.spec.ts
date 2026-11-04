@@ -65,6 +65,7 @@ import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../sr
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
 import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
+import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
 
 declare module '@yharness/llm' {
@@ -120,6 +121,58 @@ function postWriteFailurePool(): { pool: MemoryMediaPool; rows: ThrowAfterSetMap
   const rows = new ThrowAfterSetMap<string, unknown>()
   pool.media.set('agent_bots', { tables: new Map([['bots', rows]]), global: null })
   return { pool, rows }
+}
+
+function appendClosedLegacySystemMessage(session: Session, text: string): void {
+  let openTurn: number | undefined
+  let openStep: number | undefined
+  let nextTurn = 1
+  let nextStep = 1
+  for (const event of session.snapshotEvents()) {
+    switch (event.type) {
+      case 'turn/start':
+        openTurn = event.data.turn
+        openStep = undefined
+        nextTurn = Math.max(nextTurn, event.data.turn + 1)
+        nextStep = 1
+        break
+      case 'step/start':
+        if (openTurn === event.data.turn) {
+          openStep = event.data.step
+          nextStep = event.data.step + 1
+        }
+        break
+      case 'step/end':
+        if (openTurn === event.data.turn && openStep === event.data.step) {
+          openStep = undefined
+          nextStep = event.data.step + 1
+        }
+        break
+      case 'turn/end':
+        if (openTurn === event.data.turn) {
+          openTurn = undefined
+          openStep = undefined
+          nextTurn = Math.max(nextTurn, event.data.turn + 1)
+          nextStep = 1
+        }
+        break
+      default:
+        break
+    }
+  }
+  const turn = openTurn ?? nextTurn
+  const step = openStep ?? nextStep
+  const startedTurn = openTurn === undefined
+  const startedStep = openStep === undefined
+  if (startedTurn) session.append('turn/start', { turn })
+  if (startedStep) session.append('step/start', { turn, step })
+  session.append('system/message', {
+    turn,
+    step,
+    message: createSystemMessage(text),
+  }, { surfaceOp: 'append' })
+  if (startedStep) session.append('step/end', { turn, step })
+  if (startedTurn) session.append('turn/end', { turn, reason: { kind: 'completed' } })
 }
 
 function postIntentWriteFailurePool(): {
@@ -746,11 +799,7 @@ describe('durable Bot roster', () => {
       })
       const agent = h.agents[0]
       if (agent === undefined || h.adapter === undefined) throw new Error('legacy group prompt Agent was not created')
-      agent.session.append('system/message', {
-        turn: 1,
-        step: 1,
-        message: createSystemMessage('PRIVATE_LEGACY_GROUP_SYSTEM_PROMPT'),
-      }, { surfaceOp: 'append' })
+      appendClosedLegacySystemMessage(agent.session, 'PRIVATE_LEGACY_GROUP_SYSTEM_PROMPT')
 
       const resolved = await productionSharedHost(h.service).resolveSharedGroupAgent(
         sharedSessionId,
@@ -849,11 +898,7 @@ describe('durable Bot roster', () => {
             ctx.on('session/flush', () => true)
             const agent = ctx.agents.get(sharedSessionId)
             if (agent === undefined) throw new Error('startup legacy prompt Agent was not created')
-            agent.session.append('system/message', {
-              turn: 1,
-              step: 1,
-              message: createSystemMessage('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT'),
-            }, { surfaceOp: 'append' })
+            appendClosedLegacySystemMessage(agent.session, 'PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
           },
         },
       )
@@ -866,6 +911,18 @@ describe('durable Bot roster', () => {
           .join('\n')
         expect(startupSurfaceText).not.toContain('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
         expect(startupSurfaceText).toContain('Your role is: Public startup role')
+
+        const currentHeader = sessionFormatCatalog.encodeCurrentHeader({
+          version: agent.session.header.version,
+          id: String(agent.session.id),
+          createdAt: agent.session.header.createdAt,
+          isSeeded: agent.session.header.isSeeded,
+          delegationDepth: agent.session.header.delegationDepth ?? 0,
+        }, Number(agent.session.inheritedEventCount))
+        const currentRows = agent.session.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(event))
+        const reopened = sessionFormatCatalog.createRestore(currentHeader, { recovery: 'strict', validation: 'current' })
+        for (const row of currentRows) reopened.decodeRow(row)
+        expect(() => reopened.finish()).not.toThrow()
 
         const directCompaction = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -890,6 +947,35 @@ describe('durable Bot roster', () => {
         await expect(directRaw()).rejects.toThrow(/shared Bot Session.*LLM/i)
         expect(h.adapter.requests).toHaveLength(0)
 
+        const directAmbientRaw = async (): Promise<void> => {
+          await h.ctx.agents.withInitiator(agent, async () => {
+            for await (const _chunk of h.ctx.llm.stream({
+              provider: 'mock',
+              model: 'mock',
+              messages: [{ role: 'user', content: [{ type: 'text', text: 'ambient unattributed input' }] }],
+            })) { /* The ambient shared initiator must not bypass attribution. */ }
+          })
+        }
+        await expect(directAmbientRaw()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
+
+        const directAmbientTitle = async (): Promise<void> => {
+          await h.ctx.agents.withInitiator(agent, async () => {
+            for await (const _chunk of h.ctx.llm.stream({
+              provider: 'mock',
+              model: 'mock',
+              purpose: 'session-title',
+              system: 'title system',
+              messages: [createUserMessage({
+                content: [{ type: 'text', text: 'ambient attributed title input' }],
+                source: { kind: 'dsh-session-title-llm' },
+              })],
+            })) { /* The audited auxiliary capability may omit a duplicate Session id. */ }
+          })
+        }
+        await expect(directAmbientTitle()).resolves.toBeUndefined()
+        expect(h.adapter.requests).toHaveLength(1)
+
         const directToolHistory = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
             provider: 'mock',
@@ -905,7 +991,7 @@ describe('durable Bot roster', () => {
           })) { /* The guard must reject before the adapter is reached. */ }
         }
         await expect(directToolHistory()).rejects.toThrow(/shared Bot Session.*LLM/i)
-        expect(h.adapter.requests).toHaveLength(0)
+        expect(h.adapter.requests).toHaveLength(1)
 
         const directTitle = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -921,7 +1007,24 @@ describe('durable Bot roster', () => {
           })) { /* The audited auxiliary envelope is admitted. */ }
         }
         await expect(directTitle()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(1)
+        expect(h.adapter.requests).toHaveLength(2)
+
+        const directAuxTools = async (): Promise<void> => {
+          for await (const _chunk of h.ctx.llm.stream({
+            provider: 'mock',
+            model: 'mock',
+            sessionId: sharedSessionId,
+            purpose: 'session-title',
+            system: 'title system',
+            messages: [createUserMessage({
+              content: [{ type: 'text', text: 'attributed title input with tools' }],
+              source: { kind: 'dsh-session-title-llm' },
+            })],
+            tools: [{ name: 'unexpected', description: 'unexpected', parameters: {} }],
+          })) { /* The guard must reject before the adapter is reached. */ }
+        }
+        await expect(directAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(2)
 
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
@@ -944,6 +1047,31 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!firstClosed) await close(first.ctx)
+    }
+  })
+
+  it('keeps shared admission fenced until a failed prompt migration flush is retried durably', async () => {
+    const sharedSessionId = SessionId('shared-session-prompt-migration-retry')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)], new Map(), new Map(), true, 'native', false, {
+      inspectSharedSessions: true,
+    })
+    try {
+      const created = await h.service.create({ name: 'Prompt migration retry owner', cwd: '/tmp' })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('prompt migration retry Agent was not created')
+      appendClosedLegacySystemMessage(agent.session, 'PRIVATE_PROMPT_MIGRATION_RETRY')
+      const host = productionSharedHost(h.service)
+      h.flush.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const resolve = () => host.resolvePrivateAgent(
+        sharedSessionId,
+        new AbortController().signal,
+        created.bot.id,
+      )
+      await expect(resolve()).resolves.toHaveProperty('error')
+      await expect(resolve()).resolves.toHaveProperty('error')
+      await expect(resolve()).resolves.toHaveProperty('agent', agent)
+    } finally {
+      await close(h.ctx)
     }
   })
 
@@ -1366,6 +1494,15 @@ describe('durable Bot roster', () => {
         agent,
       })).resolves.toMatchObject({ isError: true })
       await expect(resolving).resolves.toHaveProperty('error')
+      const blockedModel = async (): Promise<void> => {
+        for await (const _chunk of h.ctx.llm.stream({
+          provider: 'mock',
+          model: 'mock',
+          sessionId: sharedSessionId,
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'missing Bot must remain blocked' }] }],
+        })) { /* A missing durable Bot row must not leave a marker-only shared route. */ }
+      }
+      await expect(blockedModel()).rejects.toThrow(/shared Bot Session.*LLM/i)
       await expect(h.ctx.tools.execute({
         callId: ToolCallId('shared-admission-missing-fence-after-error'),
         name: 'bash',
