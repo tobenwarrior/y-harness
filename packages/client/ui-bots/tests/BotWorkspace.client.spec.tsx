@@ -211,6 +211,68 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy()
   })
 
+  it('does not let an earlier profile save close a newly selected Bot editor', async () => {
+    const save = Promise.withResolvers<undefined>()
+    const updateProfile = vi.fn().mockReturnValue(save.promise)
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+      onUpdateProfile={updateProfile}
+    ><span /></BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+    await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+      onUpdateProfile={updateProfile}
+    ><span /></BotDetail>)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
+
+    save.resolve(undefined)
+    await waitFor(() => { expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy() })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('does not let an earlier profile failure mark a newly selected Bot editor', async () => {
+    const save = Promise.withResolvers<undefined>()
+    const updateProfile = vi.fn().mockReturnValue(save.promise)
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+      onUpdateProfile={updateProfile}
+    ><span /></BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+    await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      t={t}
+      onUpdateProfile={updateProfile}
+    ><span /></BotDetail>)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    save.reject(new Error('offline'))
+
+    await waitFor(() => { expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy() })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
+  })
+
   it('renames the selected bot from its conversation header', async () => {
     const rename = vi.fn(async () => {})
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
